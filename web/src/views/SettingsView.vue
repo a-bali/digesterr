@@ -22,8 +22,6 @@ const showAddFeed = ref(false)
 const newFeed = ref({ category_id: 0, type: 'rss', name: '', url: '' })
 const newCategoryName = ref('')
 const showAddCategory = ref(false)
-const selectedAccent = ref('')
-
 onMounted(async () => {
   await categoryStore.fetchCategories()
   feeds.value = await feedApi.list()

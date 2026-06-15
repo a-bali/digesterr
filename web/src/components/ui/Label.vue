@@ -9,5 +9,5 @@ import { cn } from '../../lib/utils'
     v-bind="$attrs"
   >
     <slot />
-  </RekaLable>
+  </RekaLabel>
 </template>
