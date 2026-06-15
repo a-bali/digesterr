@@ -156,7 +156,7 @@ func (q *Queries) GetItem(ctx context.Context, id int64) (Item, error) {
 }
 
 const listItemsByFeed = `-- name: ListItemsByFeed :many
-SELECT id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? ORDER BY created_at DESC
+SELECT id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC
 `
 
 func (q *Queries) ListItemsByFeed(ctx context.Context, feedID int64) ([]Item, error) {
@@ -200,7 +200,7 @@ func (q *Queries) ListItemsByFeed(ctx context.Context, feedID int64) ([]Item, er
 }
 
 const listItemsByFeedAndStatus = `-- name: ListItemsByFeedAndStatus :many
-SELECT id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? AND status = ? ORDER BY created_at DESC
+SELECT id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC
 `
 
 type ListItemsByFeedAndStatusParams struct {
@@ -357,7 +357,7 @@ func (q *Queries) UpdateItemStatus(ctx context.Context, arg UpdateItemStatusPara
 }
 
 const listUnreadItemsForEnrichment = `-- name: ListUnreadItemsForEnrichment :many
-SELECT id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY created_at DESC
+SELECT id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY published_at DESC, created_at DESC
 `
 
 type ListUnreadItemsForEnrichmentParams struct {

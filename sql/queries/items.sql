@@ -15,10 +15,10 @@ UPDATE items SET url = ?, updated_at = DATETIME('now') WHERE id = ?;
 SELECT * FROM items WHERE id = ?;
 
 -- name: ListItemsByFeed :many
-SELECT * FROM items WHERE feed_id = ? ORDER BY created_at DESC;
+SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC;
 
 -- name: ListItemsByFeedAndStatus :many
-SELECT * FROM items WHERE feed_id = ? AND status = ? ORDER BY created_at DESC;
+SELECT * FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC;
 
 -- name: UpdateItemStatus :one
 UPDATE items
@@ -33,7 +33,7 @@ WHERE id = ?
 RETURNING *;
 
 -- name: ListUnreadItemsForEnrichment :many
-SELECT * FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY created_at DESC;
+SELECT * FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY published_at DESC, created_at DESC;
 
 -- name: DeleteItem :one
 DELETE FROM items WHERE id = ? RETURNING id;
