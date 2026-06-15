@@ -10,22 +10,23 @@ Digesterr — feed reader with AI-generated digests. See `PLAN.md` for full spec
 - **Frontend:** Vite + Vue + Tailwind (PWA) — not yet implemented
 - **Database:** SQLite — must use standard SQL only, no SQLite-specific syntax
 - **Auth:** JWT (golang-jwt/jwt/v5) + bcrypt, access tokens + refresh tokens
-- **Dev environment:** devenv — run `devenv shell` to get Go, sqlc
+- **Dev environment:** devenv — run `devenv shell` to get Go, sqlc, nodejs, pnpm
 
 ## Commands
 
 ```bash
-nix develop              # enter dev shell (Go, sqlc) — for build/test/lint
-devenv shell             # enter dev shell (Go, sqlc, env vars set) — alternative to nix develop
+nix develop              # enter dev shell (all tools) — for build/test/lint
+devenv shell             # enter dev shell (all tools, env vars set) — alternative to nix develop
 devenv up                # start dev server (foreground, Ctrl+C to stop)
 make generate            # run sqlc code generation
 make build               # compile to bin/digesterr
 make test                # go test ./...
+make test-web            # pnpm --dir web test
 make lint                # go vet ./...
 make clean               # remove binary and DB file
 ```
 
-Use `nix develop` for quick build/test/lint. Use `devenv up` to run the server with env vars pre-set.
+Use `nix develop` or `devenv shell` for build/test/lint. Use `devenv up` to run the server with env vars pre-set.
 
 ## Architecture
 

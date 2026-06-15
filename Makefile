@@ -1,4 +1,4 @@
-.PHONY: all build build-web generate test lint run clean
+.PHONY: all build build-web generate test test-web lint run clean
 
 DB_PATH ?= digesterr.db
 PORT ?= 8080
@@ -22,6 +22,9 @@ run: build
 
 test:
 	go test ./... -v
+
+test-web:
+	cd web && pnpm test
 
 lint:
 	go vet ./...
