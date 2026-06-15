@@ -104,6 +104,18 @@ func (q *Queries) CreateItemIfNotExists(ctx context.Context, arg CreateItemIfNot
 	return id, err
 }
 
+const updateItemURL = `-- name: UpdateItemURL :exec
+UPDATE items SET url = ?, updated_at = DATETIME('now') WHERE id = ?
+`
+
+func (q *Queries) UpdateItemURL(ctx context.Context, arg struct {
+	Url string `json:"url"`
+	ID    int64  `json:"id"`
+}) error {
+	_, err := q.db.ExecContext(ctx, updateItemURL, arg.Url, arg.ID)
+	return err
+}
+
 const deleteItem = `-- name: DeleteItem :one
 DELETE FROM items WHERE id = ? RETURNING id
 `

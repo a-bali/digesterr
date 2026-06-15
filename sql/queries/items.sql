@@ -8,6 +8,9 @@ INSERT OR IGNORE INTO items (feed_id, guid, title, url, content, comment_url, au
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unread')
 RETURNING id;
 
+-- name: UpdateItemURL :exec
+UPDATE items SET url = ?, updated_at = DATETIME('now') WHERE id = ?;
+
 -- name: GetItem :one
 SELECT * FROM items WHERE id = ?;
 

@@ -28,6 +28,7 @@ func NewPoller(queries *store.Queries) *Poller {
 		enrichers: map[string]Enricher{
 			"hn":       NewHNEnricher(),
 			"lobsters": NewLobstersEnricher(),
+			"reddit":   NewRedditEnricher(queries),
 		},
 	}
 }
