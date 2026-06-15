@@ -193,6 +193,7 @@ func TestUserIsolation(t *testing.T) {
 	})
 	itemA, _ := queries.CreateItem(t.Context(), store.CreateItemParams{
 		FeedID:  feedA.ID,
+		GUID:    "a-item-1",
 		Title:   "A Item",
 		Url:     "https://a.example.com/1",
 		Content: "content",
@@ -200,6 +201,7 @@ func TestUserIsolation(t *testing.T) {
 	})
 	itemB, _ := queries.CreateItem(t.Context(), store.CreateItemParams{
 		FeedID:  feedB.ID,
+		GUID:    "b-item-1",
 		Title:   "B Item",
 		Url:     "https://b.example.com/1",
 		Content: "content",
@@ -337,6 +339,7 @@ func TestUpdateItemStatus(t *testing.T) {
 	})
 	item, _ := queries.CreateItem(t.Context(), store.CreateItemParams{
 		FeedID:   feed.ID,
+		GUID:     "item-1",
 		Title:    "Test Item",
 		Url:      "https://example.com/1",
 		Content:  "content",
@@ -383,6 +386,7 @@ func TestUpdateItemStatusInvalid(t *testing.T) {
 	})
 	item, _ := queries.CreateItem(t.Context(), store.CreateItemParams{
 		FeedID:   feed.ID,
+		GUID:     "item-2",
 		Title:    "Test Item",
 		Url:      "https://example.com/1",
 		Content:  "content",
@@ -461,6 +465,7 @@ func TestDigestResultReadCascade(t *testing.T) {
 
 	item1, _ := queries.CreateItem(t.Context(), store.CreateItemParams{
 		FeedID:   feed.ID,
+		GUID:     "cascade-1",
 		Title:    "Item 1",
 		Url:      "https://example.com/1",
 		Content:  "content 1",
@@ -468,6 +473,7 @@ func TestDigestResultReadCascade(t *testing.T) {
 	})
 	item2, _ := queries.CreateItem(t.Context(), store.CreateItemParams{
 		FeedID:   feed.ID,
+		GUID:     "cascade-2",
 		Title:    "Item 2",
 		Url:      "https://example.com/2",
 		Content:  "content 2",
@@ -541,6 +547,7 @@ func TestFeedItemsByStatus(t *testing.T) {
 	})
 	queries.CreateItem(t.Context(), store.CreateItemParams{
 		FeedID:   feed.ID,
+		GUID:     "feedstatus-1",
 		Title:    "Unread Item",
 		Url:      "https://example.com/1",
 		Content:  "content",
@@ -548,6 +555,7 @@ func TestFeedItemsByStatus(t *testing.T) {
 	})
 	queries.CreateItem(t.Context(), store.CreateItemParams{
 		FeedID:   feed.ID,
+		GUID:     "feedstatus-2",
 		Title:    "Read Item",
 		Url:      "https://example.com/2",
 		Content:  "content",

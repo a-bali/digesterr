@@ -32,3 +32,6 @@ RETURNING *;
 
 -- name: DeleteFeed :one
 DELETE FROM feeds WHERE id = ? AND user_id = ? RETURNING id;
+
+-- name: ListActiveFeeds :many
+SELECT * FROM feeds WHERE status = 'active' ORDER BY id;

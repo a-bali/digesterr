@@ -34,12 +34,15 @@ CREATE TABLE feeds (
 CREATE TABLE items (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     feed_id         INTEGER NOT NULL,
+    guid            TEXT    NOT NULL DEFAULT '',
     title           TEXT    NOT NULL,
     url             TEXT    NOT NULL DEFAULT '',
     content         TEXT    NOT NULL DEFAULT '',
+    author          TEXT    NOT NULL DEFAULT '',
     comment_url     TEXT    NOT NULL DEFAULT '',
     points          INTEGER NOT NULL DEFAULT 0,
     comments_count  INTEGER NOT NULL DEFAULT 0,
+    published_at    DATETIME,
     status          TEXT    NOT NULL DEFAULT 'unread',
     fetched_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
     created_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
@@ -102,3 +105,4 @@ CREATE INDEX idx_digest_result_items_result_id ON digest_result_items(result_id)
 CREATE INDEX idx_digest_result_items_item_id ON digest_result_items(item_id);
 CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens(user_id);
 CREATE INDEX idx_refresh_tokens_token_hash ON refresh_tokens(token_hash);
+CREATE UNIQUE INDEX idx_items_feed_guid ON items(feed_id, guid) WHERE guid != '';

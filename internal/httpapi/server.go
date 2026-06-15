@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"digesterr/internal/auth"
+	"digesterr/internal/feed"
 	"digesterr/internal/store"
 )
 
@@ -13,6 +15,7 @@ type Server struct {
 	mux     *http.ServeMux
 	queries *store.Queries
 	auth    *auth.Service
+	poller  *feed.Poller
 }
 
 func NewServer(queries *store.Queries, authSvc *auth.Service) *Server {
@@ -20,6 +23,7 @@ func NewServer(queries *store.Queries, authSvc *auth.Service) *Server {
 		mux:     http.NewServeMux(),
 		queries: queries,
 		auth:    authSvc,
+		poller:  feed.NewPoller(queries),
 	}
 
 	mux := s.mux
@@ -43,6 +47,7 @@ func NewServer(queries *store.Queries, authSvc *auth.Service) *Server {
 	mux.HandleFunc("PATCH /api/feeds/{id}", s.requireAuth(s.handleUpdateFeed))
 	mux.HandleFunc("DELETE /api/feeds/{id}", s.requireAuth(s.handleDeleteFeed))
 	mux.HandleFunc("GET /api/feeds/{id}/items", s.requireAuth(s.handleListFeedItems))
+	mux.HandleFunc("POST /api/feeds/{id}/fetch", s.requireAuth(s.handleFetchFeed))
 
 	mux.HandleFunc("PATCH /api/items/{id}", s.requireAuth(s.handleUpdateItemStatus))
 
@@ -58,6 +63,10 @@ func NewServer(queries *store.Queries, authSvc *auth.Service) *Server {
 	mux.HandleFunc("DELETE /api/digest-results/{id}", s.requireAuth(s.handleDeleteDigestResult))
 
 	return s
+}
+
+func (s *Server) StartPoller(ctx context.Context, interval time.Duration) {
+	go s.poller.Start(ctx, interval)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -1,7 +1,12 @@
 -- name: CreateItem :one
-INSERT INTO items (feed_id, title, url, content, comment_url, points, comments_count, status)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO items (feed_id, guid, title, url, content, comment_url, author, published_at, points, comments_count, status)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
+
+-- name: CreateItemIfNotExists :one
+INSERT OR IGNORE INTO items (feed_id, guid, title, url, content, comment_url, author, published_at, points, comments_count, status)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unread')
+RETURNING id;
 
 -- name: GetItem :one
 SELECT * FROM items WHERE id = ?;

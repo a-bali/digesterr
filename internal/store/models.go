@@ -60,18 +60,21 @@ type Feed struct {
 }
 
 type Item struct {
-	ID            int64     `json:"id"`
-	FeedID        int64     `json:"feed_id"`
-	Title         string    `json:"title"`
-	Url           string    `json:"url"`
-	Content       string    `json:"content"`
-	CommentUrl    string    `json:"comment_url"`
-	Points        int64     `json:"points"`
-	CommentsCount int64     `json:"comments_count"`
-	Status        string    `json:"status"`
-	FetchedAt     time.Time `json:"fetched_at"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            int64         `json:"id"`
+	FeedID        int64         `json:"feed_id"`
+	GUID          string        `json:"guid"`
+	Title         string        `json:"title"`
+	Url           string        `json:"url"`
+	Content       string        `json:"content"`
+	Author        string        `json:"author"`
+	CommentUrl    string        `json:"comment_url"`
+	Points        int64         `json:"points"`
+	CommentsCount int64         `json:"comments_count"`
+	PublishedAt   sql.NullTime  `json:"published_at"`
+	Status        string        `json:"status"`
+	FetchedAt     time.Time     `json:"fetched_at"`
+	CreatedAt     time.Time     `json:"created_at"`
+	UpdatedAt     time.Time     `json:"updated_at"`
 }
 
 type RefreshToken struct {

@@ -217,3 +217,30 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, items)
 }
+
+func (s *Server) handleFetchFeed(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	f, err := s.queries.GetFeed(r.Context(), store.GetFeedParams{
+		ID:     id,
+		UserID: userID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "feed not found")
+		return
+	}
+
+	if err := s.poller.PollFeed(r.Context(), f); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fetch feed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "feed fetched"})
+}

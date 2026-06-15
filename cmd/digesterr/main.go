@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -44,6 +46,7 @@ func main() {
 	queries := store.New(db)
 	authSvc := auth.NewService(jwtSecret, queries)
 	server := httpapi.NewServer(queries, authSvc)
+	server.StartPoller(context.Background(), 1*time.Hour)
 
 	slog.Info("starting digesterr", "port", port)
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", port), server); err != nil {
