@@ -26,7 +26,8 @@ func NewPoller(queries *store.Queries) *Poller {
 			"atom": rssFetcher,
 		},
 		enrichers: map[string]Enricher{
-			"hn": NewHNEnricher(),
+			"hn":       NewHNEnricher(),
+			"lobsters": NewLobstersEnricher(),
 		},
 	}
 }
