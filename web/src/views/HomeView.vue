@@ -168,13 +168,13 @@ function absoluteTime(val: any): string {
         <SplitterGroup direction="horizontal" auto-save-id="digesterr" class="flex-1">
           <SplitterPanel :default-size="18" :min-size="14" :max-size="28">
             <aside class="h-full border-r bg-sidebar overflow-y-auto p-3">
-              <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/50 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': showingSaved }" @click="showSaved">
+              <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': showingSaved }" @click="showSaved">
                 <BookmarkCheck class="size-3.5 shrink-0 text-accent" /> <span class="truncate">Saved Items</span>
               </button>
               <div v-for="cat in categoryStore.categories" :key="cat.id" class="mb-3">
                 <p class="text-xs font-semibold text-muted-foreground uppercase mb-1 px-2">{{ cat.name }}</p>
                 <button v-for="feed in feedStore.feeds.filter(f => f.category_id === cat.id)" :key="feed.id"
-                  class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/50 transition-colors" :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }"
+                  class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors" :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }"
                   @click="selectFeed(feed.id)">
                   <Rss class="size-3.5 shrink-0 text-accent" /> <span class="truncate">{{ feed.name }}</span>
                 </button>
@@ -199,8 +199,8 @@ function absoluteTime(val: any): string {
               <div v-else-if="!feedStore.activeFeed && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
               <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
               <button v-for="item in showingSaved ? savedItems : feedStore.filteredItems" :key="item.id"
-                class="w-full text-left p-3 border-b hover:bg-muted/50 transition-colors"
-                :class="{ 'bg-muted': item.id === feedStore.selectedItem?.id, 'font-bold text-foreground': item.status === 'unread', 'font-bold text-muted-foreground': item.status === 'digested', 'font-normal text-muted-foreground': item.status === 'read', 'font-normal text-accent': item.status === 'saved' }"
+                class="w-full text-left p-3 border-b hover:bg-accent/10 transition-colors"
+                :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'font-bold text-foreground': item.status === 'unread', 'font-bold text-muted-foreground': item.status === 'digested', 'font-normal text-muted-foreground': item.status === 'read', 'font-normal text-accent': item.status === 'saved' }"
                 @click="selectItem(item)">
                 <p class="text-sm line-clamp-2">{{ item.title }}</p>
                 <div class="flex items-center gap-2 mt-1">
@@ -254,13 +254,13 @@ function absoluteTime(val: any): string {
           <div class="absolute inset-0 bg-black/50" />
         </div>
         <aside :class="['fixed left-0 top-12 z-40 h-[calc(100vh-3rem)] w-64 bg-sidebar border-r shadow-xl transition-transform duration-200 overflow-y-auto p-3', sidebarOpen ? 'translate-x-0' : '-translate-x-full']">
-          <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/50 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': showingSaved }" @click="showSaved">
+          <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': showingSaved }" @click="showSaved">
             <BookmarkCheck class="size-3.5 shrink-0 text-accent" /> <span class="truncate">Saved Items</span>
           </button>
           <div v-for="cat in categoryStore.categories" :key="cat.id" class="mb-3">
             <p class="text-xs font-semibold text-muted-foreground uppercase mb-1 px-2">{{ cat.name }}</p>
             <button v-for="feed in feedStore.feeds.filter(f => f.category_id === cat.id)" :key="feed.id"
-              class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/50 transition-colors"
+              class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors"
               :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }"
               @click="selectFeed(feed.id)">
               <Rss class="size-3.5 shrink-0 text-accent" /> <span class="truncate">{{ feed.name }}</span>
@@ -284,8 +284,8 @@ function absoluteTime(val: any): string {
           <div v-else-if="!feedStore.activeFeed && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
           <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
           <button v-for="item in showingSaved ? savedItems : feedStore.filteredItems" :key="item.id"
-            class="w-full text-left p-3 border-b hover:bg-muted/50 transition-colors"
-            :class="{ 'bg-muted': item.id === feedStore.selectedItem?.id, 'font-bold text-foreground': item.status === 'unread', 'font-bold text-muted-foreground': item.status === 'digested', 'font-normal text-muted-foreground': item.status === 'read', 'font-normal text-accent': item.status === 'saved' }"
+            class="w-full text-left p-3 border-b hover:bg-accent/10 transition-colors"
+            :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'font-bold text-foreground': item.status === 'unread', 'font-bold text-muted-foreground': item.status === 'digested', 'font-normal text-muted-foreground': item.status === 'read', 'font-normal text-accent': item.status === 'saved' }"
             @click="selectItem(item)">
             <p class="text-sm line-clamp-2">{{ item.title }}</p>
             <div class="flex items-center gap-2 mt-1">
@@ -333,13 +333,13 @@ function absoluteTime(val: any): string {
           <div class="absolute inset-0 bg-black/50" />
         </div>
         <aside :class="['fixed left-0 top-12 z-40 h-[calc(100vh-3rem)] w-64 bg-sidebar border-r shadow-xl transition-transform duration-200 overflow-y-auto p-3', sidebarOpen ? 'translate-x-0' : '-translate-x-full']">
-          <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/50 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': showingSaved }" @click="showSaved">
+          <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': showingSaved }" @click="showSaved">
             <BookmarkCheck class="size-3.5 shrink-0 text-accent" /> <span class="truncate">Saved Items</span>
           </button>
           <div v-for="cat in categoryStore.categories" :key="cat.id" class="mb-3">
             <p class="text-xs font-semibold text-muted-foreground uppercase mb-1 px-2">{{ cat.name }}</p>
             <button v-for="feed in feedStore.feeds.filter(f => f.category_id === cat.id)" :key="feed.id"
-              class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/50 transition-colors"
+              class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors"
               :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }"
               @click="selectFeed(feed.id)">
               <Rss class="size-3.5 shrink-0 text-accent" /> <span class="truncate">{{ feed.name }}</span>
@@ -362,8 +362,8 @@ function absoluteTime(val: any): string {
           <div v-if="!feedStore.activeFeed && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed from the menu</div>
           <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
           <button v-for="item in showingSaved ? savedItems : feedStore.filteredItems" :key="item.id"
-            class="w-full text-left p-3 border-b hover:bg-muted/50 transition-colors"
-            :class="{ 'bg-muted': item.id === feedStore.selectedItem?.id, 'font-bold text-foreground': item.status === 'unread', 'font-bold text-muted-foreground': item.status === 'digested', 'font-normal text-muted-foreground': item.status === 'read', 'font-normal text-accent': item.status === 'saved' }"
+            class="w-full text-left p-3 border-b hover:bg-accent/10 transition-colors"
+            :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'font-bold text-foreground': item.status === 'unread', 'font-bold text-muted-foreground': item.status === 'digested', 'font-normal text-muted-foreground': item.status === 'read', 'font-normal text-accent': item.status === 'saved' }"
             @click="selectItem(item)">
             <p class="text-sm line-clamp-2">{{ item.title }}</p>
             <div class="flex items-center gap-2 mt-1">
