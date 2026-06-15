@@ -44,7 +44,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   }
   const res = await fetch(`/api${path}`, { ...options, headers })
   if (res.status === 401) {
-    token = null
+    setAuthToken(null)
     onUnauthorized?.()
     throw new ApiError(401, { error: 'unauthorized' })
   }
