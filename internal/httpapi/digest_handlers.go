@@ -1,0 +1,250 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+
+	"digesterr/internal/store"
+)
+
+type createDigestConfigRequest struct {
+	Schedule string `json:"schedule"`
+	Config   string `json:"config"`
+}
+
+func (s *Server) handleListDigestConfigs(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	configs, err := s.queries.ListDigestConfigs(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list digest configs")
+		return
+	}
+	if configs == nil {
+		configs = []store.DigestConfig{}
+	}
+	writeJSON(w, http.StatusOK, configs)
+}
+
+func (s *Server) handleCreateDigestConfig(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req createDigestConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Schedule == "" {
+		writeError(w, http.StatusBadRequest, "schedule is required")
+		return
+	}
+	if req.Config == "" {
+		req.Config = "{}"
+	}
+	cfg, err := s.queries.CreateDigestConfig(r.Context(), store.CreateDigestConfigParams{
+		UserID:   userID,
+		Schedule: req.Schedule,
+		Config:   req.Config,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create digest config")
+		return
+	}
+	writeJSON(w, http.StatusCreated, cfg)
+}
+
+func (s *Server) handleGetDigestConfig(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	cfg, err := s.queries.GetDigestConfig(r.Context(), store.GetDigestConfigParams{
+		ID:     id,
+		UserID: userID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "digest config not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+func (s *Server) handleUpdateDigestConfig(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req createDigestConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	cfg, err := s.queries.UpdateDigestConfig(r.Context(), store.UpdateDigestConfigParams{
+		ID:       id,
+		UserID:   userID,
+		Schedule: req.Schedule,
+		Config:   req.Config,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "digest config not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+func (s *Server) handleDeleteDigestConfig(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	deleted, err := s.queries.DeleteDigestConfig(r.Context(), store.DeleteDigestConfigParams{
+		ID:     id,
+		UserID: userID,
+	})
+	if err != nil || deleted == 0 {
+		writeError(w, http.StatusNotFound, "digest config not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
+}
+
+func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	configID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	results, err := s.queries.ListDigestResultsByConfig(r.Context(), store.ListDigestResultsByConfigParams{
+		ConfigID: configID,
+		UserID:   userID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list digest results")
+		return
+	}
+	if results == nil {
+		results = []store.DigestResult{}
+	}
+	writeJSON(w, http.StatusOK, results)
+}
+
+func (s *Server) handleGetDigestResult(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	result, err := s.queries.GetDigestResult(r.Context(), store.GetDigestResultParams{
+		ID:     id,
+		UserID: userID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "digest result not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+type updateDigestResultStatusRequest struct {
+	Status string `json:"status"`
+}
+
+func (s *Server) handleUpdateDigestResultStatus(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req updateDigestResultStatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Status != "new" && req.Status != "read" {
+		writeError(w, http.StatusBadRequest, "status must be new or read")
+		return
+	}
+	result, err := s.queries.UpdateDigestResultStatus(r.Context(), store.UpdateDigestResultStatusParams{
+		ID:     id,
+		UserID: userID,
+		Status: req.Status,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "digest result not found")
+		return
+	}
+	if req.Status == "read" {
+		items, err := s.queries.ListDigestResultItems(r.Context(), result.ID)
+		if err == nil {
+			for _, dri := range items {
+				s.queries.UpdateItemStatus(r.Context(), store.UpdateItemStatusParams{
+					ID:     dri.ItemID,
+					Status: "read",
+				})
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleDeleteDigestResult(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	deleted, err := s.queries.DeleteDigestResult(r.Context(), store.DeleteDigestResultParams{
+		ID:     id,
+		UserID: userID,
+	})
+	if err != nil || deleted == 0 {
+		writeError(w, http.StatusNotFound, "digest result not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
+}

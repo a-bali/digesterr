@@ -1,0 +1,10 @@
+# Devenv
+.devenv*
+devenv.local.nix
+
+# Go
+bin/
+*.db*
+
+# OS
+.DS_Store
