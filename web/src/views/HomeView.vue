@@ -78,25 +78,38 @@ async function unsaveItem(item: Item) {
   if (feedStore.selectedItem?.id === item.id) feedStore.selectedItem = null
 }
 
-function relativeTime(dateStr: string | null): string {
-  if (!dateStr) return ''
-  const diff = Date.now() - new Date(dateStr).getTime()
+function parseItemDate(val: any): Date | null {
+  if (!val) return null
+  if (typeof val === 'object') {
+    if (!val.Valid) return null
+    val = val.Time
+  }
+  if (typeof val !== 'string') return null
+  const d = new Date(val)
+  return isNaN(d.getTime()) ? null : d
+}
+
+function relativeTime(val: any): string {
+  const d = parseItemDate(val)
+  if (!d) return ''
+  const diff = Date.now() - d.getTime()
   const sec = Math.floor(diff / 1000)
   if (sec < 60) return 'just now'
   const min = Math.floor(sec / 60)
   if (min < 60) return `${min}m ago`
   const h = Math.floor(min / 60)
   if (h < 24) return `${h}h ago`
-  const d = Math.floor(h / 24)
-  if (d < 30) return `${d}d ago`
-  const m = Math.floor(d / 30)
+  const d2 = Math.floor(h / 24)
+  if (d2 < 30) return `${d2}d ago`
+  const m = Math.floor(d2 / 30)
   if (m < 12) return `${m}mo ago`
   return `${Math.floor(m / 12)}y ago`
 }
 
-function absoluteTime(dateStr: string | null): string {
-  if (!dateStr) return ''
-  return new Date(dateStr).toLocaleString(undefined, {
+function absoluteTime(val: any): string {
+  const d = parseItemDate(val)
+  if (!d) return ''
+  return d.toLocaleString(undefined, {
     year: 'numeric', month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit',
   })
