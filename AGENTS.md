@@ -15,9 +15,9 @@ Digesterr — feed reader with AI-generated digests. See `PLAN.md` for full spec
 ## Commands
 
 ```bash
-nix develop              # enter dev shell (all tools) — for build/test/lint
+nix develop --no-pure-eval --accept-flake-config  # enter dev shell (all tools)
 devenv shell             # enter dev shell (all tools, env vars set) — alternative to nix develop
-devenv up                # start dev server (foreground, Ctrl+C to stop)
+devenv up                # start both servers (foreground, Ctrl+C to stop)
 make generate            # run sqlc code generation
 make build               # compile to bin/digesterr
 make test                # go test ./...
@@ -26,7 +26,7 @@ make lint                # go vet ./...
 make clean               # remove binary and DB file
 ```
 
-Use `nix develop` or `devenv shell` for build/test/lint. Use `devenv up` to run the server with env vars pre-set.
+Use `nix develop --no-pure-eval --accept-flake-config` or `devenv shell` to enter a shell with all tools. Use `devenv up` to run both servers with env vars pre-set.
 
 ## Architecture
 
