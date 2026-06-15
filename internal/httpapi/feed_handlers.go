@@ -209,7 +209,7 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 		items, err = s.queries.ListItemsByFeed(r.Context(), id)
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list items")
+		writeServerError(w, "failed to list items", err)
 		return
 	}
 	if items == nil {

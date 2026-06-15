@@ -80,7 +80,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	s.mux.ServeHTTP(rec, r)
-	slog.Info("request", "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration", time.Since(start))
+	status := rec.status
+	if status >= 500 && status < 600 {
+		slog.Warn("request failed with server error", "method", r.Method, "path", r.URL.Path, "status", status)
+	}
+	slog.Info("request", "method", r.Method, "path", r.URL.Path, "status", status, "duration", time.Since(start))
 }
 
 type responseRecorder struct {

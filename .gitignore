@@ -4,7 +4,12 @@ devenv.local.nix
 
 # Go
 bin/
+/digesterr
 *.db*
+
+# Build artifacts
+cmd/digesterr/static/*
+!cmd/digesterr/static/.gitkeep
 
 # OS
 .DS_Store

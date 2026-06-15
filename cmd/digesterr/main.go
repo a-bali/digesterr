@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,6 +18,26 @@ import (
 	"digesterr/internal/schema"
 	"digesterr/internal/store"
 )
+
+//go:embed static/*
+var staticFiles embed.FS
+
+func staticFileSystem() http.FileSystem {
+	if _, err := os.Stat("web/dist"); err == nil {
+		return http.Dir("web/dist")
+	}
+	sub, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		return nil
+	}
+	// Check if the embedded files have real content (not just placeholder).
+	if f, err := sub.Open("index.html"); err != nil {
+		return nil
+	} else {
+		f.Close()
+	}
+	return http.FS(sub)
+}
 
 func main() {
 	dbPath := envOr("DATABASE_PATH", "digesterr.db")
@@ -48,8 +70,10 @@ func main() {
 	server := httpapi.NewServer(queries, authSvc)
 	server.StartPoller(context.Background(), 1*time.Hour)
 
+	handler := spaHandler(server, staticFileSystem())
+
 	slog.Info("starting digesterr", "port", port)
-	if err := http.ListenAndServe(fmt.Sprintf(":%s", port), server); err != nil {
+	if err := http.ListenAndServe(fmt.Sprintf(":%s", port), handler); err != nil {
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
 	}
@@ -61,13 +85,52 @@ func initSchema(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("checking schema: %w", err)
 	}
-	if count > 0 {
+	if count == 0 {
+		if _, err := db.Exec(schema.DDL); err != nil {
+			return fmt.Errorf("applying schema: %w", err)
+		}
+		slog.Info("database schema initialized")
 		return nil
 	}
-	if _, err := db.Exec(schema.DDL); err != nil {
-		return fmt.Errorf("applying schema: %w", err)
+	// Schema exists — apply any missing columns / indexes.
+	return migrateSchema(db)
+}
+
+func migrateSchema(db *sql.DB) error {
+	migrations := []struct {
+		name string
+		sql  string
+	}{
+		{
+			"add items.guid",
+			"ALTER TABLE items ADD COLUMN guid TEXT NOT NULL DEFAULT ''",
+		},
+		{
+			"add items.author",
+			"ALTER TABLE items ADD COLUMN author TEXT NOT NULL DEFAULT ''",
+		},
+		{
+			"add items.published_at",
+			"ALTER TABLE items ADD COLUMN published_at DATETIME",
+		},
+		{
+			"add items.last_enriched_at",
+			"ALTER TABLE items ADD COLUMN last_enriched_at DATETIME",
+		},
+		{
+			"add items.feed_guid unique index",
+			"CREATE UNIQUE INDEX IF NOT EXISTS idx_items_feed_guid ON items(feed_id, guid) WHERE guid != ''",
+		},
 	}
-	slog.Info("database schema initialized")
+	for _, m := range migrations {
+		if _, err := db.Exec(m.sql); err != nil {
+			// If the column already exists, SQLite returns an error.
+			// This is expected — continue.
+			slog.Debug("schema migration (may already exist)", "name", m.name, "error", err)
+		} else {
+			slog.Info("schema migration applied", "name", m.name)
+		}
+	}
 	return nil
 }
 
@@ -76,4 +139,30 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// spaHandler wraps an API handler to also serve static SPA files.
+// If no static filesystem is available (dev mode), just serves API.
+func spaHandler(api http.Handler, fs http.FileSystem) http.Handler {
+	if fs == nil {
+		return api
+	}
+	fileServer := http.FileServer(fs)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(r.URL.Path) >= 4 && r.URL.Path[:4] == "/api" {
+			api.ServeHTTP(w, r)
+			return
+		}
+		path := r.URL.Path
+		if path == "/" {
+			path = "/index.html"
+		}
+		if f, err := fs.Open(path); err == nil {
+			f.Close()
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		r.URL.Path = "/index.html"
+		fileServer.ServeHTTP(w, r)
+	})
 }

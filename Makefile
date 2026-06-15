@@ -1,15 +1,20 @@
-.PHONY: all build generate test lint run clean
+.PHONY: all build build-web generate test lint run clean
 
 DB_PATH ?= digesterr.db
 PORT ?= 8080
 JWT_SECRET ?= dev-secret-change-in-production
 
-all: generate build
+all: generate build-web build
 
 generate:
 	sqlc generate
 
-build:
+build-web:
+	cd web && pnpm install && pnpm build
+	rm -rf cmd/digesterr/static
+	cp -r web/dist cmd/digesterr/static
+
+build: build-web
 	go build -o bin/digesterr ./cmd/digesterr
 
 run: build
@@ -23,3 +28,4 @@ lint:
 
 clean:
 	rm -f bin/digesterr $(DB_PATH)
+	rm -rf cmd/digesterr/static

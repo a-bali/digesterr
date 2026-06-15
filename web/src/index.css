@@ -1,0 +1,46 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource-variable/inter";
+
+@theme {
+  --color-accent: hsl(217 91% 60%);
+  --color-accent-foreground: hsl(0 0% 100%);
+  --color-background: hsl(0 0% 100%);
+  --color-foreground: hsl(222 47% 11%);
+  --color-muted: hsl(210 40% 96%);
+  --color-muted-foreground: hsl(215 16% 47%);
+  --color-border: hsl(214 32% 91%);
+  --color-sidebar: hsl(210 40% 96%);
+  --color-sidebar-foreground: hsl(215 16% 47%);
+}
+
+:root {
+  --accent: 217 91% 60%;
+  --accent-foreground: 0 0% 100%;
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+  --border: 214 32% 91%;
+  --ring: 222 47% 11%;
+  --sidebar: 210 40% 96%;
+  --sidebar-foreground: 215 16% 47%;
+}
+
+.dark {
+  --background: 222 47% 11%;
+  --foreground: 210 40% 98%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 65%;
+  --border: 217 33% 17%;
+  --ring: 213 27% 84%;
+  --sidebar: 217 33% 17%;
+  --sidebar-foreground: 215 20% 65%;
+}
+
+* { border-color: hsl(var(--border)); }
+body {
+  font-family: 'Inter Variable', sans-serif;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}

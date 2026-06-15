@@ -1,0 +1,88 @@
+import type { AuthResponse, Category, Feed, Item } from '../types/api'
+
+const TOKEN_KEY = 'digesterr-token'
+
+let token: string | null = null
+let onUnauthorized: (() => void) | null = null
+
+export function setAuthToken(t: string | null) {
+  token = t
+  if (t) {
+    localStorage.setItem(TOKEN_KEY, t)
+  } else {
+    localStorage.removeItem(TOKEN_KEY)
+  }
+}
+
+export function getAuthToken() {
+  if (token) return token
+  const saved = localStorage.getItem(TOKEN_KEY)
+  if (saved) {
+    token = saved
+    return token
+  }
+  return null
+}
+
+export function setOnUnauthorized(cb: () => void) {
+  onUnauthorized = cb
+}
+
+export class ApiError extends Error {
+  constructor(public status: number, body: any) {
+    super(body?.error || `HTTP ${status}`)
+  }
+}
+
+export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string>),
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  const res = await fetch(`/api${path}`, { ...options, headers })
+  if (res.status === 401) {
+    token = null
+    onUnauthorized?.()
+    throw new ApiError(401, { error: 'unauthorized' })
+  }
+  const body = res.status === 204 ? null : await res.json()
+  if (!res.ok) throw new ApiError(res.status, body)
+  return body as T
+}
+
+export const authApi = {
+  signup: (email: string, password: string) =>
+    api<AuthResponse>('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  signin: (email: string, password: string) =>
+    api<AuthResponse>('/auth/signin', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  signout: () => api<void>('/auth/signout', { method: 'POST' }),
+  changePassword: (oldPassword: string, newPassword: string) =>
+    api<void>('/auth/change-password', { method: 'POST', body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }) }),
+}
+
+export const categoryApi = {
+  list: () => api<Category[]>('/categories'),
+  create: (name: string) => api<Category>('/categories', { method: 'POST', body: JSON.stringify({ name }) }),
+  update: (id: number, name: string) => api<Category>(`/categories/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  delete: (id: number) => api<void>(`/categories/${id}`, { method: 'DELETE' }),
+}
+
+export const feedApi = {
+  list: () => api<Feed[]>('/feeds'),
+  create: (data: { category_id: number; type: string; name: string; url: string }) =>
+    api<Feed>('/feeds', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: number, data: Partial<Feed>) =>
+    api<Feed>(`/feeds/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  delete: (id: number) => api<void>(`/feeds/${id}`, { method: 'DELETE' }),
+  getItems: (id: number, status?: string) =>
+    api<Item[]>(`/feeds/${id}/items${status ? `?status=${status}` : ''}`),
+  fetch: (id: number) => api<{ message: string }>(`/feeds/${id}/fetch`, { method: 'POST' }),
+}
+
+export const itemApi = {
+  updateStatus: (id: number, status: string) =>
+    api<Item>(`/items/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+}

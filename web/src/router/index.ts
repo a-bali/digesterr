@@ -1,0 +1,20 @@
+import { createRouter, createWebHistory } from 'vue-router'
+import { getAuthToken } from '../services/api'
+import HomeView from '../views/HomeView.vue'
+import LoginView from '../views/LoginView.vue'
+import SettingsView from '../views/SettingsView.vue'
+
+export const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: '/login', component: LoginView },
+    { path: '/', component: HomeView, meta: { requiresAuth: true } },
+    { path: '/settings', component: SettingsView, meta: { requiresAuth: true } },
+  ],
+})
+
+router.beforeEach((to) => {
+  if (to.meta.requiresAuth && !getAuthToken()) {
+    return '/login'
+  }
+})
