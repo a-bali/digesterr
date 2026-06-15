@@ -597,3 +597,52 @@ func TestInvalidPathParams(t *testing.T) {
 		t.Fatalf("expected 404 for nonexistent id, got %d", w.Code)
 	}
 }
+
+func TestFetchFeedUnauthenticated(t *testing.T) {
+	server, _ := setupTestServer(t)
+	w := makeRequest(server, http.MethodPost, "/api/feeds/1/fetch", nil, "")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestFetchFeedInvalidID(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createTestUser(t, queries, "fetchbad@example.com", "password123")
+	token := getTestToken(t, server.auth, &user)
+
+	w := makeRequest(server, http.MethodPost, "/api/feeds/abc/fetch", nil, token)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for non-numeric id, got %d", w.Code)
+	}
+
+	w = makeRequest(server, http.MethodPost, "/api/feeds/99999/fetch", nil, token)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for nonexistent feed, got %d", w.Code)
+	}
+}
+
+func TestFetchFeedAnotherUsersFeed(t *testing.T) {
+	server, queries := setupTestServer(t)
+	userA := createTestUser(t, queries, "fetcha@example.com", "password123")
+	userB := createTestUser(t, queries, "fetchb@example.com", "password123")
+	tokenA := getTestToken(t, server.auth, &userA)
+
+	cat, _ := queries.CreateCategory(t.Context(), store.CreateCategoryParams{
+		UserID: userB.ID,
+		Name:   "B",
+	})
+	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
+		UserID:     userB.ID,
+		CategoryID: cat.ID,
+		Type:       "rss",
+		Name:       "BFeed",
+		Url:        "https://b.example.com/feed",
+		Config:     "{}",
+		Status:     "active",
+	})
+	w := makeRequest(server, http.MethodPost, "/api/feeds/"+itoa(feed.ID)+"/fetch", nil, tokenA)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}

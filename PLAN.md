@@ -38,10 +38,14 @@ after each development iteration.
 ## Phased delivery
 
 1. **Basic backend:** project skeleton, DB schema, user auth, REST API
-2. **Feeds:** pluggable feed architecture, RSS/Atom and HN (in this phase),
-   Lobste.rs and Reddit in later phases
+2. **Feeds:** pluggable feed architecture, RSS/Atom parsing, HN, Lobste.rs and
+   Reddit sources. RSS/Atom used for item discovery. Points and comment counts
+   fetched via source-specific APIs (Firebase for HN, Lobste.rs JSON API,
+   Reddit JSON API). Enrichment runs on poll for unread items.
 3. **Basic UI:** 3-pane layout, feed browsing, item reading
 4. **Digest and scheduling:** cron-style digest creation, LLM integration
+5. **Content extraction:** fetch article content from linked pages using
+   readability/clarity, configurable per feed
 
 ## Functionality
 
@@ -60,20 +64,15 @@ implementation specifics.
 For starters, the app will support 4 kinds of feeds:
 
 1. RSS/Atom feeds: parse standard-compliant feeds and fetch new items as unread.
-   If configured, the link referenced by the item should also be fetched using
-   plain HTTP (no JS rendering). If the item contains a link to comments, that
-   link should also be presented.
-2. Hacker News: use Algolia API to fetch new stories. Make sure to always fetch
-   all new items since the last fetch. For each item, store the points and the
-   number of comments as well (always refetch these when preparing a digest).
-   Always fetch the content of the link referenced in the item and show that as
-   the content.
-3. Lobste.rs: find a way to fetch content, link, comments and votes, similarly to
-   Hacker News. RSS might work if you find no other way, but then you need to
-   separately fetch comments and votes.
-4. A subreddit in reddit.com: find a way to fetch new stories (all) since last
-   fetch, including upvotes and comments and upvotes on comments. This feed type
-   is lower priority and may be deferred to a later phase.
+   If the item contains a link to comments, that link should also be presented.
+2. Hacker News: discover items via RSS feed, enrich with current score and
+   comment count via Firebase API (https://hacker-news.firebaseio.com/v0/item/{id}.json).
+   Always refetch these when preparing a digest.
+3. Lobste.rs: discover items via RSS feed, enrich with current score and
+   comment count via Lobste.rs JSON API (https://lobste.rs/s/{short_id}.json).
+4. A subreddit in reddit.com: discover items via Atom feed, enrich with current
+   score, comment count, and actual article URL via Reddit JSON API
+   (https://www.reddit.com/comments/{post_id}.json).
 
 Each feed should be assigned to a category (e.g. tech, lifestyle etc.).
 
@@ -82,6 +81,13 @@ Each feed should be assigned to a category (e.g. tech, lifestyle etc.).
 Feeds are polled globally on a schedule. Default polling interval is every hour.
 If a feed is down or returns an error, mark it as failed and retry on the next
 scheduled poll.
+
+### Content extraction (Phase 5)
+
+Optionally, the linked article content should be fetched using plain HTTP
+(no JS rendering) and extracted using a readability/clarity algorithm.
+Whether content is fetched can be configured per feed. The extracted content
+is stored in the `content` field of the item and used in digests.
 
 ### Item statuses
 
