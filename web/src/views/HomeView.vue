@@ -77,6 +77,30 @@ async function unsaveItem(item: Item) {
   savedItems.value = savedItems.value.filter(i => i.id !== item.id)
   if (feedStore.selectedItem?.id === item.id) feedStore.selectedItem = null
 }
+
+function relativeTime(dateStr: string | null): string {
+  if (!dateStr) return ''
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const sec = Math.floor(diff / 1000)
+  if (sec < 60) return 'just now'
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}m ago`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `${h}h ago`
+  const d = Math.floor(h / 24)
+  if (d < 30) return `${d}d ago`
+  const m = Math.floor(d / 30)
+  if (m < 12) return `${m}mo ago`
+  return `${Math.floor(m / 12)}y ago`
+}
+
+function absoluteTime(dateStr: string | null): string {
+  if (!dateStr) return ''
+  return new Date(dateStr).toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  })
+}
 </script>
 
 <template>
@@ -138,7 +162,7 @@ async function unsaveItem(item: Item) {
                 <p class="text-xs font-semibold text-muted-foreground uppercase mb-1 px-2">{{ cat.name }}</p>
                 <button v-for="feed in feedStore.feeds.filter(f => f.category_id === cat.id)" :key="feed.id"
                   class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted transition-colors"
-                  :class="{ 'bg-muted font-medium': feed.id === feedStore.activeFeedId }"
+                  :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }"
                   @click="selectFeed(feed.id)">
                   <Rss class="size-3.5 shrink-0 text-accent" /> <span class="truncate">{{ feed.name }}</span>
                 </button>
@@ -170,6 +194,7 @@ async function unsaveItem(item: Item) {
                 <div class="flex items-center gap-2 mt-1">
                   <span v-if="item.points > 0" class="text-xs text-muted-foreground">{{ item.points }} pts</span>
                   <span v-if="item.comments_count > 0" class="text-xs text-muted-foreground">{{ item.comments_count }} comments</span>
+                  <span class="text-xs text-muted-foreground ml-auto" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
                 </div>
               </button>
             </div>
@@ -185,6 +210,7 @@ async function unsaveItem(item: Item) {
                 <h1 class="text-xl font-semibold mb-2">{{ feedStore.selectedItem.title }}</h1>
                 <div class="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mb-4">
                   <span v-if="feedStore.selectedItem.author">By {{ feedStore.selectedItem.author }}</span>
+                  <span class="text-xs text-muted-foreground">{{ absoluteTime(feedStore.selectedItem.published_at) }}</span>
                   <span v-if="feedStore.selectedItem.points">▴ {{ feedStore.selectedItem.points }}</span>
                   <span v-if="feedStore.selectedItem.comments_count">💬 {{ feedStore.selectedItem.comments_count }}</span>
                   <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank" class="flex items-center gap-1 text-accent hover:underline">Open <ExternalLink class="size-3" /></a>
