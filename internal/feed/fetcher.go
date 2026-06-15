@@ -3,6 +3,8 @@ package feed
 import (
 	"context"
 	"time"
+
+	"digesterr/internal/store"
 )
 
 type Item struct {
@@ -19,4 +21,8 @@ type Item struct {
 
 type Fetcher interface {
 	Fetch(ctx context.Context, feedURL string) ([]Item, error)
+}
+
+type Enricher interface {
+	Enrich(ctx context.Context, item *store.Item) error
 }

@@ -3,6 +3,7 @@ package feed
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -11,8 +12,9 @@ import (
 )
 
 type Poller struct {
-	queries  *store.Queries
-	fetchers map[string]Fetcher
+	queries   *store.Queries
+	fetchers  map[string]Fetcher
+	enrichers map[string]Enricher
 }
 
 func NewPoller(queries *store.Queries) *Poller {
@@ -22,6 +24,9 @@ func NewPoller(queries *store.Queries) *Poller {
 		fetchers: map[string]Fetcher{
 			"rss":  rssFetcher,
 			"atom": rssFetcher,
+		},
+		enrichers: map[string]Enricher{
+			"hn": NewHNEnricher(),
 		},
 	}
 }
@@ -88,6 +93,12 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 
 	newCount := 0
 	for _, item := range items {
+		// Normalize GUID for feed types that need it.
+		if feed.Type == "hn" {
+			if hnID := extractHNID(item.CommentURL, item.URL); hnID != 0 {
+				item.GUID = fmt.Sprintf("hn:%d", hnID)
+			}
+		}
 		pubAt := sql.NullTime{}
 		if !item.PublishedAt.IsZero() {
 			pubAt = sql.NullTime{Time: item.PublishedAt, Valid: true}
@@ -105,7 +116,12 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 			CommentsCount: int64(item.CommentsCnt),
 		})
 		if err != nil {
-			logger.Error("failed to create item", "guid", item.GUID, "error", err)
+			if errors.Is(err, sql.ErrNoRows) {
+				// Item already exists (INSERT OR IGNORE dedup) — expected.
+				logger.Debug("item already exists", "guid", item.GUID)
+			} else {
+				logger.Error("failed to create item", "guid", item.GUID, "error", err)
+			}
 			continue
 		}
 		if id > 0 {
@@ -124,6 +140,47 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 		})
 	}
 
+	if enricher, ok := p.enrichers[feed.Type]; ok {
+		p.enrichFeedItems(ctx, feed, enricher)
+	}
+
 	logger.Info("feed polled", "total_items", len(items), "new_items", newCount)
 	return nil
+}
+
+func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher Enricher) {
+	logger := slog.With("feed_id", feed.ID)
+	cutoff := time.Now().Add(-24 * time.Hour)
+	recent := time.Now().Add(-1 * time.Hour)
+
+	items, err := p.queries.ListUnreadItemsForEnrichment(ctx, store.ListUnreadItemsForEnrichmentParams{
+		FeedID:             feed.ID,
+		FetchedAfter:       cutoff,
+		LastEnrichedBefore: recent,
+	})
+	if err != nil {
+		logger.Error("failed to list items for enrichment", "error", err)
+		return
+	}
+
+	if len(items) == 0 {
+		return
+	}
+
+	for i := range items {
+		item := items[i]
+		if err := enricher.Enrich(ctx, &item); err != nil {
+			logger.Debug("failed to enrich item", "item_id", item.ID, "error", err)
+			continue
+		}
+		if _, err := p.queries.UpdateItemPointsAndComments(ctx, store.UpdateItemPointsAndCommentsParams{
+			ID:            item.ID,
+			Points:        item.Points,
+			CommentsCount: item.CommentsCount,
+		}); err != nil {
+			logger.Debug("failed to update enriched item", "item_id", item.ID, "error", err)
+		}
+	}
+
+	logger.Debug("enriched items", "count", len(items))
 }

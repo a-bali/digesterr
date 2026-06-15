@@ -47,6 +47,7 @@ CREATE TABLE items (
     fetched_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
     created_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
     updated_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    last_enriched_at DATETIME,
     FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
 );
 

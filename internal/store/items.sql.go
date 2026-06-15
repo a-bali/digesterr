@@ -8,12 +8,13 @@ package store
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 const createItem = `-- name: CreateItem :one
 INSERT INTO items (feed_id, guid, title, url, content, comment_url, author, published_at, points, comments_count, status)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at
+RETURNING id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at
 `
 
 type CreateItemParams struct {
@@ -61,6 +62,7 @@ func (q *Queries) CreateItem(ctx context.Context, arg CreateItemParams) (Item, e
 		&i.FetchedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LastEnrichedAt,
 	)
 	return i, err
 }
@@ -114,7 +116,7 @@ func (q *Queries) DeleteItem(ctx context.Context, id int64) (int64, error) {
 }
 
 const getItem = `-- name: GetItem :one
-SELECT id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at FROM items WHERE id = ?
+SELECT id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE id = ?
 `
 
 func (q *Queries) GetItem(ctx context.Context, id int64) (Item, error) {
@@ -136,12 +138,13 @@ func (q *Queries) GetItem(ctx context.Context, id int64) (Item, error) {
 		&i.FetchedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LastEnrichedAt,
 	)
 	return i, err
 }
 
 const listItemsByFeed = `-- name: ListItemsByFeed :many
-SELECT id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at FROM items WHERE feed_id = ? ORDER BY created_at DESC
+SELECT id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? ORDER BY created_at DESC
 `
 
 func (q *Queries) ListItemsByFeed(ctx context.Context, feedID int64) ([]Item, error) {
@@ -169,6 +172,7 @@ func (q *Queries) ListItemsByFeed(ctx context.Context, feedID int64) ([]Item, er
 			&i.FetchedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.LastEnrichedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -184,7 +188,7 @@ func (q *Queries) ListItemsByFeed(ctx context.Context, feedID int64) ([]Item, er
 }
 
 const listItemsByFeedAndStatus = `-- name: ListItemsByFeedAndStatus :many
-SELECT id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at FROM items WHERE feed_id = ? AND status = ? ORDER BY created_at DESC
+SELECT id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? AND status = ? ORDER BY created_at DESC
 `
 
 type ListItemsByFeedAndStatusParams struct {
@@ -217,6 +221,7 @@ func (q *Queries) ListItemsByFeedAndStatus(ctx context.Context, arg ListItemsByF
 			&i.FetchedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.LastEnrichedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -233,9 +238,9 @@ func (q *Queries) ListItemsByFeedAndStatus(ctx context.Context, arg ListItemsByF
 
 const updateItemPointsAndComments = `-- name: UpdateItemPointsAndComments :one
 UPDATE items
-SET points = ?, comments_count = ?, updated_at = DATETIME('now')
+SET points = ?, comments_count = ?, updated_at = DATETIME('now'), last_enriched_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at
+RETURNING id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at
 `
 
 type UpdateItemPointsAndCommentsParams struct {
@@ -263,12 +268,13 @@ func (q *Queries) UpdateItemPointsAndComments(ctx context.Context, arg UpdateIte
 		&i.FetchedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LastEnrichedAt,
 	)
 	return i, err
 }
 
 const getItemWithFeedOwner = `-- name: GetItemWithFeedOwner :one
-SELECT i.id, i.feed_id, i.guid, i.title, i.url, i.content, i.comment_url, i.author, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at FROM items i
+SELECT i.id, i.feed_id, i.guid, i.title, i.url, i.content, i.comment_url, i.author, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, last_enriched_at FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE i.id = ? AND f.user_id = ?
 `
@@ -297,6 +303,7 @@ func (q *Queries) GetItemWithFeedOwner(ctx context.Context, arg GetItemWithFeedO
 		&i.FetchedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LastEnrichedAt,
 	)
 	return i, err
 }
@@ -305,7 +312,7 @@ const updateItemStatus = `-- name: UpdateItemStatus :one
 UPDATE items
 SET status = ?, updated_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at
+RETURNING id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at
 `
 
 type UpdateItemStatusParams struct {
@@ -332,6 +339,57 @@ func (q *Queries) UpdateItemStatus(ctx context.Context, arg UpdateItemStatusPara
 		&i.FetchedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LastEnrichedAt,
 	)
 	return i, err
+}
+
+const listUnreadItemsForEnrichment = `-- name: ListUnreadItemsForEnrichment :many
+SELECT id, feed_id, guid, title, url, content, comment_url, author, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY created_at DESC
+`
+
+type ListUnreadItemsForEnrichmentParams struct {
+	FeedID             int64        `json:"feed_id"`
+	FetchedAfter       time.Time    `json:"fetched_after"`
+	LastEnrichedBefore time.Time    `json:"last_enriched_before"`
+}
+
+func (q *Queries) ListUnreadItemsForEnrichment(ctx context.Context, arg ListUnreadItemsForEnrichmentParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listUnreadItemsForEnrichment, arg.FeedID, arg.FetchedAfter, arg.LastEnrichedBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.GUID,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.CommentUrl,
+			&i.Author,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

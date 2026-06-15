@@ -75,6 +75,7 @@ type Item struct {
 	FetchedAt     time.Time     `json:"fetched_at"`
 	CreatedAt     time.Time     `json:"created_at"`
 	UpdatedAt     time.Time     `json:"updated_at"`
+	LastEnrichedAt sql.NullTime `json:"last_enriched_at"`
 }
 
 type RefreshToken struct {

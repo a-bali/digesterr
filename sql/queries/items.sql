@@ -25,9 +25,12 @@ RETURNING *;
 
 -- name: UpdateItemPointsAndComments :one
 UPDATE items
-SET points = ?, comments_count = ?, updated_at = DATETIME('now')
+SET points = ?, comments_count = ?, updated_at = DATETIME('now'), last_enriched_at = DATETIME('now')
 WHERE id = ?
 RETURNING *;
+
+-- name: ListUnreadItemsForEnrichment :many
+SELECT * FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY created_at DESC;
 
 -- name: DeleteItem :one
 DELETE FROM items WHERE id = ? RETURNING id;
