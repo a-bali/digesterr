@@ -26,7 +26,7 @@ func NewLobstersEnricher() *LobstersEnricher {
 }
 
 func (e *LobstersEnricher) Enrich(ctx context.Context, item *store.Item) error {
-	shortID := extractLobstersShortID(item.CommentUrl, item.Url, item.GUID)
+	shortID := extractLobstersShortID(item.CommentUrl, item.Url, item.Hash)
 	if shortID == "" {
 		return fmt.Errorf("could not extract Lobste.rs short ID")
 	}

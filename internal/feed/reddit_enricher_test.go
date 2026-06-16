@@ -118,7 +118,7 @@ func TestRedditEnricherEnrich(t *testing.T) {
 	defer server.Close()
 
 	e := &RedditEnricher{client: server.Client(), baseURL: server.URL, queries: queries}
-	item := &store.Item{ID: 1, GUID: "t3_1tlh5aj", Url: "https://www.reddit.com/r/test/comments/1tlh5aj/"}
+	item := &store.Item{ID: 1, Hash: "t3_1tlh5aj", Url: "https://www.reddit.com/r/test/comments/1tlh5aj/"}
 	if err := e.Enrich(context.Background(), item); err != nil {
 		t.Fatalf("Enrich failed: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestRedditEnricherEnrich(t *testing.T) {
 
 func TestRedditEnricherEnrichNoID(t *testing.T) {
 	e := &RedditEnricher{client: &http.Client{}, queries: store.New(nil)}
-	item := &store.Item{ID: 1, GUID: "", Url: "https://example.com/story"}
+	item := &store.Item{ID: 1, Hash: "", Url: "https://example.com/story"}
 	if err := e.Enrich(context.Background(), item); err == nil {
 		t.Fatal("expected error for non-Reddit URL")
 	}
@@ -154,7 +154,7 @@ func TestRedditEnricherEnrichNotFound(t *testing.T) {
 	}
 	defer db.Close()
 	e := &RedditEnricher{client: server.Client(), baseURL: server.URL, queries: store.New(db)}
-	item := &store.Item{ID: 1, GUID: "t3_missing"}
+	item := &store.Item{ID: 1, Hash: "t3_missing"}
 	if err := e.Enrich(context.Background(), item); err == nil {
 		t.Fatal("expected error for 404 response")
 	}
@@ -167,7 +167,7 @@ func TestRedditEnricherEnrichInvalidJSON(t *testing.T) {
 	defer server.Close()
 
 	e := &RedditEnricher{client: server.Client(), baseURL: server.URL, queries: store.New(nil)}
-	item := &store.Item{ID: 1, GUID: "t3_abc"}
+	item := &store.Item{ID: 1, Hash: "t3_abc"}
 	if err := e.Enrich(context.Background(), item); err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
@@ -181,7 +181,7 @@ func TestRedditEnricherEnrichContextCanceled(t *testing.T) {
 	defer server.Close()
 
 	e := &RedditEnricher{client: server.Client(), baseURL: server.URL, queries: store.New(nil)}
-	item := &store.Item{ID: 1, GUID: "t3_abc"}
+	item := &store.Item{ID: 1, Hash: "t3_abc"}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := e.Enrich(ctx, item); err == nil {
@@ -201,7 +201,7 @@ func TestRedditEnricherEnrichEmptyResponse(t *testing.T) {
 	}
 	defer db.Close()
 	e := &RedditEnricher{client: server.Client(), baseURL: server.URL, queries: store.New(db)}
-	item := &store.Item{ID: 1, GUID: "t3_missing"}
+	item := &store.Item{ID: 1, Hash: "t3_missing"}
 	if err := e.Enrich(context.Background(), item); err == nil {
 		t.Fatal("expected error for empty children array")
 	}
@@ -240,7 +240,7 @@ func TestRedditEnricherEnrichKeepsRedditURL(t *testing.T) {
 	defer server.Close()
 
 	e := &RedditEnricher{client: server.Client(), baseURL: server.URL, queries: queries}
-	item := &store.Item{ID: 1, GUID: "t3_selfpost", Url: "https://www.reddit.com/r/test/comments/selfpost/"}
+	item := &store.Item{ID: 1, Hash: "t3_selfpost", Url: "https://www.reddit.com/r/test/comments/selfpost/"}
 	if err := e.Enrich(context.Background(), item); err != nil {
 		t.Fatalf("Enrich failed: %v", err)
 	}

@@ -2,10 +2,13 @@ package feed
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"time"
 
 	"digesterr/internal/store"
@@ -101,13 +104,14 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 				item.GUID = fmt.Sprintf("hn:%d", hnID)
 			}
 		}
+		h := itemHash(item.GUID, item.Title, item.URL, item.Content)
 		pubAt := sql.NullTime{}
 		if !item.PublishedAt.IsZero() {
 			pubAt = sql.NullTime{Time: item.PublishedAt, Valid: true}
 		}
 		id, err := p.queries.CreateItemIfNotExists(ctx, store.CreateItemIfNotExistsParams{
 			FeedID:        feed.ID,
-			GUID:          item.GUID,
+			Hash:          h,
 			Title:         item.Title,
 			Url:           item.URL,
 			Content:       item.Content,
@@ -119,10 +123,9 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 		})
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				// Item already exists (INSERT OR IGNORE dedup) — expected.
-				logger.Debug("item already exists", "guid", item.GUID)
+				logger.Debug("item already exists", "hash", h)
 			} else {
-				logger.Error("failed to create item", "guid", item.GUID, "error", err)
+				logger.Error("failed to create item", "hash", h, "error", err)
 			}
 			continue
 		}
@@ -148,6 +151,22 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 
 	logger.Info("feed polled", "total_items", len(items), "new_items", newCount)
 	return nil
+}
+
+var stripRe = regexp.MustCompile(`<[^>]*>`)
+
+func itemHash(guid, title, url, content string) string {
+	s := sha256.New()
+	switch {
+	case guid != "":
+		s.Write([]byte(guid + title))
+	case url != "":
+		s.Write([]byte(url))
+	default:
+		plain := stripRe.ReplaceAllString(content, "")
+		s.Write([]byte(title + plain))
+	}
+	return hex.EncodeToString(s.Sum(nil))
 }
 
 func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher Enricher) {

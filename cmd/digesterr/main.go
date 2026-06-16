@@ -121,16 +121,23 @@ func migrateSchema(db *sql.DB) error {
 			"add items.feed_guid unique index",
 			"CREATE UNIQUE INDEX IF NOT EXISTS idx_items_feed_guid ON items(feed_id, guid) WHERE guid != ''",
 		},
+		{
+			"migrate guid→hash column and index",
+			"ALTER TABLE items ADD COLUMN hash TEXT NOT NULL DEFAULT ''",
+		},
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m.sql); err != nil {
-			// If the column already exists, SQLite returns an error.
-			// This is expected — continue.
 			slog.Debug("schema migration (may already exist)", "name", m.name, "error", err)
 		} else {
 			slog.Info("schema migration applied", "name", m.name)
 		}
 	}
+	// Copy existing guid data into hash and create new unique index.
+	db.Exec("UPDATE items SET hash = guid WHERE hash = '' AND guid != ''")
+	db.Exec("DROP INDEX IF EXISTS idx_items_feed_guid")
+	db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_feed_hash ON items(feed_id, hash) WHERE hash != ''")
+	slog.Info("hash migration complete")
 	return nil
 }
 

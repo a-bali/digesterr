@@ -62,7 +62,7 @@ type Feed struct {
 type Item struct {
 	ID             int64         `json:"id"`
 	FeedID         int64         `json:"feed_id"`
-	GUID           string        `json:"guid"`
+	Hash           string        `json:"hash"`
 	Title          string        `json:"title"`
 	Url            string        `json:"url"`
 	Content        string        `json:"content"`

@@ -43,7 +43,7 @@ func NewRedditEnricher(queries *store.Queries) *RedditEnricher {
 }
 
 func (e *RedditEnricher) Enrich(ctx context.Context, item *store.Item) error {
-	postID := extractRedditPostID(item.GUID, item.CommentUrl, item.Url)
+	postID := extractRedditPostID(item.Hash, item.CommentUrl, item.Url)
 	if postID == "" {
 		return fmt.Errorf("could not extract Reddit post ID")
 	}

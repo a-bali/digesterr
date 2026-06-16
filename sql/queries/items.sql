@@ -1,10 +1,10 @@
 -- name: CreateItem :one
-INSERT INTO items (feed_id, guid, title, url, content, comment_url, author, published_at, points, comments_count, status)
+INSERT INTO items (feed_id, hash, title, url, content, comment_url, author, published_at, points, comments_count, status)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: CreateItemIfNotExists :one
-INSERT OR IGNORE INTO items (feed_id, guid, title, url, content, comment_url, author, published_at, points, comments_count, status)
+INSERT OR IGNORE INTO items (feed_id, hash, title, url, content, comment_url, author, published_at, points, comments_count, status)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unread')
 RETURNING id;
 

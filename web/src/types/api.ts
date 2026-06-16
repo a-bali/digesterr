@@ -30,7 +30,7 @@ export interface Feed {
 export interface Item {
   id: number
   feed_id: number
-  guid: string
+  hash: string
   title: string
   url: string
   content: string
