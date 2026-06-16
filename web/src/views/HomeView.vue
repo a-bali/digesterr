@@ -3,8 +3,9 @@ import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 import Button from '../components/ui/Button'
-import Skeleton from '../components/ui/Skeleton'
-import Separator from '../components/ui/Separator'
+import FeedSidebar from '../components/FeedSidebar.vue'
+import ItemList from '../components/ItemList.vue'
+import ItemContent from '../components/ItemContent.vue'
 import { useAuthStore } from '../stores/auth'
 import { useFeedStore } from '../stores/feed'
 import { useCategoryStore } from '../stores/category'
@@ -12,8 +13,8 @@ import { useThemeStore } from '../stores/theme'
 import { feedApi } from '../services/api'
 import type { Item } from '../types/api'
 import {
-  Rss, Settings, LogOut, BookOpen, Sun, Moon, ExternalLink, MessageSquare,
-  Check, Bookmark, BookmarkCheck, Filter, Menu, X, ArrowLeft,
+  Rss, Settings, LogOut, BookOpen, Sun, Moon, MessageSquare,
+  Menu, ArrowLeft,
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -29,8 +30,6 @@ const windowWidth = ref(window.innerWidth)
 const sidebarOpen = ref(false)
 
 const isDesktop = computed(() => windowWidth.value >= 900)
-const isTablet = computed(() => windowWidth.value >= 640 && windowWidth.value < 900)
-const isMobile = computed(() => windowWidth.value < 640)
 
 function onResize() { windowWidth.value = window.innerWidth }
 
@@ -168,233 +167,45 @@ function absoluteTime(val: any): string {
         <SplitterGroup direction="horizontal" auto-save-id="digesterr" class="flex-1">
           <SplitterPanel :default-size="18" :min-size="14" :max-size="28">
             <aside class="h-full border-r bg-sidebar overflow-y-auto p-3">
-              <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': showingSaved }" @click="showSaved">
-                <BookmarkCheck class="size-3.5 shrink-0 text-accent" /> <span class="truncate">Saved Items</span>
-              </button>
-              <div v-for="cat in categoryStore.categories" :key="cat.id" class="mb-3">
-                <p class="text-xs font-semibold text-muted-foreground uppercase mb-1 px-2">{{ cat.name }}</p>
-                <button v-for="feed in feedStore.feeds.filter(f => f.category_id === cat.id)" :key="feed.id"
-                  class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors" :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }"
-                  @click="selectFeed(feed.id)">
-                  <Rss class="size-3.5 shrink-0 text-accent" /> <span class="truncate">{{ feed.name }}</span>
-                </button>
-              </div>
+              <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @show-saved="showSaved" />
             </aside>
           </SplitterPanel>
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
-
           <SplitterPanel :default-size="30" :min-size="20" :max-size="50">
-            <div class="h-full border-r overflow-y-auto">
-              <div class="flex items-center gap-1 p-2 border-b">
-                <Filter class="size-4 text-muted-foreground shrink-0" />
-                <select v-model="feedStore.filter" class="text-xs bg-transparent border-0 outline-none w-full">
-                  <option value="all">All</option>
-                  <option value="unread">Unread</option>
-                  <option value="read">Read</option>
-                  <option value="digested">Digested</option>
-                  <option value="saved">Saved</option>
-                </select>
-              </div>
-              <Skeleton v-if="feedStore.loading" class="m-3 h-12" />
-              <div v-else-if="!feedStore.activeFeed && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
-              <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
-              <button v-for="item in showingSaved ? savedItems : feedStore.filteredItems" :key="item.id"
-                class="w-full text-left p-3 border-b hover:bg-accent/10 transition-colors"
-                :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'font-bold text-foreground': item.status === 'unread', 'font-bold text-muted-foreground': item.status === 'digested', 'font-normal text-muted-foreground': item.status === 'read', 'font-normal text-accent': item.status === 'saved' }"
-                @click="selectItem(item)">
-                <p class="text-sm line-clamp-2">{{ item.title }}</p>
-                <div class="flex items-center gap-2 mt-1">
-                  <span v-if="item.points > 0" class="text-xs text-muted-foreground">{{ item.points }} pts</span>
-                  <span v-if="item.comments_count > 0" class="text-xs text-muted-foreground">{{ item.comments_count }} comments</span>
-                  <span class="text-xs text-muted-foreground ml-auto" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
-                </div>
-              </button>
-            </div>
+            <ItemList :saved-items="savedItems" :showing-saved="showingSaved" :relative-time="relativeTime" :absolute-time="absoluteTime" @select-item="selectItem" />
           </SplitterPanel>
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
-
           <SplitterPanel :default-size="52" :min-size="30">
-            <div class="h-full overflow-y-auto p-6">
-              <div v-if="!feedStore.selectedItem" class="flex h-full items-center justify-center text-muted-foreground">
-                <BookOpen class="size-8 mr-2" /> <span>Select an item to read</span>
-              </div>
-              <template v-else>
-                <h1 class="text-xl font-semibold mb-2">{{ feedStore.selectedItem.title }}</h1>
-                <div class="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mb-4">
-                  <span v-if="feedStore.selectedItem.author">By {{ feedStore.selectedItem.author }}</span>
-                  <span class="text-xs text-muted-foreground">{{ absoluteTime(feedStore.selectedItem.published_at) }}</span>
-                  <span v-if="feedStore.selectedItem.points">▴ {{ feedStore.selectedItem.points }}</span>
-                  <span v-if="feedStore.selectedItem.comments_count">💬 {{ feedStore.selectedItem.comments_count }}</span>
-                  <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank" class="flex items-center gap-1 text-accent hover:underline">Open <ExternalLink class="size-3" /></a>
-                  <a v-if="feedStore.selectedItem.comment_url" :href="feedStore.selectedItem.comment_url" target="_blank" class="flex items-center gap-1 text-accent hover:underline">Comments <ExternalLink class="size-3" /></a>
-                </div>
-                <div class="flex gap-2 mb-4 flex-wrap">
-                  <Button size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, feedStore.selectedItem!.status === 'read' ? 'unread' : 'read')">
-                    <Check class="size-3" /> {{ feedStore.selectedItem?.status === 'read' ? 'Mark Unread' : 'Mark Read' }}
-                  </Button>
-                  <Button v-if="feedStore.selectedItem!.status === 'saved'" size="sm" variant="outline" @click="unsaveItem(feedStore.selectedItem!)">
-                    <BookmarkCheck class="size-3" /> Unsave
-                  </Button>
-                  <Button v-else size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, 'saved')">
-                    <Bookmark class="size-3" /> Save
-                  </Button>
-                </div>
-                <Separator class="mb-4" />
-                <div class="prose prose-sm dark:prose-invert max-w-none" v-html="feedStore.selectedItem.content" />
-              </template>
-            </div>
+            <ItemContent :absolute-time="absoluteTime" :unsave-item="unsaveItem" />
           </SplitterPanel>
         </SplitterGroup>
       </template>
 
       <!-- Tablet: 2 panes with hamburger drawer -->
-      <template v-else-if="isTablet">
-        <!-- Slide-out sidebar drawer -->
+      <template v-else-if="windowWidth >= 640">
         <div v-if="sidebarOpen" class="fixed inset-0 z-30" @click="sidebarOpen = false">
           <div class="absolute inset-0 bg-black/50" />
         </div>
         <aside :class="['fixed left-0 top-12 z-40 h-[calc(100vh-3rem)] w-64 bg-sidebar border-r shadow-xl transition-transform duration-200 overflow-y-auto p-3', sidebarOpen ? 'translate-x-0' : '-translate-x-full']">
-          <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': showingSaved }" @click="showSaved">
-            <BookmarkCheck class="size-3.5 shrink-0 text-accent" /> <span class="truncate">Saved Items</span>
-          </button>
-          <div v-for="cat in categoryStore.categories" :key="cat.id" class="mb-3">
-            <p class="text-xs font-semibold text-muted-foreground uppercase mb-1 px-2">{{ cat.name }}</p>
-            <button v-for="feed in feedStore.feeds.filter(f => f.category_id === cat.id)" :key="feed.id"
-              class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors"
-              :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }"
-              @click="selectFeed(feed.id)">
-              <Rss class="size-3.5 shrink-0 text-accent" /> <span class="truncate">{{ feed.name }}</span>
-            </button>
-          </div>
+          <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @show-saved="showSaved" />
         </aside>
-
-        <!-- Item list -->
-        <div class="flex-1 border-r overflow-y-auto">
-          <div class="flex items-center gap-1 p-2 border-b">
-            <Filter class="size-4 text-muted-foreground shrink-0" />
-            <select v-model="feedStore.filter" class="text-xs bg-transparent border-0 outline-none w-full">
-              <option value="all">All</option>
-              <option value="unread">Unread</option>
-              <option value="read">Read</option>
-              <option value="digested">Digested</option>
-              <option value="saved">Saved</option>
-            </select>
-          </div>
-          <Skeleton v-if="feedStore.loading" class="m-3 h-12" />
-          <div v-else-if="!feedStore.activeFeed && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
-          <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
-          <button v-for="item in showingSaved ? savedItems : feedStore.filteredItems" :key="item.id"
-            class="w-full text-left p-3 border-b hover:bg-accent/10 transition-colors"
-            :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'font-bold text-foreground': item.status === 'unread', 'font-bold text-muted-foreground': item.status === 'digested', 'font-normal text-muted-foreground': item.status === 'read', 'font-normal text-accent': item.status === 'saved' }"
-            @click="selectItem(item)">
-            <p class="text-sm line-clamp-2">{{ item.title }}</p>
-            <div class="flex items-center gap-2 mt-1">
-              <span v-if="item.points > 0" class="text-xs text-muted-foreground">{{ item.points }} pts</span>
-              <span v-if="item.comments_count > 0" class="text-xs text-muted-foreground">{{ item.comments_count }} comments</span>
-            </div>
-          </button>
-        </div>
-
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-6">
-          <div v-if="!feedStore.selectedItem" class="flex h-full items-center justify-center text-muted-foreground">
-            <BookOpen class="size-8 mr-2" /> <span>Select an item</span>
-          </div>
-          <template v-else>
-            <h1 class="text-xl font-semibold mb-2">{{ feedStore.selectedItem.title }}</h1>
-            <div class="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mb-4">
-              <span v-if="feedStore.selectedItem.author">By {{ feedStore.selectedItem.author }}</span>
-              <span v-if="feedStore.selectedItem.points">▴ {{ feedStore.selectedItem.points }}</span>
-              <span v-if="feedStore.selectedItem.comments_count">💬 {{ feedStore.selectedItem.comments_count }}</span>
-              <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank" class="flex items-center gap-1 text-accent hover:underline">Open <ExternalLink class="size-3" /></a>
-              <a v-if="feedStore.selectedItem.comment_url" :href="feedStore.selectedItem.comment_url" target="_blank" class="flex items-center gap-1 text-accent hover:underline">Comments <ExternalLink class="size-3" /></a>
-            </div>
-            <div class="flex gap-2 mb-4 flex-wrap">
-              <Button size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, feedStore.selectedItem!.status === 'read' ? 'unread' : 'read')">
-                <Check class="size-3" /> {{ feedStore.selectedItem?.status === 'read' ? 'Mark Unread' : 'Mark Read' }}
-              </Button>
-              <Button v-if="feedStore.selectedItem!.status === 'saved'" size="sm" variant="outline" @click="unsaveItem(feedStore.selectedItem!)">
-                <BookmarkCheck class="size-3" /> Unsave
-              </Button>
-              <Button v-else size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, 'saved')">
-                <Bookmark class="size-3" /> Save
-              </Button>
-            </div>
-            <Separator class="mb-4" />
-            <div class="prose prose-sm dark:prose-invert max-w-none" v-html="feedStore.selectedItem.content" />
-          </template>
-        </div>
+        <ItemList :saved-items="savedItems" :showing-saved="showingSaved" :relative-time="relativeTime" :absolute-time="absoluteTime" @select-item="selectItem" />
+        <ItemContent :absolute-time="absoluteTime" :unsave-item="unsaveItem" />
       </template>
 
-      <!-- Mobile: single pane with hamburger drawer -->
+      <!-- Mobile: single pane -->
       <template v-else>
-        <!-- Slide-out sidebar drawer -->
         <div v-if="sidebarOpen" class="fixed inset-0 z-30" @click="sidebarOpen = false">
           <div class="absolute inset-0 bg-black/50" />
         </div>
         <aside :class="['fixed left-0 top-12 z-40 h-[calc(100vh-3rem)] w-64 bg-sidebar border-r shadow-xl transition-transform duration-200 overflow-y-auto p-3', sidebarOpen ? 'translate-x-0' : '-translate-x-full']">
-          <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': showingSaved }" @click="showSaved">
-            <BookmarkCheck class="size-3.5 shrink-0 text-accent" /> <span class="truncate">Saved Items</span>
-          </button>
-          <div v-for="cat in categoryStore.categories" :key="cat.id" class="mb-3">
-            <p class="text-xs font-semibold text-muted-foreground uppercase mb-1 px-2">{{ cat.name }}</p>
-            <button v-for="feed in feedStore.feeds.filter(f => f.category_id === cat.id)" :key="feed.id"
-              class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors"
-              :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }"
-              @click="selectFeed(feed.id)">
-              <Rss class="size-3.5 shrink-0 text-accent" /> <span class="truncate">{{ feed.name }}</span>
-            </button>
-          </div>
+          <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @show-saved="showSaved" />
         </aside>
-
-        <!-- Main view: item list -->
         <div v-if="!feedStore.selectedItem" class="flex-1 overflow-y-auto">
-          <div class="flex items-center gap-1 p-2 border-b">
-            <Filter class="size-4 text-muted-foreground shrink-0" />
-            <select v-model="feedStore.filter" class="text-xs bg-transparent border-0 outline-none w-full">
-              <option value="all">All</option>
-              <option value="unread">Unread</option>
-              <option value="read">Read</option>
-              <option value="digested">Digested</option>
-              <option value="saved">Saved</option>
-            </select>
-          </div>
-          <div v-if="!feedStore.activeFeed && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed from the menu</div>
-          <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
-          <button v-for="item in showingSaved ? savedItems : feedStore.filteredItems" :key="item.id"
-            class="w-full text-left p-3 border-b hover:bg-accent/10 transition-colors"
-            :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'font-bold text-foreground': item.status === 'unread', 'font-bold text-muted-foreground': item.status === 'digested', 'font-normal text-muted-foreground': item.status === 'read', 'font-normal text-accent': item.status === 'saved' }"
-            @click="selectItem(item)">
-            <p class="text-sm line-clamp-2">{{ item.title }}</p>
-            <div class="flex items-center gap-2 mt-1">
-              <span v-if="item.points > 0" class="text-xs text-muted-foreground">{{ item.points }} pts</span>
-              <span v-if="item.comments_count > 0" class="text-xs text-muted-foreground">{{ item.comments_count }} comments</span>
-            </div>
-          </button>
+          <ItemList :saved-items="savedItems" :showing-saved="showingSaved" :relative-time="relativeTime" :absolute-time="absoluteTime" @select-item="selectItem" />
         </div>
-
-        <!-- Main view: content -->
         <div v-else class="flex-1 overflow-y-auto p-4">
-          <h1 class="text-lg font-semibold mb-2">{{ feedStore.selectedItem.title }}</h1>
-          <div class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground mb-3">
-            <span v-if="feedStore.selectedItem.author">By {{ feedStore.selectedItem.author }}</span>
-            <span v-if="feedStore.selectedItem.points">▴ {{ feedStore.selectedItem.points }}</span>
-            <span v-if="feedStore.selectedItem.comments_count">💬 {{ feedStore.selectedItem.comments_count }}</span>
-            <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank" class="flex items-center gap-1 text-accent hover:underline">Open <ExternalLink class="size-3" /></a>
-          </div>
-          <div class="flex gap-2 mb-3 flex-wrap">
-            <Button size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, feedStore.selectedItem!.status === 'read' ? 'unread' : 'read')">
-              <Check class="size-3" /> {{ feedStore.selectedItem?.status === 'read' ? 'Mark Unread' : 'Mark Read' }}
-            </Button>
-            <Button v-if="feedStore.selectedItem!.status === 'saved'" size="sm" variant="outline" @click="unsaveItem(feedStore.selectedItem!)">
-              <BookmarkCheck class="size-3" /> Unsave
-            </Button>
-            <Button v-else size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, 'saved')">
-              <Bookmark class="size-3" /> Save
-            </Button>
-          </div>
-          <Separator class="mb-3" />
-          <div class="prose prose-sm dark:prose-invert max-w-none" v-html="feedStore.selectedItem.content" />
+          <ItemContent :absolute-time="absoluteTime" :unsave-item="unsaveItem" />
         </div>
       </template>
     </div>
