@@ -6,9 +6,9 @@ import { useFeedStore } from '../stores/feed'
 import { feedApi } from '../services/api'
 import { BookmarkCheck, Rss, RefreshCw } from 'lucide-vue-next'
 
-const props = defineProps<{
-  showingSaved: boolean
-}>()
+const props = withDefaults(defineProps<{
+  showingSaved?: boolean
+}>(), { showingSaved: false })
 
 const emit = defineEmits<{
   (e: 'selectFeed', id: number): void
