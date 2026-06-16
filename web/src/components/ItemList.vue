@@ -15,6 +15,19 @@ const emit = defineEmits<{
 }>()
 
 const feedStore = useFeedStore()
+
+function stripContent(content: string): string {
+  if (!content) return ''
+  return content
+    .replace(/<[^>]*>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 </script>
 
 <template>
@@ -33,15 +46,15 @@ const feedStore = useFeedStore()
     <div v-else-if="!feedStore.activeFeed && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
     <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
     <button v-for="item in showingSaved ? savedItems : feedStore.filteredItems" :key="item.id"
-      class="w-full text-left p-3 border-b hover:bg-accent/10 transition-colors"
-      :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'font-bold text-foreground': item.status === 'unread', 'font-bold text-muted-foreground': item.status === 'digested', 'font-normal text-muted-foreground': item.status === 'read', 'font-normal text-accent': item.status === 'saved' }"
+      class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
+      :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-muted-foreground': item.status === 'digested' || item.status === 'read', 'text-accent': item.status === 'saved' }"
       @click="emit('selectItem', item)">
-      <p class="text-sm line-clamp-2">{{ item.title }}</p>
-      <div class="flex items-center gap-2 mt-1">
-        <span v-if="item.points > 0" class="text-xs text-muted-foreground">{{ item.points }} pts</span>
-        <span v-if="item.comments_count > 0" class="text-xs text-muted-foreground">{{ item.comments_count }} comments</span>
-        <span class="text-xs text-muted-foreground ml-auto" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
+      <div class="flex items-start gap-1 min-w-0">
+        <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ item.title }}</p>
+        <span class="text-[10px] text-muted-foreground/70 shrink-0 mt-0.5" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
       </div>
+      <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0">{{ stripContent(item.content) }}</p>
+      <span v-if="item.points > 0" class="text-[10px] text-muted-foreground/70 absolute right-2 bottom-2">{{ item.points }} pts</span>
     </button>
   </div>
 </template>

@@ -93,16 +93,16 @@ function relativeTime(val: any): string {
   if (!d) return ''
   const diff = Date.now() - d.getTime()
   const sec = Math.floor(diff / 1000)
-  if (sec < 60) return 'just now'
+  if (sec < 60) return 'now'
   const min = Math.floor(sec / 60)
-  if (min < 60) return `${min}m ago`
+  if (min < 60) return `${min}m`
   const h = Math.floor(min / 60)
-  if (h < 24) return `${h}h ago`
+  if (h < 24) return `${h}h`
   const d2 = Math.floor(h / 24)
-  if (d2 < 30) return `${d2}d ago`
+  if (d2 < 30) return `${d2}d`
   const m = Math.floor(d2 / 30)
-  if (m < 12) return `${m}mo ago`
-  return `${Math.floor(m / 12)}y ago`
+  if (m < 12) return `${m}mo`
+  return `${Math.floor(m / 12)}y`
 }
 
 function absoluteTime(val: any): string {
