@@ -29,7 +29,7 @@ func (f *RSSFetcher) Fetch(ctx context.Context, feedURL string) ([]Item, error) 
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Digesterr/1.0")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Digesterr/1.0; +https://github.com/balia/digesterr)")
 
 	resp, err := f.client.Do(req)
 	if err != nil {
