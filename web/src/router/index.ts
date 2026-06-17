@@ -9,6 +9,8 @@ export const router = createRouter({
   routes: [
     { path: '/login', component: LoginView },
     { path: '/', component: HomeView, meta: { requiresAuth: true } },
+    { path: '/feeds/:feedId(\\d+)/:itemId(\\d+)?', component: HomeView, meta: { requiresAuth: true } },
+    { path: '/saved', component: HomeView, meta: { requiresAuth: true } },
     { path: '/settings', component: SettingsView, meta: { requiresAuth: true } },
   ],
 })

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 import Button from '../components/ui/Button'
 import FeedSidebar from '../components/FeedSidebar.vue'
@@ -18,6 +18,7 @@ import {
 } from 'lucide-vue-next'
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
 const feedStore = useFeedStore()
 const categoryStore = useCategoryStore()
@@ -31,6 +32,8 @@ const sidebarOpen = ref(false)
 
 const isDesktop = computed(() => windowWidth.value >= 900)
 
+const pendingItemId = ref<number | null>(null)
+
 function onResize() { windowWidth.value = window.innerWidth }
 
 onMounted(() => {
@@ -40,30 +43,88 @@ onMounted(() => {
 })
 onUnmounted(() => window.removeEventListener('resize', onResize))
 
+// URL → state sync
+watch(
+  () => ({ path: route.path, feedId: route.params.feedId, itemId: route.params.itemId }),
+  async ({ path, feedId, itemId }) => {
+    const fid = feedId ? Number(feedId) : null
+    const iid = itemId ? Number(itemId) : null
+    if (path.startsWith('/feeds/') && fid) {
+      showingSaved.value = false
+      if (feedStore.activeFeedId !== fid) {
+        await feedStore.setActiveFeed(fid)
+      }
+      if (iid) {
+        const item = feedStore.items.find(i => i.id === iid)
+        if (item && feedStore.selectedItem?.id !== iid) {
+          feedStore.selectItem(item)
+          pendingItemId.value = null
+        } else if (!item) {
+          pendingItemId.value = iid
+        }
+      } else {
+        feedStore.selectedItem = null
+        pendingItemId.value = null
+      }
+    } else if (path === '/saved') {
+      showingSaved.value = true
+      sidebarOpen.value = false
+      feedStore.activeFeedId = null
+      feedStore.selectedItem = null
+      pendingItemId.value = null
+      if (savedItems.value.length === 0) {
+        for (const feed of feedStore.feeds) {
+          try { savedItems.value.push(...(await feedApi.getItems(feed.id, 'saved')).items) }
+          catch { /* skip */ }
+        }
+      }
+    } else if (path === '/') {
+      showingSaved.value = false
+      feedStore.activeFeedId = null
+      feedStore.selectedItem = null
+      pendingItemId.value = null
+    }
+  },
+  { immediate: true }
+)
+
+// Select pending item after items load (deferred deep-link selection)
+watch(
+  () => feedStore.items,
+  (items) => {
+    if (pendingItemId.value != null) {
+      const item = items.find(i => i.id === pendingItemId.value)
+      if (item) {
+        feedStore.selectItem(item)
+        pendingItemId.value = null
+      }
+    }
+  }
+)
+
 function selectFeed(id: number) {
   showingSaved.value = false
   sidebarOpen.value = false
-  feedStore.setActiveFeed(id)
+  router.push({ path: `/feeds/${id}` })
 }
 
 async function showSaved() {
-  showingSaved.value = true
-  sidebarOpen.value = false
-  feedStore.activeFeedId = null
-  feedStore.selectedItem = null
-  savedItems.value = []
-  for (const feed of feedStore.feeds) {
-    try { savedItems.value.push(...(await feedApi.getItems(feed.id, 'saved')).items) }
-    catch { /* skip */ }
-  }
+  router.push({ path: '/saved' })
 }
 
 function goBackToList() {
   feedStore.selectedItem = null
+  pendingItemId.value = null
+  if (feedStore.activeFeedId) {
+    router.push({ path: `/feeds/${feedStore.activeFeedId}` })
+  }
 }
 
 async function selectItem(item: Item) {
   feedStore.selectItem(item)
+  if (feedStore.activeFeedId) {
+    router.push({ path: `/feeds/${feedStore.activeFeedId}/${item.id}` })
+  }
   if (item.status === 'unread') {
     await feedStore.updateItemStatus(item, 'read')
     const idx = savedItems.value.findIndex(i => i.id === item.id)
