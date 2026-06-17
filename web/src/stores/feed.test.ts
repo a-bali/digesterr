@@ -38,7 +38,6 @@ describe('feed store', () => {
     ;(feedApi.list as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 1 }])
 	;(feedApi.getItems as ReturnType<typeof vi.fn>).mockResolvedValue({
 		items: [{ id: 10, title: 'Item 1', status: 'unread' }],
-		scale: { points_max: 0, comments_max: 0 },
 	})
 
     const store = useFeedStore()

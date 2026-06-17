@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -221,14 +220,8 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 		items = []store.Item{}
 	}
 
-	scale, scaleErr := s.queries.GetFeedScale(r.Context(), id)
-	if scaleErr != nil {
-		slog.Debug("failed to get feed scale", "error", scaleErr)
-	}
-
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"items": items,
-		"scale": scale,
 	})
 }
 

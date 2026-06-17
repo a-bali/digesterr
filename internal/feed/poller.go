@@ -110,9 +110,9 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 			}
 		}
 		h := itemHash(item.GUID, item.Title, item.URL, item.Content)
-		pubAt := store.NullTime{}
+		pubAt := sql.NullTime{}
 		if !item.PublishedAt.IsZero() {
-			pubAt = store.NullTime{Time: item.PublishedAt, Valid: true}
+			pubAt = sql.NullTime{Time: item.PublishedAt, Valid: true}
 		}
 		id, err := p.queries.CreateItemIfNotExists(ctx, store.CreateItemIfNotExistsParams{
 			FeedID:        feed.ID,
@@ -180,9 +180,9 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 	recent := time.Now().Add(-1 * time.Hour)
 
 	items, err := p.queries.ListUnreadItemsForEnrichment(ctx, store.ListUnreadItemsForEnrichmentParams{
-		FeedID:             feed.ID,
-		FetchedAfter:       cutoff,
-		LastEnrichedBefore: recent,
+		FeedID:         feed.ID,
+		FetchedAt:      cutoff,
+		LastEnrichedAt: sql.NullTime{Time: recent, Valid: true},
 	})
 	if err != nil {
 		logger.Error("failed to list items for enrichment", "error", err)

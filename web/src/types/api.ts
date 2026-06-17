@@ -60,14 +60,6 @@ export interface AuthResponse {
   access_token: string
 }
 
-export interface FeedScale {
-  points_max: number
-  points_avg: number
-  comments_max: number
-  comments_avg: number
-}
-
 export interface FeedItemsResponse {
   items: Item[]
-  scale: FeedScale
 }

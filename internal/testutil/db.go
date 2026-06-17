@@ -9,7 +9,7 @@ import (
 )
 
 func OpenTestDB() (*sql.DB, error) {
-	db, err := sql.Open("sqlite", ":memory:?_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", ":memory:?_pragma=foreign_keys(1)&_texttotime=true&_time_format=sqlite")
 	if err != nil {
 		return nil, err
 	}

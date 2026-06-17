@@ -9,45 +9,6 @@ import (
 	"context"
 )
 
-const listActiveFeeds = `-- name: ListActiveFeeds :many
-SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, created_at, updated_at FROM feeds WHERE status = 'active' ORDER BY id
-`
-
-func (q *Queries) ListActiveFeeds(ctx context.Context) ([]Feed, error) {
-	rows, err := q.db.QueryContext(ctx, listActiveFeeds)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Feed{}
-	for rows.Next() {
-		var i Feed
-		if err := rows.Scan(
-			&i.ID,
-			&i.UserID,
-			&i.CategoryID,
-			&i.Type,
-			&i.Name,
-			&i.Url,
-			&i.Config,
-			&i.LastFetchedAt,
-			&i.Status,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const createFeed = `-- name: CreateFeed :one
 INSERT INTO feeds (user_id, category_id, type, name, url, config, status)
 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -133,6 +94,45 @@ func (q *Queries) GetFeed(ctx context.Context, arg GetFeedParams) (Feed, error) 
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listActiveFeeds = `-- name: ListActiveFeeds :many
+SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, created_at, updated_at FROM feeds WHERE status = 'active' ORDER BY id
+`
+
+func (q *Queries) ListActiveFeeds(ctx context.Context) ([]Feed, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveFeeds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Feed{}
+	for rows.Next() {
+		var i Feed
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.CategoryID,
+			&i.Type,
+			&i.Name,
+			&i.Url,
+			&i.Config,
+			&i.LastFetchedAt,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listFeeds = `-- name: ListFeeds :many

@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
 import { Filter, ArrowUp, MessageSquare } from 'lucide-vue-next'
 
-defineProps<{
+const props = defineProps<{
   savedItems: any[]
   showingSaved: boolean
   relativeTime: (val: any) => string
@@ -16,6 +17,32 @@ const emit = defineEmits<{
 }>()
 
 const feedStore = useFeedStore()
+
+const displayItems = computed(() => props.showingSaved ? props.savedItems : feedStore.filteredItems)
+
+const scale = computed(() => {
+  const items = displayItems.value
+  if (items.length === 0) return { points_max: 0, points_avg: 0, comments_max: 0, comments_avg: 0 }
+  let pointsMax = 0, commentsMax = 0, pointsSum = 0, commentsSum = 0, pointsCount = 0, commentsCount = 0
+  for (const item of items) {
+    if (item.points > 0) {
+      if (item.points > pointsMax) pointsMax = item.points
+      pointsSum += item.points
+      pointsCount++
+    }
+    if (item.comments_count > 0) {
+      if (item.comments_count > commentsMax) commentsMax = item.comments_count
+      commentsSum += item.comments_count
+      commentsCount++
+    }
+  }
+  return {
+    points_max: pointsMax,
+    points_avg: pointsCount > 0 ? Math.round(pointsSum / pointsCount) : 0,
+    comments_max: commentsMax,
+    comments_avg: commentsCount > 0 ? Math.round(commentsSum / commentsCount) : 0,
+  }
+})
 
 function accentOpacity(val: number, max: number): number {
   if (max <= 0) return 0.4
@@ -31,14 +58,14 @@ function accentStyle(val: number, max: number): string {
 }
 
 function pointsTitle(val: number): string {
-  const avg = feedStore.scale.points_avg
+  const avg = scale.value.points_avg
   const diff = val - avg
   const sign = diff >= 0 ? '+' : ''
   return `${val} points (${sign}${diff})`
 }
 
 function commentsTitle(val: number): string {
-  const avg = feedStore.scale.comments_avg
+  const avg = scale.value.comments_avg
   const diff = val - avg
   const sign = diff >= 0 ? '+' : ''
   return `${val} comments (${sign}${diff})`
@@ -85,7 +112,7 @@ function stripContent(content: string): string {
       <div class="absolute right-2 bottom-2 flex items-center gap-2">
         <Tooltip v-if="item.points > 0">
           <template #trigger>
-            <span class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.points, feedStore.scale.points_max)">
+            <span class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.points, scale.points_max)">
               <ArrowUp class="size-3" /> {{ item.points }}
             </span>
           </template>
@@ -93,7 +120,7 @@ function stripContent(content: string): string {
         </Tooltip>
         <Tooltip v-if="item.comments_count > 0">
           <template #trigger>
-            <span class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.comments_count, feedStore.scale.comments_max)">
+            <span class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.comments_count, scale.comments_max)">
               <MessageSquare class="size-3" /> {{ item.comments_count }}
             </span>
           </template>
