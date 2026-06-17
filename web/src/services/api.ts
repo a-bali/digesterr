@@ -73,6 +73,14 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return body as T
 }
 
+function qs(params: Record<string, string | number | undefined>): string {
+  const parts: string[] = []
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '') parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+  }
+  return parts.length > 0 ? '?' + parts.join('&') : ''
+}
+
 export const authApi = {
   signup: (email: string, password: string) =>
     api<AuthResponse>('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password }) }),
@@ -97,9 +105,10 @@ export const feedApi = {
   update: (id: number, data: Partial<Feed>) =>
     api<Feed>(`/feeds/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   delete: (id: number) => api<void>(`/feeds/${id}`, { method: 'DELETE' }),
-  getItems: (id: number, status?: string) =>
-    api<FeedItemsResponse>(`/feeds/${id}/items${status ? `?status=${status}` : ''}`),
+  getItems: (id: number, opts?: { status?: string; limit?: number; offset?: number }) =>
+    api<FeedItemsResponse>(`/feeds/${id}/items${qs({ status: opts?.status, limit: opts?.limit, offset: opts?.offset })}`),
   fetch: (id: number) => api<{ message: string }>(`/feeds/${id}/fetch`, { method: 'POST' }),
+  unreadCounts: () => api<Record<number, number>>('/unread-counts'),
 }
 
 export const itemApi = {

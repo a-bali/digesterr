@@ -49,6 +49,8 @@ func NewServer(queries *store.Queries, authSvc *auth.Service) *Server {
 	mux.HandleFunc("GET /api/feeds/{id}/items", s.requireAuth(s.handleListFeedItems))
 	mux.HandleFunc("POST /api/feeds/{id}/fetch", s.requireAuth(s.handleFetchFeed))
 
+	mux.HandleFunc("GET /api/unread-counts", s.requireAuth(s.handleUnreadCounts))
+
 	mux.HandleFunc("PATCH /api/items/{id}", s.requireAuth(s.handleUpdateItemStatus))
 
 	mux.HandleFunc("GET /api/digest-configs", s.requireAuth(s.handleListDigestConfigs))

@@ -28,7 +28,7 @@ RETURNING *;
 
 -- name: UpdateItemPointsAndComments :one
 UPDATE items
-SET points = ?, comments_count = ?, updated_at = DATETIME('now'), last_enriched_at = DATETIME('now')
+SET points = ?, comments_count = ?, comment_url = ?, updated_at = DATETIME('now'), last_enriched_at = DATETIME('now')
 WHERE id = ?
 RETURNING *;
 
@@ -42,3 +42,12 @@ DELETE FROM items WHERE id = ? RETURNING id;
 SELECT i.* FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE i.id = ? AND f.user_id = ?;
+
+-- name: GetUnreadCounts :many
+SELECT f.id AS feed_id, CAST(COALESCE((SELECT COUNT(*) FROM items WHERE feed_id = f.id AND status = 'unread'), 0) AS INTEGER) AS unread_count FROM feeds f WHERE f.user_id = ?;
+
+-- name: ListItemsByFeedPaginated :many
+SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?;
+
+-- name: ListItemsByFeedAndStatusPaginated :many
+SELECT * FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?;

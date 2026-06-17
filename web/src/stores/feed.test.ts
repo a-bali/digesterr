@@ -38,6 +38,7 @@ describe('feed store', () => {
     ;(feedApi.list as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 1 }])
 	;(feedApi.getItems as ReturnType<typeof vi.fn>).mockResolvedValue({
 		items: [{ id: 10, title: 'Item 1', status: 'unread' }],
+		has_more: false,
 	})
 
     const store = useFeedStore()
@@ -54,26 +55,6 @@ describe('feed store', () => {
     const item = { id: 1, title: 'Test', status: 'unread' } as any
     store.selectItem(item)
     expect(store.selectedItem?.title).toBe('Test')
-  })
-
-  it('filters items by status', () => {
-    const store = useFeedStore()
-    store.items = [
-      { id: 1, status: 'unread' },
-      { id: 2, status: 'read' },
-      { id: 3, status: 'saved' },
-    ] as any
-
-    store.filter = 'unread'
-    expect(store.filteredItems).toHaveLength(1)
-    expect(store.filteredItems[0].id).toBe(1)
-  })
-
-  it('returns all items for filter=all', () => {
-    const store = useFeedStore()
-    store.items = [{ id: 1, status: 'unread' }, { id: 2, status: 'read' }] as any
-    store.filter = 'all'
-    expect(store.filteredItems).toHaveLength(2)
   })
 
   it('updates item status and syncs selectedItem', async () => {

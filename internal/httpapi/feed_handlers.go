@@ -203,7 +203,54 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := r.URL.Query().Get("status")
+	limitStr := r.URL.Query().Get("limit")
 	var items []store.Item
+	if limitStr != "" {
+		limit, err := strconv.Atoi(limitStr)
+		if err != nil || limit <= 0 {
+			limit = 50
+		}
+		if limit > 100 {
+			limit = 100
+		}
+		offset := 0
+		if o := r.URL.Query().Get("offset"); o != "" {
+			if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+				offset = v
+			}
+		}
+		queryLimit := limit + 1
+		if status != "" {
+			items, err = s.queries.ListItemsByFeedAndStatusPaginated(r.Context(), store.ListItemsByFeedAndStatusPaginatedParams{
+				FeedID: id,
+				Status: status,
+				Limit:  int64(queryLimit),
+				Offset: int64(offset),
+			})
+		} else {
+			items, err = s.queries.ListItemsByFeedPaginated(r.Context(), store.ListItemsByFeedPaginatedParams{
+				FeedID: id,
+				Limit:  int64(queryLimit),
+				Offset: int64(offset),
+			})
+		}
+		if err != nil {
+			writeServerError(w, "failed to list items", err)
+			return
+		}
+		hasMore := len(items) > limit
+		if hasMore {
+			items = items[:limit]
+		}
+		if items == nil {
+			items = []store.Item{}
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"items":    items,
+			"has_more": hasMore,
+		})
+		return
+	}
 	if status != "" {
 		items, err = s.queries.ListItemsByFeedAndStatus(r.Context(), store.ListItemsByFeedAndStatusParams{
 			FeedID: id,
@@ -250,4 +297,25 @@ func (s *Server) handleFetchFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "feed fetched"})
+}
+
+func (s *Server) handleUnreadCounts(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	counts, err := s.queries.GetUnreadCounts(r.Context(), userID)
+	if err != nil {
+		writeServerError(w, "failed to get unread counts", err)
+		return
+	}
+	if counts == nil {
+		counts = []store.GetUnreadCountsRow{}
+	}
+	result := make(map[int64]int64, len(counts))
+	for _, c := range counts {
+		result[c.FeedID] = c.UnreadCount
+	}
+	writeJSON(w, http.StatusOK, result)
 }

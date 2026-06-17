@@ -167,6 +167,10 @@ func (e *RedditEnricher) Enrich(ctx context.Context, item *store.Item) error {
 	item.Points = int64(post.Score)
 	item.CommentsCount = int64(post.NumComments)
 
+	if post.Permalink != "" {
+		item.CommentUrl = "https://www.reddit.com" + post.Permalink
+	}
+
 	if post.URL != "" && !strings.Contains(post.URL, "reddit.com") {
 		if err := e.queries.UpdateItemURL(ctx, struct {
 			Url string `json:"url"`

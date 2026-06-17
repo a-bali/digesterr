@@ -178,6 +178,38 @@ func (q *Queries) GetItemWithFeedOwner(ctx context.Context, arg GetItemWithFeedO
 	return i, err
 }
 
+const getUnreadCounts = `-- name: GetUnreadCounts :many
+SELECT f.id AS feed_id, CAST(COALESCE((SELECT COUNT(*) FROM items WHERE feed_id = f.id AND status = 'unread'), 0) AS INTEGER) AS unread_count FROM feeds f WHERE f.user_id = ?
+`
+
+type GetUnreadCountsRow struct {
+	FeedID      int64 `json:"feed_id"`
+	UnreadCount int64 `json:"unread_count"`
+}
+
+func (q *Queries) GetUnreadCounts(ctx context.Context, userID int64) ([]GetUnreadCountsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getUnreadCounts, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetUnreadCountsRow{}
+	for rows.Next() {
+		var i GetUnreadCountsRow
+		if err := rows.Scan(&i.FeedID, &i.UnreadCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listItemsByFeed = `-- name: ListItemsByFeed :many
 SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC
 `
@@ -271,6 +303,112 @@ func (q *Queries) ListItemsByFeedAndStatus(ctx context.Context, arg ListItemsByF
 	return items, nil
 }
 
+const listItemsByFeedAndStatusPaginated = `-- name: ListItemsByFeedAndStatusPaginated :many
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?
+`
+
+type ListItemsByFeedAndStatusPaginatedParams struct {
+	FeedID int64  `json:"feed_id"`
+	Status string `json:"status"`
+	Limit  int64  `json:"limit"`
+	Offset int64  `json:"offset"`
+}
+
+func (q *Queries) ListItemsByFeedAndStatusPaginated(ctx context.Context, arg ListItemsByFeedAndStatusPaginatedParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByFeedAndStatusPaginated,
+		arg.FeedID,
+		arg.Status,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listItemsByFeedPaginated = `-- name: ListItemsByFeedPaginated :many
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?
+`
+
+type ListItemsByFeedPaginatedParams struct {
+	FeedID int64 `json:"feed_id"`
+	Limit  int64 `json:"limit"`
+	Offset int64 `json:"offset"`
+}
+
+func (q *Queries) ListItemsByFeedPaginated(ctx context.Context, arg ListItemsByFeedPaginatedParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByFeedPaginated, arg.FeedID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnreadItemsForEnrichment = `-- name: ListUnreadItemsForEnrichment :many
 SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY last_enriched_at IS NULL DESC, last_enriched_at ASC, published_at DESC
 `
@@ -323,19 +461,25 @@ func (q *Queries) ListUnreadItemsForEnrichment(ctx context.Context, arg ListUnre
 
 const updateItemPointsAndComments = `-- name: UpdateItemPointsAndComments :one
 UPDATE items
-SET points = ?, comments_count = ?, updated_at = DATETIME('now'), last_enriched_at = DATETIME('now')
+SET points = ?, comments_count = ?, comment_url = ?, updated_at = DATETIME('now'), last_enriched_at = DATETIME('now')
 WHERE id = ?
 RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at
 `
 
 type UpdateItemPointsAndCommentsParams struct {
-	Points        int64 `json:"points"`
-	CommentsCount int64 `json:"comments_count"`
-	ID            int64 `json:"id"`
+	Points        int64  `json:"points"`
+	CommentsCount int64  `json:"comments_count"`
+	CommentUrl    string `json:"comment_url"`
+	ID            int64  `json:"id"`
 }
 
 func (q *Queries) UpdateItemPointsAndComments(ctx context.Context, arg UpdateItemPointsAndCommentsParams) (Item, error) {
-	row := q.db.QueryRowContext(ctx, updateItemPointsAndComments, arg.Points, arg.CommentsCount, arg.ID)
+	row := q.db.QueryRowContext(ctx, updateItemPointsAndComments,
+		arg.Points,
+		arg.CommentsCount,
+		arg.CommentUrl,
+		arg.ID,
+	)
 	var i Item
 	err := row.Scan(
 		&i.ID,

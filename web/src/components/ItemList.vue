@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
@@ -18,7 +18,9 @@ const emit = defineEmits<{
 
 const feedStore = useFeedStore()
 
-const displayItems = computed(() => props.showingSaved ? props.savedItems : feedStore.filteredItems)
+const scrollEl = ref<HTMLElement | null>(null)
+
+const displayItems = computed(() => props.showingSaved ? props.savedItems : feedStore.items)
 
 const scale = computed(() => {
   const items = displayItems.value
@@ -79,17 +81,38 @@ function stripContent(content: string): string {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&nbsp;/g, ' ')
+    .replace(/&#32;/g, ' ')
     .replace(/&quot;/g, '"')
     .replace(/\s+/g, ' ')
     .trim()
 }
+
+function onScroll() {
+  const el = scrollEl.value
+  if (!el || !feedStore.hasMore || feedStore.loadingMore || feedStore.loading) return
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 100) {
+    feedStore.fetchMoreItems()
+  }
+}
+
+function onFilterChange(e: Event) {
+  const val = (e.target as HTMLSelectElement).value as 'all' | 'unread' | 'read' | 'digested' | 'saved'
+  if (val !== feedStore.filter) {
+    feedStore.changeFilter(val)
+  }
+}
+
+// Reset scroll position when items are replaced (filter change, feed switch)
+const prevItemsLen = ref(0)
+onMounted(() => {})
+onUnmounted(() => {})
 </script>
 
 <template>
-  <div class="h-full border-r overflow-y-auto">
+  <div class="h-full border-r overflow-y-auto" ref="scrollEl" @scroll="onScroll">
     <div class="flex items-center gap-1 p-2 border-b">
       <Filter class="size-4 text-muted-foreground shrink-0" />
-      <select v-model="feedStore.filter" class="text-xs bg-transparent border-0 outline-none w-full">
+      <select :value="feedStore.filter" @change="onFilterChange" class="text-xs bg-transparent border-0 outline-none w-full">
         <option value="all">All</option>
         <option value="unread">Unread</option>
         <option value="read">Read</option>
@@ -98,9 +121,10 @@ function stripContent(content: string): string {
       </select>
     </div>
     <Skeleton v-if="feedStore.loading" class="m-3 h-12" />
-    <div v-else-if="!feedStore.activeFeed && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
+    <div v-else-if="!feedStore.activeFeedId && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
     <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
-    <button v-for="item in showingSaved ? savedItems : feedStore.filteredItems" :key="item.id"
+    <template v-else>
+      <button v-for="item in displayItems" :key="item.id"
       class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
       :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-muted-foreground': item.status === 'digested' || item.status === 'read', 'text-accent': item.status === 'saved' }"
       @click="emit('selectItem', item)">
@@ -118,15 +142,19 @@ function stripContent(content: string): string {
           </template>
           {{ pointsTitle(item.points) }}
         </Tooltip>
-        <Tooltip v-if="item.comments_count > 0">
+        <Tooltip v-if="item.comments_count > 0 || item.comment_url">
           <template #trigger>
-            <span class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.comments_count, scale.comments_max)">
-              <MessageSquare class="size-3" /> {{ item.comments_count }}
+            <span class="flex items-center gap-0.5 text-[10px]" :style="item.comments_count > 0 ? accentStyle(item.comments_count, scale.comments_max) : 'color: hsl(var(--accent) / 0.3)'">
+              <MessageSquare class="size-3" /> <template v-if="item.comments_count > 0">{{ item.comments_count }}</template>
             </span>
           </template>
-          {{ commentsTitle(item.comments_count) }}
+          <template v-if="item.comments_count > 0">{{ commentsTitle(item.comments_count) }}</template>
         </Tooltip>
       </div>
     </button>
+    <div v-if="!props.showingSaved && feedStore.loadingMore" class="p-3">
+      <Skeleton class="h-12" />
+    </div>
+    </template>
   </div>
 </template>

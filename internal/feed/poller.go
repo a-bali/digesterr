@@ -220,6 +220,7 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 				ID:            item.ID,
 				Points:        item.Points,
 				CommentsCount: item.CommentsCount,
+				CommentUrl:    item.CommentUrl,
 			}); err != nil {
 				logger.Debug("failed to update enriched item", "item_id", item.ID, "error", err)
 			}
@@ -237,6 +238,7 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 			ID:            item.ID,
 			Points:        item.Points,
 			CommentsCount: item.CommentsCount,
+			CommentUrl:    item.CommentUrl,
 		}); err != nil {
 			logger.Debug("failed to update enriched item", "item_id", item.ID, "error", err)
 		} else {

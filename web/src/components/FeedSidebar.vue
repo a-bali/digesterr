@@ -46,7 +46,9 @@ async function refreshFeed(id: number) {
         class="group flex items-center w-full rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors"
         :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }">
         <button class="flex items-center gap-2 flex-1 min-w-0" @click="emit('selectFeed', feed.id)">
-          <Rss class="size-3.5 shrink-0 text-accent" /> <span class="truncate">{{ feed.name }}</span>
+          <Rss class="size-3.5 shrink-0 text-accent" />
+          <span class="truncate">{{ feed.name }}</span>
+          <span v-if="(feedStore.unreadCounts[feed.id] ?? 0) > 0" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-1.5">{{ feedStore.unreadCounts[feed.id] }}</span>
         </button>
         <button @click.stop="refreshFeed(feed.id)" class="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20">
           <RefreshCw v-if="refreshingFeeds.has(feed.id)" class="size-3 animate-spin" />
