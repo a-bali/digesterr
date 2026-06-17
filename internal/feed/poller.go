@@ -29,6 +29,8 @@ func NewPoller(queries *store.Queries) *Poller {
 			"atom": rssFetcher,
 		},
 		enrichers: map[string]Enricher{
+			"rss":      &NoopEnricher{},
+			"atom":     &NoopEnricher{},
 			"hn":       NewHNEnricher(),
 			"lobsters": NewLobstersEnricher(),
 			"reddit":   NewRedditEnricher(queries),
@@ -188,12 +190,39 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 		return
 	}
 
+	// Try bulk enrichment first.
+	ptrs := make([]*store.Item, len(items))
+	for i := range items {
+		ptrs[i] = &items[i]
+	}
+	if b, ok := enricher.(BulkEnricher); ok {
+		if err := b.BulkEnrich(ctx, ptrs); err != nil {
+			logger.Debug("bulk enrich failed", "error", err)
+		}
+	} else {
+		// Fallback to per-item enrichment.
+		for i := range items {
+			item := items[i]
+			if err := enricher.Enrich(ctx, &item); err != nil {
+				logger.Debug("failed to enrich item", "item_id", item.ID, "error", err)
+				continue
+			}
+			if _, err := p.queries.UpdateItemPointsAndComments(ctx, store.UpdateItemPointsAndCommentsParams{
+				ID:            item.ID,
+				Points:        item.Points,
+				CommentsCount: item.CommentsCount,
+			}); err != nil {
+				logger.Debug("failed to update enriched item", "item_id", item.ID, "error", err)
+			}
+		}
+		logger.Debug("enriched items", "count", len(items))
+		return
+	}
+
+	// Persist changes from bulk enrichment. URL updates are handled
+	// internally by each enricher's BulkEnrich method (e.g. Reddit).
 	for i := range items {
 		item := items[i]
-		if err := enricher.Enrich(ctx, &item); err != nil {
-			logger.Debug("failed to enrich item", "item_id", item.ID, "error", err)
-			continue
-		}
 		if _, err := p.queries.UpdateItemPointsAndComments(ctx, store.UpdateItemPointsAndCommentsParams{
 			ID:            item.ID,
 			Points:        item.Points,
@@ -202,6 +231,5 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 			logger.Debug("failed to update enriched item", "item_id", item.ID, "error", err)
 		}
 	}
-
-	logger.Debug("enriched items", "count", len(items))
+	logger.Debug("enriched items (bulk)", "count", len(items))
 }

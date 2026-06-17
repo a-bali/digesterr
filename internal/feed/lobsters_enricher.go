@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,7 +31,38 @@ func (e *LobstersEnricher) Enrich(ctx context.Context, item *store.Item) error {
 	if shortID == "" {
 		return fmt.Errorf("could not extract Lobste.rs short ID")
 	}
+	return e.enrichOne(ctx, item, shortID)
+}
 
+func (e *LobstersEnricher) BulkEnrich(ctx context.Context, items []*store.Item) error {
+	for _, item := range items {
+		shortID := extractLobstersShortID(item.CommentUrl, item.Url, item.Hash)
+		if shortID == "" {
+			continue
+		}
+		if err := e.enrichOne(ctx, item, shortID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type lobstersStory struct {
+	ShortID      string            `json:"short_id"`
+	Score        int               `json:"score"`
+	CommentCount int               `json:"comment_count"`
+	Comments     []lobstersComment `json:"comments"`
+}
+
+type lobstersComment struct {
+	ShortID       string            `json:"short_id"`
+	Comment       string            `json:"comment"`
+	Score         int               `json:"score"`
+	CommentingUser string           `json:"commenting_user"`
+	Children      []lobstersComment `json:"children"`
+}
+
+func (e *LobstersEnricher) enrichOne(ctx context.Context, item *store.Item, shortID string) error {
 	apiURL := fmt.Sprintf("%s/s/%s.json", e.baseURL, shortID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
@@ -62,6 +94,58 @@ func (e *LobstersEnricher) Enrich(ctx context.Context, item *store.Item) error {
 	item.Points = int64(lsItem.Score)
 	item.CommentsCount = int64(lsItem.CommentCount)
 	return nil
+}
+
+func (e *LobstersEnricher) FetchComments(ctx context.Context, item store.Item, maxComments int) ([]Comment, error) {
+	shortID := extractLobstersShortID(item.CommentUrl, item.Url, item.Hash)
+	if shortID == "" {
+		return nil, fmt.Errorf("could not extract Lobste.rs short ID")
+	}
+
+	apiURL := fmt.Sprintf("%s/s/%s.json", e.baseURL, shortID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating Lobste.rs API request: %w", err)
+	}
+
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching Lobste.rs story %s: %w", shortID, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Lobste.rs API returned status %d for story %s", resp.StatusCode, shortID)
+	}
+
+	var story lobstersStory
+	if err := json.NewDecoder(resp.Body).Decode(&story); err != nil {
+		return nil, fmt.Errorf("decoding Lobste.rs API response: %w", err)
+	}
+
+	var comments []Comment
+	flattenLobstersComments(story.Comments, 0, &comments)
+	sort.Slice(comments, func(i, j int) bool { return comments[i].Points > comments[j].Points })
+
+	if maxComments > 0 && len(comments) > maxComments {
+		comments = comments[:maxComments]
+	}
+	return comments, nil
+}
+
+func flattenLobstersComments(children []lobstersComment, depth int, out *[]Comment) {
+	for _, c := range children {
+		if c.Comment == "" {
+			continue
+		}
+		*out = append(*out, Comment{
+			Author: c.CommentingUser,
+			Text:   stripHTMLTags(c.Comment),
+			Points: c.Score,
+			Depth:  depth,
+		})
+		flattenLobstersComments(c.Children, depth+1, out)
+	}
 }
 
 func extractLobstersShortID(urls ...string) string {

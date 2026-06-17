@@ -106,7 +106,7 @@ func TestHNEnricherEnrich(t *testing.T) {
 	}))
 	defer server.Close()
 
-	e := &HNEnricher{client: server.Client(), baseURL: server.URL}
+	e := &HNEnricher{client: server.Client(), firebaseURL: server.URL}
 	item := &store.Item{
 		CommentUrl: "https://news.ycombinator.com/item?id=123",
 	}
@@ -136,7 +136,7 @@ func TestHNEnricherEnrichNotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	e := &HNEnricher{client: server.Client(), baseURL: server.URL}
+	e := &HNEnricher{client: server.Client(), firebaseURL: server.URL}
 	item := &store.Item{
 		CommentUrl: "https://news.ycombinator.com/item?id=404",
 	}
@@ -151,7 +151,7 @@ func TestHNEnricherEnrichInvalidJSON(t *testing.T) {
 	}))
 	defer server.Close()
 
-	e := &HNEnricher{client: server.Client(), baseURL: server.URL}
+	e := &HNEnricher{client: server.Client(), firebaseURL: server.URL}
 	item := &store.Item{
 		CommentUrl: "https://news.ycombinator.com/item?id=1",
 	}
@@ -167,7 +167,7 @@ func TestHNEnricherEnrichContextCanceled(t *testing.T) {
 	}))
 	defer server.Close()
 
-	e := &HNEnricher{client: server.Client(), baseURL: server.URL}
+	e := &HNEnricher{client: server.Client(), firebaseURL: server.URL}
 	item := &store.Item{
 		CommentUrl: "https://news.ycombinator.com/item?id=1",
 	}

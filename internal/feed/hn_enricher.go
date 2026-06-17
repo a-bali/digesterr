@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,24 +15,27 @@ import (
 )
 
 type HNEnricher struct {
-	client  *http.Client
-	baseURL string
+	client     *http.Client
+	firebaseURL string
+	algoliaURL  string
 }
 
 func NewHNEnricher() *HNEnricher {
 	return &HNEnricher{
-		client:  &http.Client{Timeout: 10 * time.Second},
-		baseURL: "https://hacker-news.firebaseio.com",
+		client:      &http.Client{Timeout: 10 * time.Second},
+		firebaseURL: "https://hacker-news.firebaseio.com",
+		algoliaURL:  "https://hn.algolia.com",
 	}
 }
 
+// Enrich fetches a single item from the Firebase API.
 func (e *HNEnricher) Enrich(ctx context.Context, item *store.Item) error {
 	hnID := extractHNID(item.CommentUrl, item.Url)
 	if hnID == 0 {
 		return fmt.Errorf("could not extract HN item ID")
 	}
 
-	apiURL := fmt.Sprintf("%s/v0/item/%d.json", e.baseURL, hnID)
+	apiURL := fmt.Sprintf("%s/v0/item/%d.json", e.firebaseURL, hnID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return fmt.Errorf("creating HN API request: %w", err)
@@ -51,9 +55,6 @@ func (e *HNEnricher) Enrich(ctx context.Context, item *store.Item) error {
 		ID          int    `json:"id"`
 		Score       int    `json:"score"`
 		Descendants int    `json:"descendants"`
-		Title       string `json:"title"`
-		URL         string `json:"url"`
-		By          string `json:"by"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&hnItem); err != nil {
 		return fmt.Errorf("decoding HN API response: %w", err)
@@ -65,6 +66,147 @@ func (e *HNEnricher) Enrich(ctx context.Context, item *store.Item) error {
 	item.Points = int64(hnItem.Score)
 	item.CommentsCount = int64(hnItem.Descendants)
 	return nil
+}
+
+// BulkEnrich fetches current points/comments for multiple items via Algolia search.
+func (e *HNEnricher) BulkEnrich(ctx context.Context, items []*store.Item) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	// Build the Algolia filter: objectID:12345 OR objectID:67890
+	filters := make([]string, 0, len(items))
+	idToItem := make(map[string]*store.Item, len(items))
+	for _, item := range items {
+		hnID := extractHNID(item.CommentUrl, item.Url)
+		if hnID == 0 {
+			continue
+		}
+		sID := strconv.Itoa(hnID)
+		filters = append(filters, "objectID:"+sID)
+		idToItem[sID] = item
+	}
+	if len(filters) == 0 {
+		return nil
+	}
+
+	apiURL := fmt.Sprintf("%s/api/v1/search?query=&tags=story&filters=%s&hitsPerPage=%d",
+		e.algoliaURL, url.QueryEscape(strings.Join(filters, " OR ")), len(filters))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return fmt.Errorf("creating Algolia request: %w", err)
+	}
+
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetching Algolia bulk: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Algolia returned status %d", resp.StatusCode)
+	}
+
+	var algoliaResp struct {
+		Hits []struct {
+			ObjectID    string `json:"objectID"`
+			Points      int    `json:"points"`
+			NumComments int    `json:"num_comments"`
+		} `json:"hits"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&algoliaResp); err != nil {
+		return fmt.Errorf("decoding Algolia response: %w", err)
+	}
+
+	for _, hit := range algoliaResp.Hits {
+		if item, ok := idToItem[hit.ObjectID]; ok {
+			item.Points = int64(hit.Points)
+			item.CommentsCount = int64(hit.NumComments)
+		}
+	}
+
+	return nil
+}
+
+// FetchComments fetches the comment tree from Algolia and returns the top N comments sorted by points.
+func (e *HNEnricher) FetchComments(ctx context.Context, item store.Item, maxComments int) ([]Comment, error) {
+	hnID := extractHNID(item.CommentUrl, item.Url)
+	if hnID == 0 {
+		return nil, fmt.Errorf("could not extract HN item ID")
+	}
+
+	apiURL := fmt.Sprintf("%s/api/v1/items/%d", e.algoliaURL, hnID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating Algolia items request: %w", err)
+	}
+
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching Algolia item %d: %w", hnID, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Algolia returned status %d for item %d", resp.StatusCode, hnID)
+	}
+
+	var algoliaResp struct {
+		Children []algoliaComment `json:"children"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&algoliaResp); err != nil {
+		return nil, fmt.Errorf("decoding Algolia item response: %w", err)
+	}
+
+	var comments []Comment
+	flattenComments(algoliaResp.Children, 0, &comments)
+	sort.Slice(comments, func(i, j int) bool { return comments[i].Points > comments[j].Points })
+
+	if maxComments > 0 && len(comments) > maxComments {
+		comments = comments[:maxComments]
+	}
+	return comments, nil
+}
+
+type algoliaComment struct {
+	Author   string           `json:"author"`
+	Text     string           `json:"text"`
+	Points   int              `json:"points"`
+	Children []algoliaComment `json:"children"`
+}
+
+func flattenComments(children []algoliaComment, depth int, out *[]Comment) {
+	for _, c := range children {
+		if c.Text == "" {
+			continue
+		}
+		*out = append(*out, Comment{
+			Author: c.Author,
+			Text:   stripHTMLTags(c.Text),
+			Points: c.Points,
+			Depth:  depth,
+		})
+		flattenComments(c.Children, depth+1, out)
+	}
+}
+
+func stripHTMLTags(s string) string {
+	var buf strings.Builder
+	inTag := false
+	for _, r := range s {
+		if r == '<' {
+			inTag = true
+			continue
+		}
+		if r == '>' {
+			inTag = false
+			continue
+		}
+		if !inTag {
+			buf.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(buf.String())
 }
 
 func extractHNID(commentURL, itemURL string) int {
