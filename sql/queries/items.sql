@@ -42,3 +42,11 @@ DELETE FROM items WHERE id = ? RETURNING id;
 SELECT i.* FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE i.id = ? AND f.user_id = ?;
+
+-- name: GetFeedScale :one
+SELECT COALESCE(MAX(points), 0) AS points_max,
+       COALESCE(ROUND(AVG(points)), 0) AS points_avg,
+       COALESCE(MAX(comments_count), 0) AS comments_max,
+       COALESCE(ROUND(AVG(comments_count)), 0) AS comments_avg
+FROM items
+WHERE feed_id = ? AND fetched_at > datetime('now', '-24 hours');

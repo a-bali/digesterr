@@ -404,3 +404,26 @@ func (q *Queries) ListUnreadItemsForEnrichment(ctx context.Context, arg ListUnre
 	}
 	return items, nil
 }
+
+type FeedScale struct {
+	PointsMax    int64 `json:"points_max"`
+	PointsAvg    int64 `json:"points_avg"`
+	CommentsMax  int64 `json:"comments_max"`
+	CommentsAvg  int64 `json:"comments_avg"`
+}
+
+const getFeedScale = `-- name: GetFeedScale :one
+SELECT COALESCE(MAX(points), 0) AS points_max,
+       COALESCE(ROUND(AVG(points)), 0) AS points_avg,
+       COALESCE(MAX(comments_count), 0) AS comments_max,
+       COALESCE(ROUND(AVG(comments_count)), 0) AS comments_avg
+FROM items
+WHERE feed_id = ? AND fetched_at > datetime('now', '-24 hours')
+`
+
+func (q *Queries) GetFeedScale(ctx context.Context, feedID int64) (FeedScale, error) {
+	row := q.db.QueryRowContext(ctx, getFeedScale, feedID)
+	var i FeedScale
+	err := row.Scan(&i.PointsMax, &i.PointsAvg, &i.CommentsMax, &i.CommentsAvg)
+	return i, err
+}

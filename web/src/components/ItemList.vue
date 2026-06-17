@@ -16,6 +16,37 @@ const emit = defineEmits<{
 
 const feedStore = useFeedStore()
 
+function accentOpacity(val: number, max: number): number {
+  if (max <= 0) return 0.4
+  const r = Math.log(Math.max(val, 1)) / Math.log(Math.max(max, 2))
+  if (r > 0.8) return 1
+  if (r > 0.5) return 0.65
+  if (r > 0.2) return 0.4
+  return 0.2
+}
+
+function accentStyle(val: number, max: number): string {
+  return `color: hsl(var(--accent) / ${accentOpacity(val, max)})`
+}
+
+function pointsTitle(val: number): string {
+  const avg = feedStore.scale.points_avg
+  if (!avg) return `${val} points`
+  const diff = val - avg
+  const pct = Math.round((diff / avg) * 100)
+  const sign = diff >= 0 ? '+' : ''
+  return `${val} points (avg ${avg}, ${sign}${pct}%)`
+}
+
+function commentsTitle(val: number): string {
+  const avg = feedStore.scale.comments_avg
+  if (!avg) return `${val} comments`
+  const diff = val - avg
+  const pct = Math.round((diff / avg) * 100)
+  const sign = diff >= 0 ? '+' : ''
+  return `${val} comments (avg ${avg}, ${sign}${pct}%)`
+}
+
 function stripContent(content: string): string {
   if (!content) return ''
   return content
@@ -55,10 +86,10 @@ function stripContent(content: string): string {
       </div>
       <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0 pr-16">{{ stripContent(item.content) }}</p>
       <div class="absolute right-2 bottom-2 flex items-center gap-2">
-        <span v-if="item.points > 0" class="flex items-center gap-0.5 text-[10px] text-muted-foreground/70" :title="`${item.points} points`">
+        <span v-if="item.points > 0" class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.points, feedStore.scale.points_max)" :title="pointsTitle(item.points)">
           <ArrowUp class="size-3" /> {{ item.points }}
         </span>
-        <span v-if="item.comments_count > 0" class="flex items-center gap-0.5 text-[10px] text-muted-foreground/70" :title="`${item.comments_count} comments`">
+        <span v-if="item.comments_count > 0" class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.comments_count, feedStore.scale.comments_max)" :title="commentsTitle(item.comments_count)">
           <MessageSquare class="size-3" /> {{ item.comments_count }}
         </span>
       </div>

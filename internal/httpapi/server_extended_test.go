@@ -566,19 +566,21 @@ func TestFeedItemsByStatus(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
-	var items []store.Item
-	json.NewDecoder(w.Body).Decode(&items)
-	if len(items) != 1 || items[0].Status != "unread" {
-		t.Fatalf("expected 1 unread item, got %d", len(items))
+	var result struct {
+		Items []store.Item `json:"items"`
+	}
+	json.NewDecoder(w.Body).Decode(&result)
+	if len(result.Items) != 1 || result.Items[0].Status != "unread" {
+		t.Fatalf("expected 1 unread item, got %d", len(result.Items))
 	}
 
 	w = makeRequest(server, http.MethodGet, "/api/feeds/"+itoa(feed.ID)+"/items", nil, token)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
-	json.NewDecoder(w.Body).Decode(&items)
-	if len(items) != 2 {
-		t.Fatalf("expected 2 items total, got %d", len(items))
+	json.NewDecoder(w.Body).Decode(&result)
+	if len(result.Items) != 2 {
+		t.Fatalf("expected 2 items total, got %d", len(result.Items))
 	}
 }
 

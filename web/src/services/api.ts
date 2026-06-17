@@ -1,4 +1,4 @@
-import type { AuthResponse, Category, Feed, Item } from '../types/api'
+import type { AuthResponse, Category, Feed, FeedItemsResponse, Item } from '../types/api'
 
 const TOKEN_KEY = 'digesterr-token'
 
@@ -78,7 +78,7 @@ export const feedApi = {
     api<Feed>(`/feeds/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   delete: (id: number) => api<void>(`/feeds/${id}`, { method: 'DELETE' }),
   getItems: (id: number, status?: string) =>
-    api<Item[]>(`/feeds/${id}/items${status ? `?status=${status}` : ''}`),
+    api<FeedItemsResponse>(`/feeds/${id}/items${status ? `?status=${status}` : ''}`),
   fetch: (id: number) => api<{ message: string }>(`/feeds/${id}/fetch`, { method: 'POST' }),
 }
 

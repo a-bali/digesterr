@@ -53,7 +53,7 @@ async function showSaved() {
   feedStore.selectedItem = null
   savedItems.value = []
   for (const feed of feedStore.feeds) {
-    try { savedItems.value.push(...await feedApi.getItems(feed.id, 'saved')) }
+    try { savedItems.value.push(...(await feedApi.getItems(feed.id, 'saved')).items) }
     catch { /* skip */ }
   }
 }

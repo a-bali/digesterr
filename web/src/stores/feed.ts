@@ -2,12 +2,13 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { toast } from 'vue-sonner'
 import { feedApi, itemApi, ApiError } from '../services/api'
-import type { Feed, Item } from '../types/api'
+import type { Feed, Item, FeedScale } from '../types/api'
 
 export const useFeedStore = defineStore('feed', () => {
   const feeds = ref<Feed[]>([])
   const activeFeedId = ref<number | null>(null)
   const items = ref<Item[]>([])
+  const scale = ref<FeedScale>({ points_max: 0, points_avg: 0, comments_max: 0, comments_avg: 0 })
   const selectedItem = ref<Item | null>(null)
   const filter = ref<'all' | 'unread' | 'read' | 'digested' | 'saved'>('all')
   const loading = ref(false)
@@ -38,7 +39,9 @@ export const useFeedStore = defineStore('feed', () => {
     if (!activeFeedId.value) return
     loading.value = true
     try {
-      items.value = await feedApi.getItems(activeFeedId.value)
+      const resp = await feedApi.getItems(activeFeedId.value)
+      items.value = resp.items
+      scale.value = resp.scale
     } catch (e) {
       toast.error('Failed to load items', { description: e instanceof ApiError ? e.message : undefined })
     } finally {
@@ -62,7 +65,7 @@ export const useFeedStore = defineStore('feed', () => {
   }
 
   return {
-    feeds, activeFeedId, items, selectedItem, filter, loading,
+    feeds, activeFeedId, items, scale, selectedItem, filter, loading,
     activeFeed, filteredItems,
     fetchFeeds, setActiveFeed, fetchItems, selectItem, updateItemStatus,
   }
