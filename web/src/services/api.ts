@@ -34,6 +34,20 @@ export class ApiError extends Error {
   }
 }
 
+async function tryRefresh(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/auth/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+    if (res.ok) {
+      const body = await res.json()
+      setAuthToken(body.access_token)
+      return true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -42,7 +56,13 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
   }
-  const res = await fetch(`/api${path}`, { ...options, headers })
+  let res = await fetch(`/api${path}`, { ...options, headers })
+  if (res.status === 401) {
+    if (await tryRefresh()) {
+      headers['Authorization'] = `Bearer ${token}`
+      res = await fetch(`/api${path}`, { ...options, headers })
+    }
+  }
   if (res.status === 401) {
     setAuthToken(null)
     onUnauthorized?.()
