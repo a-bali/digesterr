@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useFeedStore } from '../stores/feed'
 import Skeleton from './ui/Skeleton.vue'
-import { Filter } from 'lucide-vue-next'
+import { Filter, ArrowUp, MessageSquare } from 'lucide-vue-next'
 
 defineProps<{
   savedItems: any[]
@@ -53,8 +53,15 @@ function stripContent(content: string): string {
         <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ item.title }}</p>
         <span class="text-[10px] text-muted-foreground/70 shrink-0 mt-0.5" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
       </div>
-      <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0">{{ stripContent(item.content) }}</p>
-      <span v-if="item.points > 0" class="text-[10px] text-muted-foreground/70 absolute right-2 bottom-2">{{ item.points }} pts</span>
+      <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0 pr-16">{{ stripContent(item.content) }}</p>
+      <div class="absolute right-2 bottom-2 flex items-center gap-2">
+        <span v-if="item.points > 0" class="flex items-center gap-0.5 text-[10px] text-muted-foreground/70" :title="`${item.points} points`">
+          <ArrowUp class="size-3" /> {{ item.points }}
+        </span>
+        <span v-if="item.comments_count > 0" class="flex items-center gap-0.5 text-[10px] text-muted-foreground/70" :title="`${item.comments_count} comments`">
+          <MessageSquare class="size-3" /> {{ item.comments_count }}
+        </span>
+      </div>
     </button>
   </div>
 </template>
