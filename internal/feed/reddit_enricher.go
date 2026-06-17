@@ -128,6 +128,7 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 		idToItem[postID] = item
 	}
 	if len(ids) == 0 {
+		slog.Debug("reddit bulk enrich: no items with extractable post IDs")
 		return nil
 	}
 
@@ -145,7 +146,7 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Reddit API returned status %d", resp.StatusCode)
+		return fmt.Errorf("Reddit API returned status %d for bulk info", resp.StatusCode)
 	}
 
 	var info struct {
@@ -157,23 +158,33 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 		return fmt.Errorf("decoding Reddit info response: %w", err)
 	}
 
+	matched := 0
 	for _, child := range info.Data.Children {
-		if item, ok := idToItem[child.Data.ID]; ok {
-			item.Points = int64(child.Data.Score)
-			item.CommentsCount = int64(child.Data.NumComments)
-			if child.Data.URL != "" && !strings.Contains(child.Data.URL, "reddit.com") {
-				if err := e.queries.UpdateItemURL(ctx, struct {
-					Url string `json:"url"`
-					ID  int64  `json:"id"`
-				}{Url: child.Data.URL, ID: item.ID}); err != nil {
-					slog.Warn("failed to update Reddit item URL", "item_id", item.ID, "error", err)
-				} else {
-					item.Url = child.Data.URL
-				}
+		if child.Kind != "t3" {
+			continue
+		}
+		item, ok := idToItem[child.Data.ID]
+		if !ok {
+			continue
+		}
+		matched++
+		item.Points = int64(child.Data.Score)
+		item.CommentsCount = int64(child.Data.NumComments)
+		if child.Data.URL != "" && !strings.Contains(child.Data.URL, "reddit.com") {
+			if err := e.queries.UpdateItemURL(ctx, struct {
+				Url string `json:"url"`
+				ID  int64  `json:"id"`
+			}{Url: child.Data.URL, ID: item.ID}); err != nil {
+				slog.Warn("failed to update Reddit item URL", "item_id", item.ID, "error", err)
+			} else {
+				item.Url = child.Data.URL
 			}
 		}
 	}
-
+	slog.Debug("reddit bulk enrich", "requested", len(ids), "matched", matched)
+	if matched == 0 {
+		slog.Warn("reddit bulk enrich matched no items — API response may be empty or rate-limited")
+	}
 	return nil
 }
 
