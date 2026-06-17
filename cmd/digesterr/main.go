@@ -48,6 +48,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	logLevel := slog.LevelInfo
+	if os.Getenv("DIGESTERR_LOG_LEVEL") == "debug" {
+		logLevel = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
+
 	db, err := sql.Open("sqlite", dbPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		slog.Error("failed to open database", "error", err)

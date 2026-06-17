@@ -12,6 +12,7 @@
   env.JWT_SECRET = "dev-secret-change-in-production";
   env.DATABASE_PATH = "digesterr.db";
   env.PORT = "8080";
+  env.DIGESTERR_LOG_LEVEL = "debug";
 
   processes.digesterr.exec = "go run ./cmd/digesterr";
   processes.web.exec = "pnpm --dir web run dev";
