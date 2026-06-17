@@ -29,19 +29,93 @@ const savedItems = ref<Item[]>([])
 const showingSaved = ref(false)
 const windowWidth = ref(window.innerWidth)
 const sidebarOpen = ref(false)
+const showThemeMenu = ref(false)
 
 const isDesktop = computed(() => windowWidth.value >= 900)
+
+const accentColors: Record<string, string> = {
+  blue: '217 91% 60%',
+  green: '142 71% 45%',
+  purple: '271 81% 56%',
+  orange: '24 95% 53%',
+  rose: '346 77% 50%',
+  teal: '173 80% 36%',
+  amber: '38 92% 50%',
+}
 
 const pendingItemId = ref<number | null>(null)
 
 function onResize() { windowWidth.value = window.innerWidth }
 
+function onKeyDown(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+
+  const item = feedStore.selectedItem
+
+  switch (e.key) {
+    case 'ArrowLeft':
+    case 'ArrowRight': {
+      const items = showingSaved.value ? savedItems.value : feedStore.items
+      if (items.length === 0) return
+      const idx = item ? items.findIndex(i => i.id === item.id) : -1
+      const next = e.key === 'ArrowRight' ? idx + 1 : idx - 1
+      if (next >= 0 && next < items.length) {
+        selectItem(items[next])
+      }
+      break
+    }
+    case 'ArrowUp':
+    case 'ArrowDown': {
+      const el = document.querySelector<HTMLElement>('[data-item-content]')
+      if (el) el.scrollBy(0, e.key === 'ArrowUp' ? -80 : 80)
+      break
+    }
+    case 'PageUp':
+    case 'PageDown': {
+      const feeds = feedStore.feeds
+      if (feeds.length === 0) return
+      const cur = feedStore.activeFeedId
+      const idx = cur ? feeds.findIndex(f => f.id === cur) : -1
+      const next = e.key === 'PageDown' ? idx + 1 : idx - 1
+      if (next >= 0 && next < feeds.length) {
+        selectFeed(feeds[next].id)
+      }
+      break
+    }
+    case ' ':
+      e.preventDefault()
+      if (item) {
+        feedStore.updateItemStatus(item, item.status === 'read' ? 'unread' : 'read')
+      }
+      break
+    case 's':
+    case 'S':
+      if (item) {
+        if (item.status === 'saved') {
+          unsaveItem(item)
+        } else {
+          feedStore.updateItemStatus(item, 'saved')
+        }
+      }
+      break
+    case 'v':
+    case 'V':
+      if (item?.url) window.open(item.url, '_blank')
+      break
+  }
+}
+
 onMounted(() => {
   window.addEventListener('resize', onResize)
+  window.addEventListener('keydown', onKeyDown)
   categoryStore.fetchCategories()
   feedStore.fetchFeeds()
 })
-onUnmounted(() => window.removeEventListener('resize', onResize))
+onUnmounted(() => {
+  window.removeEventListener('resize', onResize)
+  window.removeEventListener('keydown', onKeyDown)
+})
 
 // URL → state sync
 watch(
@@ -74,7 +148,7 @@ watch(
       pendingItemId.value = null
       if (savedItems.value.length === 0) {
         for (const feed of feedStore.feeds) {
-          try { savedItems.value.push(...(await feedApi.getItems(feed.id, 'saved')).items) }
+          try { savedItems.value.push(...(await feedApi.getItems(feed.id, { status: 'saved' })).items) }
           catch { /* skip */ }
         }
       }
@@ -135,7 +209,6 @@ async function selectItem(item: Item) {
 async function unsaveItem(item: Item) {
   await feedStore.updateItemStatus(item, 'read')
   savedItems.value = savedItems.value.filter(i => i.id !== item.id)
-  if (feedStore.selectedItem?.id === item.id) feedStore.selectedItem = null
 }
 
 function parseItemDate(val: any): Date | null {
@@ -200,11 +273,35 @@ function absoluteTime(val: any): string {
           <MessageSquare class="size-4" /> <span class="hidden sm:inline">Digest</span>
         </Button>
       </div>
-      <div class="ml-auto flex items-center gap-1">
-        <Button variant="ghost" size="icon" @click="theme.setMode(theme.mode === 'dark' ? 'light' : 'dark')">
+      <div class="ml-auto flex items-center gap-1 relative">
+        <Button variant="ghost" size="icon" @click="showThemeMenu = !showThemeMenu">
           <Sun v-if="theme.mode !== 'dark'" class="size-4" />
           <Moon v-else class="size-4" />
         </Button>
+        <div v-if="showThemeMenu" class="absolute right-0 top-full mt-1 z-50 min-w-40 rounded-md border bg-background p-2 shadow-md">
+          <div class="flex items-center gap-2 px-1 py-1">
+            <span class="text-xs text-muted-foreground">Mode</span>
+            <div class="flex rounded-md border border-border overflow-hidden text-xs">
+              <button class="px-2 py-1 transition-colors" :class="theme.mode === 'light' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'" @click="theme.setMode('light'); showThemeMenu = false">
+                <Sun class="size-3 inline" /> Light
+              </button>
+              <button class="px-2 py-1 border-x border-border transition-colors" :class="theme.mode === 'dark' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'" @click="theme.setMode('dark'); showThemeMenu = false">
+                <Moon class="size-3 inline" /> Dark
+              </button>
+              <button class="px-2 py-1 transition-colors" :class="theme.mode === 'system' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'" @click="theme.setMode('system'); showThemeMenu = false">Auto</button>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 px-1 py-1">
+            <span class="text-xs text-muted-foreground">Accent</span>
+            <div class="flex gap-1.5">
+              <button v-for="a in ['blue','green','purple','orange','rose','teal','amber']" :key="a"
+                class="size-5 rounded-full border transition-all"
+                :class="theme.accent === a ? 'border-foreground scale-110' : 'border-transparent'"
+                :style="{ backgroundColor: `hsl(${accentColors[a]})` }"
+                @click="theme.setAccent(a); showThemeMenu = false" />
+            </div>
+          </div>
+        </div>
         <Button variant="ghost" size="icon" @click="router.push('/settings')">
           <Settings class="size-4" />
         </Button>

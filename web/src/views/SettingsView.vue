@@ -6,7 +6,6 @@ import Input from '../components/ui/Input'
 import Dialog from '../components/ui/Dialog'
 import { useAuthStore } from '../stores/auth'
 import { useCategoryStore } from '../stores/category'
-import { useThemeStore } from '../stores/theme'
 import { feedApi } from '../services/api'
 import type { Feed } from '../types/api'
 import Separator from '../components/ui/Separator'
@@ -15,7 +14,6 @@ import { ArrowLeft, Plus, Trash2, Rss } from 'lucide-vue-next'
 const router = useRouter()
 const auth = useAuthStore()
 const categoryStore = useCategoryStore()
-const theme = useThemeStore()
 
 const feeds = ref<Feed[]>([])
 const showAddFeed = ref(false)
@@ -66,43 +64,16 @@ function handleTypeChange(type: string) {
       newFeed.value.url = ''
   }
 }
-
-const accents = ['blue', 'green', 'purple', 'orange', 'rose', 'teal', 'amber']
-
-const accentColors: Record<string, string> = {
-  blue: 'hsl(217 91% 60%)',
-  green: 'hsl(142 71% 45%)',
-  purple: 'hsl(271 81% 56%)',
-  orange: 'hsl(24 95% 53%)',
-  rose: 'hsl(346 77% 50%)',
-  teal: 'hsl(173 80% 36%)',
-  amber: 'hsl(38 92% 50%)',
-}
 </script>
 
 <template>
   <div class="mx-auto max-w-2xl p-6">
     <div class="flex items-center gap-4 mb-6">
-      <Button variant="ghost" size="icon" @click="router.push('/')">
+      <Button variant="ghost" size="icon" @click="router.back()">
         <ArrowLeft class="size-4" />
       </Button>
       <h1 class="text-xl font-semibold">Settings</h1>
     </div>
-
-    <!-- Accent color -->
-    <section class="mb-8">
-      <h2 class="text-sm font-semibold mb-3">Accent Color</h2>
-      <div class="flex gap-2">
-        <button
-          v-for="a in accents"
-          :key="a"
-          class="size-7 rounded-full border-2 transition-all"
-          :class="theme.accent === a ? 'border-foreground scale-110' : 'border-transparent'"
-          :style="{ backgroundColor: accentColors[a] }"
-          @click="theme.setAccent(a)"
-        />
-      </div>
-    </section>
 
     <!-- Categories -->
     <section class="mb-8">
