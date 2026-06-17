@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"digesterr/internal/store"
@@ -44,17 +47,80 @@ type redditListing struct {
 }
 
 type RedditEnricher struct {
-	client  *http.Client
-	baseURL string
-	queries *store.Queries
+	client       *http.Client
+	baseURL      string
+	apiBaseURL   string
+	queries      *store.Queries
+	clientID     string
+	clientSecret string
+	token        string
+	tokenExpiry  time.Time
+	tokenMu      sync.Mutex
 }
 
 func NewRedditEnricher(queries *store.Queries) *RedditEnricher {
 	return &RedditEnricher{
-		client:  &http.Client{Timeout: 10 * time.Second},
-		baseURL: "https://www.reddit.com",
-		queries: queries,
+		client:       &http.Client{Timeout: 10 * time.Second},
+		baseURL:      "https://www.reddit.com",
+		apiBaseURL:   "https://oauth.reddit.com",
+		queries:      queries,
+		clientID:     os.Getenv("REDDIT_CLIENT_ID"),
+		clientSecret: os.Getenv("REDDIT_CLIENT_SECRET"),
 	}
+}
+
+func (e *RedditEnricher) ensureToken(ctx context.Context) error {
+	e.tokenMu.Lock()
+	if e.token != "" && time.Now().Before(e.tokenExpiry) {
+		e.tokenMu.Unlock()
+		return nil
+	}
+	e.tokenMu.Unlock()
+
+	if e.clientID == "" || e.clientSecret == "" {
+		slog.Warn("Reddit API credentials not configured — enrichment will likely fail with 403")
+		return nil
+	}
+
+	apiURL := fmt.Sprintf("%s/api/v1/access_token", e.baseURL)
+	body := strings.NewReader("grant_type=client_credentials&scope=read")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, body)
+	if err != nil {
+		return fmt.Errorf("creating token request: %w", err)
+	}
+	req.SetBasicAuth(e.clientID, e.clientSecret)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0")
+
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetching Reddit access token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Reddit token endpoint returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return fmt.Errorf("decoding token response: %w", err)
+	}
+	if tokenResp.AccessToken == "" {
+		return fmt.Errorf("Reddit token endpoint returned empty access_token")
+	}
+
+	e.tokenMu.Lock()
+	e.token = tokenResp.AccessToken
+	e.tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	e.tokenMu.Unlock()
+
+	slog.Debug("obtained new Reddit OAuth token", "expires_in", tokenResp.ExpiresIn)
+	return nil
 }
 
 func (e *RedditEnricher) Enrich(ctx context.Context, item *store.Item) error {
@@ -63,12 +129,17 @@ func (e *RedditEnricher) Enrich(ctx context.Context, item *store.Item) error {
 		return fmt.Errorf("could not extract Reddit post ID")
 	}
 
-	apiURL := fmt.Sprintf("%s/comments/%s.json?limit=1", e.baseURL, postID)
+	if err := e.ensureToken(ctx); err != nil {
+		return fmt.Errorf("auth: %w", err)
+	}
+
+	apiURL := fmt.Sprintf("%s/comments/%s.json?limit=1", e.apiBaseURL, postID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return fmt.Errorf("creating Reddit API request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Digesterr/1.0 (by u/dre_is)")
+	req.Header.Set("Authorization", "Bearer "+e.token)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0")
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -132,11 +203,16 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 		return nil
 	}
 
-	apiURL := fmt.Sprintf("%s/api/info.json?id=%s", e.baseURL, strings.Join(ids, ","))
+	if err := e.ensureToken(ctx); err != nil {
+		return fmt.Errorf("auth: %w", err)
+	}
+
+	apiURL := fmt.Sprintf("%s/api/info.json?id=%s", e.apiBaseURL, strings.Join(ids, ","))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return fmt.Errorf("creating Reddit API request: %w", err)
 	}
+	req.Header.Set("Authorization", "Bearer "+e.token)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0")
 
 	resp, err := e.client.Do(req)
