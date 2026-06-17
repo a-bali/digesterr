@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useFeedStore } from '../stores/feed'
 import Skeleton from './ui/Skeleton.vue'
+import Tooltip from './ui/Tooltip.vue'
 import { Filter, ArrowUp, MessageSquare } from 'lucide-vue-next'
 
 defineProps<{
@@ -31,20 +32,16 @@ function accentStyle(val: number, max: number): string {
 
 function pointsTitle(val: number): string {
   const avg = feedStore.scale.points_avg
-  if (!avg) return `${val} points`
   const diff = val - avg
-  const pct = Math.round((diff / avg) * 100)
   const sign = diff >= 0 ? '+' : ''
-  return `${val} points (avg ${avg}, ${sign}${pct}%)`
+  return `${val} points (${sign}${diff})`
 }
 
 function commentsTitle(val: number): string {
   const avg = feedStore.scale.comments_avg
-  if (!avg) return `${val} comments`
   const diff = val - avg
-  const pct = Math.round((diff / avg) * 100)
   const sign = diff >= 0 ? '+' : ''
-  return `${val} comments (avg ${avg}, ${sign}${pct}%)`
+  return `${val} comments (${sign}${diff})`
 }
 
 function stripContent(content: string): string {
@@ -86,12 +83,22 @@ function stripContent(content: string): string {
       </div>
       <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0 pr-16">{{ stripContent(item.content) }}</p>
       <div class="absolute right-2 bottom-2 flex items-center gap-2">
-        <span v-if="item.points > 0" class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.points, feedStore.scale.points_max)" :title="pointsTitle(item.points)">
-          <ArrowUp class="size-3" /> {{ item.points }}
-        </span>
-        <span v-if="item.comments_count > 0" class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.comments_count, feedStore.scale.comments_max)" :title="commentsTitle(item.comments_count)">
-          <MessageSquare class="size-3" /> {{ item.comments_count }}
-        </span>
+        <Tooltip v-if="item.points > 0">
+          <template #trigger>
+            <span class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.points, feedStore.scale.points_max)">
+              <ArrowUp class="size-3" /> {{ item.points }}
+            </span>
+          </template>
+          {{ pointsTitle(item.points) }}
+        </Tooltip>
+        <Tooltip v-if="item.comments_count > 0">
+          <template #trigger>
+            <span class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.comments_count, feedStore.scale.comments_max)">
+              <MessageSquare class="size-3" /> {{ item.comments_count }}
+            </span>
+          </template>
+          {{ commentsTitle(item.comments_count) }}
+        </Tooltip>
       </div>
     </button>
   </div>
