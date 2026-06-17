@@ -193,6 +193,8 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 		return
 	}
 
+	logger.Info("enriching items", "count", len(items), "type", feed.Type)
+
 	// Try bulk enrichment first.
 	ptrs := make([]*store.Item, len(items))
 	for i := range items {
@@ -201,15 +203,19 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 	if b, ok := enricher.(BulkEnricher); ok {
 		if err := b.BulkEnrich(ctx, ptrs); err != nil {
 			logger.Debug("bulk enrich failed", "error", err)
+		} else {
+			logger.Info("bulk enrichment succeeded", "items", len(items), "type", feed.Type)
 		}
 	} else {
 		// Fallback to per-item enrichment.
+		success := 0
 		for i := range items {
 			item := items[i]
 			if err := enricher.Enrich(ctx, &item); err != nil {
 				logger.Debug("failed to enrich item", "item_id", item.ID, "error", err)
 				continue
 			}
+			success++
 			if _, err := p.queries.UpdateItemPointsAndComments(ctx, store.UpdateItemPointsAndCommentsParams{
 				ID:            item.ID,
 				Points:        item.Points,
@@ -218,12 +224,13 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 				logger.Debug("failed to update enriched item", "item_id", item.ID, "error", err)
 			}
 		}
-		logger.Debug("enriched items", "count", len(items))
+		logger.Info("enriched items (per-item)", "count", success, "total", len(items))
 		return
 	}
 
 	// Persist changes from bulk enrichment. URL updates are handled
 	// internally by each enricher's BulkEnrich method (e.g. Reddit).
+	updated := 0
 	for i := range items {
 		item := items[i]
 		if _, err := p.queries.UpdateItemPointsAndComments(ctx, store.UpdateItemPointsAndCommentsParams{
@@ -232,7 +239,9 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 			CommentsCount: item.CommentsCount,
 		}); err != nil {
 			logger.Debug("failed to update enriched item", "item_id", item.ID, "error", err)
+		} else {
+			updated++
 		}
 	}
-	logger.Debug("enriched items (bulk)", "count", len(items))
+	logger.Info("enriched items (bulk)", "updated", updated, "total", len(items))
 }
