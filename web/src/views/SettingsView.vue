@@ -50,6 +50,23 @@ async function deleteCategory(id: number) {
   await categoryStore.remove(id)
 }
 
+function handleTypeChange(type: string) {
+  newFeed.value.type = type
+  switch (type) {
+    case 'hn':
+      newFeed.value.url = 'https://news.ycombinator.com/rss'
+      break
+    case 'lobsters':
+      newFeed.value.url = 'https://lobste.rs/rss'
+      break
+    case 'reddit':
+      newFeed.value.url = 'https://www.reddit.com/r/'
+      break
+    default:
+      newFeed.value.url = ''
+  }
+}
+
 const accents = ['blue', 'green', 'purple', 'orange', 'rose', 'teal', 'amber']
 
 const accentColors: Record<string, string> = {
@@ -133,14 +150,18 @@ const accentColors: Record<string, string> = {
             <option value="0" disabled>Select category</option>
             <option v-for="cat in categoryStore.categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
           </select>
-          <select v-model="newFeed.type" class="flex h-9 w-full rounded-md border border-border bg-background px-3 text-sm">
+          <select :value="newFeed.type" @change="handleTypeChange(($event.target as HTMLSelectElement).value)" class="flex h-9 w-full rounded-md border border-border bg-background px-3 text-sm">
             <option value="rss">RSS / Atom</option>
             <option value="hn">Hacker News</option>
             <option value="lobsters">Lobste.rs</option>
             <option value="reddit">Reddit</option>
           </select>
           <Input v-model="newFeed.name" placeholder="Feed name" required />
-          <Input v-model="newFeed.url" placeholder="Feed URL" required />
+          <div v-if="newFeed.type === 'rss' || newFeed.type === 'atom' || newFeed.type === 'reddit'" class="space-y-1">
+            <Input v-model="newFeed.url" placeholder="Feed URL" required />
+            <p v-if="newFeed.type === 'reddit'" class="text-xs text-muted-foreground">Enter the subreddit URL, e.g. https://www.reddit.com/r/programming/</p>
+          </div>
+          <p v-if="newFeed.type === 'hn' || newFeed.type === 'lobsters'" class="text-xs text-muted-foreground">URL will be set automatically to {{ newFeed.url }}</p>
           <Button type="submit">Add</Button>
         </form>
       </Dialog>
