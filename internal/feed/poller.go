@@ -25,8 +25,11 @@ func NewPoller(queries *store.Queries) *Poller {
 	return &Poller{
 		queries: queries,
 		fetchers: map[string]Fetcher{
-			"rss":  rssFetcher,
-			"atom": rssFetcher,
+			"rss":      rssFetcher,
+			"atom":     rssFetcher,
+			"hn":       rssFetcher,
+			"lobsters": rssFetcher,
+			"reddit":   rssFetcher,
 		},
 		enrichers: map[string]Enricher{
 			"rss":      &NoopEnricher{},

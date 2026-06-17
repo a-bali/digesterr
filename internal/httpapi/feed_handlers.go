@@ -48,6 +48,10 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and type are required")
 		return
 	}
+	if req.CategoryID <= 0 {
+		writeError(w, http.StatusBadRequest, "category is required")
+		return
+	}
 	if req.Config == "" {
 		req.Config = "{}"
 	}
@@ -61,7 +65,7 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 		Status:     "active",
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create feed")
+		writeServerError(w, "failed to create feed", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, feed)
