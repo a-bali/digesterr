@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
@@ -35,15 +36,21 @@ func (e *LobstersEnricher) Enrich(ctx context.Context, item *store.Item) error {
 }
 
 func (e *LobstersEnricher) BulkEnrich(ctx context.Context, items []*store.Item) error {
+	enriched := 0
+	errors := 0
 	for _, item := range items {
 		shortID := extractLobstersShortID(item.CommentUrl, item.Url, item.Hash)
 		if shortID == "" {
 			continue
 		}
 		if err := e.enrichOne(ctx, item, shortID); err != nil {
-			return err
+			slog.Debug("failed to enrich Lobste.rs item", "item_id", item.ID, "short_id", shortID, "error", err)
+			errors++
+			continue
 		}
+		enriched++
 	}
+	slog.Info("Lobste.rs bulk enrich", "enriched", enriched, "errors", errors, "total", len(items))
 	return nil
 }
 
