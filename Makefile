@@ -32,3 +32,5 @@ lint:
 clean:
 	rm -f bin/digesterr $(DB_PATH)
 	rm -rf cmd/digesterr/static
+	mkdir -p cmd/digesterr/static
+	@echo 'placeholder' > cmd/digesterr/static/.gitkeep
