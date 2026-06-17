@@ -272,7 +272,7 @@ func (q *Queries) ListItemsByFeedAndStatus(ctx context.Context, arg ListItemsByF
 }
 
 const listUnreadItemsForEnrichment = `-- name: ListUnreadItemsForEnrichment :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY published_at DESC, created_at DESC
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY last_enriched_at IS NULL DESC, last_enriched_at ASC, published_at DESC
 `
 
 type ListUnreadItemsForEnrichmentParams struct {

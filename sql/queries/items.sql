@@ -33,7 +33,7 @@ WHERE id = ?
 RETURNING *;
 
 -- name: ListUnreadItemsForEnrichment :many
-SELECT * FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY published_at DESC, created_at DESC;
+SELECT * FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY last_enriched_at IS NULL DESC, last_enriched_at ASC, published_at DESC;
 
 -- name: DeleteItem :one
 DELETE FROM items WHERE id = ? RETURNING id;
