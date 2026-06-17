@@ -110,9 +110,9 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 			}
 		}
 		h := itemHash(item.GUID, item.Title, item.URL, item.Content)
-		pubAt := sql.NullTime{}
+		pubAt := store.NullTime{}
 		if !item.PublishedAt.IsZero() {
-			pubAt = sql.NullTime{Time: item.PublishedAt, Valid: true}
+			pubAt = store.NullTime{Time: item.PublishedAt, Valid: true}
 		}
 		id, err := p.queries.CreateItemIfNotExists(ctx, store.CreateItemIfNotExistsParams{
 			FeedID:        feed.ID,

@@ -7,7 +7,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"time"
 )
 
@@ -25,7 +24,7 @@ type CreateItemParams struct {
 	Content       string       `json:"content"`
 	CommentUrl    string       `json:"comment_url"`
 	Author        string       `json:"author"`
-	PublishedAt   sql.NullTime `json:"published_at"`
+	PublishedAt   NullTime `json:"published_at"`
 	Points        int64        `json:"points"`
 	CommentsCount int64        `json:"comments_count"`
 	Status        string       `json:"status"`
@@ -81,7 +80,7 @@ type CreateItemIfNotExistsParams struct {
 	Content       string       `json:"content"`
 	CommentUrl    string       `json:"comment_url"`
 	Author        string       `json:"author"`
-	PublishedAt   sql.NullTime `json:"published_at"`
+	PublishedAt   NullTime `json:"published_at"`
 	Points        int64        `json:"points"`
 	CommentsCount int64        `json:"comments_count"`
 }

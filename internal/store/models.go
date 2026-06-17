@@ -6,8 +6,63 @@ package store
 
 import (
 	"database/sql"
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"time"
 )
+
+// NullTime is a sql.NullTime replacement that can scan string
+// datetime values produced by modernc.org/sqlite.
+type NullTime struct {
+	Time  time.Time
+	Valid bool
+}
+
+func (nt *NullTime) Scan(value any) error {
+	if value == nil {
+		nt.Time, nt.Valid = time.Time{}, false
+		return nil
+	}
+	nt.Valid = true
+	switch v := value.(type) {
+	case time.Time:
+		nt.Time = v
+		return nil
+	case string:
+		formats := []string{
+			"2006-01-02 15:04:05.999999999 -0700 MST",
+			"2006-01-02 15:04:05.999999999 -0700 -0700",
+			"2006-01-02 15:04:05 -0700 MST",
+			"2006-01-02 15:04:05 -0700 -0700",
+			"2006-01-02 15:04:05",
+			time.RFC3339,
+			time.RFC3339Nano,
+		}
+		for _, f := range formats {
+			if t, err := time.Parse(f, v); err == nil {
+				nt.Time = t
+				return nil
+			}
+		}
+		return fmt.Errorf("cannot parse date %q", v)
+	}
+	return nil
+}
+
+func (nt NullTime) MarshalJSON() ([]byte, error) {
+	if !nt.Valid {
+		return []byte("null"), nil
+	}
+	return json.Marshal(nt.Time)
+}
+
+func (nt NullTime) Value() (driver.Value, error) {
+	if !nt.Valid {
+		return nil, nil
+	}
+	return nt.Time, nil
+}
 
 type Category struct {
 	ID        int64     `json:"id"`
@@ -70,12 +125,12 @@ type Item struct {
 	CommentUrl     string        `json:"comment_url"`
 	Points         int64         `json:"points"`
 	CommentsCount  int64         `json:"comments_count"`
-	PublishedAt    sql.NullTime  `json:"published_at"`
+	PublishedAt    NullTime  `json:"published_at"`
 	Status         string        `json:"status"`
 	FetchedAt      time.Time     `json:"fetched_at"`
 	CreatedAt      time.Time     `json:"created_at"`
 	UpdatedAt      time.Time     `json:"updated_at"`
-	LastEnrichedAt sql.NullTime  `json:"last_enriched_at"`
+	LastEnrichedAt NullTime  `json:"last_enriched_at"`
 }
 
 type RefreshToken struct {

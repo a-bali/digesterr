@@ -159,7 +159,7 @@ const accentColors: Record<string, string> = {
           <Input v-model="newFeed.name" placeholder="Feed name" required />
           <div v-if="newFeed.type === 'rss' || newFeed.type === 'atom' || newFeed.type === 'reddit'" class="space-y-1">
             <Input v-model="newFeed.url" placeholder="Feed URL" required />
-            <p v-if="newFeed.type === 'reddit'" class="text-xs text-muted-foreground">Enter the subreddit URL, e.g. https://www.reddit.com/r/programming/</p>
+            <p v-if="newFeed.type === 'reddit'" class="text-xs text-muted-foreground">Append the subreddit name and .rss, e.g. https://www.reddit.com/r/programming/.rss</p>
           </div>
           <p v-if="newFeed.type === 'hn' || newFeed.type === 'lobsters'" class="text-xs text-muted-foreground">URL will be set automatically to {{ newFeed.url }}</p>
           <Button type="submit">Add</Button>
