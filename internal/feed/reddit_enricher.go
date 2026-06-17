@@ -137,13 +137,15 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 	if err != nil {
 		return fmt.Errorf("creating Reddit API request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Digesterr/1.0 (by u/dre_is)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0")
 
 	resp, err := e.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("fetching Reddit bulk info: %w", err)
 	}
 	defer resp.Body.Close()
+
+	slog.Debug("reddit bulk enrich", "url", apiURL, "status", resp.StatusCode, "req_ids", len(ids))
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Reddit API returned status %d for bulk info", resp.StatusCode)
@@ -157,6 +159,8 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return fmt.Errorf("decoding Reddit info response: %w", err)
 	}
+
+	slog.Debug("reddit bulk enrich response", "children_count", len(info.Data.Children))
 
 	matched := 0
 	for _, child := range info.Data.Children {
