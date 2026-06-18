@@ -4,7 +4,7 @@ import { useFeedStore } from '../stores/feed'
 import { itemApi } from '../services/api'
 import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
-import { BookOpen, ExternalLink, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw } from 'lucide-vue-next'
+import { BookOpen, ExternalLink, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files } from 'lucide-vue-next'
 
 defineProps<{
   absoluteTime: (val: any) => string
@@ -78,6 +78,12 @@ onUnmounted(() => {
       <div class="flex gap-2 mb-4 flex-wrap">
         <Button size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, feedStore.selectedItem!.status === 'read' ? 'unread' : 'read')">
           <Check class="size-3" /> {{ feedStore.selectedItem?.status === 'read' ? 'Mark Unread' : 'Mark Read' }}
+        </Button>
+        <Button v-if="feedStore.selectedItem?.status === 'digested'" size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, 'unread')">
+          <Files class="size-3" /> Mark Undigested
+        </Button>
+        <Button v-else size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, 'digested')">
+          <Files class="size-3" /> Mark Digested
         </Button>
         <Button v-if="feedStore.selectedItem!.status === 'saved'" size="sm" variant="outline" @click="unsaveItem(feedStore.selectedItem!)">
           <BookmarkCheck class="size-3" /> Unsave

@@ -75,6 +75,7 @@ func main() {
 	authSvc := auth.NewService(jwtSecret, queries)
 	server := httpapi.NewServer(queries, authSvc)
 	server.StartPoller(context.Background(), 1*time.Hour)
+	server.StartScheduler(context.Background())
 
 	handler := spaHandler(server, staticFileSystem())
 

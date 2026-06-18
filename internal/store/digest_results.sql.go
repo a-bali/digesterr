@@ -7,6 +7,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"time"
 )
 
 const createDigestResult = `-- name: CreateDigestResult :one
@@ -111,6 +113,31 @@ func (q *Queries) GetDigestResult(ctx context.Context, arg GetDigestResultParams
 	return i, err
 }
 
+const getLatestDigestResult = `-- name: GetLatestDigestResult :one
+SELECT id, user_id, config_id, config_snapshot, content, status, created_at, updated_at FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1
+`
+
+type GetLatestDigestResultParams struct {
+	ConfigID int64 `json:"config_id"`
+	UserID   int64 `json:"user_id"`
+}
+
+func (q *Queries) GetLatestDigestResult(ctx context.Context, arg GetLatestDigestResultParams) (DigestResult, error) {
+	row := q.db.QueryRowContext(ctx, getLatestDigestResult, arg.ConfigID, arg.UserID)
+	var i DigestResult
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ConfigID,
+		&i.ConfigSnapshot,
+		&i.Content,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listDigestResultItems = `-- name: ListDigestResultItems :many
 SELECT id, result_id, item_id, is_highlight, created_at FROM digest_result_items WHERE result_id = ?
 `
@@ -130,6 +157,92 @@ func (q *Queries) ListDigestResultItems(ctx context.Context, resultID int64) ([]
 			&i.ItemID,
 			&i.IsHighlight,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDigestResultItemsWithData = `-- name: ListDigestResultItemsWithData :many
+SELECT dri.id, dri.result_id, dri.item_id, dri.is_highlight, dri.created_at AS result_item_created_at,
+       i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count,
+       i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at,
+       i.extract_content, i.extract_status, i.extract_retries, i.extract_date
+FROM digest_result_items dri
+JOIN items i ON i.id = dri.item_id
+WHERE dri.result_id = ?
+ORDER BY dri.is_highlight DESC, i.points DESC
+`
+
+type ListDigestResultItemsWithDataRow struct {
+	ID                  int64        `json:"id"`
+	ResultID            int64        `json:"result_id"`
+	ItemID              int64        `json:"item_id"`
+	IsHighlight         int64        `json:"is_highlight"`
+	ResultItemCreatedAt time.Time    `json:"result_item_created_at"`
+	FeedID              int64        `json:"feed_id"`
+	Hash                string       `json:"hash"`
+	Title               string       `json:"title"`
+	Url                 string       `json:"url"`
+	Content             string       `json:"content"`
+	Author              string       `json:"author"`
+	CommentUrl          string       `json:"comment_url"`
+	Points              int64        `json:"points"`
+	CommentsCount       int64        `json:"comments_count"`
+	PublishedAt         sql.NullTime `json:"published_at"`
+	Status              string       `json:"status"`
+	FetchedAt           time.Time    `json:"fetched_at"`
+	CreatedAt           time.Time    `json:"created_at"`
+	UpdatedAt           time.Time    `json:"updated_at"`
+	LastEnrichedAt      sql.NullTime `json:"last_enriched_at"`
+	ExtractContent      string       `json:"extract_content"`
+	ExtractStatus       string       `json:"extract_status"`
+	ExtractRetries      int64        `json:"extract_retries"`
+	ExtractDate         sql.NullTime `json:"extract_date"`
+}
+
+func (q *Queries) ListDigestResultItemsWithData(ctx context.Context, resultID int64) ([]ListDigestResultItemsWithDataRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDigestResultItemsWithData, resultID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDigestResultItemsWithDataRow{}
+	for rows.Next() {
+		var i ListDigestResultItemsWithDataRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ResultID,
+			&i.ItemID,
+			&i.IsHighlight,
+			&i.ResultItemCreatedAt,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
 		); err != nil {
 			return nil, err
 		}
@@ -171,6 +284,64 @@ func (q *Queries) ListDigestResultsByConfig(ctx context.Context, arg ListDigestR
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnreadDigestItems = `-- name: ListUnreadDigestItems :many
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = ? AND i.status = 'unread' AND i.fetched_at > ?
+ORDER BY i.points DESC
+LIMIT ?
+`
+
+type ListUnreadDigestItemsParams struct {
+	UserID    int64     `json:"user_id"`
+	FetchedAt time.Time `json:"fetched_at"`
+	Limit     int64     `json:"limit"`
+}
+
+func (q *Queries) ListUnreadDigestItems(ctx context.Context, arg ListUnreadDigestItemsParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listUnreadDigestItems, arg.UserID, arg.FetchedAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
 		); err != nil {
 			return nil, err
 		}

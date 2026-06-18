@@ -6,6 +6,9 @@ RETURNING *;
 -- name: GetFeed :one
 SELECT * FROM feeds WHERE id = ? AND user_id = ?;
 
+-- name: GetFeedByID :one
+SELECT * FROM feeds WHERE id = ?;
+
 -- name: ListFeeds :many
 SELECT * FROM feeds WHERE user_id = ? ORDER BY name;
 
@@ -32,6 +35,9 @@ RETURNING *;
 
 -- name: DeleteFeed :one
 DELETE FROM feeds WHERE id = ? AND user_id = ? RETURNING id;
+
+-- name: ListAllFeeds :many
+SELECT * FROM feeds ORDER BY id;
 
 -- name: ListActiveFeeds :many
 SELECT * FROM feeds WHERE status = 'active' ORDER BY id;

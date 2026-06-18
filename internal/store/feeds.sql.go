@@ -100,12 +100,76 @@ func (q *Queries) GetFeed(ctx context.Context, arg GetFeedParams) (Feed, error) 
 	return i, err
 }
 
+const getFeedByID = `-- name: GetFeedByID :one
+SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, extract_content, created_at, updated_at FROM feeds WHERE id = ?
+`
+
+func (q *Queries) GetFeedByID(ctx context.Context, id int64) (Feed, error) {
+	row := q.db.QueryRowContext(ctx, getFeedByID, id)
+	var i Feed
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.CategoryID,
+		&i.Type,
+		&i.Name,
+		&i.Url,
+		&i.Config,
+		&i.LastFetchedAt,
+		&i.Status,
+		&i.ExtractContent,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listActiveFeeds = `-- name: ListActiveFeeds :many
 SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, extract_content, created_at, updated_at FROM feeds WHERE status = 'active' ORDER BY id
 `
 
 func (q *Queries) ListActiveFeeds(ctx context.Context) ([]Feed, error) {
 	rows, err := q.db.QueryContext(ctx, listActiveFeeds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Feed{}
+	for rows.Next() {
+		var i Feed
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.CategoryID,
+			&i.Type,
+			&i.Name,
+			&i.Url,
+			&i.Config,
+			&i.LastFetchedAt,
+			&i.Status,
+			&i.ExtractContent,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllFeeds = `-- name: ListAllFeeds :many
+SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, extract_content, created_at, updated_at FROM feeds ORDER BY id
+`
+
+func (q *Queries) ListAllFeeds(ctx context.Context) ([]Feed, error) {
+	rows, err := q.db.QueryContext(ctx, listAllFeeds)
 	if err != nil {
 		return nil, err
 	}

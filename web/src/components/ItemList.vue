@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
-import { Filter, ArrowUp, MessageSquare } from 'lucide-vue-next'
+import { Circle, CircleDot, CircleCheck, Check, Filter, ArrowUp, MessageSquare } from 'lucide-vue-next'
 
 const props = defineProps<{
   savedItems: any[]
@@ -126,9 +126,14 @@ onUnmounted(() => {})
     <template v-else>
       <button v-for="item in displayItems" :key="item.id"
       class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
-      :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-muted-foreground': item.status === 'digested' || item.status === 'read', 'text-accent': item.status === 'saved' }"
+      :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'italic text-muted-foreground': item.status === 'digested', 'text-muted-foreground': item.status === 'read' && item.status !== 'digested', 'text-accent': item.status === 'saved' }"
       @click="emit('selectItem', item)">
       <div class="flex items-start gap-1 min-w-0">
+        <CircleDot v-if="item.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
+        <CircleCheck v-else-if="item.status === 'saved'" class="size-3 shrink-0 mt-0.5 text-accent" />
+        <span v-else-if="item.status === 'digested'" class="size-3 shrink-0 mt-0.5 inline-flex items-center justify-center text-[10px] leading-none text-muted-foreground/60" title="digested">◐</span>
+        <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
+        <span v-if="item.status === 'saved'" class="text-accent shrink-0 mt-0.5"><Check class="size-3" /></span>
         <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ item.title }}</p>
         <span class="text-[10px] text-muted-foreground/70 shrink-0 mt-0.5" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
       </div>

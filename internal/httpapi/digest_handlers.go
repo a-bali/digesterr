@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -247,4 +248,70 @@ func (s *Server) handleDeleteDigestResult(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
+}
+
+func (s *Server) handleGenerateDigest(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	configID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	cfg, err := s.queries.GetDigestConfig(r.Context(), store.GetDigestConfigParams{
+		ID:     configID,
+		UserID: userID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "digest config not found")
+		return
+	}
+
+	if s.generator == nil {
+		writeError(w, http.StatusServiceUnavailable, "digest generation not available")
+		return
+	}
+
+	result, err := s.generator.Generate(r.Context(), cfg)
+	if err != nil {
+		slog.Error("digest generation failed", "config_id", configID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to generate digest: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (s *Server) handleListDigestResultItemsWithData(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	resultID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	result, err := s.queries.GetDigestResult(r.Context(), store.GetDigestResultParams{
+		ID:     resultID,
+		UserID: userID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "digest result not found")
+		return
+	}
+	_ = result
+
+	items, err := s.queries.ListDigestResultItemsWithData(r.Context(), resultID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list digest result items")
+		return
+	}
+	if items == nil {
+		items = []store.ListDigestResultItemsWithDataRow{}
+	}
+	writeJSON(w, http.StatusOK, items)
 }

@@ -20,13 +20,18 @@ import (
 )
 
 type Poller struct {
-	queries   *store.Queries
-	fetchers  map[string]Fetcher
-	enrichers map[string]Enricher
+	queries         *store.Queries
+	fetchers        map[string]Fetcher
+	enrichers       map[string]Enricher
+	commentFetchers map[string]CommentFetcher
 }
 
 func NewPoller(queries *store.Queries) *Poller {
 	rssFetcher := NewRSSFetcher()
+	hnEnricher := NewHNEnricher()
+	lobstersEnricher := NewLobstersEnricher()
+	redditEnricher := NewRedditEnricher(queries)
+	noop := &NoopEnricher{}
 	return &Poller{
 		queries: queries,
 		fetchers: map[string]Fetcher{
@@ -37,13 +42,39 @@ func NewPoller(queries *store.Queries) *Poller {
 			"reddit":   rssFetcher,
 		},
 		enrichers: map[string]Enricher{
-			"rss":      &NoopEnricher{},
-			"atom":     &NoopEnricher{},
-			"hn":       NewHNEnricher(),
-			"lobsters": NewLobstersEnricher(),
-			"reddit":   NewRedditEnricher(queries),
+			"rss":      noop,
+			"atom":     noop,
+			"hn":       hnEnricher,
+			"lobsters": lobstersEnricher,
+			"reddit":   redditEnricher,
+		},
+		commentFetchers: map[string]CommentFetcher{
+			"rss":      noop,
+			"atom":     noop,
+			"hn":       hnEnricher,
+			"lobsters": lobstersEnricher,
+			"reddit":   redditEnricher,
 		},
 	}
+}
+
+func (p *Poller) Enrichers() map[string]Enricher {
+	return p.enrichers
+}
+
+func (p *Poller) CommentFetchers() map[string]CommentFetcher {
+	return p.commentFetchers
+}
+
+func (p *Poller) ExtractItem(ctx context.Context, itemID int64) error {
+	item, err := p.queries.GetItem(ctx, itemID)
+	if err != nil {
+		return fmt.Errorf("getting item %d: %w", itemID, err)
+	}
+	p.setItemExtractionPending(ctx, itemID, slog.With("item_id", itemID))
+	client := &http.Client{Timeout: 30 * time.Second}
+	p.extractSingleItem(ctx, client, item, slog.With("item_id", itemID))
+	return nil
 }
 
 func (p *Poller) Start(ctx context.Context, interval time.Duration) {
@@ -417,4 +448,8 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 		}
 	}
 	logger.Info("enriched items (bulk)", "updated", updated, "total", len(items))
+}
+
+func ItemHash(guid, title, url, content string) string {
+	return itemHash(guid, title, url, content)
 }

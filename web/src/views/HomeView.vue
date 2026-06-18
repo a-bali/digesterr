@@ -6,21 +6,25 @@ import Button from '../components/ui/Button'
 import FeedSidebar from '../components/FeedSidebar.vue'
 import ItemList from '../components/ItemList.vue'
 import ItemContent from '../components/ItemContent.vue'
+import DigestSidebar from '../components/DigestSidebar.vue'
+import DigestContent from '../components/DigestContent.vue'
 import { useAuthStore } from '../stores/auth'
 import { useFeedStore } from '../stores/feed'
 import { useCategoryStore } from '../stores/category'
+import { useDigestStore } from '../stores/digest'
 import { useThemeStore } from '../stores/theme'
 import { feedApi } from '../services/api'
 import type { Item } from '../types/api'
 import {
   Rss, Settings, LogOut, BookOpen, Sun, Moon, MessageSquare,
-  Menu, ArrowLeft,
+  Menu, ArrowLeft, Sparkles, Star, Trash2,
 } from 'lucide-vue-next'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 const feedStore = useFeedStore()
+const digestStore = useDigestStore()
 const categoryStore = useCategoryStore()
 const theme = useThemeStore()
 
@@ -124,6 +128,7 @@ watch(
     const fid = feedId ? Number(feedId) : null
     const iid = itemId ? Number(itemId) : null
     if (path.startsWith('/feeds/') && fid) {
+      viewMode.value = 'feed'
       showingSaved.value = false
       if (feedStore.activeFeedId !== fid) {
         await feedStore.setActiveFeed(fid)
@@ -139,6 +144,28 @@ watch(
       } else {
         feedStore.selectedItem = null
         pendingItemId.value = null
+      }
+    } else if (path.startsWith('/digests/')) {
+      viewMode.value = 'digest'
+      showingSaved.value = false
+      feedStore.activeFeedId = null
+      feedStore.selectedItem = null
+      pendingItemId.value = null
+      const cid = route.params.configId ? Number(route.params.configId) : null
+      const rid = route.params.resultId ? Number(route.params.resultId) : null
+      if (cid) {
+        if (digestStore.activeConfigId !== cid) {
+          await digestStore.setActiveConfig(cid)
+        }
+        if (rid) {
+          const result = digestStore.results.find(r => r.id === rid)
+          if (result) {
+            await digestStore.selectResult(result)
+          }
+        } else {
+          digestStore.selectedResult = null
+          digestStore.resultItems = []
+        }
       }
     } else if (path === '/saved') {
       showingSaved.value = true
@@ -266,10 +293,10 @@ function absoluteTime(val: any): string {
         <span class="font-semibold shrink-0 hidden sm:inline">Digesterr</span>
       </template>
       <div class="ml-4 flex gap-1">
-        <Button :variant="viewMode === 'feed' ? 'default' : 'ghost'" size="sm" @click="viewMode = 'feed'">
+        <Button :variant="viewMode === 'feed' ? 'default' : 'ghost'" size="sm" @click="viewMode = 'feed'; router.push('/')">
           <BookOpen class="size-4" /> <span class="hidden sm:inline">Feeds</span>
         </Button>
-        <Button :variant="viewMode === 'digest' ? 'default' : 'ghost'" size="sm" @click="viewMode = 'digest'">
+        <Button :variant="viewMode === 'digest' ? 'default' : 'ghost'" size="sm" @click="viewMode = 'digest'; router.push(digestStore.activeConfigId ? `/digests/${digestStore.activeConfigId}` : '/digests')">
           <MessageSquare class="size-4" /> <span class="hidden sm:inline">Digest</span>
         </Button>
       </div>
@@ -311,13 +338,105 @@ function absoluteTime(val: any): string {
       </div>
     </header>
 
-    <div v-if="viewMode === 'digest'" class="flex flex-1 items-center justify-center bg-muted/30">
-      <div class="max-w-md text-center p-8">
-        <MessageSquare class="size-12 mx-auto mb-4 text-muted-foreground" />
-        <h2 class="text-xl font-semibold mb-2">Digests</h2>
-        <p class="text-muted-foreground">AI-generated summaries — coming in a future release.</p>
+    <!-- Digest view: 3-pane layout -->
+    <template v-if="viewMode === 'digest'">
+      <div class="flex flex-1 overflow-hidden">
+        <template v-if="isDesktop">
+          <SplitterGroup direction="horizontal" auto-save-id="digesterr-digest" class="flex-1">
+            <SplitterPanel :default-size="18" :min-size="14" :max-size="28">
+              <aside class="h-full border-r bg-sidebar overflow-y-auto p-3">
+                <DigestSidebar />
+              </aside>
+            </SplitterPanel>
+            <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
+            <SplitterPanel :default-size="30" :min-size="20" :max-size="50">
+              <div class="h-full overflow-y-auto p-3">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-xs font-semibold text-muted-foreground uppercase">Results</span>
+                  <Button
+                    v-if="digestStore.activeConfigId"
+                    variant="outline"
+                    size="sm"
+                    :disabled="digestStore.generating"
+                    @click.stop="digestStore.generateNow(digestStore.activeConfigId)"
+                  >
+                    <Sparkles class="size-3" /> {{ digestStore.generating ? 'Generating...' : 'Generate' }}
+                  </Button>
+                </div>
+                <div v-if="digestStore.loading" class="flex items-center justify-center h-32 text-sm text-muted-foreground">
+                  Loading...
+                </div>
+                <div v-else-if="digestStore.results.length === 0" class="text-xs text-muted-foreground p-2">
+                  No results yet.
+                </div>
+                <div v-else class="space-y-2">
+                  <div
+                    v-for="result in digestStore.results"
+                    :key="result.id"
+                    class="group relative rounded-md p-2 cursor-pointer border transition-colors"
+                    :class="digestStore.selectedResult?.id === result.id ? 'bg-accent/10 font-medium text-accent border-accent' : 'hover:bg-muted border-border'"
+                    @click="digestStore.selectResult(result); router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)"
+                  >
+                    <div class="flex items-center justify-between text-sm">
+                      <span class="font-medium">
+                        {{ new Date(result.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }}
+                      </span>
+                      <span v-if="result.status === 'new'" class="inline-flex items-center gap-0.5 text-accent bg-accent/10 rounded px-1 py-0.5 text-xs">
+                        <Star class="size-2.5" /> New
+                      </span>
+                      <span v-else-if="result.status === 'read'" class="text-xs text-muted-foreground">Read</span>
+                    </div>
+                    <div class="text-xs text-muted-foreground mt-0.5">
+                      {{ new Date(result.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}
+                    </div>
+                    <button class="absolute right-2 bottom-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-red-500" @click.stop="digestStore.deleteResult(result.id)" title="Delete">
+                      <Trash2 class="size-3" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </SplitterPanel>
+            <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
+            <SplitterPanel :default-size="52" :min-size="30">
+              <DigestContent />
+            </SplitterPanel>
+          </SplitterGroup>
+        </template>
+
+        <!-- Non-desktop digest: simplified layout -->
+        <template v-else>
+          <div class="flex-1 overflow-y-auto p-3" v-if="!digestStore.selectedResult">
+            <DigestSidebar />
+            <div class="mt-4">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-semibold text-muted-foreground uppercase">Results</span>
+                <Button
+                  v-if="digestStore.activeConfigId"
+                  variant="outline"
+                  size="sm"
+                  :disabled="digestStore.generating"
+                  @click.stop="digestStore.generateNow(digestStore.activeConfigId)"
+                >
+                  <Sparkles class="size-3" /> {{ digestStore.generating ? '...' : 'Generate' }}
+                </Button>
+              </div>
+              <div v-for="result in digestStore.results" :key="result.id"
+                class="flex items-center justify-between rounded-md p-2 border cursor-pointer hover:bg-muted mb-1 group"
+                @click="digestStore.selectResult(result)"
+              >
+                <span class="text-sm">{{ new Date(result.created_at).toLocaleDateString() }}</span>
+                <button class="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-red-500" @click.stop="digestStore.deleteResult(result.id)" title="Delete">
+                  <Trash2 class="size-3" />
+                </button>
+              </div>
+            </div>
+          </div>
+          <div v-else class="flex-1 overflow-y-auto">
+            <DigestContent />
+          </div>
+        </template>
       </div>
-    </div>
+    </template>
 
     <div v-else class="flex flex-1 overflow-hidden">
       <!-- Desktop: 3 resizable panes -->

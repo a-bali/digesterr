@@ -25,3 +25,23 @@ RETURNING *;
 
 -- name: ListDigestResultItems :many
 SELECT * FROM digest_result_items WHERE result_id = ?;
+
+-- name: ListDigestResultItemsWithData :many
+SELECT dri.id, dri.result_id, dri.item_id, dri.is_highlight, dri.created_at AS result_item_created_at,
+       i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count,
+       i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at,
+       i.extract_content, i.extract_status, i.extract_retries, i.extract_date
+FROM digest_result_items dri
+JOIN items i ON i.id = dri.item_id
+WHERE dri.result_id = ?
+ORDER BY dri.is_highlight DESC, i.points DESC;
+
+-- name: GetLatestDigestResult :one
+SELECT * FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1;
+
+-- name: ListUnreadDigestItems :many
+SELECT i.* FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = ? AND i.status = 'unread' AND i.fetched_at > ?
+ORDER BY i.points DESC
+LIMIT ?;

@@ -317,13 +317,24 @@ func (e *RedditEnricher) FetchComments(ctx context.Context, item store.Item, max
 
 func flattenRedditComment(child redditChild, depth int, out *[]Comment) {
 	if child.Kind != "t1" || child.Data.Body == "" {
+		if child.Kind == "t1" {
+			for _, reply := range child.Data.Replies.Data.Children {
+				flattenRedditComment(reply, depth+1, out)
+			}
+		}
 		return
 	}
+	commentURL := ""
+	if child.Data.Permalink != "" {
+		commentURL = "https://www.reddit.com" + child.Data.Permalink
+	}
 	*out = append(*out, Comment{
+		ID:     0,
 		Author: child.Data.Author,
 		Text:   child.Data.Body,
 		Points: child.Data.Score,
 		Depth:  depth,
+		URL:    commentURL,
 	})
 	for _, reply := range child.Data.Replies.Data.Children {
 		flattenRedditComment(reply, depth+1, out)

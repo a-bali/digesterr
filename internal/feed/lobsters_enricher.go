@@ -131,7 +131,7 @@ func (e *LobstersEnricher) FetchComments(ctx context.Context, item store.Item, m
 	}
 
 	var comments []Comment
-	flattenLobstersComments(story.Comments, 0, &comments)
+	flattenLobstersComments(story.Comments, shortID, 0, &comments)
 	sort.Slice(comments, func(i, j int) bool { return comments[i].Points > comments[j].Points })
 
 	if maxComments > 0 && len(comments) > maxComments {
@@ -140,9 +140,10 @@ func (e *LobstersEnricher) FetchComments(ctx context.Context, item store.Item, m
 	return comments, nil
 }
 
-func flattenLobstersComments(children []lobstersComment, depth int, out *[]Comment) {
+func flattenLobstersComments(children []lobstersComment, shortID string, depth int, out *[]Comment) {
 	for _, c := range children {
 		if c.Comment == "" {
+			flattenLobstersComments(c.Children, shortID, depth+1, out)
 			continue
 		}
 		*out = append(*out, Comment{
@@ -150,8 +151,9 @@ func flattenLobstersComments(children []lobstersComment, depth int, out *[]Comme
 			Text:   stripHTMLTags(c.Comment),
 			Points: c.Score,
 			Depth:  depth,
+			URL:    fmt.Sprintf("https://lobste.rs/s/%s/%s", shortID, c.ShortID),
 		})
-		flattenLobstersComments(c.Children, depth+1, out)
+		flattenLobstersComments(c.Children, shortID, depth+1, out)
 	}
 }
 

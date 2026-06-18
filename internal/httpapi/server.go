@@ -4,18 +4,21 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"digesterr/internal/auth"
+	"digesterr/internal/digest"
 	"digesterr/internal/feed"
 	"digesterr/internal/store"
 )
 
 type Server struct {
-	mux     *http.ServeMux
-	queries *store.Queries
-	auth    *auth.Service
-	poller  *feed.Poller
+	mux       *http.ServeMux
+	queries   *store.Queries
+	auth      *auth.Service
+	poller    *feed.Poller
+	generator *digest.Generator
 }
 
 func NewServer(queries *store.Queries, authSvc *auth.Service) *Server {
@@ -25,6 +28,12 @@ func NewServer(queries *store.Queries, authSvc *auth.Service) *Server {
 		auth:    authSvc,
 		poller:  feed.NewPoller(queries),
 	}
+
+	llmEndpoint := envOr("LLM_ENDPOINT", "https://api.openai.com/v1")
+	llmAPIKey := envOr("LLM_API_KEY", "")
+	llmModel := envOr("LLM_MODEL", "gpt-4o-mini")
+	llmClient := digest.NewLLMClient(llmEndpoint, llmAPIKey, llmModel)
+	s.generator = digest.NewGenerator(queries, llmClient, s.poller)
 
 	mux := s.mux
 
@@ -63,15 +72,23 @@ func NewServer(queries *store.Queries, authSvc *auth.Service) *Server {
 	mux.HandleFunc("DELETE /api/digest-configs/{id}", s.requireAuth(s.handleDeleteDigestConfig))
 	mux.HandleFunc("GET /api/digest-configs/{id}/results", s.requireAuth(s.handleListDigestResults))
 
+	mux.HandleFunc("POST /api/digest-configs/{id}/generate", s.requireAuth(s.handleGenerateDigest))
+
 	mux.HandleFunc("GET /api/digest-results/{id}", s.requireAuth(s.handleGetDigestResult))
 	mux.HandleFunc("PATCH /api/digest-results/{id}", s.requireAuth(s.handleUpdateDigestResultStatus))
 	mux.HandleFunc("DELETE /api/digest-results/{id}", s.requireAuth(s.handleDeleteDigestResult))
+	mux.HandleFunc("GET /api/digest-results/{id}/items", s.requireAuth(s.handleListDigestResultItemsWithData))
 
 	return s
 }
 
 func (s *Server) StartPoller(ctx context.Context, interval time.Duration) {
 	go s.poller.Start(ctx, interval)
+}
+
+func (s *Server) StartScheduler(ctx context.Context) {
+	scheduler := digest.NewScheduler(s.queries, s.generator)
+	go scheduler.Start(ctx)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -100,4 +117,11 @@ type responseRecorder struct {
 func (rr *responseRecorder) WriteHeader(code int) {
 	rr.status = code
 	rr.ResponseWriter.WriteHeader(code)
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

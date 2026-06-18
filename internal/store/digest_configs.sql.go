@@ -74,6 +74,40 @@ func (q *Queries) GetDigestConfig(ctx context.Context, arg GetDigestConfigParams
 	return i, err
 }
 
+const listAllDigestConfigs = `-- name: ListAllDigestConfigs :many
+SELECT id, user_id, schedule, config, created_at, updated_at FROM digest_configs ORDER BY id
+`
+
+func (q *Queries) ListAllDigestConfigs(ctx context.Context) ([]DigestConfig, error) {
+	rows, err := q.db.QueryContext(ctx, listAllDigestConfigs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DigestConfig{}
+	for rows.Next() {
+		var i DigestConfig
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Schedule,
+			&i.Config,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDigestConfigs = `-- name: ListDigestConfigs :many
 SELECT id, user_id, schedule, config, created_at, updated_at FROM digest_configs WHERE user_id = ? ORDER BY created_at
 `

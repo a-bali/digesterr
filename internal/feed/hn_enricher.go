@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"sort"
@@ -128,7 +129,7 @@ func (e *HNEnricher) BulkEnrich(ctx context.Context, items []*store.Item) error 
 	return nil
 }
 
-// FetchComments fetches the comment tree from Algolia and returns the top N comments sorted by points.
+// FetchComments fetches the comment tree from Algolia.
 func (e *HNEnricher) FetchComments(ctx context.Context, item store.Item, maxComments int) ([]Comment, error) {
 	hnID := extractHNID(item.CommentUrl, item.Url)
 	if hnID == 0 {
@@ -169,6 +170,7 @@ func (e *HNEnricher) FetchComments(ctx context.Context, item store.Item, maxComm
 }
 
 type algoliaComment struct {
+	ID       int64            `json:"id"`
 	Author   string           `json:"author"`
 	Text     string           `json:"text"`
 	Points   int              `json:"points"`
@@ -178,13 +180,16 @@ type algoliaComment struct {
 func flattenComments(children []algoliaComment, depth int, out *[]Comment) {
 	for _, c := range children {
 		if c.Text == "" {
+			flattenComments(c.Children, depth+1, out)
 			continue
 		}
 		*out = append(*out, Comment{
+			ID:     c.ID,
 			Author: c.Author,
 			Text:   stripHTMLTags(c.Text),
 			Points: c.Points,
 			Depth:  depth,
+			URL:    fmt.Sprintf("https://news.ycombinator.com/item?id=%d", c.ID),
 		})
 		flattenComments(c.Children, depth+1, out)
 	}
@@ -206,7 +211,7 @@ func stripHTMLTags(s string) string {
 			buf.WriteRune(r)
 		}
 	}
-	return strings.TrimSpace(buf.String())
+	return html.UnescapeString(strings.TrimSpace(buf.String()))
 }
 
 func extractHNID(commentURL, itemURL string) int {

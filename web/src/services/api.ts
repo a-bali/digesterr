@@ -1,4 +1,4 @@
-import type { AuthResponse, Category, Feed, FeedItemsResponse, Item } from '../types/api'
+import type { AuthResponse, Category, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, Item } from '../types/api'
 
 const TOKEN_KEY = 'digesterr-token'
 
@@ -117,4 +117,22 @@ export const itemApi = {
     api<Item>(`/items/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   getItem: (id: number) => api<Item>(`/items/${id}`),
   extract: (id: number) => api<Item>(`/items/${id}/extract`, { method: 'POST' }),
+}
+
+export const digestApi = {
+  listConfigs: () => api<DigestConfig[]>('/digest-configs'),
+  createConfig: (data: { schedule: string; config: string }) =>
+    api<DigestConfig>('/digest-configs', { method: 'POST', body: JSON.stringify(data) }),
+  updateConfig: (id: number, data: { schedule: string; config: string }) =>
+    api<DigestConfig>(`/digest-configs/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteConfig: (id: number) => api<void>(`/digest-configs/${id}`, { method: 'DELETE' }),
+  getConfig: (id: number) => api<DigestConfig>(`/digest-configs/${id}`),
+  generate: (configId: number) =>
+    api<DigestResult>(`/digest-configs/${configId}/generate`, { method: 'POST' }),
+  listResults: (configId: number) => api<DigestResult[]>(`/digest-configs/${configId}/results`),
+  getResult: (id: number) => api<DigestResult>(`/digest-results/${id}`),
+  updateResultStatus: (id: number, status: string) =>
+    api<DigestResult>(`/digest-results/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  deleteResult: (id: number) => api<void>(`/digest-results/${id}`, { method: 'DELETE' }),
+  listResultItems: (resultId: number) => api<DigestResultItemWithData[]>(`/digest-results/${resultId}/items`),
 }

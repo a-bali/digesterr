@@ -1,0 +1,111 @@
+package digest
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+)
+
+type LLMClient struct {
+	endpoint string
+	apiKey   string
+	model    string
+	client   *http.Client
+}
+
+func NewLLMClient(endpoint, apiKey, model string) *LLMClient {
+	endpoint = strings.TrimRight(endpoint, "/")
+	if !strings.HasSuffix(endpoint, "/chat/completions") {
+		endpoint += "/chat/completions"
+	}
+	return &LLMClient{
+		endpoint: endpoint,
+		apiKey:   apiKey,
+		model:    model,
+		client:   &http.Client{Timeout: 120 * time.Second},
+	}
+}
+
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type chatRequest struct {
+	Model    string        `json:"model"`
+	Messages []chatMessage `json:"messages"`
+}
+
+type chatResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+func (c *LLMClient) Chat(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+	messages := []chatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	body := chatRequest{
+		Model:    c.model,
+		Messages: messages,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("marshaling request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(jsonBody))
+	if err != nil {
+		return "", fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	slog.Debug("calling LLM", "endpoint", c.endpoint, "model", c.model)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("sending request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("LLM API returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var cr chatResponse
+	if err := json.Unmarshal(respBody, &cr); err != nil {
+		return "", fmt.Errorf("unmarshaling response: %w", err)
+	}
+
+	if cr.Error != nil {
+		return "", fmt.Errorf("LLM API error: %s", cr.Error.Message)
+	}
+
+	if len(cr.Choices) == 0 {
+		return "", fmt.Errorf("LLM returned no choices")
+	}
+
+	return cr.Choices[0].Message.Content, nil
+}

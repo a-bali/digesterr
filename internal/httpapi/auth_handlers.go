@@ -9,6 +9,19 @@ import (
 	"digesterr/internal/store"
 )
 
+func refreshCookie(r *http.Request, value string, maxAge int) *http.Cookie {
+	secure := r.TLS != nil
+	return &http.Cookie{
+		Name:     "refresh_token",
+		Value:    value,
+		Path:     "/api/auth/refresh",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	}
+}
+
 type signupRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
@@ -51,15 +64,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "refresh_token",
-		Value:    refreshToken,
-		Path:     "/api/auth/refresh",
-		MaxAge:   int(auth.RefreshTokenDuration.Seconds()),
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-	})
+	http.SetCookie(w, refreshCookie(r, refreshToken, int(auth.RefreshTokenDuration.Seconds())))
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"user":         user,
@@ -100,15 +105,7 @@ func (s *Server) handleSignin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "refresh_token",
-		Value:    refreshToken,
-		Path:     "/api/auth/refresh",
-		MaxAge:   int(auth.RefreshTokenDuration.Seconds()),
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-	})
+	http.SetCookie(w, refreshCookie(r, refreshToken, int(auth.RefreshTokenDuration.Seconds())))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"user":         user,
@@ -120,15 +117,7 @@ func (s *Server) handleSignout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie("refresh_token"); err == nil {
 		s.auth.DeleteRefreshToken(r.Context(), cookie.Value)
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     "refresh_token",
-		Value:    "",
-		Path:     "/api/auth/refresh",
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-	})
+	http.SetCookie(w, refreshCookie(r, "", -1))
 	writeJSON(w, http.StatusOK, map[string]string{"message": "signed out"})
 }
 
@@ -175,15 +164,7 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "refresh_token",
-		Value:    newRefresh,
-		Path:     "/api/auth/refresh",
-		MaxAge:   int(auth.RefreshTokenDuration.Seconds()),
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-	})
+	http.SetCookie(w, refreshCookie(r, newRefresh, int(auth.RefreshTokenDuration.Seconds())))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"access_token": accessToken,
@@ -238,14 +219,6 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.auth.DeleteAllUserRefreshTokens(r.Context(), userID)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "refresh_token",
-		Value:    "",
-		Path:     "/api/auth/refresh",
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-	})
+	http.SetCookie(w, refreshCookie(r, "", -1))
 	writeJSON(w, http.StatusOK, map[string]string{"message": "password changed"})
 }

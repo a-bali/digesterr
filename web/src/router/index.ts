@@ -10,6 +10,8 @@ export const router = createRouter({
     { path: '/login', component: LoginView },
     { path: '/', component: HomeView, meta: { requiresAuth: true } },
     { path: '/feeds/:feedId(\\d+)/:itemId(\\d+)?', component: HomeView, meta: { requiresAuth: true } },
+    { path: '/digests', component: HomeView, meta: { requiresAuth: true } },
+    { path: '/digests/:configId(\\d+)/:resultId(\\d+)?', component: HomeView, meta: { requiresAuth: true } },
     { path: '/saved', component: HomeView, meta: { requiresAuth: true } },
     { path: '/settings', component: SettingsView, meta: { requiresAuth: true } },
   ],

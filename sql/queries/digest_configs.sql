@@ -9,6 +9,9 @@ SELECT * FROM digest_configs WHERE id = ? AND user_id = ?;
 -- name: ListDigestConfigs :many
 SELECT * FROM digest_configs WHERE user_id = ? ORDER BY created_at;
 
+-- name: ListAllDigestConfigs :many
+SELECT * FROM digest_configs ORDER BY id;
+
 -- name: UpdateDigestConfig :one
 UPDATE digest_configs
 SET schedule = ?, config = ?, updated_at = DATETIME('now')
