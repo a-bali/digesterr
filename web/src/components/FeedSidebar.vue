@@ -4,6 +4,7 @@ import { toast } from 'vue-sonner'
 import { useCategoryStore } from '../stores/category'
 import { useFeedStore } from '../stores/feed'
 import { feedApi } from '../services/api'
+import type { Feed } from '../types/api'
 import { BookmarkCheck, Rss, RefreshCw } from 'lucide-vue-next'
 
 const props = withDefaults(defineProps<{
@@ -18,6 +19,17 @@ const emit = defineEmits<{
 const feedStore = useFeedStore()
 const categoryStore = useCategoryStore()
 const refreshingFeeds = ref(new Set<number>())
+
+function feedIcon(feed: Feed): string {
+  if (feed.type === 'hn') return 'https://news.ycombinator.com/favicon.ico'
+  if (feed.type === 'lobsters') return 'https://lobste.rs/favicon.ico'
+  try {
+    const domain = new URL(feed.url).hostname
+    return `https://icons.duckduckgo.com/ip3/${domain}.ico`
+  } catch {
+    return ''
+  }
+}
 
 async function refreshFeed(id: number) {
   refreshingFeeds.value = new Set(refreshingFeeds.value).add(id)
@@ -46,7 +58,8 @@ async function refreshFeed(id: number) {
         class="group flex items-center w-full rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors"
         :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }">
         <button class="flex items-center gap-2 flex-1 min-w-0" @click="emit('selectFeed', feed.id)">
-          <Rss class="size-3.5 shrink-0 text-accent" />
+          <img v-if="feedIcon(feed)" :src="feedIcon(feed)" class="size-3.5 shrink-0 rounded" @error="($event.target as HTMLImageElement).style.display = 'none'" />
+          <Rss v-else class="size-3.5 shrink-0 text-accent" />
           <span class="truncate">{{ feed.name }}</span>
           <span v-if="(feedStore.unreadCounts[feed.id] ?? 0) > 0" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-1.5">{{ feedStore.unreadCounts[feed.id] }}</span>
         </button>
