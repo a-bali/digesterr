@@ -71,6 +71,28 @@ func (q *Queries) GetCategory(ctx context.Context, arg GetCategoryParams) (Categ
 	return i, err
 }
 
+const getCategoryByName = `-- name: GetCategoryByName :one
+SELECT id, user_id, name, created_at, updated_at FROM categories WHERE user_id = ? AND name = ?
+`
+
+type GetCategoryByNameParams struct {
+	UserID int64  `json:"user_id"`
+	Name   string `json:"name"`
+}
+
+func (q *Queries) GetCategoryByName(ctx context.Context, arg GetCategoryByNameParams) (Category, error) {
+	row := q.db.QueryRowContext(ctx, getCategoryByName, arg.UserID, arg.Name)
+	var i Category
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listCategories = `-- name: ListCategories :many
 SELECT id, user_id, name, created_at, updated_at FROM categories WHERE user_id = ? ORDER BY name
 `

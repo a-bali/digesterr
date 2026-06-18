@@ -100,7 +100,7 @@ export const categoryApi = {
 
 export const feedApi = {
   list: () => api<Feed[]>('/feeds'),
-  create: (data: { category_id: number; type: string; name: string; url: string; extract_content?: number }) =>
+  create: (data: { category_id?: number; category_name?: string; type: string; name: string; url: string; extract_content?: number }) =>
     api<Feed>('/feeds', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: number, data: Partial<Feed>) =>
     api<Feed>(`/feeds/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
@@ -121,9 +121,9 @@ export const itemApi = {
 
 export const digestApi = {
   listConfigs: () => api<DigestConfig[]>('/digest-configs'),
-  createConfig: (data: { schedule: string; config: string }) =>
+  createConfig: (data: { name: string; schedule: string; config: string }) =>
     api<DigestConfig>('/digest-configs', { method: 'POST', body: JSON.stringify(data) }),
-  updateConfig: (id: number, data: { schedule: string; config: string }) =>
+  updateConfig: (id: number, data: { name: string; schedule: string; config: string }) =>
     api<DigestConfig>(`/digest-configs/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteConfig: (id: number) => api<void>(`/digest-configs/${id}`, { method: 'DELETE' }),
   getConfig: (id: number) => api<DigestConfig>(`/digest-configs/${id}`),

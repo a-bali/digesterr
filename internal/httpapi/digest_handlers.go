@@ -10,6 +10,7 @@ import (
 )
 
 type createDigestConfigRequest struct {
+	Name     string `json:"name"`
 	Schedule string `json:"schedule"`
 	Config   string `json:"config"`
 }
@@ -51,6 +52,7 @@ func (s *Server) handleCreateDigestConfig(w http.ResponseWriter, r *http.Request
 	}
 	cfg, err := s.queries.CreateDigestConfig(r.Context(), store.CreateDigestConfigParams{
 		UserID:   userID,
+		Name:     req.Name,
 		Schedule: req.Schedule,
 		Config:   req.Config,
 	})
@@ -102,6 +104,7 @@ func (s *Server) handleUpdateDigestConfig(w http.ResponseWriter, r *http.Request
 	cfg, err := s.queries.UpdateDigestConfig(r.Context(), store.UpdateDigestConfigParams{
 		ID:       id,
 		UserID:   userID,
+		Name:     req.Name,
 		Schedule: req.Schedule,
 		Config:   req.Config,
 	})

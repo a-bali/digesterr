@@ -15,5 +15,8 @@ SET name = ?, updated_at = DATETIME('now')
 WHERE id = ? AND user_id = ?
 RETURNING *;
 
+-- name: GetCategoryByName :one
+SELECT * FROM categories WHERE user_id = ? AND name = ?;
+
 -- name: DeleteCategory :one
 DELETE FROM categories WHERE id = ? AND user_id = ? RETURNING id;

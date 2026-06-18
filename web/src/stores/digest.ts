@@ -23,9 +23,9 @@ export const useDigestStore = defineStore('digest', () => {
     }
   }
 
-  async function createConfig(schedule: string, config: string) {
+  async function createConfig(name: string, schedule: string, config: string) {
     try {
-      const cfg = await digestApi.createConfig({ schedule, config })
+      const cfg = await digestApi.createConfig({ name, schedule, config })
       configs.value.push(cfg)
       return cfg
     } catch (e) {
@@ -34,9 +34,9 @@ export const useDigestStore = defineStore('digest', () => {
     }
   }
 
-  async function updateConfig(id: number, schedule: string, config: string) {
+  async function updateConfig(id: number, name: string, schedule: string, config: string) {
     try {
-      const updated = await digestApi.updateConfig(id, { schedule, config })
+      const updated = await digestApi.updateConfig(id, { name, schedule, config })
       const idx = configs.value.findIndex(c => c.id === id)
       if (idx !== -1) configs.value[idx] = updated
     } catch (e) {

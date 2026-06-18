@@ -1,6 +1,6 @@
 -- name: CreateDigestConfig :one
-INSERT INTO digest_configs (user_id, schedule, config)
-VALUES (?, ?, ?)
+INSERT INTO digest_configs (user_id, name, schedule, config)
+VALUES (?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetDigestConfig :one
@@ -14,7 +14,7 @@ SELECT * FROM digest_configs ORDER BY id;
 
 -- name: UpdateDigestConfig :one
 UPDATE digest_configs
-SET schedule = ?, config = ?, updated_at = DATETIME('now')
+SET name = ?, schedule = ?, config = ?, updated_at = DATETIME('now')
 WHERE id = ? AND user_id = ?
 RETURNING *;
 

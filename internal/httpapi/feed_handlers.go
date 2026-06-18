@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 type createFeedRequest struct {
 	CategoryID     int64  `json:"category_id"`
+	CategoryName   string `json:"category_name"`
 	Type           string `json:"type"`
 	Name           string `json:"name"`
 	URL            string `json:"url"`
@@ -17,21 +19,34 @@ type createFeedRequest struct {
 	ExtractContent int64  `json:"extract_content"`
 }
 
-func (s *Server) handleListFeeds(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
+func (s *Server) resolveCategory(ctx context.Context, userID int64, req createFeedRequest) (int64, error) {
+	if req.CategoryID > 0 {
+		return req.CategoryID, nil
 	}
-	feeds, err := s.queries.ListFeeds(r.Context(), userID)
+	if req.CategoryName != "" {
+		cat, err := s.queries.CreateCategory(ctx, store.CreateCategoryParams{
+			UserID: userID,
+			Name:   req.CategoryName,
+		})
+		if err == nil {
+			return cat.ID, nil
+		}
+	}
+	cat, err := s.queries.GetCategoryByName(ctx, store.GetCategoryByNameParams{
+		UserID: userID,
+		Name:   "FEEDS",
+	})
+	if err == nil {
+		return cat.ID, nil
+	}
+	cat, err = s.queries.CreateCategory(ctx, store.CreateCategoryParams{
+		UserID: userID,
+		Name:   "FEEDS",
+	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list feeds")
-		return
+		return 0, err
 	}
-	if feeds == nil {
-		feeds = []store.Feed{}
-	}
-	writeJSON(w, http.StatusOK, feeds)
+	return cat.ID, nil
 }
 
 func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
@@ -49,16 +64,17 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and type are required")
 		return
 	}
-	if req.CategoryID <= 0 {
-		writeError(w, http.StatusBadRequest, "category is required")
-		return
-	}
 	if req.Config == "" {
 		req.Config = "{}"
 	}
+	categoryID, err := s.resolveCategory(r.Context(), userID, req)
+	if err != nil {
+		writeServerError(w, "failed to resolve category", err)
+		return
+	}
 	feed, err := s.queries.CreateFeed(r.Context(), store.CreateFeedParams{
 		UserID:         userID,
-		CategoryID:     req.CategoryID,
+		CategoryID:     categoryID,
 		Type:           req.Type,
 		Name:           req.Name,
 		Url:            req.URL,
@@ -71,6 +87,23 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, feed)
+}
+
+func (s *Server) handleListFeeds(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	feeds, err := s.queries.ListFeeds(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list feeds")
+		return
+	}
+	if feeds == nil {
+		feeds = []store.Feed{}
+	}
+	writeJSON(w, http.StatusOK, feeds)
 }
 
 func (s *Server) handleGetFeed(w http.ResponseWriter, r *http.Request) {

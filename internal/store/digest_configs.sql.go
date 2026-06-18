@@ -10,23 +10,30 @@ import (
 )
 
 const createDigestConfig = `-- name: CreateDigestConfig :one
-INSERT INTO digest_configs (user_id, schedule, config)
-VALUES (?, ?, ?)
-RETURNING id, user_id, schedule, config, created_at, updated_at
+INSERT INTO digest_configs (user_id, name, schedule, config)
+VALUES (?, ?, ?, ?)
+RETURNING id, user_id, name, schedule, config, created_at, updated_at
 `
 
 type CreateDigestConfigParams struct {
 	UserID   int64  `json:"user_id"`
+	Name     string `json:"name"`
 	Schedule string `json:"schedule"`
 	Config   string `json:"config"`
 }
 
 func (q *Queries) CreateDigestConfig(ctx context.Context, arg CreateDigestConfigParams) (DigestConfig, error) {
-	row := q.db.QueryRowContext(ctx, createDigestConfig, arg.UserID, arg.Schedule, arg.Config)
+	row := q.db.QueryRowContext(ctx, createDigestConfig,
+		arg.UserID,
+		arg.Name,
+		arg.Schedule,
+		arg.Config,
+	)
 	var i DigestConfig
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.Name,
 		&i.Schedule,
 		&i.Config,
 		&i.CreatedAt,
@@ -52,7 +59,7 @@ func (q *Queries) DeleteDigestConfig(ctx context.Context, arg DeleteDigestConfig
 }
 
 const getDigestConfig = `-- name: GetDigestConfig :one
-SELECT id, user_id, schedule, config, created_at, updated_at FROM digest_configs WHERE id = ? AND user_id = ?
+SELECT id, user_id, name, schedule, config, created_at, updated_at FROM digest_configs WHERE id = ? AND user_id = ?
 `
 
 type GetDigestConfigParams struct {
@@ -66,6 +73,7 @@ func (q *Queries) GetDigestConfig(ctx context.Context, arg GetDigestConfigParams
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.Name,
 		&i.Schedule,
 		&i.Config,
 		&i.CreatedAt,
@@ -75,7 +83,7 @@ func (q *Queries) GetDigestConfig(ctx context.Context, arg GetDigestConfigParams
 }
 
 const listAllDigestConfigs = `-- name: ListAllDigestConfigs :many
-SELECT id, user_id, schedule, config, created_at, updated_at FROM digest_configs ORDER BY id
+SELECT id, user_id, name, schedule, config, created_at, updated_at FROM digest_configs ORDER BY id
 `
 
 func (q *Queries) ListAllDigestConfigs(ctx context.Context) ([]DigestConfig, error) {
@@ -90,6 +98,7 @@ func (q *Queries) ListAllDigestConfigs(ctx context.Context) ([]DigestConfig, err
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
+			&i.Name,
 			&i.Schedule,
 			&i.Config,
 			&i.CreatedAt,
@@ -109,7 +118,7 @@ func (q *Queries) ListAllDigestConfigs(ctx context.Context) ([]DigestConfig, err
 }
 
 const listDigestConfigs = `-- name: ListDigestConfigs :many
-SELECT id, user_id, schedule, config, created_at, updated_at FROM digest_configs WHERE user_id = ? ORDER BY created_at
+SELECT id, user_id, name, schedule, config, created_at, updated_at FROM digest_configs WHERE user_id = ? ORDER BY created_at
 `
 
 func (q *Queries) ListDigestConfigs(ctx context.Context, userID int64) ([]DigestConfig, error) {
@@ -124,6 +133,7 @@ func (q *Queries) ListDigestConfigs(ctx context.Context, userID int64) ([]Digest
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
+			&i.Name,
 			&i.Schedule,
 			&i.Config,
 			&i.CreatedAt,
@@ -144,12 +154,13 @@ func (q *Queries) ListDigestConfigs(ctx context.Context, userID int64) ([]Digest
 
 const updateDigestConfig = `-- name: UpdateDigestConfig :one
 UPDATE digest_configs
-SET schedule = ?, config = ?, updated_at = DATETIME('now')
+SET name = ?, schedule = ?, config = ?, updated_at = DATETIME('now')
 WHERE id = ? AND user_id = ?
-RETURNING id, user_id, schedule, config, created_at, updated_at
+RETURNING id, user_id, name, schedule, config, created_at, updated_at
 `
 
 type UpdateDigestConfigParams struct {
+	Name     string `json:"name"`
 	Schedule string `json:"schedule"`
 	Config   string `json:"config"`
 	ID       int64  `json:"id"`
@@ -158,6 +169,7 @@ type UpdateDigestConfigParams struct {
 
 func (q *Queries) UpdateDigestConfig(ctx context.Context, arg UpdateDigestConfigParams) (DigestConfig, error) {
 	row := q.db.QueryRowContext(ctx, updateDigestConfig,
+		arg.Name,
 		arg.Schedule,
 		arg.Config,
 		arg.ID,
@@ -167,6 +179,7 @@ func (q *Queries) UpdateDigestConfig(ctx context.Context, arg UpdateDigestConfig
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.Name,
 		&i.Schedule,
 		&i.Config,
 		&i.CreatedAt,

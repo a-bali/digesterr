@@ -20,6 +20,7 @@ type Category struct {
 type DigestConfig struct {
 	ID        int64     `json:"id"`
 	UserID    int64     `json:"user_id"`
+	Name      string    `json:"name"`
 	Schedule  string    `json:"schedule"`
 	Config    string    `json:"config"`
 	CreatedAt time.Time `json:"created_at"`

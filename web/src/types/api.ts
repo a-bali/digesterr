@@ -54,6 +54,7 @@ export interface Item {
 export interface DigestConfig {
   id: number
   user_id: number
+  name: string
   schedule: string
   config: string
   created_at: string

@@ -59,6 +59,7 @@ CREATE TABLE items (
 CREATE TABLE digest_configs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     INTEGER NOT NULL,
+    name        TEXT    NOT NULL DEFAULT '',
     schedule    TEXT    NOT NULL,
     config      TEXT    NOT NULL DEFAULT '{}',
     created_at  DATETIME NOT NULL DEFAULT (DATETIME('now')),

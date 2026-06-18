@@ -152,6 +152,10 @@ func migrateSchema(db *sql.DB) error {
 			"add items.extract_date",
 			"ALTER TABLE items ADD COLUMN extract_date DATETIME",
 		},
+		{
+			"add digest_configs.name",
+			"ALTER TABLE digest_configs ADD COLUMN name TEXT NOT NULL DEFAULT ''",
+		},
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m.sql); err != nil {
