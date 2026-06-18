@@ -5,7 +5,8 @@ import { useCategoryStore } from '../stores/category'
 import { useFeedStore } from '../stores/feed'
 import { feedApi } from '../services/api'
 import type { Feed } from '../types/api'
-import { BookmarkCheck, Rss, RefreshCw } from 'lucide-vue-next'
+import { BookmarkCheck, Rss, RefreshCw, Check } from 'lucide-vue-next'
+import Tooltip from './ui/Tooltip.vue'
 
 const props = withDefaults(defineProps<{
   showingSaved?: boolean
@@ -45,6 +46,33 @@ async function refreshFeed(id: number) {
     refreshingFeeds.value = next
   }
 }
+
+async function markFeedRead(id: number) {
+  try {
+    await feedApi.markRead(id)
+    await feedStore.fetchFeeds()
+    if (feedStore.activeFeedId === id) {
+      await feedStore.fetchItems()
+    }
+    toast.success('Feed marked read')
+  } catch (e: any) {
+    toast.error('Failed to mark feed read', { description: e.message })
+  }
+}
+
+function formatDate(val: any): string {
+  if (!val) return ''
+  if (typeof val === 'object') {
+    if (!val.Valid) return ''
+    val = val.Time
+  }
+  if (typeof val !== 'string') return ''
+  const d = new Date(val)
+  return isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  })
+}
 </script>
 
 <template>
@@ -60,8 +88,17 @@ async function refreshFeed(id: number) {
         <button class="flex items-center gap-2 flex-1 min-w-0" @click="emit('selectFeed', feed.id)">
           <img v-if="feedIcon(feed)" :src="feedIcon(feed)" class="size-3.5 shrink-0 rounded" @error="($event.target as HTMLImageElement).style.display = 'none'" />
           <Rss v-else class="size-3.5 shrink-0 text-accent" />
-          <span class="truncate">{{ feed.name }}</span>
+          <Tooltip>
+            <template #trigger>
+              <span class="truncate cursor-help">{{ feed.name }}</span>
+            </template>
+            <p>Last fetched: {{ formatDate(feed.last_fetched_at) || 'never' }}</p>
+            <p v-if="feed.status === 'error'" class="text-red-500">Failed</p>
+          </Tooltip>
           <span v-if="(feedStore.unreadCounts[feed.id] ?? 0) > 0" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-1.5">{{ feedStore.unreadCounts[feed.id] }}</span>
+        </button>
+        <button @click.stop="markFeedRead(feed.id)" class="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20">
+          <Check class="size-3" />
         </button>
         <button @click.stop="refreshFeed(feed.id)" class="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20">
           <RefreshCw v-if="refreshingFeeds.has(feed.id)" class="size-3 animate-spin" />
