@@ -131,6 +131,26 @@ func migrateSchema(db *sql.DB) error {
 			"migrate guid→hash column and index",
 			"ALTER TABLE items ADD COLUMN hash TEXT NOT NULL DEFAULT ''",
 		},
+		{
+			"add feeds.extract_content",
+			"ALTER TABLE feeds ADD COLUMN extract_content INTEGER NOT NULL DEFAULT 0",
+		},
+		{
+			"add items.extract_content",
+			"ALTER TABLE items ADD COLUMN extract_content TEXT NOT NULL DEFAULT ''",
+		},
+		{
+			"add items.extract_status",
+			"ALTER TABLE items ADD COLUMN extract_status TEXT NOT NULL DEFAULT ''",
+		},
+		{
+			"add items.extract_retries",
+			"ALTER TABLE items ADD COLUMN extract_retries INTEGER NOT NULL DEFAULT 0",
+		},
+		{
+			"add items.extract_date",
+			"ALTER TABLE items ADD COLUMN extract_date DATETIME",
+		},
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m.sql); err != nil {

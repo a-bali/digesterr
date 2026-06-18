@@ -9,11 +9,12 @@ import (
 )
 
 type createFeedRequest struct {
-	CategoryID int64  `json:"category_id"`
-	Type       string `json:"type"`
-	Name       string `json:"name"`
-	URL        string `json:"url"`
-	Config     string `json:"config"`
+	CategoryID     int64  `json:"category_id"`
+	Type           string `json:"type"`
+	Name           string `json:"name"`
+	URL            string `json:"url"`
+	Config         string `json:"config"`
+	ExtractContent int64  `json:"extract_content"`
 }
 
 func (s *Server) handleListFeeds(w http.ResponseWriter, r *http.Request) {
@@ -56,13 +57,14 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 		req.Config = "{}"
 	}
 	feed, err := s.queries.CreateFeed(r.Context(), store.CreateFeedParams{
-		UserID:     userID,
-		CategoryID: req.CategoryID,
-		Type:       req.Type,
-		Name:       req.Name,
-		Url:        req.URL,
-		Config:     req.Config,
-		Status:     "active",
+		UserID:         userID,
+		CategoryID:     req.CategoryID,
+		Type:           req.Type,
+		Name:           req.Name,
+		Url:            req.URL,
+		Config:         req.Config,
+		Status:         "active",
+		ExtractContent: req.ExtractContent,
 	})
 	if err != nil {
 		writeServerError(w, "failed to create feed", err)
@@ -94,11 +96,12 @@ func (s *Server) handleGetFeed(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateFeedRequest struct {
-	Name       *string `json:"name"`
-	URL        *string `json:"url"`
-	Config     *string `json:"config"`
-	CategoryID *int64  `json:"category_id"`
-	Status     *string `json:"status"`
+	Name           *string `json:"name"`
+	URL            *string `json:"url"`
+	Config         *string `json:"config"`
+	CategoryID     *int64  `json:"category_id"`
+	Status         *string `json:"status"`
+	ExtractContent *int64  `json:"extract_content"`
 }
 
 func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
@@ -145,14 +148,19 @@ func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
 	if req.Status != nil {
 		status = *req.Status
 	}
+	extractContent := existing.ExtractContent
+	if req.ExtractContent != nil {
+		extractContent = *req.ExtractContent
+	}
 	feed, err := s.queries.UpdateFeed(r.Context(), store.UpdateFeedParams{
-		ID:         id,
-		UserID:     userID,
-		Name:       name,
-		Url:        url,
-		Config:     config,
-		CategoryID: categoryID,
-		Status:     status,
+		ID:             id,
+		UserID:         userID,
+		Name:           name,
+		Url:            url,
+		Config:         config,
+		CategoryID:     categoryID,
+		Status:         status,
+		ExtractContent: extractContent,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update feed")
@@ -318,4 +326,30 @@ func (s *Server) handleUnreadCounts(w http.ResponseWriter, r *http.Request) {
 		result[c.FeedID] = c.UnreadCount
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleMarkFeedRead(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	_, err = s.queries.GetFeed(r.Context(), store.GetFeedParams{
+		ID:     id,
+		UserID: userID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "feed not found")
+		return
+	}
+	if err := s.queries.MarkFeedRead(r.Context(), id); err != nil {
+		writeServerError(w, "failed to mark feed read", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "feed marked read"})
 }

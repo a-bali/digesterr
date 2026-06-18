@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { ref, watch, onUnmounted } from 'vue'
 import { useFeedStore } from '../stores/feed'
+import { itemApi } from '../services/api'
 import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
-import { BookOpen, ExternalLink, Check, Bookmark, BookmarkCheck, MessageSquare } from 'lucide-vue-next'
+import { BookOpen, ExternalLink, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw } from 'lucide-vue-next'
 
 defineProps<{
   absoluteTime: (val: any) => string
@@ -10,6 +12,42 @@ defineProps<{
 }>()
 
 const feedStore = useFeedStore()
+
+const extracting = ref(false)
+let extractPoll: ReturnType<typeof setInterval> | null = null
+
+async function doExtract() {
+  const item = feedStore.selectedItem
+  if (!item || extracting.value) return
+  extracting.value = true
+  try {
+    await itemApi.extract(item.id)
+    // Start polling for result
+    if (extractPoll) clearInterval(extractPoll)
+    extractPoll = setInterval(async () => {
+      try {
+        const updated = await itemApi.getItem(item.id)
+        if (updated.extract_status !== 'pending') {
+          if (extractPoll) clearInterval(extractPoll)
+          extractPoll = null
+          extracting.value = false
+          // Update store with the result
+          const idx = feedStore.items.findIndex(i => i.id === updated.id)
+          if (idx !== -1) feedStore.items[idx] = updated
+          if (feedStore.selectedItem?.id === updated.id) feedStore.selectedItem = updated
+        }
+      } catch {
+        // poll failed, will retry
+      }
+    }, 2000)
+  } catch {
+    extracting.value = false
+  }
+}
+
+onUnmounted(() => {
+  if (extractPoll) clearInterval(extractPoll)
+})
 </script>
 
 <template>
@@ -47,8 +85,37 @@ const feedStore = useFeedStore()
         <Button v-else size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, 'saved')">
           <Bookmark class="size-3" /> Save
         </Button>
+        <Button size="sm" variant="outline" :disabled="extracting" @click="doExtract">
+          <template v-if="extracting"><RefreshCw class="size-3 animate-spin" /> Extracting</template>
+          <template v-else><Download class="size-3" /> {{ feedStore.selectedItem.extract_status === 'done' ? 'Re-extract' : 'Extract' }}</template>
+        </Button>
       </div>
-      <Separator class="mb-4" />
+
+      <!-- Extracted Content -->
+      <template v-if="feedStore.selectedItem.extract_status">
+        <Separator class="mb-4" />
+        <p class="text-xs font-semibold text-muted-foreground uppercase mb-2">
+          Extracted
+          <span v-if="feedStore.selectedItem.extract_status === 'done' && feedStore.selectedItem.extract_date" class="font-normal text-muted-foreground/60 ml-1">{{ absoluteTime(feedStore.selectedItem.extract_date) }}</span>
+        </p>
+        <div v-if="feedStore.selectedItem.extract_status === 'pending'"
+          class="p-4 text-sm text-muted-foreground bg-muted/30 rounded-md">
+          <RefreshCw class="size-3 inline animate-spin mr-1" /> Extraction in progress…
+        </div>
+        <div v-else-if="feedStore.selectedItem.extract_status === 'failed'"
+          class="p-4 rounded-md bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
+          <p class="text-xs font-medium text-amber-700 dark:text-amber-400 mb-1">Extraction failed after {{ feedStore.selectedItem.extract_retries }} attempt{{ feedStore.selectedItem.extract_retries === 1 ? '' : 's' }}</p>
+          <pre class="text-xs text-amber-600 dark:text-amber-500 whitespace-pre-wrap">{{ feedStore.selectedItem.extract_content }}</pre>
+        </div>
+        <div v-else-if="feedStore.selectedItem.extract_status === 'done'"
+          class="prose prose-sm dark:prose-invert max-w-none [&_a]:text-accent [&_a]:hover:underline" v-html="feedStore.selectedItem.extract_content" />
+      </template>
+
+      <!-- Original Content -->
+      <template v-if="feedStore.selectedItem.extract_status">
+        <Separator class="mb-4" />
+        <p class="text-xs font-semibold text-muted-foreground uppercase mb-2">Original</p>
+      </template>
       <div class="prose prose-sm dark:prose-invert max-w-none [&_a]:text-accent [&_a]:hover:underline" v-html="feedStore.selectedItem.content" />
     </div>
   </div>

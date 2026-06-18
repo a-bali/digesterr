@@ -23,6 +23,7 @@ export interface Feed {
   config: string
   last_fetched_at: string | null
   status: string
+  extract_content: number
   created_at: string
   updated_at: string
 }
@@ -44,6 +45,10 @@ export interface Item {
   created_at: string
   updated_at: string
   last_enriched_at: string | null
+  extract_content: string
+  extract_status: string
+  extract_retries: number
+  extract_date: string | null
 }
 
 export interface DigestConfig {

@@ -100,7 +100,7 @@ export const categoryApi = {
 
 export const feedApi = {
   list: () => api<Feed[]>('/feeds'),
-  create: (data: { category_id: number; type: string; name: string; url: string }) =>
+  create: (data: { category_id: number; type: string; name: string; url: string; extract_content?: number }) =>
     api<Feed>('/feeds', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: number, data: Partial<Feed>) =>
     api<Feed>(`/feeds/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
@@ -108,10 +108,13 @@ export const feedApi = {
   getItems: (id: number, opts?: { status?: string; limit?: number; offset?: number }) =>
     api<FeedItemsResponse>(`/feeds/${id}/items${qs({ status: opts?.status, limit: opts?.limit, offset: opts?.offset })}`),
   fetch: (id: number) => api<{ message: string }>(`/feeds/${id}/fetch`, { method: 'POST' }),
+  markRead: (id: number) => api<{ message: string }>(`/feeds/${id}/mark-read`, { method: 'POST' }),
   unreadCounts: () => api<Record<number, number>>('/unread-counts'),
 }
 
 export const itemApi = {
   updateStatus: (id: number, status: string) =>
     api<Item>(`/items/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  getItem: (id: number) => api<Item>(`/items/${id}`),
+  extract: (id: number) => api<Item>(`/items/${id}/extract`, { method: 'POST' }),
 }

@@ -132,7 +132,7 @@ onUnmounted(() => {})
         <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ item.title }}</p>
         <span class="text-[10px] text-muted-foreground/70 shrink-0 mt-0.5" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
       </div>
-      <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0 pr-16">{{ stripContent(item.content) }}</p>
+      <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0 pr-16">{{ stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</p>
       <div class="absolute right-2 bottom-2 flex items-center gap-2">
         <Tooltip v-if="item.points > 0">
           <template #trigger>

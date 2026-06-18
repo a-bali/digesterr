@@ -10,19 +10,20 @@ import (
 )
 
 const createFeed = `-- name: CreateFeed :one
-INSERT INTO feeds (user_id, category_id, type, name, url, config, status)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-RETURNING id, user_id, category_id, type, name, url, config, last_fetched_at, status, created_at, updated_at
+INSERT INTO feeds (user_id, category_id, type, name, url, config, status, extract_content)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, user_id, category_id, type, name, url, config, last_fetched_at, status, extract_content, created_at, updated_at
 `
 
 type CreateFeedParams struct {
-	UserID     int64  `json:"user_id"`
-	CategoryID int64  `json:"category_id"`
-	Type       string `json:"type"`
-	Name       string `json:"name"`
-	Url        string `json:"url"`
-	Config     string `json:"config"`
-	Status     string `json:"status"`
+	UserID         int64  `json:"user_id"`
+	CategoryID     int64  `json:"category_id"`
+	Type           string `json:"type"`
+	Name           string `json:"name"`
+	Url            string `json:"url"`
+	Config         string `json:"config"`
+	Status         string `json:"status"`
+	ExtractContent int64  `json:"extract_content"`
 }
 
 func (q *Queries) CreateFeed(ctx context.Context, arg CreateFeedParams) (Feed, error) {
@@ -34,6 +35,7 @@ func (q *Queries) CreateFeed(ctx context.Context, arg CreateFeedParams) (Feed, e
 		arg.Url,
 		arg.Config,
 		arg.Status,
+		arg.ExtractContent,
 	)
 	var i Feed
 	err := row.Scan(
@@ -46,6 +48,7 @@ func (q *Queries) CreateFeed(ctx context.Context, arg CreateFeedParams) (Feed, e
 		&i.Config,
 		&i.LastFetchedAt,
 		&i.Status,
+		&i.ExtractContent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -69,7 +72,7 @@ func (q *Queries) DeleteFeed(ctx context.Context, arg DeleteFeedParams) (int64, 
 }
 
 const getFeed = `-- name: GetFeed :one
-SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, created_at, updated_at FROM feeds WHERE id = ? AND user_id = ?
+SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, extract_content, created_at, updated_at FROM feeds WHERE id = ? AND user_id = ?
 `
 
 type GetFeedParams struct {
@@ -90,6 +93,7 @@ func (q *Queries) GetFeed(ctx context.Context, arg GetFeedParams) (Feed, error) 
 		&i.Config,
 		&i.LastFetchedAt,
 		&i.Status,
+		&i.ExtractContent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -97,7 +101,7 @@ func (q *Queries) GetFeed(ctx context.Context, arg GetFeedParams) (Feed, error) 
 }
 
 const listActiveFeeds = `-- name: ListActiveFeeds :many
-SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, created_at, updated_at FROM feeds WHERE status = 'active' ORDER BY id
+SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, extract_content, created_at, updated_at FROM feeds WHERE status = 'active' ORDER BY id
 `
 
 func (q *Queries) ListActiveFeeds(ctx context.Context) ([]Feed, error) {
@@ -119,6 +123,7 @@ func (q *Queries) ListActiveFeeds(ctx context.Context) ([]Feed, error) {
 			&i.Config,
 			&i.LastFetchedAt,
 			&i.Status,
+			&i.ExtractContent,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -136,7 +141,7 @@ func (q *Queries) ListActiveFeeds(ctx context.Context) ([]Feed, error) {
 }
 
 const listFeeds = `-- name: ListFeeds :many
-SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, created_at, updated_at FROM feeds WHERE user_id = ? ORDER BY name
+SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, extract_content, created_at, updated_at FROM feeds WHERE user_id = ? ORDER BY name
 `
 
 func (q *Queries) ListFeeds(ctx context.Context, userID int64) ([]Feed, error) {
@@ -158,6 +163,7 @@ func (q *Queries) ListFeeds(ctx context.Context, userID int64) ([]Feed, error) {
 			&i.Config,
 			&i.LastFetchedAt,
 			&i.Status,
+			&i.ExtractContent,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -175,7 +181,7 @@ func (q *Queries) ListFeeds(ctx context.Context, userID int64) ([]Feed, error) {
 }
 
 const listFeedsByCategory = `-- name: ListFeedsByCategory :many
-SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, created_at, updated_at FROM feeds WHERE category_id = ? AND user_id = ? ORDER BY name
+SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, extract_content, created_at, updated_at FROM feeds WHERE category_id = ? AND user_id = ? ORDER BY name
 `
 
 type ListFeedsByCategoryParams struct {
@@ -202,6 +208,7 @@ func (q *Queries) ListFeedsByCategory(ctx context.Context, arg ListFeedsByCatego
 			&i.Config,
 			&i.LastFetchedAt,
 			&i.Status,
+			&i.ExtractContent,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -220,19 +227,20 @@ func (q *Queries) ListFeedsByCategory(ctx context.Context, arg ListFeedsByCatego
 
 const updateFeed = `-- name: UpdateFeed :one
 UPDATE feeds
-SET name = ?, url = ?, config = ?, category_id = ?, status = ?, updated_at = DATETIME('now')
+SET name = ?, url = ?, config = ?, category_id = ?, status = ?, extract_content = ?, updated_at = DATETIME('now')
 WHERE id = ? AND user_id = ?
-RETURNING id, user_id, category_id, type, name, url, config, last_fetched_at, status, created_at, updated_at
+RETURNING id, user_id, category_id, type, name, url, config, last_fetched_at, status, extract_content, created_at, updated_at
 `
 
 type UpdateFeedParams struct {
-	Name       string `json:"name"`
-	Url        string `json:"url"`
-	Config     string `json:"config"`
-	CategoryID int64  `json:"category_id"`
-	Status     string `json:"status"`
-	ID         int64  `json:"id"`
-	UserID     int64  `json:"user_id"`
+	Name           string `json:"name"`
+	Url            string `json:"url"`
+	Config         string `json:"config"`
+	CategoryID     int64  `json:"category_id"`
+	Status         string `json:"status"`
+	ExtractContent int64  `json:"extract_content"`
+	ID             int64  `json:"id"`
+	UserID         int64  `json:"user_id"`
 }
 
 func (q *Queries) UpdateFeed(ctx context.Context, arg UpdateFeedParams) (Feed, error) {
@@ -242,6 +250,7 @@ func (q *Queries) UpdateFeed(ctx context.Context, arg UpdateFeedParams) (Feed, e
 		arg.Config,
 		arg.CategoryID,
 		arg.Status,
+		arg.ExtractContent,
 		arg.ID,
 		arg.UserID,
 	)
@@ -256,6 +265,7 @@ func (q *Queries) UpdateFeed(ctx context.Context, arg UpdateFeedParams) (Feed, e
 		&i.Config,
 		&i.LastFetchedAt,
 		&i.Status,
+		&i.ExtractContent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -266,7 +276,7 @@ const updateFeedFetchTime = `-- name: UpdateFeedFetchTime :one
 UPDATE feeds
 SET last_fetched_at = DATETIME('now'), updated_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, user_id, category_id, type, name, url, config, last_fetched_at, status, created_at, updated_at
+RETURNING id, user_id, category_id, type, name, url, config, last_fetched_at, status, extract_content, created_at, updated_at
 `
 
 func (q *Queries) UpdateFeedFetchTime(ctx context.Context, id int64) (Feed, error) {
@@ -282,6 +292,7 @@ func (q *Queries) UpdateFeedFetchTime(ctx context.Context, id int64) (Feed, erro
 		&i.Config,
 		&i.LastFetchedAt,
 		&i.Status,
+		&i.ExtractContent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -292,7 +303,7 @@ const updateFeedStatus = `-- name: UpdateFeedStatus :one
 UPDATE feeds
 SET status = ?, updated_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, user_id, category_id, type, name, url, config, last_fetched_at, status, created_at, updated_at
+RETURNING id, user_id, category_id, type, name, url, config, last_fetched_at, status, extract_content, created_at, updated_at
 `
 
 type UpdateFeedStatusParams struct {
@@ -313,6 +324,7 @@ func (q *Queries) UpdateFeedStatus(ctx context.Context, arg UpdateFeedStatusPara
 		&i.Config,
 		&i.LastFetchedAt,
 		&i.Status,
+		&i.ExtractContent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

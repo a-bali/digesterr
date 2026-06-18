@@ -25,6 +25,7 @@ CREATE TABLE feeds (
     config           TEXT    NOT NULL DEFAULT '{}',
     last_fetched_at  DATETIME,
     status           TEXT    NOT NULL DEFAULT 'active',
+    extract_content  INTEGER NOT NULL DEFAULT 0,
     created_at       DATETIME NOT NULL DEFAULT (DATETIME('now')),
     updated_at       DATETIME NOT NULL DEFAULT (DATETIME('now')),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -48,6 +49,10 @@ CREATE TABLE items (
     created_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
     updated_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
     last_enriched_at DATETIME,
+    extract_content  TEXT    NOT NULL DEFAULT '',
+    extract_status   TEXT    NOT NULL DEFAULT '',
+    extract_retries  INTEGER NOT NULL DEFAULT 0,
+    extract_date     DATETIME,
     FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
 );
 

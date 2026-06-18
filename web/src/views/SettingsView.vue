@@ -9,7 +9,7 @@ import { useCategoryStore } from '../stores/category'
 import { feedApi } from '../services/api'
 import type { Feed } from '../types/api'
 import Separator from '../components/ui/Separator'
-import { ArrowLeft, Plus, Trash2, Rss } from 'lucide-vue-next'
+import { ArrowLeft, Plus, Trash2, Rss, Settings2 } from 'lucide-vue-next'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -17,6 +17,9 @@ const categoryStore = useCategoryStore()
 
 const feeds = ref<Feed[]>([])
 const showAddFeed = ref(false)
+const showEditFeed = ref(false)
+const editingFeed = ref<Feed | null>(null)
+const editExtractContent = ref(0)
 const newFeed = ref({ category_id: 0, type: 'rss', name: '', url: '' })
 const newCategoryName = ref('')
 const showAddCategory = ref(false)
@@ -46,6 +49,21 @@ async function addCategory() {
 
 async function deleteCategory(id: number) {
   await categoryStore.remove(id)
+}
+
+function startEdit(feed: Feed) {
+  editingFeed.value = feed
+  editExtractContent.value = feed.extract_content
+  showEditFeed.value = true
+}
+
+async function saveEdit() {
+  if (!editingFeed.value) return
+  await feedApi.update(editingFeed.value.id, { extract_content: editExtractContent.value })
+  const f = feeds.value.find(f => f.id === editingFeed.value!.id)
+  if (f) f.extract_content = editExtractContent.value
+  showEditFeed.value = false
+  editingFeed.value = null
 }
 
 function handleTypeChange(type: string) {
@@ -111,10 +129,25 @@ function handleTypeChange(type: string) {
           <span class="text-sm">{{ feed.name }}</span>
           <span class="text-xs text-muted-foreground">({{ feed.type }})</span>
         </div>
-        <Button variant="ghost" size="icon" @click="deleteFeed(feed.id)">
-          <Trash2 class="size-3 text-red-500" />
-        </Button>
+        <div class="flex items-center gap-1">
+          <Button variant="ghost" size="icon" @click="startEdit(feed)">
+            <Settings2 class="size-3" />
+          </Button>
+          <Button variant="ghost" size="icon" @click="deleteFeed(feed.id)">
+            <Trash2 class="size-3 text-red-500" />
+          </Button>
+        </div>
       </div>
+      <Dialog v-if="showEditFeed" v-model:open="showEditFeed" title="Edit Feed">
+        <form @submit.prevent="saveEdit" class="space-y-3">
+          <p class="text-sm font-medium">{{ editingFeed?.name }}</p>
+          <label class="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" v-model.number="editExtractContent" :true-value="1" :false-value="0" class="toggle" />
+            Auto-extract full article content
+          </label>
+          <Button type="submit">Save</Button>
+        </form>
+      </Dialog>
       <Dialog v-if="showAddFeed" v-model:open="showAddFeed" title="Add Feed">
         <form @submit.prevent="addFeed" class="space-y-3">
           <select v-model="newFeed.category_id" required class="flex h-9 w-full rounded-md border border-border bg-background px-3 text-sm">

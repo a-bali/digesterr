@@ -14,7 +14,7 @@ import (
 const createItem = `-- name: CreateItem :one
 INSERT INTO items (feed_id, hash, title, url, content, comment_url, author, published_at, points, comments_count, status)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at
+RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date
 `
 
 type CreateItemParams struct {
@@ -63,6 +63,10 @@ func (q *Queries) CreateItem(ctx context.Context, arg CreateItemParams) (Item, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastEnrichedAt,
+		&i.ExtractContent,
+		&i.ExtractStatus,
+		&i.ExtractRetries,
+		&i.ExtractDate,
 	)
 	return i, err
 }
@@ -116,7 +120,7 @@ func (q *Queries) DeleteItem(ctx context.Context, id int64) (int64, error) {
 }
 
 const getItem = `-- name: GetItem :one
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE id = ?
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE id = ?
 `
 
 func (q *Queries) GetItem(ctx context.Context, id int64) (Item, error) {
@@ -139,12 +143,16 @@ func (q *Queries) GetItem(ctx context.Context, id int64) (Item, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastEnrichedAt,
+		&i.ExtractContent,
+		&i.ExtractStatus,
+		&i.ExtractRetries,
+		&i.ExtractDate,
 	)
 	return i, err
 }
 
 const getItemWithFeedOwner = `-- name: GetItemWithFeedOwner :one
-SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at FROM items i
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE i.id = ? AND f.user_id = ?
 `
@@ -174,6 +182,10 @@ func (q *Queries) GetItemWithFeedOwner(ctx context.Context, arg GetItemWithFeedO
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastEnrichedAt,
+		&i.ExtractContent,
+		&i.ExtractStatus,
+		&i.ExtractRetries,
+		&i.ExtractDate,
 	)
 	return i, err
 }
@@ -211,7 +223,7 @@ func (q *Queries) GetUnreadCounts(ctx context.Context, userID int64) ([]GetUnrea
 }
 
 const listItemsByFeed = `-- name: ListItemsByFeed :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC
 `
 
 func (q *Queries) ListItemsByFeed(ctx context.Context, feedID int64) ([]Item, error) {
@@ -240,6 +252,10 @@ func (q *Queries) ListItemsByFeed(ctx context.Context, feedID int64) ([]Item, er
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
 		); err != nil {
 			return nil, err
 		}
@@ -255,7 +271,7 @@ func (q *Queries) ListItemsByFeed(ctx context.Context, feedID int64) ([]Item, er
 }
 
 const listItemsByFeedAndStatus = `-- name: ListItemsByFeedAndStatus :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC
 `
 
 type ListItemsByFeedAndStatusParams struct {
@@ -289,6 +305,10 @@ func (q *Queries) ListItemsByFeedAndStatus(ctx context.Context, arg ListItemsByF
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
 		); err != nil {
 			return nil, err
 		}
@@ -304,7 +324,7 @@ func (q *Queries) ListItemsByFeedAndStatus(ctx context.Context, arg ListItemsByF
 }
 
 const listItemsByFeedAndStatusPaginated = `-- name: ListItemsByFeedAndStatusPaginated :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?
 `
 
 type ListItemsByFeedAndStatusPaginatedParams struct {
@@ -345,6 +365,10 @@ func (q *Queries) ListItemsByFeedAndStatusPaginated(ctx context.Context, arg Lis
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
 		); err != nil {
 			return nil, err
 		}
@@ -360,7 +384,7 @@ func (q *Queries) ListItemsByFeedAndStatusPaginated(ctx context.Context, arg Lis
 }
 
 const listItemsByFeedPaginated = `-- name: ListItemsByFeedPaginated :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?
 `
 
 type ListItemsByFeedPaginatedParams struct {
@@ -395,6 +419,63 @@ func (q *Queries) ListItemsByFeedPaginated(ctx context.Context, arg ListItemsByF
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listItemsNeedingExtraction = `-- name: ListItemsNeedingExtraction :many
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? AND url != '' AND extract_status IN ('pending', 'failed') AND extract_retries < 3 ORDER BY extract_retries ASC, published_at DESC LIMIT ?
+`
+
+type ListItemsNeedingExtractionParams struct {
+	FeedID int64 `json:"feed_id"`
+	Limit  int64 `json:"limit"`
+}
+
+func (q *Queries) ListItemsNeedingExtraction(ctx context.Context, arg ListItemsNeedingExtractionParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsNeedingExtraction, arg.FeedID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
 		); err != nil {
 			return nil, err
 		}
@@ -410,7 +491,7 @@ func (q *Queries) ListItemsByFeedPaginated(ctx context.Context, arg ListItemsByF
 }
 
 const listUnreadItemsForEnrichment = `-- name: ListUnreadItemsForEnrichment :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY last_enriched_at IS NULL DESC, last_enriched_at ASC, published_at DESC
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY last_enriched_at IS NULL DESC, last_enriched_at ASC, published_at DESC
 `
 
 type ListUnreadItemsForEnrichmentParams struct {
@@ -445,6 +526,10 @@ func (q *Queries) ListUnreadItemsForEnrichment(ctx context.Context, arg ListUnre
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
 		); err != nil {
 			return nil, err
 		}
@@ -459,11 +544,64 @@ func (q *Queries) ListUnreadItemsForEnrichment(ctx context.Context, arg ListUnre
 	return items, nil
 }
 
+const markFeedRead = `-- name: MarkFeedRead :exec
+UPDATE items SET status = 'read', updated_at = DATETIME('now') WHERE feed_id = ? AND status = 'unread'
+`
+
+func (q *Queries) MarkFeedRead(ctx context.Context, feedID int64) error {
+	_, err := q.db.ExecContext(ctx, markFeedRead, feedID)
+	return err
+}
+
+const updateItemExtraction = `-- name: UpdateItemExtraction :one
+UPDATE items SET extract_content = ?, extract_status = ?, extract_retries = ?, extract_date = DATETIME('now'), updated_at = DATETIME('now') WHERE id = ? RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date
+`
+
+type UpdateItemExtractionParams struct {
+	ExtractContent string `json:"extract_content"`
+	ExtractStatus  string `json:"extract_status"`
+	ExtractRetries int64  `json:"extract_retries"`
+	ID             int64  `json:"id"`
+}
+
+func (q *Queries) UpdateItemExtraction(ctx context.Context, arg UpdateItemExtractionParams) (Item, error) {
+	row := q.db.QueryRowContext(ctx, updateItemExtraction,
+		arg.ExtractContent,
+		arg.ExtractStatus,
+		arg.ExtractRetries,
+		arg.ID,
+	)
+	var i Item
+	err := row.Scan(
+		&i.ID,
+		&i.FeedID,
+		&i.Hash,
+		&i.Title,
+		&i.Url,
+		&i.Content,
+		&i.Author,
+		&i.CommentUrl,
+		&i.Points,
+		&i.CommentsCount,
+		&i.PublishedAt,
+		&i.Status,
+		&i.FetchedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastEnrichedAt,
+		&i.ExtractContent,
+		&i.ExtractStatus,
+		&i.ExtractRetries,
+		&i.ExtractDate,
+	)
+	return i, err
+}
+
 const updateItemPointsAndComments = `-- name: UpdateItemPointsAndComments :one
 UPDATE items
 SET points = ?, comments_count = ?, comment_url = ?, updated_at = DATETIME('now'), last_enriched_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at
+RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date
 `
 
 type UpdateItemPointsAndCommentsParams struct {
@@ -498,6 +636,10 @@ func (q *Queries) UpdateItemPointsAndComments(ctx context.Context, arg UpdateIte
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastEnrichedAt,
+		&i.ExtractContent,
+		&i.ExtractStatus,
+		&i.ExtractRetries,
+		&i.ExtractDate,
 	)
 	return i, err
 }
@@ -506,7 +648,7 @@ const updateItemStatus = `-- name: UpdateItemStatus :one
 UPDATE items
 SET status = ?, updated_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at
+RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date
 `
 
 type UpdateItemStatusParams struct {
@@ -534,6 +676,10 @@ func (q *Queries) UpdateItemStatus(ctx context.Context, arg UpdateItemStatusPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastEnrichedAt,
+		&i.ExtractContent,
+		&i.ExtractStatus,
+		&i.ExtractRetries,
+		&i.ExtractDate,
 	)
 	return i, err
 }
