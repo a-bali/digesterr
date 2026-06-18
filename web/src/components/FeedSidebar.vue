@@ -37,6 +37,7 @@ async function refreshFeed(id: number) {
   try {
     await feedApi.fetch(id)
     await feedStore.fetchItems()
+    await feedStore.fetchFeeds()
     toast.success('Feed refreshed')
   } catch (e: any) {
     toast.error('Failed to refresh feed', { description: e.message })
