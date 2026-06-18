@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { toast } from 'vue-sonner'
 import { useCategoryStore } from '../stores/category'
 import { useFeedStore } from '../stores/feed'
@@ -10,7 +10,7 @@ import Button from './ui/Button'
 import Input from './ui/Input'
 import Dialog from './ui/Dialog'
 import Tooltip from './ui/Tooltip'
-import { BookmarkCheck, Rss, RefreshCw, Check, Plus, Sparkles, Settings, Trash2, MessageSquare } from 'lucide-vue-next'
+import { BookmarkCheck, Rss, RefreshCw, Check, Plus, Sparkles, Settings, Trash2, MessageSquare, ChevronDown } from 'lucide-vue-next'
 
 const props = withDefaults(defineProps<{
   showingSaved?: boolean
@@ -183,7 +183,7 @@ function generateNow(e: Event, cfgId: number) {
   digestStore.generateNow(cfgId)
 }
 
-function toggleCategory(list: number[], catId: number) {
+function toggleDigestCategory(list: number[], catId: number) {
   const idx = list.indexOf(catId)
   if (idx !== -1) list.splice(idx, 1); else list.push(catId)
 }
@@ -197,6 +197,7 @@ onMounted(() => {
   digestStore.fetchConfigs()
 })
 
+const collapsedCategories = reactive(new Set<number>())
 const sortedCategoryIds = computed(() => {
   const cats = [...categoryStore.categories]
   const feedsCatIdx = cats.findIndex(c => c.name === 'FEEDS')
@@ -206,6 +207,14 @@ const sortedCategoryIds = computed(() => {
   }
   return cats.map(c => c.id)
 })
+
+function toggleCategory(catId: number) {
+  if (collapsedCategories.has(catId)) {
+    collapsedCategories.delete(catId)
+  } else {
+    collapsedCategories.add(catId)
+  }
+}
 </script>
 
 <template>
@@ -218,7 +227,7 @@ const sortedCategoryIds = computed(() => {
     <!-- DIGESTS section -->
     <div class="flex items-center justify-between mb-2 px-2">
       <span class="text-xs font-semibold text-muted-foreground uppercase">Digests</span>
-      <Button variant="ghost" size="icon" class="size-5" title="Create digest config" @click="showAddDigest = true">
+      <Button variant="ghost" size="icon" class="size-5 justify-end" title="Create digest config" @click="showAddDigest = true">
         <Plus class="size-3.5" />
       </Button>
     </div>
@@ -248,13 +257,18 @@ const sortedCategoryIds = computed(() => {
     <!-- Feeds -->
     <div class="flex items-center justify-between mb-2 px-2">
       <span class="text-xs font-semibold text-muted-foreground uppercase">Feeds</span>
-      <Button variant="ghost" size="icon" class="size-5" title="Add feed" @click="showAddFeed = true">
+      <Button variant="ghost" size="icon" class="size-5 justify-end" title="Add feed" @click="showAddFeed = true">
         <Plus class="size-3.5" />
       </Button>
     </div>
     <div v-for="catId in sortedCategoryIds" :key="catId" class="mb-3">
-      <p class="text-xs font-semibold text-muted-foreground uppercase mb-1 px-2">{{ categoryStore.categories.find(c => c.id === catId)?.name || '' }}</p>
-      <div v-for="feed in feedStore.feeds.filter(f => f.category_id === catId)" :key="feed.id"
+      <button class="flex w-full items-center justify-between text-xs font-semibold text-muted-foreground uppercase mb-1 hover:text-foreground transition-colors px-2" @click="toggleCategory(catId)">
+        <span>{{ categoryStore.categories.find(c => c.id === catId)?.name || '' }}</span>
+        <span class="inline-flex items-center justify-end h-9 w-9 shrink-0">
+          <ChevronDown class="size-4 transition-transform" :class="collapsedCategories.has(catId) ? '-rotate-90' : ''" />
+        </span>
+      </button>
+      <div v-if="!collapsedCategories.has(catId)" v-for="feed in feedStore.feeds.filter(f => f.category_id === catId)" :key="feed.id"
         class="group flex items-center w-full rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors"
         :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }"
       >
@@ -338,7 +352,7 @@ const sortedCategoryIds = computed(() => {
           <label class="text-xs font-medium">Include categories</label>
           <div class="space-y-1 mt-1 max-h-24 overflow-y-auto">
             <label v-for="cat in categoryStore.categories" :key="cat.id" class="flex items-center gap-2 text-xs cursor-pointer">
-              <input type="checkbox" :checked="newDigest.categoryIds.includes(cat.id)" @change="toggleCategory(newDigest.categoryIds, cat.id)" />
+              <input type="checkbox" :checked="newDigest.categoryIds.includes(cat.id)" @change="toggleDigestCategory(newDigest.categoryIds, cat.id)" />
               {{ cat.name }}
             </label>
           </div>
@@ -376,7 +390,7 @@ const sortedCategoryIds = computed(() => {
           <label class="text-xs font-medium">Include categories</label>
           <div class="space-y-1 mt-1 max-h-24 overflow-y-auto">
             <label v-for="cat in categoryStore.categories" :key="cat.id" class="flex items-center gap-2 text-xs cursor-pointer">
-              <input type="checkbox" :checked="newDigest.categoryIds.includes(cat.id)" @change="toggleCategory(newDigest.categoryIds, cat.id)" />
+              <input type="checkbox" :checked="newDigest.categoryIds.includes(cat.id)" @change="toggleDigestCategory(newDigest.categoryIds, cat.id)" />
               {{ cat.name }}
             </label>
           </div>
