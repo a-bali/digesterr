@@ -7,6 +7,7 @@
     sqlc
     nodejs
     pnpm
+    entr
   ];
 
   env.JWT_SECRET = "dev-secret-change-in-production";
@@ -14,6 +15,6 @@
   env.PORT = "8080";
   env.DIGESTERR_LOG_LEVEL = "debug";
 
-  processes.digesterr.exec = "go run ./cmd/digesterr";
+  processes.digesterr.exec = "find . -name '*.go' -type f | entr -n -r go run ./cmd/digesterr";
   processes.web.exec = "pnpm --dir web run dev";
 }
