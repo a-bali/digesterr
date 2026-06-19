@@ -7,13 +7,14 @@ package store
 
 import (
 	"context"
+	"database/sql"
 )
 
 const countFeedsInCategory = `-- name: CountFeedsInCategory :one
 SELECT count(*) FROM feeds WHERE category_id = ?
 `
 
-func (q *Queries) CountFeedsInCategory(ctx context.Context, categoryID int64) (int64, error) {
+func (q *Queries) CountFeedsInCategory(ctx context.Context, categoryID sql.NullInt64) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countFeedsInCategory, categoryID)
 	var count int64
 	err := row.Scan(&count)

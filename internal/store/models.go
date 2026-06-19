@@ -47,18 +47,18 @@ type DigestResultItem struct {
 }
 
 type Feed struct {
-	ID             int64        `json:"id"`
-	UserID         int64        `json:"user_id"`
-	CategoryID     int64        `json:"category_id"`
-	Type           string       `json:"type"`
-	Name           string       `json:"name"`
-	Url            string       `json:"url"`
-	Config         string       `json:"config"`
-	LastFetchedAt  sql.NullTime `json:"last_fetched_at"`
-	Status         string       `json:"status"`
-	ExtractContent int64        `json:"extract_content"`
-	CreatedAt      time.Time    `json:"created_at"`
-	UpdatedAt      time.Time    `json:"updated_at"`
+	ID             int64         `json:"id"`
+	UserID         int64         `json:"user_id"`
+	CategoryID     sql.NullInt64 `json:"category_id"`
+	Type           string        `json:"type"`
+	Name           string        `json:"name"`
+	Url            string        `json:"url"`
+	Config         string        `json:"config"`
+	LastFetchedAt  sql.NullTime  `json:"last_fetched_at"`
+	Status         string        `json:"status"`
+	ExtractContent int64         `json:"extract_content"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
 }
 
 type Item struct {

@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 )
 
 const createFeed = `-- name: CreateFeed :one
@@ -16,14 +17,14 @@ RETURNING id, user_id, category_id, type, name, url, config, last_fetched_at, st
 `
 
 type CreateFeedParams struct {
-	UserID         int64  `json:"user_id"`
-	CategoryID     int64  `json:"category_id"`
-	Type           string `json:"type"`
-	Name           string `json:"name"`
-	Url            string `json:"url"`
-	Config         string `json:"config"`
-	Status         string `json:"status"`
-	ExtractContent int64  `json:"extract_content"`
+	UserID         int64         `json:"user_id"`
+	CategoryID     sql.NullInt64 `json:"category_id"`
+	Type           string        `json:"type"`
+	Name           string        `json:"name"`
+	Url            string        `json:"url"`
+	Config         string        `json:"config"`
+	Status         string        `json:"status"`
+	ExtractContent int64         `json:"extract_content"`
 }
 
 func (q *Queries) CreateFeed(ctx context.Context, arg CreateFeedParams) (Feed, error) {
@@ -249,8 +250,8 @@ SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, statu
 `
 
 type ListFeedsByCategoryParams struct {
-	CategoryID int64 `json:"category_id"`
-	UserID     int64 `json:"user_id"`
+	CategoryID sql.NullInt64 `json:"category_id"`
+	UserID     int64         `json:"user_id"`
 }
 
 func (q *Queries) ListFeedsByCategory(ctx context.Context, arg ListFeedsByCategoryParams) ([]Feed, error) {
@@ -297,14 +298,14 @@ RETURNING id, user_id, category_id, type, name, url, config, last_fetched_at, st
 `
 
 type UpdateFeedParams struct {
-	Name           string `json:"name"`
-	Url            string `json:"url"`
-	Config         string `json:"config"`
-	CategoryID     int64  `json:"category_id"`
-	Status         string `json:"status"`
-	ExtractContent int64  `json:"extract_content"`
-	ID             int64  `json:"id"`
-	UserID         int64  `json:"user_id"`
+	Name           string        `json:"name"`
+	Url            string        `json:"url"`
+	Config         string        `json:"config"`
+	CategoryID     sql.NullInt64 `json:"category_id"`
+	Status         string        `json:"status"`
+	ExtractContent int64         `json:"extract_content"`
+	ID             int64         `json:"id"`
+	UserID         int64         `json:"user_id"`
 }
 
 func (q *Queries) UpdateFeed(ctx context.Context, arg UpdateFeedParams) (Feed, error) {

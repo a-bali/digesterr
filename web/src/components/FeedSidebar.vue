@@ -9,7 +9,6 @@ import type { DigestConfig, Feed } from '../types/api'
 import Button from './ui/Button'
 import Input from './ui/Input'
 import Dialog from './ui/Dialog'
-import TagInput from './TagInput.vue'
 import Tooltip from './ui/Tooltip'
 import { BookmarkCheck, Rss, RefreshCw, Check, Plus, Sparkles, Settings, Trash2, MessageSquare, ChevronDown, X } from 'lucide-vue-next'
 
@@ -32,9 +31,10 @@ const generatingDigests = ref(new Set<number>())
 const showAddFeed = ref(false)
 const showEditFeed = ref(false)
 const editingFeed = ref<Feed | null>(null)
-const newFeed = ref({ category_ids: [] as number[], createCategoryName: '', type: 'rss', name: '', url: '', extract_content: 0 })
-const editingFeedData = ref({ category_ids: [] as number[], createCategoryName: '', type: 'rss', name: '', url: '', extract_content: 0 })
-const newCategoryName = ref('')
+const newFeed = ref({ type: 'rss', name: '', url: '', extract_content: 0 })
+const newFeedCategory = ref('')
+const editingFeedData = ref({ type: 'rss', name: '', url: '', extract_content: 0 })
+const editFeedCategory = ref('')
 
 const showAddDigest = ref(false)
 const showEditDigest = ref(false)
@@ -98,9 +98,9 @@ async function markFeedRead(id: number) {
 function startEditFeed(feed: Feed) {
   editingFeed.value = feed
   const url = feed.type === 'reddit' ? feed.url.replace('https://www.reddit.com/r/', '').replace('.rss', '') : feed.url
+  const cat = feed.category_id ? categoryStore.categories.find(c => c.id === feed.category_id) : null
+  editFeedCategory.value = cat?.name || ''
   editingFeedData.value = {
-    category_ids: feed.category_id ? [feed.category_id] : [],
-    createCategoryName: '',
     type: feed.type,
     name: feed.name,
     url,
@@ -112,10 +112,16 @@ function startEditFeed(feed: Feed) {
 async function saveEditFeed() {
   if (!editingFeed.value) return
   const data: any = { extract_content: editingFeedData.value.extract_content }
-  if (editingFeedData.value.category_ids.length > 0) {
-    data.category_id = editingFeedData.value.category_ids[0]
-  } else if (editingFeedData.value.createCategoryName) {
-    data.category_name = editingFeedData.value.createCategoryName
+  const catName = editFeedCategory.value.trim()
+  if (catName) {
+    const existing = categoryStore.categories.find(c => c.name === catName)
+    if (existing) {
+      data.category_id = existing.id
+    } else {
+      data.category_name = catName
+    }
+  } else {
+    data.category_id = 0
   }
   if (editingFeedData.value.type === 'reddit') {
     data.url = 'https://www.reddit.com/r/' + editingFeedData.value.url.replace(/\.rss$/, '') + '.rss'
@@ -130,6 +136,7 @@ async function saveEditFeed() {
   showEditFeed.value = false; editingFeed.value = null
   resetEditFeed()
   await feedStore.fetchFeeds()
+  await categoryStore.fetchCategories()
 }
 
 async function deleteFeed(id: number) {
@@ -149,10 +156,14 @@ function handleTypeChange(type: string) {
 
 async function addFeed() {
   const data: any = { type: newFeed.value.type, name: newFeed.value.name, extract_content: newFeed.value.extract_content }
-  if (newFeed.value.category_ids.length > 0) {
-    data.category_id = newFeed.value.category_ids[0]
-  } else if (newFeed.value.createCategoryName) {
-    data.category_name = newFeed.value.createCategoryName
+  const catName = newFeedCategory.value.trim()
+  if (catName) {
+    const existing = categoryStore.categories.find(c => c.name === catName)
+    if (existing) {
+      data.category_id = existing.id
+    } else {
+      data.category_name = catName
+    }
   }
   if (newFeed.value.type === 'reddit') {
     data.url = 'https://www.reddit.com/r/' + newFeed.value.url.replace(/\.rss$/, '') + '.rss'
@@ -165,16 +176,19 @@ async function addFeed() {
   }
   await feedApi.create(data)
   await feedStore.fetchFeeds()
+  await categoryStore.fetchCategories()
   showAddFeed.value = false
   resetNewFeed()
 }
 
 function resetNewFeed() {
-  newFeed.value = { category_id: 0, category_ids: [] as number[], createCategoryName: '', type: 'rss', name: '', url: '', extract_content: 0 }
+  newFeed.value = { type: 'rss', name: '', url: '', extract_content: 0 }
+  newFeedCategory.value = ''
 }
 
 function resetEditFeed() {
-  editingFeedData.value = { category_ids: [] as number[], createCategoryName: '', type: 'rss', name: '', url: '', extract_content: 0 }
+  editingFeedData.value = { type: 'rss', name: '', url: '', extract_content: 0 }
+  editFeedCategory.value = ''
 }
 
 function makeConfigJson(sourceIds: number[], highlights: number, comments: number, prompt: string): string {
@@ -237,11 +251,6 @@ function generateNow(e: Event, cfgId: number) {
   })
 }
 
-function onDigestCategoryCreate(name: string) {
-  // Will be created on save if category doesn't exist
-  // For now just emit
-}
-
 function isRedditType(t: string) { return t === 'reddit' }
 
 function setFeedUrlForType(type: string) {
@@ -263,13 +272,9 @@ onMounted(() => {
 })
 
 const collapsedCategories = reactive(new Set<number>())
+const uncategorizedFeeds = computed(() => feedStore.feeds.filter(f => !f.category_id))
 const sortedCategoryIds = computed(() => {
-  const cats = [...categoryStore.categories].filter(c => feedStore.feeds.some(f => f.category_id === c.id) || c.name === 'FEEDS')
-  const feedsCatIdx = cats.findIndex(c => c.name === 'FEEDS')
-  if (feedsCatIdx > 0) {
-    const [feedsCat] = cats.splice(feedsCatIdx, 1)
-    cats.unshift(feedsCat)
-  }
+  const cats = [...categoryStore.categories].filter(c => feedStore.feeds.some(f => f.category_id === c.id))
   return cats.map(c => c.id)
 })
 
@@ -326,6 +331,35 @@ function toggleCategory(catId: number) {
         <Plus class="size-3.5" />
       </button>
     </div>
+    <div v-if="uncategorizedFeeds.length" class="mb-3">
+      <div v-for="feed in uncategorizedFeeds" :key="feed.id"
+        class="group flex items-center w-full rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors"
+        :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }"
+      >
+        <button class="flex items-center gap-2 flex-1 min-w-0" @click="emit('selectFeed', feed.id)">
+          <img v-if="feedIcon(feed)" :src="feedIcon(feed)" class="size-3.5 shrink-0 rounded" @error="($event.target as HTMLImageElement).style.display = 'none'" />
+          <Rss v-else class="size-3.5 shrink-0 text-accent" />
+          <Tooltip>
+            <template #trigger>
+              <span class="truncate cursor-help">{{ feed.name }}</span>
+            </template>
+            <p>Last fetched: {{ formatDate(feed.last_fetched_at) || 'never' }}</p>
+            <p v-if="feed.status === 'error'" class="text-red-500">Failed</p>
+          </Tooltip>
+          <span v-if="(feedStore.unreadCounts[feed.id] ?? 0) > 0" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-1.5">{{ feedStore.unreadCounts[feed.id] }}</span>
+        </button>
+        <button class="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20" @click.stop="startEditFeed(feed)">
+          <Settings class="size-3" />
+        </button>
+        <button class="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20" @click.stop="markFeedRead(feed.id)">
+          <Check class="size-3" />
+        </button>
+        <button class="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20" @click.stop="refreshFeed(feed.id)">
+          <RefreshCw v-if="refreshingFeeds.has(feed.id)" class="size-3 animate-spin" />
+          <RefreshCw v-else class="size-3" />
+        </button>
+      </div>
+    </div>
     <div v-for="catId in sortedCategoryIds" :key="catId" class="mb-3">
       <button class="flex w-full items-center justify-between text-xs font-semibold text-muted-foreground uppercase mb-1 hover:text-foreground transition-colors px-2" @click="toggleCategory(catId)">
         <span>{{ categoryStore.categories.find(c => c.id === catId)?.name || '' }}</span>
@@ -367,13 +401,15 @@ function toggleCategory(catId: number) {
       <form @submit.prevent="addFeed" class="space-y-4">
         <div class="space-y-1">
           <label class="text-xs font-medium">Category</label>
-          <TagInput
-            :items="categoryStore.categories.map(c => ({ label: c.name, value: c.id }))"
-            v-model="newFeed.category_ids"
-            placeholder="Type to search or create…"
-            :allowCreate="true"
-            @create="(name: string) => { newFeed.createCategoryName = name; newFeed.category_ids = [] }"
+          <input
+            v-model="newFeedCategory"
+            list="add-feed-cats"
+            placeholder="Select existing or type new name…"
+            class="flex h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
           />
+          <datalist id="add-feed-cats">
+            <option v-for="cat in categoryStore.categories" :key="cat.id" :value="cat.name" />
+          </datalist>
         </div>
         <div class="space-y-1">
           <label class="text-xs font-medium">Type</label>
@@ -417,13 +453,15 @@ function toggleCategory(catId: number) {
       <form @submit.prevent="saveEditFeed" class="space-y-4">
         <div class="space-y-1">
           <label class="text-xs font-medium">Category</label>
-          <TagInput
-            :items="categoryStore.categories.map(c => ({ label: c.name, value: c.id }))"
-            v-model="editingFeedData.category_ids"
-            placeholder="Search…"
-            :allowCreate="true"
-            @create="(name: string) => { editingFeedData.createCategoryName = name; editingFeedData.category_ids = [] }"
+          <input
+            v-model="editFeedCategory"
+            list="edit-feed-cats"
+            placeholder="Select existing or type new name…"
+            class="flex h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
           />
+          <datalist id="edit-feed-cats">
+            <option v-for="cat in categoryStore.categories" :key="cat.id" :value="cat.name" />
+          </datalist>
         </div>
         <div class="space-y-1">
           <label class="text-xs font-medium">Type</label>

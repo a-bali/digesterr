@@ -190,7 +190,7 @@ func (g *Generator) buildFeedLimits(ctx context.Context, userID int64, dcfg dige
 
 	for _, cat := range dcfg.Categories {
 		catFeeds, err := g.queries.ListFeedsByCategory(ctx, store.ListFeedsByCategoryParams{
-			CategoryID: int64(cat.ID),
+			CategoryID: sql.NullInt64{Int64: int64(cat.ID), Valid: true},
 			UserID:     userID,
 		})
 		if err != nil {

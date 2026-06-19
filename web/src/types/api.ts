@@ -16,7 +16,7 @@ export interface Category {
 export interface Feed {
   id: number
   user_id: number
-  category_id: number
+  category_id: number | null
   type: string
   name: string
   url: string

@@ -18,7 +18,7 @@ CREATE TABLE categories (
 CREATE TABLE feeds (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         INTEGER NOT NULL,
-    category_id     INTEGER NOT NULL,
+    category_id     INTEGER,
     type             TEXT    NOT NULL,
     name             TEXT    NOT NULL,
     url              TEXT    NOT NULL DEFAULT '',

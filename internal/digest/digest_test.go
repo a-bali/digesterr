@@ -2,6 +2,7 @@ package digest
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"os"
 	"strconv"
@@ -163,7 +164,7 @@ func TestGeneratorBuildFeedLimits(t *testing.T) {
 
 	f1, err := queries.CreateFeed(ctx, store.CreateFeedParams{
 		UserID:     user.ID,
-		CategoryID: cat.ID,
+		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
 		Type:       "rss",
 		Name:       "Feed 1",
 		Url:        "https://example.com/feed1",
@@ -176,7 +177,7 @@ func TestGeneratorBuildFeedLimits(t *testing.T) {
 
 	_, err = queries.CreateFeed(ctx, store.CreateFeedParams{
 		UserID:     user.ID,
-		CategoryID: cat.ID,
+		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
 		Type:       "rss",
 		Name:       "Feed 2",
 		Url:        "https://example.com/feed2",
@@ -403,7 +404,7 @@ func TestGeneratorFullPipeline(t *testing.T) {
 
 	feedObj, err := queries.CreateFeed(ctx, store.CreateFeedParams{
 		UserID:     user.ID,
-		CategoryID: cat.ID,
+		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
 		Type:       "rss",
 		Name:       "Test Feed",
 		Url:        "https://example.com/feed",

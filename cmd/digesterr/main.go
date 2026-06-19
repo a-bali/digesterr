@@ -156,6 +156,33 @@ func migrateSchema(db *sql.DB) error {
 			"add digest_configs.name",
 			"ALTER TABLE digest_configs ADD COLUMN name TEXT NOT NULL DEFAULT ''",
 		},
+		{
+			"make feeds.category_id nullable",
+			// Recreate feeds table with nullable category_id, preserving data with explicit column order.
+			`
+PRAGMA foreign_keys=OFF;
+CREATE TABLE feeds_new (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL,
+    category_id     INTEGER,
+    type            TEXT    NOT NULL,
+    name            TEXT    NOT NULL,
+    url             TEXT    NOT NULL DEFAULT '',
+    config          TEXT    NOT NULL DEFAULT '{}',
+    last_fetched_at DATETIME,
+    status          TEXT    NOT NULL DEFAULT 'active',
+    extract_content INTEGER NOT NULL DEFAULT 0,
+    created_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    updated_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+);
+INSERT INTO feeds_new SELECT * FROM feeds;
+DROP TABLE feeds;
+ALTER TABLE feeds_new RENAME TO feeds;
+PRAGMA foreign_keys=ON;
+`,
+		},
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m.sql); err != nil {

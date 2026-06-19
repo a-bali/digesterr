@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -175,7 +176,7 @@ func TestUserIsolation(t *testing.T) {
 	})
 	feedA, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
 		UserID:     userA.ID,
-		CategoryID: catA.ID,
+		CategoryID: sql.NullInt64{Int64: catA.ID, Valid: true},
 		Type:       "rss",
 		Name:       "AFeed",
 		Url:        "https://a.example.com/feed",
@@ -184,7 +185,7 @@ func TestUserIsolation(t *testing.T) {
 	})
 	feedB, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
 		UserID:     userB.ID,
-		CategoryID: cat.ID,
+		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
 		Type:       "rss",
 		Name:       "BFeed",
 		Url:        "https://b.example.com/feed",
@@ -330,7 +331,7 @@ func TestUpdateItemStatus(t *testing.T) {
 	})
 	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
 		UserID:     user.ID,
-		CategoryID: cat.ID,
+		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
 		Type:       "rss",
 		Name:       "Test",
 		Url:        "https://example.com/feed",
@@ -377,7 +378,7 @@ func TestUpdateItemStatusInvalid(t *testing.T) {
 	})
 	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
 		UserID:     user.ID,
-		CategoryID: cat.ID,
+		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
 		Type:       "rss",
 		Name:       "Test",
 		Url:        "https://example.com/feed",
@@ -455,7 +456,7 @@ func TestDigestResultReadCascade(t *testing.T) {
 	})
 	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
 		UserID:     user.ID,
-		CategoryID: cat.ID,
+		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
 		Type:       "rss",
 		Name:       "Test",
 		Url:        "https://example.com/feed",
@@ -538,7 +539,7 @@ func TestFeedItemsByStatus(t *testing.T) {
 	})
 	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
 		UserID:     user.ID,
-		CategoryID: cat.ID,
+		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
 		Type:       "rss",
 		Name:       "Test",
 		Url:        "https://example.com/feed",
@@ -636,7 +637,7 @@ func TestFetchFeedAnotherUsersFeed(t *testing.T) {
 	})
 	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
 		UserID:     userB.ID,
-		CategoryID: cat.ID,
+		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
 		Type:       "rss",
 		Name:       "BFeed",
 		Url:        "https://b.example.com/feed",
