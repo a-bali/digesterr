@@ -71,12 +71,15 @@ func ExtractContent(ctx context.Context, pageURL string, client *http.Client, lo
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("fetch: %w", err)
+		logger.Info("direct fetch failed, trying Jina.ai", "error", err)
+		return ExtractWithJina(ctx, pageURL, client, logger)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		logger.Info("direct fetch returned non-200, trying Jina.ai", "status", resp.StatusCode, "body_preview", string(body))
+		return ExtractWithJina(ctx, pageURL, client, logger)
 	}
 
 	contentType := resp.Header.Get("Content-Type")
