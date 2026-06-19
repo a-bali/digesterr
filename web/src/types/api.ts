@@ -123,7 +123,7 @@ export interface DigestContentItem {
 export interface DigestComment {
   author: string
   text: string
-  points: number
+  points?: number
   url?: string
 }
 

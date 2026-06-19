@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useDigestStore } from '../stores/digest'
+import { useFeedStore } from '../stores/feed'
 import type { DigestContent, DigestContentItem } from '../types/api'
-import { MessageSquare, ExternalLink, Clock, MessageCircle, Trash2, Circle, Check } from 'lucide-vue-next'
+import type { Feed } from '../types/api'
+import Button from './ui/Button.vue'
+import { MessageSquare, ExternalLink, Clock, MessageCircle, Trash2, Check } from 'lucide-vue-next'
 
 const store = useDigestStore()
+const feedStore = useFeedStore()
 
 const digestContent = computed<DigestContent | null>(() => {
   if (!store.selectedResult) return null
@@ -15,75 +19,87 @@ const digestContent = computed<DigestContent | null>(() => {
   }
 })
 
-const groupedHighlights = computed<Record<string, DigestContentItem[]>>(() => {
+const groupedHighlights = computed<Record<string, { feedId: number; items: DigestContentItem[] }>>(() => {
   const items = digestContent.value?.highlights || []
-  const groups: Record<string, DigestContentItem[]> = {}
+  const groups: Record<string, { feedId: number; items: DigestContentItem[] }> = {}
   for (const item of items) {
     const key = item.feed_name || 'Unknown'
-    if (!groups[key]) groups[key] = []
-    groups[key].push(item)
+    if (!groups[key]) groups[key] = { feedId: item.feed_id, items: [] }
+    groups[key].items.push(item)
   }
   return groups
 })
 
-function relativeTime(val: string): string {
+const highlightCount = computed(() => digestContent.value?.highlights?.length || 0)
+const itemCount = computed(() => (digestContent.value?.items?.length || 0) + highlightCount.value)
+
+function absoluteTime(val: string): string {
   if (!val) return ''
   const d = new Date(val)
   if (isNaN(d.getTime())) return ''
-  const diff = Date.now() - d.getTime()
-  const sec = Math.floor(diff / 1000)
-  if (sec < 60) return 'now'
-  const min = Math.floor(sec / 60)
-  if (min < 60) return `${min}m ago`
-  const h = Math.floor(min / 60)
-  if (h < 24) return `${h}h ago`
-  const d2 = Math.floor(h / 24)
-  if (d2 < 30) return `${d2}d ago`
-  const m = Math.floor(d2 / 30)
-  if (m < 12) return `${m}mo ago`
-  return `${Math.floor(m / 12)}y ago`
+  return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 async function deleteResult() {
   if (!store.selectedResult) return
   await store.deleteResult(store.selectedResult.id)
 }
+
+function toggleStatus() {
+  if (!store.selectedResult) return
+  const newStatus = store.selectedResult.status === 'read' ? 'unread' : 'read'
+  store.updateResultStatus(store.selectedResult.id, newStatus)
+}
+
+function feedIcon(feedId: number): string {
+  const feed = feedStore.feeds.find(f => f.id === feedId)
+  if (!feed) return ''
+  if (feed.type === 'hn') return 'https://news.ycombinator.com/favicon.ico'
+  if (feed.type === 'lobsters') return 'https://lobste.rs/favicon.ico'
+  try {
+    const domain = new URL(feed.url).hostname
+    return `https://icons.duckduckgo.com/ip3/${domain}.ico`
+  } catch {
+    return ''
+  }
+}
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto p-4" data-digest-content>
-    <div v-if="!store.selectedResult" class="flex items-center justify-center h-full text-muted-foreground text-sm">
+  <div class="h-full overflow-y-auto p-6" data-digest-content>
+    <div v-if="!store.selectedResult" class="flex h-full items-center justify-center text-muted-foreground text-sm">
       Select a digest result to view
     </div>
     <template v-else>
-      <div class="flex items-center justify-between mb-4">
-        <div class="flex items-center gap-2">
-          <span v-if="store.selectedResult.status === 'read'" class="text-xs text-muted-foreground/50"><Check class="size-3.5" /></span>
-          <span v-else class="text-xs text-accent"><Circle class="size-3.5" /></span>
-          <p class="text-xs text-muted-foreground">
-            {{ new Date(store.selectedResult.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }}
-            {{ new Date(store.selectedResult.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}
-          </p>
-        </div>
-        <div class="flex items-center gap-1">
-          <button class="text-xs text-muted-foreground hover:text-accent transition-colors px-1" @click="store.updateResultStatus(store.selectedResult.id, store.selectedResult.status === 'read' ? 'unread' : 'read')">
-            {{ store.selectedResult.status === 'read' ? 'Mark unread' : 'Mark read' }}
-          </button>
-          <button class="text-xs text-muted-foreground hover:text-red-500 transition-colors" @click="deleteResult" title="Delete">
-            <Trash2 class="size-3.5" />
-          </button>
-        </div>
+      <h1 class="text-xl font-semibold mb-2">
+        {{ new Date(store.selectedResult.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}
+      </h1>
+
+      <div class="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mb-4">
+        <span class="text-xs text-muted-foreground">{{ new Date(store.selectedResult.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }}</span>
+        <span>{{ highlightCount }} highlights</span>
+        <span>{{ itemCount }} items</span>
+      </div>
+
+      <div class="flex gap-2 mb-4 flex-wrap">
+        <Button size="sm" variant="outline" @click="toggleStatus">
+          <Check class="size-3" /> {{ store.selectedResult.status === 'read' ? 'Mark Unread' : 'Mark Read' }}
+        </Button>
+        <Button size="sm" variant="outline" @click="deleteResult">
+          <Trash2 class="size-3" /> Delete
+        </Button>
       </div>
 
       <!-- Highlights grouped by feed -->
       <div v-if="Object.keys(groupedHighlights).length" class="mb-6">
-        <div v-for="(items, feedName) in groupedHighlights" :key="feedName" class="mb-6">
+        <div v-for="(group, feedName) in groupedHighlights" :key="feedName" class="mb-6">
           <h3 class="text-sm font-semibold mb-3 flex items-center gap-1 text-accent">
-            <Star class="size-3.5" /> {{ feedName }}
+            <img v-if="feedIcon(group.feedId)" :src="feedIcon(group.feedId)" class="size-3.5 shrink-0 rounded" @error="($event.target as HTMLImageElement).style.display = 'none'" />
+            {{ feedName }}
           </h3>
           <div class="space-y-4">
             <div
-              v-for="item in items"
+              v-for="item in group.items"
               :key="item.item_id"
               class="p-4 rounded-lg border bg-card"
             >
@@ -94,11 +110,11 @@ async function deleteResult() {
                 </a>
               </div>
               <div class="flex flex-wrap items-center gap-3 text-xs text-muted-foreground mb-3">
-                <span class="flex items-center gap-1"><Star class="size-3" /> {{ item.points }} points</span>
-                <span class="flex items-center gap-1"><Clock class="size-3" /> {{ relativeTime(item.published_at) }}</span>
+                <span class="flex items-center gap-1"><Clock class="size-3" /> {{ absoluteTime(item.published_at) }}</span>
+                <span class="flex items-center gap-1"><ArrowUp class="size-3" /> {{ item.points }}</span>
                 <a v-if="item.comment_url" :href="item.comment_url" target="_blank"
                   class="flex items-center gap-1 hover:text-accent">
-                  <MessageCircle class="size-3" /> {{ item.comments_count }} comments
+                  <MessageCircle class="size-3" /> {{ item.comments_count }}
                 </a>
               </div>
               <p v-if="item.llm_summary" class="text-sm leading-relaxed mb-3">
@@ -107,11 +123,19 @@ async function deleteResult() {
               <div v-if="item.top_comments?.length" class="mb-3 border-t pt-2">
                 <p class="text-xs font-medium text-muted-foreground mb-1">Top comments</p>
                 <div v-for="c in item.top_comments" :key="c.url || c.text.substring(0, 20)"
-                  class="text-xs text-muted-foreground/80 mb-1 pl-2 border-l-2 border-border">
-                  <span class="font-medium">{{ c.author }}</span>
-                  <span class="ml-1 text-accent">[{{ c.points }}]</span>
-                  <a v-if="c.url" :href="c.url" target="_blank" class="ml-1 hover:text-accent">{{ c.text }}</a>
-                  <span v-else class="ml-1">{{ c.text }}</span>
+                  class="text-xs mb-1 pl-2 border-l-2 border-border">
+                  <template v-if="c.url">
+                    <a :href="c.url" target="_blank" class="font-medium text-muted-foreground hover:text-accent">{{ c.author }}</a>
+                    <span v-if="c.points != null" class="ml-1 text-accent text-[10px]">[{{ c.points }}]</span>
+                    <span class="mx-1 text-muted-foreground/40">–</span>
+                    <a :href="c.url" target="_blank" class="text-foreground/80 hover:text-accent">{{ c.text }}</a>
+                  </template>
+                  <template v-else>
+                    <span class="font-medium text-muted-foreground">{{ c.author }}</span>
+                    <span v-if="c.points != null" class="ml-1 text-accent text-[10px]">[{{ c.points }}]</span>
+                    <span class="mx-1 text-muted-foreground/40">–</span>
+                    <span class="text-foreground/80">{{ c.text }}</span>
+                  </template>
                 </div>
               </div>
             </div>
@@ -135,10 +159,10 @@ async function deleteResult() {
             <div class="flex-1 min-w-0">
               <span class="text-sm font-medium truncate block">{{ item.title }}</span>
               <div class="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
-                <span>{{ item.points }} points</span>
-                <span>{{ relativeTime(item.published_at) }}</span>
-                <a v-if="item.comment_url" :href="item.comment_url" target="_blank" class="hover:text-accent">
-                  {{ item.comments_count }} comments
+                <span class="flex items-center gap-1"><Clock class="size-3" /> {{ absoluteTime(item.published_at) }}</span>
+                <span class="flex items-center gap-1"><ArrowUp class="size-3" /> {{ item.points }}</span>
+                <a v-if="item.comment_url" :href="item.comment_url" target="_blank" class="flex items-center gap-1 hover:text-accent">
+                  <MessageCircle class="size-3" /> {{ item.comments_count }}
                 </a>
               </div>
             </div>
