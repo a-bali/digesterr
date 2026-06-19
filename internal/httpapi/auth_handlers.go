@@ -156,11 +156,13 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	s.auth.DeleteRefreshToken(r.Context(), cookie.Value)
 	accessToken, err := s.auth.GenerateAccessToken(&user)
 	if err != nil {
+		slog.Error("refresh token: failed to generate access token", "error", err, "user_id", user.ID)
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
 	newRefresh, err := s.auth.CreateRefreshToken(r.Context(), user.ID)
 	if err != nil {
+		slog.Error("refresh token: failed to create refresh token", "error", err, "user_id", user.ID)
 		writeError(w, http.StatusInternalServerError, "failed to create refresh token")
 		return
 	}
