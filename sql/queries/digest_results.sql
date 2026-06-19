@@ -42,6 +42,6 @@ SELECT * FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY create
 -- name: ListUnreadDigestItems :many
 SELECT i.* FROM items i
 JOIN feeds f ON f.id = i.feed_id
-WHERE f.user_id = ? AND i.status = 'unread' AND i.fetched_at > ?
+WHERE f.user_id = ? AND i.status = 'unread'
 ORDER BY i.points DESC
 LIMIT ?;

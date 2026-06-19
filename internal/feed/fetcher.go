@@ -32,12 +32,13 @@ type BulkEnricher interface {
 }
 
 type Comment struct {
-	ID     int64
-	Author string
-	Text   string
-	Points int
-	Depth  int
-	URL    string
+	ID          int64
+	Author      string
+	Text        string
+	Points      int
+	ValidPoints bool
+	Depth       int
+	URL         string
 }
 
 type CommentFetcher interface {

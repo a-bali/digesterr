@@ -301,19 +301,18 @@ func (q *Queries) ListDigestResultsByConfig(ctx context.Context, arg ListDigestR
 const listUnreadDigestItems = `-- name: ListUnreadDigestItems :many
 SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
 JOIN feeds f ON f.id = i.feed_id
-WHERE f.user_id = ? AND i.status = 'unread' AND i.fetched_at > ?
+WHERE f.user_id = ? AND i.status = 'unread'
 ORDER BY i.points DESC
 LIMIT ?
 `
 
 type ListUnreadDigestItemsParams struct {
-	UserID    int64     `json:"user_id"`
-	FetchedAt time.Time `json:"fetched_at"`
-	Limit     int64     `json:"limit"`
+	UserID int64 `json:"user_id"`
+	Limit  int64 `json:"limit"`
 }
 
 func (q *Queries) ListUnreadDigestItems(ctx context.Context, arg ListUnreadDigestItemsParams) ([]Item, error) {
-	rows, err := q.db.QueryContext(ctx, listUnreadDigestItems, arg.UserID, arg.FetchedAt, arg.Limit)
+	rows, err := q.db.QueryContext(ctx, listUnreadDigestItems, arg.UserID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

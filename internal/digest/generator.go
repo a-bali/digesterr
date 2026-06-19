@@ -13,8 +13,6 @@ import (
 	"digesterr/internal/store"
 )
 
-const defaultPrompt = `You are a research assistant helping to digest news articles. For each article provided below, write a concise 2-3 sentence highlight that captures the key insight and explains why it matters. Use the comments and extracted content to enrich your analysis. Then provide a brief overall summary (1-2 paragraphs) of the most important themes across all articles.`
-
 type digestConfigJSON struct {
 	Categories []struct {
 		ID         int `json:"id"`
@@ -65,7 +63,7 @@ type digestResultContent struct {
 type commentRef struct {
 	Author string `json:"author"`
 	Text   string `json:"text"`
-	Points int    `json:"points"`
+	Points *int   `json:"points,omitempty"`
 	URL    string `json:"url,omitempty"`
 }
 
@@ -92,12 +90,10 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*stor
 
 	feedLimits := g.buildFeedLimits(ctx, cfg.UserID, dcfg)
 
-	since := time.Now().Add(-24 * time.Hour)
-	limit := int64(200)
+	limit := int64(100)
 	items, err := g.queries.ListUnreadDigestItems(ctx, store.ListUnreadDigestItemsParams{
-		UserID:    cfg.UserID,
-		FetchedAt: since,
-		Limit:     limit,
+		UserID: cfg.UserID,
+		Limit:  limit,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing unread digest items: %w", err)
@@ -277,7 +273,7 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 				CommentUrl:    item.CommentUrl,
 			})
 		}
-		slog.Info("digest enriched items", "type", feedType, "count", len(feedItems))
+		slog.Debug("digest enriched items", "type", feedType, "count", len(feedItems))
 	}
 
 	for i := range items {
@@ -355,7 +351,7 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 
 	prompt := dcfg.Prompt
 	if prompt == "" {
-		prompt = defaultPrompt
+		prompt = "For each article, provide a 2-3 sentence highlight with the key insight and why it matters. Format response as JSON: {\"highlights\": [{\"title\": ..., \"summary\": ...}]}"
 	}
 
 	systemPrompt := prompt
@@ -395,7 +391,7 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 		userPrompt += "\n"
 	}
 
-	userPrompt += "For each HIGHLIGHT article, provide a 2-3 sentence analysis. Then give a 1-2 paragraph overall summary. Format your response as JSON with keys: \"highlights\" (array of {title, summary}) and \"summary\" (string)."
+	userPrompt += "For each HIGHLIGHT article, provide a 2-3 sentence highlight capturing the key insight and why it matters — skip introductory phrases like \"The article discusses\" or \"The author explains\". Format your response as JSON with key \"highlights\" (array of {title, summary})."
 
 	llmResponse, err := g.llm.Chat(ctx, systemPrompt, userPrompt)
 	if err != nil {
@@ -431,12 +427,16 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 		}
 		for j := 0; j < commentLimit; j++ {
 			c := h.FetchedComments[j]
-			topComments = append(topComments, commentRef{
+			cr := commentRef{
 				Author: c.Author,
 				Text:   c.Text,
-				Points: c.Points,
 				URL:    c.URL,
-			})
+			}
+			if c.ValidPoints {
+				p := c.Points
+				cr.Points = &p
+			}
+			topComments = append(topComments, cr)
 		}
 		content.Highlights = append(content.Highlights, digestItemRef{
 			ItemID:           h.ID,
@@ -503,8 +503,4 @@ func formatNullTime(nt sql.NullTime) string {
 		return nt.Time.Format(time.RFC3339)
 	}
 	return ""
-}
-
-func init() {
-	_ = defaultPrompt
 }
