@@ -40,4 +40,4 @@ DELETE FROM feeds WHERE id = ? AND user_id = ? RETURNING id;
 SELECT * FROM feeds ORDER BY id;
 
 -- name: ListActiveFeeds :many
-SELECT * FROM feeds WHERE status = 'active' ORDER BY id;
+SELECT * FROM feeds WHERE status IN ('active', 'error') ORDER BY id;

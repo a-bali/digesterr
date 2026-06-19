@@ -99,6 +99,9 @@ func (p *Poller) PollAll(ctx context.Context) {
 		return
 	}
 
+	slog.Info("polling feeds", "count", len(feeds))
+	start := time.Now()
+
 	for _, feed := range feeds {
 		fetcher, ok := p.fetchers[feed.Type]
 		if !ok {
@@ -108,6 +111,8 @@ func (p *Poller) PollAll(ctx context.Context) {
 
 		p.pollFeed(ctx, feed, fetcher)
 	}
+
+	slog.Info("polled feeds", "count", len(feeds), "duration", time.Since(start))
 }
 
 func (p *Poller) PollFeed(ctx context.Context, feed store.Feed) error {
@@ -317,9 +322,18 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 		return
 	}
 
-	logger.Info("enriching items", "count", len(items), "type", feed.Type)
+	logger.Info("starting enrichment", "type", feed.Type, "items", len(items))
 
-	// Try bulk enrichment first.
+	type itemSnapshot struct {
+		Points        int64
+		CommentsCount int64
+		CommentUrl    string
+	}
+	snapshots := make([]itemSnapshot, len(items))
+	for i := range items {
+		snapshots[i] = itemSnapshot{items[i].Points, items[i].CommentsCount, items[i].CommentUrl}
+	}
+
 	ptrs := make([]*store.Item, len(items))
 	for i := range items {
 		ptrs[i] = &items[i]
@@ -327,49 +341,38 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 	if b, ok := enricher.(BulkEnricher); ok {
 		if err := b.BulkEnrich(ctx, ptrs); err != nil {
 			logger.Debug("bulk enrich failed", "error", err)
-		} else {
-			logger.Info("bulk enrichment succeeded", "items", len(items), "type", feed.Type)
 		}
 	} else {
-		// Fallback to per-item enrichment.
-		success := 0
 		for i := range items {
-			item := items[i]
-			if err := enricher.Enrich(ctx, &item); err != nil {
-				logger.Debug("failed to enrich item", "item_id", item.ID, "error", err)
-				continue
-			}
-			success++
-			if _, err := p.queries.UpdateItemPointsAndComments(ctx, store.UpdateItemPointsAndCommentsParams{
-				ID:            item.ID,
-				Points:        item.Points,
-				CommentsCount: item.CommentsCount,
-				CommentUrl:    item.CommentUrl,
-			}); err != nil {
-				logger.Debug("failed to update enriched item", "item_id", item.ID, "error", err)
+			if err := enricher.Enrich(ctx, &items[i]); err != nil {
+				logger.Debug("failed to enrich item", "item_id", items[i].ID, "error", err)
 			}
 		}
-		logger.Info("enriched items (per-item)", "count", success, "total", len(items))
-		return
 	}
 
-	// Persist changes from bulk enrichment. URL updates are handled
-	// internally by each enricher's BulkEnrich method (e.g. Reddit).
-	updated := 0
+	success := 0
+	skipped := 0
+	errcount := 0
 	for i := range items {
-		item := items[i]
+		if items[i].Points == snapshots[i].Points &&
+			items[i].CommentsCount == snapshots[i].CommentsCount &&
+			items[i].CommentUrl == snapshots[i].CommentUrl {
+			skipped++
+			continue
+		}
 		if _, err := p.queries.UpdateItemPointsAndComments(ctx, store.UpdateItemPointsAndCommentsParams{
-			ID:            item.ID,
-			Points:        item.Points,
-			CommentsCount: item.CommentsCount,
-			CommentUrl:    item.CommentUrl,
+			ID:            items[i].ID,
+			Points:        items[i].Points,
+			CommentsCount: items[i].CommentsCount,
+			CommentUrl:    items[i].CommentUrl,
 		}); err != nil {
-			logger.Debug("failed to update enriched item", "item_id", item.ID, "error", err)
+			logger.Debug("failed to update enriched item", "item_id", items[i].ID, "error", err)
+			errcount++
 		} else {
-			updated++
+			success++
 		}
 	}
-	logger.Info("enriched items (bulk)", "updated", updated, "total", len(items))
+	logger.Info("enrichment completed", "type", feed.Type, "items", len(items), "success", success, "skipped", skipped, "error", errcount)
 }
 
 func ItemHash(guid, title, url, content string) string {

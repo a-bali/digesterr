@@ -125,7 +125,7 @@ func (q *Queries) GetFeedByID(ctx context.Context, id int64) (Feed, error) {
 }
 
 const listActiveFeeds = `-- name: ListActiveFeeds :many
-SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, extract_content, created_at, updated_at FROM feeds WHERE status = 'active' ORDER BY id
+SELECT id, user_id, category_id, type, name, url, config, last_fetched_at, status, extract_content, created_at, updated_at FROM feeds WHERE status IN ('active', 'error') ORDER BY id
 `
 
 func (q *Queries) ListActiveFeeds(ctx context.Context) ([]Feed, error) {
