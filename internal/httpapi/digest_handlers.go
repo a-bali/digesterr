@@ -204,9 +204,12 @@ func (s *Server) handleUpdateDigestResultStatus(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Status != "new" && req.Status != "read" {
-		writeError(w, http.StatusBadRequest, "status must be new or read")
+	if req.Status != "new" && req.Status != "unread" && req.Status != "read" {
+		writeError(w, http.StatusBadRequest, "status must be new/unread or read")
 		return
+	}
+	if req.Status == "unread" {
+		req.Status = "new"
 	}
 	result, err := s.queries.UpdateDigestResultStatus(r.Context(), store.UpdateDigestResultStatusParams{
 		ID:     id,

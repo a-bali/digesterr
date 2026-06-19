@@ -15,6 +15,11 @@ export const useDigestStore = defineStore('digest', () => {
 
   const activeConfig = computed(() => configs.value.find(c => c.id === activeConfigId.value) || null)
 
+  function normalize(r: DigestResult): DigestResult {
+    if (r.status === 'new') r.status = 'unread'
+    return r
+  }
+
   async function fetchConfigs() {
     try {
       configs.value = await digestApi.listConfigs()
@@ -65,7 +70,7 @@ export const useDigestStore = defineStore('digest', () => {
     resultItems.value = []
     loading.value = true
     try {
-      results.value = await digestApi.listResults(id)
+      results.value = (await digestApi.listResults(id)).map(normalize)
     } catch (e) {
       toast.error('Failed to load digest results', { description: e instanceof ApiError ? e.message : undefined })
     } finally {
@@ -88,7 +93,7 @@ export const useDigestStore = defineStore('digest', () => {
   async function generateNow(configId: number) {
     generating.value = true
     try {
-      const result = await digestApi.generate(configId)
+      const result = normalize(await digestApi.generate(configId))
       results.value.unshift(result)
       toast.success('Digest generated')
       return result
@@ -102,7 +107,7 @@ export const useDigestStore = defineStore('digest', () => {
 
   async function markResultRead(resultId: number) {
     try {
-      const updated = await digestApi.updateResultStatus(resultId, 'read')
+      const updated = normalize(await digestApi.updateResultStatus(resultId, 'read'))
       const idx = results.value.findIndex(r => r.id === resultId)
       if (idx !== -1) results.value[idx] = updated
       if (selectedResult.value?.id === resultId) selectedResult.value = updated
@@ -128,7 +133,7 @@ export const useDigestStore = defineStore('digest', () => {
     try {
       configs.value = await digestApi.listConfigs()
       if (activeConfigId.value) {
-        results.value = await digestApi.listResults(activeConfigId.value)
+        results.value = (await digestApi.listResults(activeConfigId.value)).map(normalize)
       }
     } catch {
       // silent
@@ -137,7 +142,7 @@ export const useDigestStore = defineStore('digest', () => {
 
   async function updateResultStatus(resultId: number, status: string) {
     try {
-      const updated = await digestApi.updateResultStatus(resultId, status)
+      const updated = normalize(await digestApi.updateResultStatus(resultId, status))
       const idx = results.value.findIndex(r => r.id === resultId)
       if (idx !== -1) results.value[idx] = updated
       if (selectedResult.value?.id === resultId) selectedResult.value = updated
