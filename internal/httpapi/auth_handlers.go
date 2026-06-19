@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"digesterr/internal/auth"
@@ -163,6 +164,8 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create refresh token")
 		return
 	}
+
+	slog.Debug("token refreshed", "user_id", user.ID, "access_token", accessToken[:8]+"...")
 
 	http.SetCookie(w, refreshCookie(r, newRefresh, int(auth.RefreshTokenDuration.Seconds())))
 
