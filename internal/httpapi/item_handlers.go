@@ -1,18 +1,16 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	readability "codeberg.org/readeck/go-readability/v2"
+	"digesterr/internal/feed"
 	"digesterr/internal/store"
 )
 
@@ -130,79 +128,16 @@ func (s *Server) doExtractItem(itemID int64, url string) {
 	ctx := context.Background()
 	logger := slog.With("item_id", itemID, "url", url)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	content, err := feed.ExtractContent(ctx, url, &http.Client{Timeout: 30 * time.Second}, logger)
 	if err != nil {
-		logger.Error("failed to create extract request", "error", err)
-		return
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Error("failed to fetch URL for extraction", "error", err)
-		s.failExtraction(itemID, fmt.Sprintf("[%s] fetch failed: %v", time.Now().Format("2006-01-02 15:04"), err))
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		logger.Error("extraction HTTP error", "status", resp.StatusCode)
-		s.failExtraction(itemID, fmt.Sprintf("[%s] HTTP %d", time.Now().Format("2006-01-02 15:04"), resp.StatusCode))
-		return
-	}
-
-	contentType := resp.Header.Get("Content-Type")
-	contentType = strings.ToLower(contentType)
-
-	switch {
-	case strings.HasPrefix(contentType, "text/html") || strings.HasPrefix(contentType, "application/xhtml+xml"):
-		s.extractItemHTML(ctx, itemID, resp, req, logger)
-
-	case strings.HasPrefix(contentType, "image/"):
-		s.extractItemDone(ctx, itemID, fmt.Sprintf(`<img src="%s" style="max-width:100%%" />`, htmlEscape(url)))
-
-	case strings.HasPrefix(contentType, "video/"):
-		s.extractItemDone(ctx, itemID, fmt.Sprintf(
-			`<video src="%s" controls style="max-width:100%%"><p>Your browser does not support the video tag. <a href="%s" target="_blank">Watch video ↗</a></p></video>`,
-			htmlEscape(url), htmlEscape(url)))
-
-	case strings.HasPrefix(contentType, "audio/"):
-		s.extractItemDone(ctx, itemID, fmt.Sprintf(
-			`<audio src="%s" controls><p>Your browser does not support the audio tag. <a href="%s" target="_blank">Listen ↗</a></p></audio>`,
-			htmlEscape(url), htmlEscape(url)))
-
-	case strings.HasPrefix(contentType, "text/"):
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 100<<10))
-		if err != nil {
-			s.failExtraction(itemID, fmt.Sprintf("[%s] read body: %v", time.Now().Format("2006-01-02 15:04"), err))
-			return
-		}
-		s.extractItemDone(ctx, itemID, fmt.Sprintf(`<pre style="white-space:pre-wrap">%s</pre>`, htmlEscape(string(body))))
-
-	default:
-		s.extractItemDone(ctx, itemID, fmt.Sprintf(`<p><a href="%s" target="_blank">Open in browser ↗</a></p>`, htmlEscape(url)))
-	}
-}
-
-func (s *Server) extractItemHTML(ctx context.Context, itemID int64, resp *http.Response, req *http.Request, logger *slog.Logger) {
-	article, err := readability.FromReader(resp.Body, req.URL)
-	if err != nil {
-		logger.Error("readability extraction failed", "error", err)
-		s.failExtraction(itemID, fmt.Sprintf("[%s] extraction failed: %v", time.Now().Format("2006-01-02 15:04"), err))
-		return
-	}
-
-	var buf bytes.Buffer
-	if err := article.RenderHTML(&buf); err != nil {
-		logger.Error("failed to render article HTML", "error", err)
-		s.failExtraction(itemID, fmt.Sprintf("[%s] render failed: %v", time.Now().Format("2006-01-02 15:04"), err))
+		logger.Error("extraction failed", "error", err)
+		s.failExtraction(itemID, fmt.Sprintf("[%s] %v", time.Now().Format("2006-01-02 15:04"), err))
 		return
 	}
 
 	_, err = s.queries.UpdateItemExtraction(ctx, store.UpdateItemExtractionParams{
 		ID:             itemID,
-		ExtractContent: buf.String(),
+		ExtractContent: content,
 		ExtractStatus:  "done",
 		ExtractRetries: 0,
 	})
@@ -210,27 +145,6 @@ func (s *Server) extractItemHTML(ctx context.Context, itemID int64, resp *http.R
 		logger.Error("failed to save extracted content", "error", err)
 		return
 	}
-	logger.Info("content extracted successfully", "length", buf.Len())
-}
-
-func (s *Server) extractItemDone(ctx context.Context, itemID int64, content string) {
-	_, err := s.queries.UpdateItemExtraction(ctx, store.UpdateItemExtractionParams{
-		ID:             itemID,
-		ExtractContent: content,
-		ExtractStatus:  "done",
-		ExtractRetries: 0,
-	})
-	if err != nil {
-		slog.Error("failed to save extraction result", "item_id", itemID, "error", err)
-	}
-}
-
-func htmlEscape(s string) string {
-	s = strings.ReplaceAll(s, "&", "&amp;")
-	s = strings.ReplaceAll(s, "<", "&lt;")
-	s = strings.ReplaceAll(s, ">", "&gt;")
-	s = strings.ReplaceAll(s, `"`, "&quot;")
-	return s
 }
 
 func (s *Server) failExtraction(itemID int64, errorLine string) {
