@@ -391,7 +391,7 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 		userPrompt += "\n"
 	}
 
-	userPrompt += "For each HIGHLIGHT article, provide a 2-3 sentence highlight capturing the key insight and why it matters — skip introductory phrases like \"The article discusses\" or \"The author explains\". Format your response as JSON with key \"highlights\" (array of {title, summary})."
+	userPrompt += "For each HIGHLIGHT article, provide a 2-3 sentence highlight capturing the key insight and why it matters — skip introductory phrases like \"The article discusses\" or \"The author explains\". Format your response as JSON with keys \"summary\" (string of overall digest summary) and \"highlights\" (array of {title, summary})."
 
 	llmResponse, err := g.llm.Chat(ctx, systemPrompt, userPrompt)
 	if err != nil {
@@ -410,13 +410,6 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 		content.Summary = llmResponse
 	} else {
 		content.Summary = output.Summary
-		highlightSummaries := make(map[string]string)
-		for _, h := range output.Highlights {
-			highlightSummaries[h.Title] = h.Summary
-		}
-		for i, h := range highlights {
-			highlights[i].ExtractContent = h.ExtractContent
-		}
 	}
 
 	for _, h := range highlights {
