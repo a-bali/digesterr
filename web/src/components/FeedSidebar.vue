@@ -27,6 +27,7 @@ const feedStore = useFeedStore()
 const categoryStore = useCategoryStore()
 const digestStore = useDigestStore()
 const refreshingFeeds = ref(new Set<number>())
+const generatingDigests = ref(new Set<number>())
 
 const showAddFeed = ref(false)
 const showEditFeed = ref(false)
@@ -38,6 +39,8 @@ const newCategoryName = ref('')
 const showAddDigest = ref(false)
 const showEditDigest = ref(false)
 const editingDigest = ref<DigestConfig | null>(null)
+const defaultPrompt = 'You are a research assistant digesting news articles. For each article provided below, produce a 2-3 sentence highlight giving the concrete takeaway and why it matters — skip introductory phrases like "The article discusses" or "The author explains". Use the comments and extracted content to enrich your analysis.'
+
 const digestSourceMode = ref<'categories' | 'feeds'>('categories')
 const newDigest = ref({
   name: '',
@@ -45,7 +48,7 @@ const newDigest = ref({
   sourceIds: [] as number[],
   highlights: 5,
   comments: 10,
-  prompt: '',
+  prompt: defaultPrompt,
 })
 
 function feedIcon(feed: Feed): string {
@@ -140,9 +143,8 @@ function handleTypeChange(type: string) {
     ref.value.type = type
     ref.value.url = ''
   })
-  if (type === 'hn') { newFeed.value.url = ''; editingFeedData.value.url = '' }
-  else if (type === 'lobsters') { newFeed.value.url = ''; editingFeedData.value.url = '' }
-  else if (type === 'reddit') { newFeed.value.url = ''; editingFeedData.value.url = '' }
+  if (type === 'hn') { newFeed.value.url = 'https://news.ycombinator.com/rss'; editingFeedData.value.url = 'https://news.ycombinator.com/rss' }
+  else if (type === 'lobsters') { newFeed.value.url = 'https://lobste.rs/rss'; editingFeedData.value.url = 'https://lobste.rs/rss' }
 }
 
 async function addFeed() {
@@ -192,7 +194,7 @@ async function addDigest() {
   const json = makeConfigJson(newDigest.value.sourceIds, newDigest.value.highlights, newDigest.value.comments, newDigest.value.prompt)
   await digestStore.createConfig(newDigest.value.name, newDigest.value.schedule, json)
   showAddDigest.value = false
-  newDigest.value = { name: '', schedule: '0 8 * * *', sourceIds: [], highlights: 5, comments: 10, prompt: '' }
+  newDigest.value = { name: '', schedule: '0 8 * * *', sourceIds: [], highlights: 5, comments: 10, prompt: defaultPrompt }
 }
 
 function startEditDigest(cfg: DigestConfig) {
@@ -229,7 +231,10 @@ async function deleteDigest(id: number) {
 
 function generateNow(e: Event, cfgId: number) {
   e.stopPropagation()
-  digestStore.generateNow(cfgId)
+  generatingDigests.value = new Set(generatingDigests.value).add(cfgId)
+  digestStore.generateNow(cfgId).finally(() => {
+    const next = new Set(generatingDigests.value); next.delete(cfgId); generatingDigests.value = next
+  })
 }
 
 function onDigestCategoryCreate(name: string) {
@@ -287,9 +292,9 @@ function toggleCategory(catId: number) {
     <!-- DIGESTS section -->
     <div class="flex items-center justify-between mb-2 px-2">
       <span class="text-xs font-semibold text-muted-foreground uppercase">Digests</span>
-      <Button variant="ghost" size="icon" class="size-5 justify-end" title="Create digest config" @click="showAddDigest = true">
+      <button class="p-1 rounded hover:bg-accent/20" title="Create digest config" @click="showAddDigest = true">
         <Plus class="size-3.5" />
-      </Button>
+      </button>
     </div>
     <div class="space-y-0.5 mb-3">
       <div
@@ -306,8 +311,8 @@ function toggleCategory(catId: number) {
           <button class="p-1 rounded hover:bg-accent/20" title="Settings" @click.stop="startEditDigest(cfg)">
             <Settings class="size-3" />
           </button>
-          <button class="p-1 rounded hover:bg-accent/20" title="Generate now" :disabled="digestStore.generating" @click.stop="generateNow($event, cfg.id)">
-            <Sparkles class="size-3" />
+          <button class="p-1 rounded hover:bg-accent/20" title="Generate now" @click.stop="generateNow($event, cfg.id)">
+            <Sparkles class="size-3" :class="generatingDigests.has(cfg.id) ? 'animate-spin' : ''" />
           </button>
         </div>
       </div>
@@ -317,9 +322,9 @@ function toggleCategory(catId: number) {
     <!-- Feeds -->
     <div class="flex items-center justify-between mb-2 px-2">
       <span class="text-xs font-semibold text-muted-foreground uppercase">Feeds</span>
-      <Button variant="ghost" size="icon" class="size-5 justify-end" title="Add feed" @click="showAddFeed = true">
+      <button class="p-1 rounded hover:bg-accent/20" title="Add feed" @click="showAddFeed = true">
         <Plus class="size-3.5" />
-      </Button>
+      </button>
     </div>
     <div v-for="catId in sortedCategoryIds" :key="catId" class="mb-3">
       <button class="flex w-full items-center justify-between text-xs font-semibold text-muted-foreground uppercase mb-1 hover:text-foreground transition-colors px-2" @click="toggleCategory(catId)">
