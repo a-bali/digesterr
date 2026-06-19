@@ -43,6 +43,11 @@ func (e *LobstersEnricher) BulkEnrich(ctx context.Context, items []*store.Item) 
 		if shortID == "" {
 			continue
 		}
+		select {
+		case <-time.After(time.Second):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		if err := e.enrichOne(ctx, item, shortID); err != nil {
 			slog.Debug("failed to enrich Lobste.rs item", "item_id", item.ID, "short_id", shortID, "error", err)
 			errors++
@@ -50,7 +55,7 @@ func (e *LobstersEnricher) BulkEnrich(ctx context.Context, items []*store.Item) 
 		}
 		enriched++
 	}
-	slog.Info("Lobste.rs bulk enrich", "enriched", enriched, "errors", errors, "total", len(items))
+	slog.Debug("lobste.rs bulk enrichment completed", "success", enriched, "error", errors, "total", len(items))
 	return nil
 }
 
@@ -147,11 +152,12 @@ func flattenLobstersComments(children []lobstersComment, shortID string, depth i
 			continue
 		}
 		*out = append(*out, Comment{
-			Author: c.CommentingUser,
-			Text:   stripHTMLTags(c.Comment),
-			Points: c.Score,
-			Depth:  depth,
-			URL:    fmt.Sprintf("https://lobste.rs/s/%s/%s", shortID, c.ShortID),
+			Author:      c.CommentingUser,
+			Text:        stripHTMLTags(c.Comment),
+			Points:      c.Score,
+			ValidPoints: true,
+			Depth:       depth,
+			URL:         fmt.Sprintf("https://lobste.rs/s/%s#c_%s", shortID, c.ShortID),
 		})
 		flattenLobstersComments(c.Children, shortID, depth+1, out)
 	}

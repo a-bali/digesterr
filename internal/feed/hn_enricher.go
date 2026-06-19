@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -126,10 +127,12 @@ func (e *HNEnricher) BulkEnrich(ctx context.Context, items []*store.Item) error 
 		}
 	}
 
+	slog.Debug("hn bulk enrichment completed", "requested", len(filters), "matched", len(algoliaResp.Hits))
+
 	return nil
 }
 
-// FetchComments fetches the comment tree from Algolia.
+// FetchComments fetches the comment tree from Algolia and ranks by descendant count.
 func (e *HNEnricher) FetchComments(ctx context.Context, item store.Item, maxComments int) ([]Comment, error) {
 	hnID := extractHNID(item.CommentUrl, item.Url)
 	if hnID == 0 {
@@ -161,7 +164,30 @@ func (e *HNEnricher) FetchComments(ctx context.Context, item store.Item, maxComm
 
 	var comments []Comment
 	flattenComments(algoliaResp.Children, 0, &comments)
-	sort.Slice(comments, func(i, j int) bool { return comments[i].Points > comments[j].Points })
+
+	// Rank by total descendant count (HN doesn't expose comment scores).
+	childrenOf := make(map[int64][]algoliaComment)
+	var indexDescendants func(children []algoliaComment)
+	indexDescendants = func(children []algoliaComment) {
+		for _, c := range children {
+			childrenOf[c.ID] = c.Children
+			indexDescendants(c.Children)
+		}
+	}
+	indexDescendants(algoliaResp.Children)
+
+	var countDesc func(id int64) int
+	countDesc = func(id int64) int {
+		total := 0
+		for _, child := range childrenOf[id] {
+			total += 1 + countDesc(child.ID)
+		}
+		return total
+	}
+
+	sort.Slice(comments, func(i, j int) bool {
+		return countDesc(comments[i].ID) > countDesc(comments[j].ID)
+	})
 
 	if maxComments > 0 && len(comments) > maxComments {
 		comments = comments[:maxComments]

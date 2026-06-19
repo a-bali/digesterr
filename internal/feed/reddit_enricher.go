@@ -225,8 +225,6 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 	}
 	defer resp.Body.Close()
 
-	slog.Debug("reddit bulk enrich", "url", apiURL, "status", resp.StatusCode, "req_ids", len(ids))
-
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Reddit API returned status %d for bulk info", resp.StatusCode)
 	}
@@ -239,8 +237,6 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return fmt.Errorf("decoding Reddit info response: %w", err)
 	}
-
-	slog.Debug("reddit bulk enrich response", "children_count", len(info.Data.Children))
 
 	matched := 0
 	for _, child := range info.Data.Children {
@@ -265,7 +261,7 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 			}
 		}
 	}
-	slog.Debug("reddit bulk enrich", "requested", len(ids), "matched", matched)
+	slog.Debug("reddit bulk enrichment completed", "requested", len(ids), "matched", matched)
 	if matched == 0 {
 		slog.Warn("reddit bulk enrich matched no items — API response may be empty or rate-limited")
 	}
@@ -329,12 +325,13 @@ func flattenRedditComment(child redditChild, depth int, out *[]Comment) {
 		commentURL = "https://www.reddit.com" + child.Data.Permalink
 	}
 	*out = append(*out, Comment{
-		ID:     0,
-		Author: child.Data.Author,
-		Text:   child.Data.Body,
-		Points: child.Data.Score,
-		Depth:  depth,
-		URL:    commentURL,
+		ID:          0,
+		Author:      child.Data.Author,
+		Text:        child.Data.Body,
+		Points:      child.Data.Score,
+		ValidPoints: true,
+		Depth:       depth,
+		URL:         commentURL,
 	})
 	for _, reply := range child.Data.Replies.Data.Children {
 		flattenRedditComment(reply, depth+1, out)
