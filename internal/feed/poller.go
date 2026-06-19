@@ -214,10 +214,7 @@ func (p *Poller) setItemExtractionPending(ctx context.Context, itemID int64, log
 }
 
 func (p *Poller) extractFeedContent(ctx context.Context, feed store.Feed, logger *slog.Logger) {
-	items, err := p.queries.ListItemsNeedingExtraction(ctx, store.ListItemsNeedingExtractionParams{
-		FeedID: feed.ID,
-		Limit:  5,
-	})
+	items, err := p.queries.ListItemsNeedingExtraction(ctx, feed.ID)
 	if err != nil {
 		logger.Debug("failed to list items for extraction", "error", err)
 		return

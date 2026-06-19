@@ -53,7 +53,7 @@ SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DES
 SELECT * FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?;
 
 -- name: ListItemsNeedingExtraction :many
-SELECT * FROM items WHERE feed_id = ? AND url != '' AND extract_status IN ('pending', 'failed') AND extract_retries < 3 ORDER BY extract_retries ASC, published_at DESC LIMIT ?;
+SELECT * FROM items WHERE feed_id = ? AND url != '' AND extract_status IN ('pending', 'failed') AND extract_retries < 3 ORDER BY extract_retries ASC, published_at DESC;
 
 -- name: UpdateItemExtraction :one
 UPDATE items SET extract_content = ?, extract_status = ?, extract_retries = ?, extract_date = DATETIME('now'), updated_at = DATETIME('now') WHERE id = ? RETURNING *;

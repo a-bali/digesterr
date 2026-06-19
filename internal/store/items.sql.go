@@ -438,16 +438,11 @@ func (q *Queries) ListItemsByFeedPaginated(ctx context.Context, arg ListItemsByF
 }
 
 const listItemsNeedingExtraction = `-- name: ListItemsNeedingExtraction :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? AND url != '' AND extract_status IN ('pending', 'failed') AND extract_retries < 3 ORDER BY extract_retries ASC, published_at DESC LIMIT ?
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? AND url != '' AND extract_status IN ('pending', 'failed') AND extract_retries < 3 ORDER BY extract_retries ASC, published_at DESC
 `
 
-type ListItemsNeedingExtractionParams struct {
-	FeedID int64 `json:"feed_id"`
-	Limit  int64 `json:"limit"`
-}
-
-func (q *Queries) ListItemsNeedingExtraction(ctx context.Context, arg ListItemsNeedingExtractionParams) ([]Item, error) {
-	rows, err := q.db.QueryContext(ctx, listItemsNeedingExtraction, arg.FeedID, arg.Limit)
+func (q *Queries) ListItemsNeedingExtraction(ctx context.Context, feedID int64) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsNeedingExtraction, feedID)
 	if err != nil {
 		return nil, err
 	}
