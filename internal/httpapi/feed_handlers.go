@@ -213,6 +213,13 @@ func (s *Server) handleDeleteFeed(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+
+	feed, err := s.queries.GetFeedByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "feed not found")
+		return
+	}
+
 	deleted, err := s.queries.DeleteFeed(r.Context(), store.DeleteFeedParams{
 		ID:     id,
 		UserID: userID,
@@ -221,6 +228,23 @@ func (s *Server) handleDeleteFeed(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "feed not found")
 		return
 	}
+
+	if feed.CategoryID != 0 {
+			cnt, cerr := s.queries.CountFeedsInCategory(r.Context(), feed.CategoryID)
+			if cerr == nil && cnt == 0 {
+				cat, cerr := s.queries.GetCategory(r.Context(), store.GetCategoryParams{
+					ID:     feed.CategoryID,
+					UserID: userID,
+				})
+				if cerr == nil && cat.Name != "FEEDS" {
+					s.queries.DeleteCategory(r.Context(), store.DeleteCategoryParams{
+						ID:     feed.CategoryID,
+						UserID: userID,
+					})
+				}
+			}
+		}
+
 	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
 }
 

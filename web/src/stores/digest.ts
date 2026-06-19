@@ -124,10 +124,33 @@ export const useDigestStore = defineStore('digest', () => {
     }
   }
 
+  async function silentRefresh() {
+    try {
+      configs.value = await digestApi.listConfigs()
+      if (activeConfigId.value) {
+        results.value = await digestApi.listResults(activeConfigId.value)
+      }
+    } catch {
+      // silent
+    }
+  }
+
+  async function updateResultStatus(resultId: number, status: string) {
+    try {
+      const updated = await digestApi.updateResultStatus(resultId, status)
+      const idx = results.value.findIndex(r => r.id === resultId)
+      if (idx !== -1) results.value[idx] = updated
+      if (selectedResult.value?.id === resultId) selectedResult.value = updated
+    } catch (e) {
+      toast.error('Failed to update digest status', { description: e instanceof ApiError ? e.message : undefined })
+    }
+  }
+
   return {
     configs, activeConfigId, results, selectedResult, resultItems,
     loading, generating, activeConfig,
     fetchConfigs, createConfig, updateConfig, deleteConfig,
     setActiveConfig, selectResult, generateNow, markResultRead, deleteResult,
+    updateResultStatus, silentRefresh,
   }
 })

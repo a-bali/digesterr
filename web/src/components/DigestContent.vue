@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useDigestStore } from '../stores/digest'
 import type { DigestContent, DigestContentItem } from '../types/api'
-import { MessageSquare, ExternalLink, Star, Clock, MessageCircle, Trash2 } from 'lucide-vue-next'
+import { MessageSquare, ExternalLink, Clock, MessageCircle, Trash2, Circle, Check } from 'lucide-vue-next'
 
 const store = useDigestStore()
 
@@ -57,18 +57,22 @@ async function deleteResult() {
     </div>
     <template v-else>
       <div class="flex items-center justify-between mb-4">
-        <div>
-          <h2 class="text-lg font-semibold">Digest</h2>
+        <div class="flex items-center gap-2">
+          <span v-if="store.selectedResult.status === 'read'" class="text-xs text-muted-foreground/50"><Check class="size-3.5" /></span>
+          <span v-else class="text-xs text-accent"><Circle class="size-3.5" /></span>
           <p class="text-xs text-muted-foreground">
-            Generated {{ new Date(store.selectedResult.created_at).toLocaleString() }}
-            <span v-if="store.selectedResult.status === 'new'" class="ml-2 inline-flex items-center gap-0.5 text-accent bg-accent/10 rounded px-1.5 py-0.5 text-xs">
-              <Star class="size-3" /> New
-            </span>
+            {{ new Date(store.selectedResult.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }}
+            {{ new Date(store.selectedResult.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}
           </p>
         </div>
-        <button class="text-xs text-muted-foreground hover:text-red-500 transition-colors" @click="deleteResult" title="Delete digest">
-          <Trash2 class="size-3.5" />
-        </button>
+        <div class="flex items-center gap-1">
+          <button class="text-xs text-muted-foreground hover:text-accent transition-colors px-1" @click="store.updateResultStatus(store.selectedResult.id, store.selectedResult.status === 'read' ? 'unread' : 'read')">
+            {{ store.selectedResult.status === 'read' ? 'Mark unread' : 'Mark read' }}
+          </button>
+          <button class="text-xs text-muted-foreground hover:text-red-500 transition-colors" @click="deleteResult" title="Delete">
+            <Trash2 class="size-3.5" />
+          </button>
+        </div>
       </div>
 
       <!-- Highlights grouped by feed -->

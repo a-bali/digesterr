@@ -155,10 +155,18 @@ export const useFeedStore = defineStore('feed', () => {
     }
   }
 
+  async function fetchUnreadCounts() {
+    try {
+      unreadCounts.value = await feedApi.unreadCounts()
+    } catch {
+      // silent
+    }
+  }
+
   return {
     feeds, activeFeedId, items, selectedItem, filter, loading, loadingMore, hasMore,
     activeFeed, unreadCounts,
     fetchFeeds, setActiveFeed, fetchFirstPage, fetchMoreItems, fetchItems,
-    selectItem, updateItemStatus, changeFilter,
+    selectItem, updateItemStatus, changeFilter, fetchUnreadCounts,
   }
 })

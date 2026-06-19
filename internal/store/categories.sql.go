@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const countFeedsInCategory = `-- name: CountFeedsInCategory :one
+SELECT count(*) FROM feeds WHERE category_id = ?
+`
+
+func (q *Queries) CountFeedsInCategory(ctx context.Context, categoryID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countFeedsInCategory, categoryID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createCategory = `-- name: CreateCategory :one
 INSERT INTO categories (user_id, name)
 VALUES (?, ?)

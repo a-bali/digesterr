@@ -20,3 +20,6 @@ SELECT * FROM categories WHERE user_id = ? AND name = ?;
 
 -- name: DeleteCategory :one
 DELETE FROM categories WHERE id = ? AND user_id = ? RETURNING id;
+
+-- name: CountFeedsInCategory :one
+SELECT count(*) FROM feeds WHERE category_id = ?;

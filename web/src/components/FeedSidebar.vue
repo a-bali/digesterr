@@ -9,8 +9,9 @@ import type { DigestConfig, Feed } from '../types/api'
 import Button from './ui/Button'
 import Input from './ui/Input'
 import Dialog from './ui/Dialog'
+import TagInput from './TagInput.vue'
 import Tooltip from './ui/Tooltip'
-import { BookmarkCheck, Rss, RefreshCw, Check, Plus, Sparkles, Settings, Trash2, MessageSquare, ChevronDown } from 'lucide-vue-next'
+import { BookmarkCheck, Rss, RefreshCw, Check, Plus, Sparkles, Settings, Trash2, MessageSquare, ChevronDown, X } from 'lucide-vue-next'
 
 const props = withDefaults(defineProps<{
   showingSaved?: boolean
@@ -30,18 +31,18 @@ const refreshingFeeds = ref(new Set<number>())
 const showAddFeed = ref(false)
 const showEditFeed = ref(false)
 const editingFeed = ref<Feed | null>(null)
-const editExtractContent = ref(0)
-const newFeed = ref({ category_id: 0, category_name: '', type: 'rss', name: '', url: '', createNewCategory: false })
+const newFeed = ref({ category_ids: [] as number[], createCategoryName: '', type: 'rss', name: '', url: '', extract_content: 0 })
+const editingFeedData = ref({ category_ids: [] as number[], createCategoryName: '', type: 'rss', name: '', url: '', extract_content: 0 })
 const newCategoryName = ref('')
 
 const showAddDigest = ref(false)
 const showEditDigest = ref(false)
 const editingDigest = ref<DigestConfig | null>(null)
+const digestSourceMode = ref<'categories' | 'feeds'>('categories')
 const newDigest = ref({
   name: '',
   schedule: '0 8 * * *',
-  categoryIds: [] as number[],
-  feedIds: [] as number[],
+  sourceIds: [] as number[],
   highlights: 5,
   comments: 10,
   prompt: '',
@@ -93,16 +94,38 @@ async function markFeedRead(id: number) {
 
 function startEditFeed(feed: Feed) {
   editingFeed.value = feed
-  editExtractContent.value = feed.extract_content
+  const url = feed.type === 'reddit' ? feed.url.replace('https://www.reddit.com/r/', '').replace('.rss', '') : feed.url
+  editingFeedData.value = {
+    category_ids: feed.category_id ? [feed.category_id] : [],
+    createCategoryName: '',
+    type: feed.type,
+    name: feed.name,
+    url,
+    extract_content: feed.extract_content,
+  }
   showEditFeed.value = true
 }
 
 async function saveEditFeed() {
   if (!editingFeed.value) return
-  await feedApi.update(editingFeed.value.id, { extract_content: editExtractContent.value })
-  const f = feedStore.feeds.find(f => f.id === editingFeed.value!.id)
-  if (f) f.extract_content = editExtractContent.value
+  const data: any = { extract_content: editingFeedData.value.extract_content }
+  if (editingFeedData.value.category_ids.length > 0) {
+    data.category_id = editingFeedData.value.category_ids[0]
+  } else if (editingFeedData.value.createCategoryName) {
+    data.category_name = editingFeedData.value.createCategoryName
+  }
+  if (editingFeedData.value.type === 'reddit') {
+    data.url = 'https://www.reddit.com/r/' + editingFeedData.value.url.replace(/\.rss$/, '') + '.rss'
+  } else if (editingFeedData.value.type === 'hn') {
+    data.url = 'https://news.ycombinator.com/rss'
+  } else if (editingFeedData.value.type === 'lobsters') {
+    data.url = 'https://lobste.rs/rss'
+  } else {
+    data.url = editingFeedData.value.url
+  }
+  await feedApi.update(editingFeed.value.id, data)
   showEditFeed.value = false; editingFeed.value = null
+  resetEditFeed()
   await feedStore.fetchFeeds()
 }
 
@@ -113,62 +136,88 @@ async function deleteFeed(id: number) {
 }
 
 function handleTypeChange(type: string) {
-  newFeed.value.type = type
-  switch (type) {
-    case 'hn': newFeed.value.url = 'https://news.ycombinator.com/rss'; break
-    case 'lobsters': newFeed.value.url = 'https://lobste.rs/rss'; break
-    case 'reddit': newFeed.value.url = 'https://www.reddit.com/r/'; break
-    default: newFeed.value.url = ''
-  }
+  ;[newFeed, editingFeedData].forEach(ref => {
+    ref.value.type = type
+    ref.value.url = ''
+  })
+  if (type === 'hn') { newFeed.value.url = ''; editingFeedData.value.url = '' }
+  else if (type === 'lobsters') { newFeed.value.url = ''; editingFeedData.value.url = '' }
+  else if (type === 'reddit') { newFeed.value.url = ''; editingFeedData.value.url = '' }
 }
 
 async function addFeed() {
-  const data: any = { type: newFeed.value.type, name: newFeed.value.name, url: newFeed.value.url }
-  if (newFeed.value.createNewCategory && newFeed.value.category_name) {
-    data.category_name = newFeed.value.category_name
-  } else if (newFeed.value.category_id > 0) {
-    data.category_id = newFeed.value.category_id
+  const data: any = { type: newFeed.value.type, name: newFeed.value.name, extract_content: newFeed.value.extract_content }
+  if (newFeed.value.category_ids.length > 0) {
+    data.category_id = newFeed.value.category_ids[0]
+  } else if (newFeed.value.createCategoryName) {
+    data.category_name = newFeed.value.createCategoryName
+  }
+  if (newFeed.value.type === 'reddit') {
+    data.url = 'https://www.reddit.com/r/' + newFeed.value.url.replace(/\.rss$/, '') + '.rss'
+  } else if (newFeed.value.type === 'hn') {
+    data.url = 'https://news.ycombinator.com/rss'
+  } else if (newFeed.value.type === 'lobsters') {
+    data.url = 'https://lobste.rs/rss'
+  } else {
+    data.url = newFeed.value.url
   }
   await feedApi.create(data)
   await feedStore.fetchFeeds()
   showAddFeed.value = false
-  newFeed.value = { category_id: 0, category_name: '', type: 'rss', name: '', url: '', createNewCategory: false }
+  resetNewFeed()
 }
 
-function makeConfigJson(categoryIds: number[], feedIds: number[], highlights: number, comments: number, prompt: string): string {
+function resetNewFeed() {
+  newFeed.value = { category_id: 0, category_ids: [] as number[], createCategoryName: '', type: 'rss', name: '', url: '', extract_content: 0 }
+}
+
+function resetEditFeed() {
+  editingFeedData.value = { category_ids: [] as number[], createCategoryName: '', type: 'rss', name: '', url: '', extract_content: 0 }
+}
+
+function makeConfigJson(sourceIds: number[], highlights: number, comments: number, prompt: string): string {
+  const mode = digestSourceMode.value
   const config: any = {
     default_highlights: highlights, default_comments: comments, prompt: prompt || undefined,
-    categories: categoryIds.map(id => ({ id, highlights, comments })),
-    feeds: feedIds.map(id => ({ id, highlights, comments })),
+  }
+  if (mode === 'categories') {
+    config.categories = sourceIds.map(id => ({ id, highlights, comments }))
+  } else {
+    config.feeds = sourceIds.map(id => ({ id, highlights, comments }))
   }
   return JSON.stringify(config)
 }
 
 async function addDigest() {
-  const json = makeConfigJson(newDigest.value.categoryIds, newDigest.value.feedIds, newDigest.value.highlights, newDigest.value.comments, newDigest.value.prompt)
+  const json = makeConfigJson(newDigest.value.sourceIds, newDigest.value.highlights, newDigest.value.comments, newDigest.value.prompt)
   await digestStore.createConfig(newDigest.value.name, newDigest.value.schedule, json)
   showAddDigest.value = false
-  newDigest.value = { name: '', schedule: '0 8 * * *', categoryIds: [], feedIds: [], highlights: 5, comments: 10, prompt: '' }
+  newDigest.value = { name: '', schedule: '0 8 * * *', sourceIds: [], highlights: 5, comments: 10, prompt: '' }
 }
 
 function startEditDigest(cfg: DigestConfig) {
-  let catIds: number[] = []; let feedIds: number[] = []; let highlights = 5; let comments = 10; let prompt = ''
+  let ids: number[] = []; let highlights = 5; let comments = 10; let prompt = ''
+  let mode: 'categories' | 'feeds' = 'categories'
   try {
     const parsed = JSON.parse(cfg.config)
     if (parsed.default_highlights) highlights = parsed.default_highlights
     if (parsed.default_comments) comments = parsed.default_comments
     if (parsed.prompt) prompt = parsed.prompt
-    if (Array.isArray(parsed.categories)) catIds = parsed.categories.map((c: any) => c.id)
-    if (Array.isArray(parsed.feeds)) feedIds = parsed.feeds.map((f: any) => f.id)
+    if (Array.isArray(parsed.categories) && parsed.categories.length) {
+      mode = 'categories'; ids = parsed.categories.map((c: any) => c.id)
+    } else if (Array.isArray(parsed.feeds) && parsed.feeds.length) {
+      mode = 'feeds'; ids = parsed.feeds.map((f: any) => f.id)
+    }
   } catch { /* defaults */ }
   editingDigest.value = cfg
-  newDigest.value = { name: cfg.name, schedule: cfg.schedule, categoryIds: catIds, feedIds, highlights, comments, prompt }
+  digestSourceMode.value = mode
+  newDigest.value = { name: cfg.name, schedule: cfg.schedule, sourceIds: ids, highlights, comments, prompt }
   showEditDigest.value = true
 }
 
 async function saveEditDigest() {
   if (!editingDigest.value) return
-  const json = makeConfigJson(newDigest.value.categoryIds, newDigest.value.feedIds, newDigest.value.highlights, newDigest.value.comments, newDigest.value.prompt)
+  const json = makeConfigJson(newDigest.value.sourceIds, newDigest.value.highlights, newDigest.value.comments, newDigest.value.prompt)
   await digestStore.updateConfig(editingDigest.value.id, newDigest.value.name, newDigest.value.schedule, json)
   showEditDigest.value = false; editingDigest.value = null
 }
@@ -183,15 +232,26 @@ function generateNow(e: Event, cfgId: number) {
   digestStore.generateNow(cfgId)
 }
 
-function toggleDigestCategory(list: number[], catId: number) {
-  const idx = list.indexOf(catId)
-  if (idx !== -1) list.splice(idx, 1); else list.push(catId)
+function onDigestCategoryCreate(name: string) {
+  // Will be created on save if category doesn't exist
+  // For now just emit
 }
 
-function toggleFeed(list: number[], feedId: number) {
-  const idx = list.indexOf(feedId)
-  if (idx !== -1) list.splice(idx, 1); else list.push(feedId)
+function isRedditType(t: string) { return t === 'reddit' }
+
+function setFeedUrlForType(type: string) {
+  if (type === 'hn') {
+    newFeed.value.url = 'https://news.ycombinator.com/rss'
+  } else if (type === 'lobsters') {
+    newFeed.value.url = 'https://lobste.rs/rss'
+  } else if (type === 'reddit') {
+    newFeed.value.url = 'https://www.reddit.com/r/'
+  } else if (newFeed.value.type !== type && !isPresetType(type)) {
+    newFeed.value.url = ''
+  }
 }
+
+function isPresetType(t: string) { return t === 'hn' || t === 'lobsters' || t === 'reddit' }
 
 onMounted(() => {
   digestStore.fetchConfigs()
@@ -199,7 +259,7 @@ onMounted(() => {
 
 const collapsedCategories = reactive(new Set<number>())
 const sortedCategoryIds = computed(() => {
-  const cats = [...categoryStore.categories]
+  const cats = [...categoryStore.categories].filter(c => feedStore.feeds.some(f => f.category_id === c.id) || c.name === 'FEEDS')
   const feedsCatIdx = cats.findIndex(c => c.name === 'FEEDS')
   if (feedsCatIdx > 0) {
     const [feedsCat] = cats.splice(feedsCatIdx, 1)
@@ -243,11 +303,11 @@ function toggleCategory(catId: number) {
           <span class="truncate">{{ cfg.name || cfg.schedule }}</span>
         </div>
         <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button class="p-1 rounded hover:bg-accent/20" title="Generate now" :disabled="digestStore.generating" @click.stop="generateNow($event, cfg.id)">
-            <Sparkles class="size-3" />
-          </button>
           <button class="p-1 rounded hover:bg-accent/20" title="Settings" @click.stop="startEditDigest(cfg)">
             <Settings class="size-3" />
+          </button>
+          <button class="p-1 rounded hover:bg-accent/20" title="Generate now" :disabled="digestStore.generating" @click.stop="generateNow($event, cfg.id)">
+            <Sparkles class="size-3" />
           </button>
         </div>
       </div>
@@ -299,78 +359,145 @@ function toggleCategory(catId: number) {
 
     <!-- Add Feed Dialog -->
     <Dialog v-if="showAddFeed" v-model:open="showAddFeed" title="Add Feed">
-      <form @submit.prevent="addFeed" class="space-y-3">
-        <div>
-          <select v-model="newFeed.category_id" class="flex h-9 w-full rounded-md border border-border bg-background px-3 text-sm">
-            <option value="0">FEEDS (no category)</option>
-            <option v-for="cat in categoryStore.categories.filter(c => c.name !== 'FEEDS')" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
-            <option value="-1">Create new category…</option>
+      <form @submit.prevent="addFeed" class="space-y-4">
+        <div class="space-y-1">
+          <label class="text-xs font-medium">Category</label>
+          <TagInput
+            :items="categoryStore.categories.map(c => ({ label: c.name, value: c.id }))"
+            v-model="newFeed.category_ids"
+            placeholder="Type to search or create…"
+            :allowCreate="true"
+            @create="(name: string) => { newFeed.createCategoryName = name; newFeed.category_ids = [] }"
+          />
+        </div>
+        <div class="space-y-1">
+          <label class="text-xs font-medium">Type</label>
+          <select v-model="newFeed.type" @change="handleTypeChange(($event.target as HTMLSelectElement).value)" class="flex h-9 w-full rounded-md border border-border bg-background px-3 text-sm">
+            <option value="rss">RSS / Atom</option>
+            <option value="hn">Hacker News</option>
+            <option value="lobsters">Lobste.rs</option>
+            <option value="reddit">Reddit</option>
           </select>
-          <Input v-if="newFeed.category_id === -1" v-model="newFeed.category_name" placeholder="New category name" class="mt-1" @update:modelValue="() => { newFeed.createNewCategory = true }" />
         </div>
-        <select :value="newFeed.type" @change="handleTypeChange(($event.target as HTMLSelectElement).value)" class="flex h-9 w-full rounded-md border border-border bg-background px-3 text-sm">
-          <option value="rss">RSS / Atom</option>
-          <option value="hn">Hacker News</option>
-          <option value="lobsters">Lobste.rs</option>
-          <option value="reddit">Reddit</option>
-        </select>
-        <Input v-model="newFeed.name" placeholder="Feed name" required />
-        <div v-if="newFeed.type === 'rss' || newFeed.type === 'atom' || newFeed.type === 'reddit'" class="space-y-1">
+        <div class="space-y-1">
+          <label class="text-xs font-medium">Name</label>
+          <Input v-model="newFeed.name" placeholder="Feed name" required />
+        </div>
+        <div v-if="newFeed.type === 'hn' || newFeed.type === 'lobsters'" class="space-y-1">
+          <label class="text-xs font-medium">URL</label>
+          <p class="text-sm text-muted-foreground bg-muted rounded px-2 py-1.5">{{ newFeed.url }}</p>
+        </div>
+        <div v-else-if="newFeed.type === 'reddit'" class="space-y-1">
+          <label class="text-xs font-medium">URL</label>
+          <div class="flex items-center gap-0">
+            <span class="text-xs text-muted-foreground bg-muted rounded-l-md px-2 py-1.5 border border-border border-r-0 whitespace-nowrap">https://www.reddit.com/r/</span>
+            <Input v-model="newFeed.url" placeholder="subreddit" required class="rounded-none" />
+            <span class="text-xs text-muted-foreground bg-muted rounded-r-md px-2 py-1.5 border border-border border-l-0 whitespace-nowrap">.rss</span>
+          </div>
+        </div>
+        <div v-else class="space-y-1">
+          <label class="text-xs font-medium">URL</label>
           <Input v-model="newFeed.url" placeholder="Feed URL" required />
-          <p v-if="newFeed.type === 'reddit'" class="text-xs text-muted-foreground">Append subreddit name and .rss</p>
         </div>
-        <p v-if="newFeed.type === 'hn' || newFeed.type === 'lobsters'" class="text-xs text-muted-foreground">URL set to {{ newFeed.url }}</p>
+        <label class="flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" v-model.number="newFeed.extract_content" :true-value="1" :false-value="0" class="toggle" />
+          Auto-extract full article content
+        </label>
         <Button type="submit">Add</Button>
       </form>
     </Dialog>
 
     <!-- Edit Feed Dialog -->
     <Dialog v-if="showEditFeed && editingFeed" v-model:open="showEditFeed" title="Edit Feed">
-      <form @submit.prevent="saveEditFeed" class="space-y-3">
-        <p class="text-sm font-medium">{{ editingFeed.name }}</p>
+      <form @submit.prevent="saveEditFeed" class="space-y-4">
+        <div class="space-y-1">
+          <label class="text-xs font-medium">Category</label>
+          <TagInput
+            :items="categoryStore.categories.map(c => ({ label: c.name, value: c.id }))"
+            v-model="editingFeedData.category_ids"
+            placeholder="Search…"
+            :allowCreate="true"
+            @create="(name: string) => { editingFeedData.createCategoryName = name; editingFeedData.category_ids = [] }"
+          />
+        </div>
+        <div class="space-y-1">
+          <label class="text-xs font-medium">Type</label>
+          <select v-model="editingFeedData.type" @change="handleTypeChange(($event.target as HTMLSelectElement).value)" class="flex h-9 w-full rounded-md border border-border bg-background px-3 text-sm">
+            <option value="rss">RSS / Atom</option>
+            <option value="hn">Hacker News</option>
+            <option value="lobsters">Lobste.rs</option>
+            <option value="reddit">Reddit</option>
+          </select>
+        </div>
+        <div class="space-y-1">
+          <label class="text-xs font-medium">Name</label>
+          <Input v-model="editingFeedData.name" placeholder="Feed name" required />
+        </div>
+        <div v-if="editingFeedData.type === 'hn' || editingFeedData.type === 'lobsters'" class="space-y-1">
+          <label class="text-xs font-medium">URL</label>
+          <p class="text-sm text-muted-foreground bg-muted rounded px-2 py-1.5">{{ editingFeedData.url }}</p>
+        </div>
+        <div v-else-if="editingFeedData.type === 'reddit'" class="space-y-1">
+          <label class="text-xs font-medium">URL</label>
+          <div class="flex items-center gap-0">
+            <span class="text-xs text-muted-foreground bg-muted rounded-l-md px-2 py-1.5 border border-border border-r-0 whitespace-nowrap">https://www.reddit.com/r/</span>
+            <Input v-model="editingFeedData.url" placeholder="subreddit" required class="rounded-none" />
+            <span class="text-xs text-muted-foreground bg-muted rounded-r-md px-2 py-1.5 border border-border border-l-0 whitespace-nowrap">.rss</span>
+          </div>
+        </div>
+        <div v-else class="space-y-1">
+          <label class="text-xs font-medium">URL</label>
+          <Input v-model="editingFeedData.url" placeholder="Feed URL" required />
+        </div>
         <label class="flex items-center gap-2 text-sm cursor-pointer">
-          <input type="checkbox" v-model.number="editExtractContent" :true-value="1" :false-value="0" class="toggle" />
+          <input type="checkbox" v-model.number="editingFeedData.extract_content" :true-value="1" :false-value="0" class="toggle" />
           Auto-extract full article content
         </label>
         <div class="flex gap-2">
           <Button type="submit">Save</Button>
-          <Button variant="outline" class="text-red-500" @click="deleteFeed(editingFeed.id)">Delete</Button>
+          <Button variant="outline" class="text-red-500" @click="deleteFeed(editingFeed!.id)">Delete</Button>
         </div>
       </form>
     </Dialog>
 
     <!-- Add Digest Config Dialog -->
     <Dialog v-if="showAddDigest" v-model:open="showAddDigest" title="Create Digest Config">
-      <form @submit.prevent="addDigest" class="space-y-3">
-        <Input v-model="newDigest.name" placeholder="Digest name (e.g. Daily Tech)" required />
-        <div>
+      <form @submit.prevent="addDigest" class="space-y-4">
+        <div class="space-y-1">
+          <label class="text-xs font-medium">Name</label>
+          <Input v-model="newDigest.name" placeholder="Digest name (e.g. Daily Tech)" required />
+        </div>
+        <div class="space-y-1">
           <label class="text-xs font-medium">Schedule (cron syntax)</label>
           <Input v-model="newDigest.schedule" placeholder="0 8 * * *" required />
           <p class="text-xs text-muted-foreground mt-0.5">0 8 * * * (daily 8am), 0 */6 * * * (every 6h)</p>
         </div>
-        <div>
-          <label class="text-xs font-medium">Include categories</label>
-          <div class="space-y-1 mt-1 max-h-24 overflow-y-auto">
-            <label v-for="cat in categoryStore.categories" :key="cat.id" class="flex items-center gap-2 text-xs cursor-pointer">
-              <input type="checkbox" :checked="newDigest.categoryIds.includes(cat.id)" @change="toggleDigestCategory(newDigest.categoryIds, cat.id)" />
-              {{ cat.name }}
-            </label>
+        <div class="space-y-1">
+          <label class="text-xs font-medium">Source</label>
+          <div class="flex rounded-md border border-border overflow-hidden text-xs w-fit">
+            <button type="button" class="px-2 py-1 transition-colors" :class="digestSourceMode === 'categories' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'" @click="digestSourceMode = 'categories'">Categories</button>
+            <button type="button" class="px-2 py-1 border-x border-border transition-colors" :class="digestSourceMode === 'feeds' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'" @click="digestSourceMode = 'feeds'">Feeds</button>
+          </div>
+          <div class="mt-1">
+            <TagInput
+              v-if="digestSourceMode === 'categories'"
+              :items="categoryStore.categories.map(c => ({ label: c.name, value: c.id }))"
+              v-model="newDigest.sourceIds"
+              placeholder="Search categories…"
+            />
+            <TagInput
+              v-else
+              :items="feedStore.feeds.map(f => ({ label: f.name + ' (' + f.type + ')', value: f.id }))"
+              v-model="newDigest.sourceIds"
+              placeholder="Search feeds…"
+            />
           </div>
         </div>
-        <div>
-          <label class="text-xs font-medium">Include specific feeds</label>
-          <div class="space-y-1 mt-1 max-h-24 overflow-y-auto">
-            <label v-for="feed in feedStore.feeds" :key="feed.id" class="flex items-center gap-2 text-xs cursor-pointer">
-              <input type="checkbox" :checked="newDigest.feedIds.includes(feed.id)" @change="toggleFeed(newDigest.feedIds, feed.id)" />
-              {{ feed.name }} ({{ feed.type }})
-            </label>
-          </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="space-y-1"><label class="text-xs font-medium">Max highlights</label><Input v-model.number="newDigest.highlights" type="number" min="1" max="10" /></div>
+          <div class="space-y-1"><label class="text-xs font-medium">Max comments</label><Input v-model.number="newDigest.comments" type="number" min="1" max="50" /></div>
         </div>
-        <div class="grid grid-cols-2 gap-2">
-          <div><label class="text-xs font-medium">Max highlights</label><Input v-model.number="newDigest.highlights" type="number" min="1" max="10" /></div>
-          <div><label class="text-xs font-medium">Max comments</label><Input v-model.number="newDigest.comments" type="number" min="1" max="50" /></div>
-        </div>
-        <div>
+        <div class="space-y-1">
           <label class="text-xs font-medium">Prompt (optional)</label>
           <textarea v-model="newDigest.prompt" rows="3" class="flex w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs" />
         </div>
@@ -380,35 +507,41 @@ function toggleCategory(catId: number) {
 
     <!-- Edit Digest Config Dialog -->
     <Dialog v-if="showEditDigest" v-model:open="showEditDigest" title="Edit Digest Config">
-      <form @submit.prevent="saveEditDigest" class="space-y-3">
-        <Input v-model="newDigest.name" placeholder="Digest name" required />
-        <div>
+      <form @submit.prevent="saveEditDigest" class="space-y-4">
+        <div class="space-y-1">
+          <label class="text-xs font-medium">Name</label>
+          <Input v-model="newDigest.name" placeholder="Digest name" required />
+        </div>
+        <div class="space-y-1">
           <label class="text-xs font-medium">Schedule</label>
           <Input v-model="newDigest.schedule" placeholder="0 8 * * *" required />
         </div>
-        <div>
-          <label class="text-xs font-medium">Include categories</label>
-          <div class="space-y-1 mt-1 max-h-24 overflow-y-auto">
-            <label v-for="cat in categoryStore.categories" :key="cat.id" class="flex items-center gap-2 text-xs cursor-pointer">
-              <input type="checkbox" :checked="newDigest.categoryIds.includes(cat.id)" @change="toggleDigestCategory(newDigest.categoryIds, cat.id)" />
-              {{ cat.name }}
-            </label>
+        <div class="space-y-1">
+          <label class="text-xs font-medium">Source</label>
+          <div class="flex rounded-md border border-border overflow-hidden text-xs w-fit">
+            <button type="button" class="px-2 py-1 transition-colors" :class="digestSourceMode === 'categories' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'" @click="digestSourceMode = 'categories'">Categories</button>
+            <button type="button" class="px-2 py-1 border-x border-border transition-colors" :class="digestSourceMode === 'feeds' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'" @click="digestSourceMode = 'feeds'">Feeds</button>
+          </div>
+          <div class="mt-1">
+            <TagInput
+              v-if="digestSourceMode === 'categories'"
+              :items="categoryStore.categories.map(c => ({ label: c.name, value: c.id }))"
+              v-model="newDigest.sourceIds"
+              placeholder="Search categories…"
+            />
+            <TagInput
+              v-else
+              :items="feedStore.feeds.map(f => ({ label: f.name + ' (' + f.type + ')', value: f.id }))"
+              v-model="newDigest.sourceIds"
+              placeholder="Search feeds…"
+            />
           </div>
         </div>
-        <div>
-          <label class="text-xs font-medium">Include specific feeds</label>
-          <div class="space-y-1 mt-1 max-h-24 overflow-y-auto">
-            <label v-for="feed in feedStore.feeds" :key="feed.id" class="flex items-center gap-2 text-xs cursor-pointer">
-              <input type="checkbox" :checked="newDigest.feedIds.includes(feed.id)" @change="toggleFeed(newDigest.feedIds, feed.id)" />
-              {{ feed.name }} ({{ feed.type }})
-            </label>
-          </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="space-y-1"><label class="text-xs font-medium">Max highlights</label><Input v-model.number="newDigest.highlights" type="number" min="1" max="10" /></div>
+          <div class="space-y-1"><label class="text-xs font-medium">Max comments</label><Input v-model.number="newDigest.comments" type="number" min="1" max="50" /></div>
         </div>
-        <div class="grid grid-cols-2 gap-2">
-          <div><label class="text-xs font-medium">Max highlights</label><Input v-model.number="newDigest.highlights" type="number" min="1" max="10" /></div>
-          <div><label class="text-xs font-medium">Max comments</label><Input v-model.number="newDigest.comments" type="number" min="1" max="50" /></div>
-        </div>
-        <div>
+        <div class="space-y-1">
           <label class="text-xs font-medium">Prompt</label>
           <textarea v-model="newDigest.prompt" rows="3" class="flex w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs" />
         </div>

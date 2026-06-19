@@ -13,10 +13,10 @@ import { useCategoryStore } from '../stores/category'
 import { useDigestStore } from '../stores/digest'
 import { useThemeStore } from '../stores/theme'
 import { feedApi } from '../services/api'
-import type { Item } from '../types/api'
+import type { Item, DigestResult } from '../types/api'
 import {
   Rss, Settings, LogOut, Sun, Moon,
-  Menu, ArrowLeft, Sparkles, Star, Trash2,
+  Menu, ArrowLeft, Sparkles, Star, Trash2, Circle, Check,
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -32,6 +32,7 @@ const showingSaved = ref(false)
 const windowWidth = ref(window.innerWidth)
 const sidebarOpen = ref(false)
 const showThemeMenu = ref(false)
+const digestFilter = ref<'all' | 'unread' | 'read'>('all')
 
 const isDesktop = computed(() => windowWidth.value >= 900)
 
@@ -92,15 +93,32 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
+const filteredResults = computed(() => {
+  const r = digestStore.results
+  if (digestFilter.value === 'all') return r
+  return r.filter(res => res.status === digestFilter.value)
+})
+
+function markDigestRead(result: DigestResult) {
+  if (result.status !== 'read') digestStore.updateResultStatus(result.id, 'read')
+}
+
+let pollInterval: ReturnType<typeof setInterval> | null = null
+
 onMounted(() => {
   window.addEventListener('resize', onResize)
   window.addEventListener('keydown', onKeyDown)
   categoryStore.fetchCategories()
   feedStore.fetchFeeds()
+  pollInterval = setInterval(() => {
+    feedStore.fetchUnreadCounts()
+    digestStore.silentRefresh()
+  }, 10000)
 })
 onUnmounted(() => {
   window.removeEventListener('resize', onResize)
   window.removeEventListener('keydown', onKeyDown)
+  if (pollInterval) clearInterval(pollInterval)
 })
 
 // URL → state sync
@@ -278,32 +296,25 @@ function absoluteTime(val: any): string {
         <SplitterPanel :default-size="30" :min-size="20" :max-size="50">
           <!-- Digest results list -->
           <div v-if="digestStore.activeConfigId && !feedMode" class="h-full overflow-y-auto p-3">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-xs font-semibold text-muted-foreground uppercase">Results</span>
-              <Button variant="outline" size="sm" :disabled="digestStore.generating" @click.stop="digestStore.generateNow(digestStore.activeConfigId)">
-                <Sparkles class="size-3" /> {{ digestStore.generating ? '...' : 'Generate' }}
-              </Button>
+            <div class="flex items-center gap-1 mb-2">
+              <button class="px-2 py-1 text-xs rounded-md transition-colors" :class="digestFilter === 'all' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted text-muted-foreground'" @click="digestFilter = 'all'">All</button>
+              <button class="px-2 py-1 text-xs rounded-md transition-colors" :class="digestFilter === 'unread' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted text-muted-foreground'" @click="digestFilter = 'unread'">Unread</button>
+              <button class="px-2 py-1 text-xs rounded-md transition-colors" :class="digestFilter === 'read' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted text-muted-foreground'" @click="digestFilter = 'read'">Read</button>
             </div>
             <div v-if="digestStore.loading" class="text-sm text-muted-foreground p-2">Loading...</div>
-            <div v-else-if="digestStore.results.length === 0" class="text-xs text-muted-foreground p-2">No results yet.</div>
+            <div v-else-if="filteredResults.length === 0" class="text-xs text-muted-foreground p-2">No results.</div>
             <div v-else class="space-y-1">
-              <div v-for="result in digestStore.results" :key="result.id"
-                class="group relative rounded-md p-2 cursor-pointer border transition-colors"
+              <div v-for="result in filteredResults" :key="result.id"
+                class="group relative rounded-md p-2 cursor-pointer border transition-colors flex items-center gap-2"
                 :class="digestStore.selectedResult?.id === result.id ? 'bg-accent/10 font-medium text-accent border-accent' : 'hover:bg-muted border-border'"
-                @click="digestStore.selectResult(result); router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)"
+                @click="markDigestRead(result); digestStore.selectResult(result); router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)"
               >
-                <div class="flex items-center justify-between text-sm">
-                  <span class="font-medium">{{ new Date(result.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }}</span>
+                <span v-if="result.status === 'read'" class="text-xs text-muted-foreground/50 shrink-0"><Check class="size-3" /></span>
+                <span v-else class="text-xs text-accent shrink-0"><Circle class="size-3" /></span>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm">{{ new Date(result.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }}</div>
+                  <div class="text-xs text-muted-foreground">{{ new Date(result.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}</div>
                 </div>
-                <div class="text-xs text-muted-foreground mt-0.5">
-                  {{ new Date(result.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}
-                </div>
-                <div class="text-xs text-muted-foreground/60 mt-0.5">
-                  <span v-if="digestStore.resultItems.length">h: {{ digestStore.resultItems.filter(i => i.is_highlight).length }}  i: {{ digestStore.resultItems.filter(i => !i.is_highlight).length }}</span>
-                </div>
-                <button class="absolute right-2 bottom-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-red-500" @click.stop="digestStore.deleteResult(result.id)" title="Delete">
-                  <Trash2 class="size-3" />
-                </button>
               </div>
             </div>
           </div>
