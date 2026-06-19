@@ -3,6 +3,7 @@ import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 import Button from '../components/ui/Button'
+import FilterBar from '../components/FilterBar.vue'
 import FeedSidebar from '../components/FeedSidebar.vue'
 import ItemList from '../components/ItemList.vue'
 import ItemContent from '../components/ItemContent.vue'
@@ -16,7 +17,7 @@ import { feedApi } from '../services/api'
 import type { Item, DigestResult } from '../types/api'
 import {
   Rss, Settings, LogOut, Sun, Moon,
-  Menu, ArrowLeft, Sparkles, Star, Trash2, Circle, Check,
+  Menu, ArrowLeft, Sparkles, Star, Trash2, Circle, CircleDot, Check,
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -93,10 +94,23 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
-const filteredResults = computed(() => {
+interface FilteredResult extends DigestResult {
+  itemCount: number
+}
+
+const filteredResults = computed<FilteredResult[]>(() => {
   const r = digestStore.results
-  if (digestFilter.value === 'all') return r
-  return r.filter(res => res.status === digestFilter.value)
+  const filtered = digestFilter.value === 'all' ? r : r.filter(res => res.status === digestFilter.value)
+  return filtered.map(res => {
+    let itemCount = 0
+    try {
+      const c = JSON.parse(res.content)
+      if (c) {
+        itemCount = (c.highlights?.length || 0) + (c.items?.length || 0)
+      }
+    } catch {}
+    return { ...res, itemCount }
+  })
 })
 
 function markDigestRead(result: DigestResult) {
@@ -295,27 +309,33 @@ function absoluteTime(val: any): string {
         <!-- Middle pane: feed items or digest results -->
         <SplitterPanel :default-size="30" :min-size="20" :max-size="50">
           <!-- Digest results list -->
-          <div v-if="digestStore.activeConfigId && !feedMode" class="h-full overflow-y-auto p-3">
-            <div class="flex items-center gap-1 mb-2">
-              <button class="px-2 py-1 text-xs rounded-md transition-colors" :class="digestFilter === 'all' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted text-muted-foreground'" @click="digestFilter = 'all'">All</button>
-              <button class="px-2 py-1 text-xs rounded-md transition-colors" :class="digestFilter === 'unread' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted text-muted-foreground'" @click="digestFilter = 'unread'">Unread</button>
-              <button class="px-2 py-1 text-xs rounded-md transition-colors" :class="digestFilter === 'read' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted text-muted-foreground'" @click="digestFilter = 'read'">Read</button>
+          <div v-if="digestStore.activeConfigId && !feedMode" class="h-full overflow-y-auto p-3 border-r">
+            <div class="mb-2">
+              <FilterBar
+                :options="[
+                  { value: 'all', label: 'All' },
+                  { value: 'unread', label: 'Unread' },
+                  { value: 'read', label: 'Read' },
+                ]"
+                v-model="digestFilter"
+              />
             </div>
             <div v-if="digestStore.loading" class="text-sm text-muted-foreground p-2">Loading...</div>
             <div v-else-if="filteredResults.length === 0" class="text-xs text-muted-foreground p-2">No results.</div>
             <div v-else class="space-y-1">
-              <div v-for="result in filteredResults" :key="result.id"
-                class="group relative rounded-md p-2 cursor-pointer border transition-colors flex items-center gap-2"
-                :class="digestStore.selectedResult?.id === result.id ? 'bg-accent/10 font-medium text-accent border-accent' : 'hover:bg-muted border-border'"
+              <button v-for="result in filteredResults" :key="result.id"
+                class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
+                :class="{ 'bg-accent/10 font-medium text-accent': result.id === digestStore.selectedResult?.id, 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
                 @click="markDigestRead(result); digestStore.selectResult(result); router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)"
               >
-                <span v-if="result.status === 'read'" class="text-xs text-muted-foreground/50 shrink-0"><Check class="size-3" /></span>
-                <span v-else class="text-xs text-accent shrink-0"><Circle class="size-3" /></span>
-                <div class="flex-1 min-w-0">
-                  <div class="text-sm">{{ new Date(result.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }}</div>
-                  <div class="text-xs text-muted-foreground">{{ new Date(result.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}</div>
+                <div class="flex items-start gap-1 min-w-0">
+                  <CircleDot v-if="result.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
+                  <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
+                  <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ new Date(result.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}</p>
                 </div>
-              </div>
+                <p class="text-xs text-muted-foreground/70 mt-0.5 min-w-0">{{ new Date(result.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }}</p>
+                <span class="absolute right-2 bottom-2 text-[10px] text-accent font-medium">{{ result.itemCount }} items</span>
+              </button>
             </div>
           </div>
           <!-- Feed items list -->

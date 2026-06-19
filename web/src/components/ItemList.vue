@@ -3,7 +3,8 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
-import { Circle, CircleDot, CircleCheck, Check, Filter, ArrowUp, MessageSquare } from 'lucide-vue-next'
+import FilterBar from './FilterBar.vue'
+import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare } from 'lucide-vue-next'
 
 const props = defineProps<{
   savedItems: any[]
@@ -95,10 +96,9 @@ function onScroll() {
   }
 }
 
-function onFilterChange(e: Event) {
-  const val = (e.target as HTMLSelectElement).value as 'all' | 'unread' | 'read' | 'digested' | 'saved'
+function onFilterChange(val: string) {
   if (val !== feedStore.filter) {
-    feedStore.changeFilter(val)
+    feedStore.changeFilter(val as any)
   }
 }
 
@@ -110,15 +110,18 @@ onUnmounted(() => {})
 
 <template>
   <div class="h-full border-r overflow-y-auto" ref="scrollEl" @scroll="onScroll">
-    <div class="flex items-center gap-1 p-2 border-b">
-      <Filter class="size-4 text-muted-foreground shrink-0" />
-      <select :value="feedStore.filter" @change="onFilterChange" class="text-xs bg-transparent border-0 outline-none w-full">
-        <option value="all">All</option>
-        <option value="unread">Unread</option>
-        <option value="read">Read</option>
-        <option value="digested">Digested</option>
-        <option value="saved">Saved</option>
-      </select>
+    <div class="p-2 border-b">
+      <FilterBar
+        :options="[
+          { value: 'all', label: 'All' },
+          { value: 'unread', label: 'Unread' },
+          { value: 'read', label: 'Read' },
+          { value: 'digested', label: 'Digested' },
+          { value: 'saved', label: 'Saved' },
+        ]"
+        :model-value="feedStore.filter"
+        @update:model-value="onFilterChange"
+      />
     </div>
     <Skeleton v-if="feedStore.loading" class="m-3 h-12" />
     <div v-else-if="!feedStore.activeFeedId && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
