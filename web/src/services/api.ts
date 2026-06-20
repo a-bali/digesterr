@@ -135,4 +135,5 @@ export const digestApi = {
     api<DigestResult>(`/digest-results/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   deleteResult: (id: number) => api<void>(`/digest-results/${id}`, { method: 'DELETE' }),
   listResultItems: (resultId: number) => api<DigestResultItemWithData[]>(`/digest-results/${resultId}/items`),
+  unreadCounts: () => api<Record<number, number>>('/digest-unread-counts'),
 }

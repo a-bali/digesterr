@@ -321,3 +321,24 @@ func (s *Server) handleListDigestResultItemsWithData(w http.ResponseWriter, r *h
 	}
 	writeJSON(w, http.StatusOK, items)
 }
+
+func (s *Server) handleDigestUnreadCounts(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	counts, err := s.queries.GetDigestUnreadCounts(r.Context(), userID)
+	if err != nil {
+		writeServerError(w, "failed to get digest unread counts", err)
+		return
+	}
+	if counts == nil {
+		counts = []store.GetDigestUnreadCountsRow{}
+	}
+	result := make(map[int64]int64, len(counts))
+	for _, c := range counts {
+		result[c.ConfigID] = c.UnreadCount
+	}
+	writeJSON(w, http.StatusOK, result)
+}

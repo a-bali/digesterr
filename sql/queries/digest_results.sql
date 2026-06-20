@@ -45,3 +45,9 @@ JOIN feeds f ON f.id = i.feed_id
 WHERE f.user_id = ? AND i.status = 'unread'
 ORDER BY i.points DESC
 LIMIT ?;
+-- name: GetDigestUnreadCounts :many
+SELECT dc.id AS config_id, CAST(COALESCE(SUM(CASE WHEN dr.status = 'new' THEN 1 ELSE 0 END), 0) AS INTEGER) AS unread_count
+FROM digest_configs dc
+LEFT JOIN digest_results dr ON dr.config_id = dc.id
+WHERE dc.user_id = ?
+GROUP BY dc.id;

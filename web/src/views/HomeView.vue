@@ -126,6 +126,7 @@ onMounted(() => {
   feedStore.fetchFeeds()
   pollInterval = setInterval(() => {
     feedStore.fetchUnreadCounts()
+    digestStore.fetchUnreadCounts()
     digestStore.silentRefresh()
   }, 10000)
 })

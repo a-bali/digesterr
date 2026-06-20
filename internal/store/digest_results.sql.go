@@ -113,6 +113,42 @@ func (q *Queries) GetDigestResult(ctx context.Context, arg GetDigestResultParams
 	return i, err
 }
 
+const getDigestUnreadCounts = `-- name: GetDigestUnreadCounts :many
+SELECT dc.id AS config_id, CAST(COALESCE(SUM(CASE WHEN dr.status = 'new' THEN 1 ELSE 0 END), 0) AS INTEGER) AS unread_count
+FROM digest_configs dc
+LEFT JOIN digest_results dr ON dr.config_id = dc.id
+WHERE dc.user_id = ?
+GROUP BY dc.id
+`
+
+type GetDigestUnreadCountsRow struct {
+	ConfigID    int64 `json:"config_id"`
+	UnreadCount int64 `json:"unread_count"`
+}
+
+func (q *Queries) GetDigestUnreadCounts(ctx context.Context, userID int64) ([]GetDigestUnreadCountsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getDigestUnreadCounts, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetDigestUnreadCountsRow{}
+	for rows.Next() {
+		var i GetDigestUnreadCountsRow
+		if err := rows.Scan(&i.ConfigID, &i.UnreadCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getLatestDigestResult = `-- name: GetLatestDigestResult :one
 SELECT id, user_id, config_id, config_snapshot, content, status, created_at, updated_at FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1
 `

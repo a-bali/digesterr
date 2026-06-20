@@ -253,6 +253,7 @@ async function generateNow(e: Event, cfgId: number) {
       emit('selectDigestConfig', cfgId)
     }
     feedStore.fetchUnreadCounts()
+    digestStore.fetchUnreadCounts()
   } finally {
     const next = new Set(generatingDigests.value); next.delete(cfgId); generatingDigests.value = next
   }
@@ -276,6 +277,7 @@ function isPresetType(t: string) { return t === 'hn' || t === 'lobsters' || t ==
 
 onMounted(() => {
   digestStore.fetchConfigs()
+  digestStore.fetchUnreadCounts()
 })
 
 const collapsedCategories = reactive(new Set<number>())
@@ -284,7 +286,7 @@ const sortedCategoryIds = computed(() => {
   const cats = [...categoryStore.categories].filter(c => feedStore.feeds.some(f => f.category_id === c.id))
   return cats.map(c => c.id)
 })
-const totalUnreadCount = computed(() => Object.values(feedStore.unreadCounts).reduce((a, b) => a + b, 0))
+
 
 function toggleCategory(catId: number) {
   if (collapsedCategories.has(catId)) {
@@ -319,7 +321,7 @@ function toggleCategory(catId: number) {
         <div class="flex items-center gap-2 flex-1 min-w-0">
           <MessageSquare class="size-3.5 shrink-0 text-accent" />
           <span class="truncate">{{ cfg.name || cfg.schedule }}</span>
-          <span v-if="totalUnreadCount > 0" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-auto">{{ totalUnreadCount }}</span>
+          <span v-if="(digestStore.unreadCounts[cfg.id] ?? 0) > 0" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-auto">{{ digestStore.unreadCounts[cfg.id] }}</span>
         </div>
         <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           <button class="p-1 rounded hover:bg-accent/20" title="Settings" @click.stop="startEditDigest(cfg)">

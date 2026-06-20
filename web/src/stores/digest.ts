@@ -12,6 +12,7 @@ export const useDigestStore = defineStore('digest', () => {
   const resultItems = ref<DigestResultItemWithData[]>([])
   const loading = ref(false)
   const generating = ref(false)
+  const unreadCounts = ref<Record<number, number>>({})
 
   const activeConfig = computed(() => configs.value.find(c => c.id === activeConfigId.value) || null)
 
@@ -142,6 +143,14 @@ export const useDigestStore = defineStore('digest', () => {
     }
   }
 
+  async function fetchUnreadCounts() {
+    try {
+      unreadCounts.value = await digestApi.unreadCounts()
+    } catch {
+      // silent
+    }
+  }
+
   async function updateResultStatus(resultId: number, status: string) {
     try {
       const updated = normalize(await digestApi.updateResultStatus(resultId, status))
@@ -155,9 +164,9 @@ export const useDigestStore = defineStore('digest', () => {
 
   return {
     configs, activeConfigId, results, selectedResult, resultItems,
-    loading, generating, activeConfig,
+    loading, generating, activeConfig, unreadCounts,
     fetchConfigs, createConfig, updateConfig, deleteConfig,
     setActiveConfig, selectResult, generateNow, markResultRead, deleteResult,
-    updateResultStatus, silentRefresh,
+    updateResultStatus, silentRefresh, fetchUnreadCounts,
   }
 })
