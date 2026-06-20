@@ -114,6 +114,7 @@ export const useDigestStore = defineStore('digest', () => {
       const idx = results.value.findIndex(r => r.id === resultId)
       if (idx !== -1) results.value[idx] = updated
       if (selectedResult.value?.id === resultId) selectedResult.value = updated
+      fetchUnreadCounts()
     } catch (e) {
       toast.error('Failed to mark digest as read', { description: e instanceof ApiError ? e.message : undefined })
     }
@@ -157,6 +158,7 @@ export const useDigestStore = defineStore('digest', () => {
       const idx = results.value.findIndex(r => r.id === resultId)
       if (idx !== -1) results.value[idx] = updated
       if (selectedResult.value?.id === resultId) selectedResult.value = updated
+      fetchUnreadCounts()
     } catch (e) {
       toast.error('Failed to update digest status', { description: e instanceof ApiError ? e.message : undefined })
     }

@@ -127,6 +127,7 @@ export const useFeedStore = defineStore('feed', () => {
       const idx = items.value.findIndex(i => i.id === item.id)
       if (idx !== -1) items.value[idx] = updated
       if (selectedItem.value?.id === item.id) selectedItem.value = updated
+      fetchUnreadCounts()
     } catch (e) {
       toast.error('Failed to update item', { description: e instanceof ApiError ? e.message : undefined })
     }
