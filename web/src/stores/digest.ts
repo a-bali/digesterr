@@ -94,7 +94,9 @@ export const useDigestStore = defineStore('digest', () => {
     generating.value = true
     try {
       const result = normalize(await digestApi.generate(configId))
-      results.value.unshift(result)
+      if (activeConfigId.value === configId) {
+        results.value.unshift(result)
+      }
       toast.success('Digest generated')
       return result
     } catch (e) {

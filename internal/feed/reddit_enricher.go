@@ -18,21 +18,31 @@ import (
 	"digesterr/internal/store"
 )
 
+type redditReplies struct {
+	Data struct {
+		Children []redditChild `json:"children"`
+	} `json:"data"`
+}
+
+func (r *redditReplies) UnmarshalJSON(b []byte) error {
+	if string(b) == `""` {
+		return nil
+	}
+	type alias redditReplies
+	return json.Unmarshal(b, (*alias)(r))
+}
+
 type redditPostData struct {
-	ID          string `json:"id"`
-	Score       int    `json:"score"`
-	NumComments int    `json:"num_comments"`
-	URL         string `json:"url"`
-	Author      string `json:"author"`
-	Title       string `json:"title"`
-	Body        string `json:"body"`
-	Permalink   string `json:"permalink"`
-	Depth       int    `json:"depth"`
-	Replies     struct {
-		Data struct {
-			Children []redditChild `json:"children"`
-		} `json:"data"`
-	} `json:"replies"`
+	ID          string        `json:"id"`
+	Score       int           `json:"score"`
+	NumComments int           `json:"num_comments"`
+	URL         string        `json:"url"`
+	Author      string        `json:"author"`
+	Title       string        `json:"title"`
+	Body        string        `json:"body"`
+	Permalink   string        `json:"permalink"`
+	Depth       int           `json:"depth"`
+	Replies     redditReplies `json:"replies"`
 }
 
 type redditChild struct {
