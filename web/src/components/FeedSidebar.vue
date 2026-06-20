@@ -9,6 +9,7 @@ import type { DigestConfig, Feed } from '../types/api'
 import Button from './ui/Button'
 import Input from './ui/Input'
 import Dialog from './ui/Dialog'
+import TagInput from './TagInput.vue'
 import Tooltip from './ui/Tooltip'
 import { BookmarkCheck, Rss, RefreshCw, Check, Plus, Sparkles, Settings, Trash2, MessageSquare, ChevronDown, X } from 'lucide-vue-next'
 

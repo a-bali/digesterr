@@ -250,6 +250,9 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 		matched++
 		item.Points = int64(child.Data.Score)
 		item.CommentsCount = int64(child.Data.NumComments)
+		if child.Data.Permalink != "" {
+			item.CommentUrl = "https://www.reddit.com" + child.Data.Permalink
+		}
 		if child.Data.URL != "" && !strings.Contains(child.Data.URL, "reddit.com") {
 			if err := e.queries.UpdateItemURL(ctx, struct {
 				Url string `json:"url"`
@@ -274,12 +277,17 @@ func (e *RedditEnricher) FetchComments(ctx context.Context, item store.Item, max
 		return nil, fmt.Errorf("could not extract Reddit post ID")
 	}
 
-	apiURL := fmt.Sprintf("%s/comments/%s.json", e.baseURL, postID)
+	if err := e.ensureToken(ctx); err != nil {
+		return nil, fmt.Errorf("auth: %w", err)
+	}
+
+	apiURL := fmt.Sprintf("%s/comments/%s", e.apiBaseURL, postID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating Reddit API request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Digesterr/1.0 (by u/dre_is)")
+	req.Header.Set("Authorization", "Bearer "+e.token)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0")
 
 	resp, err := e.client.Do(req)
 	if err != nil {

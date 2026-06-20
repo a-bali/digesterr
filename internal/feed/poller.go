@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -141,10 +142,16 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 
 	newCount := 0
 	for _, item := range items {
-		// Normalize GUID for feed types that need it.
+		// Normalize GUID/comment URL for feed types that need it.
 		if feed.Type == "hn" {
 			if hnID := extractHNID(item.CommentURL, item.URL); hnID != 0 {
 				item.GUID = fmt.Sprintf("hn:%d", hnID)
+			}
+		}
+		if feed.Type == "reddit" && item.CommentURL == "" && item.GUID != "" {
+			u, err := url.Parse(item.GUID)
+			if err == nil && strings.Contains(u.Path, "/comments/") {
+				item.CommentURL = item.GUID
 			}
 		}
 		h := itemHash(item.GUID, item.Title, item.URL, item.Content)
