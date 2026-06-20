@@ -220,17 +220,6 @@ func (s *Server) handleUpdateDigestResultStatus(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusNotFound, "digest result not found")
 		return
 	}
-	if req.Status == "read" {
-		items, err := s.queries.ListDigestResultItems(r.Context(), result.ID)
-		if err == nil {
-			for _, dri := range items {
-				s.queries.UpdateItemStatus(r.Context(), store.UpdateItemStatusParams{
-					ID:     dri.ItemID,
-					Status: "read",
-				})
-			}
-		}
-	}
 	writeJSON(w, http.StatusOK, result)
 }
 
