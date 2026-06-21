@@ -287,33 +287,60 @@ func (e *RedditEnricher) FetchComments(ctx context.Context, item store.Item, max
 		return nil, fmt.Errorf("could not extract Reddit post ID")
 	}
 
-	if err := e.ensureToken(ctx); err != nil {
-		return nil, fmt.Errorf("auth: %w", err)
-	}
-
-	apiURL := fmt.Sprintf("%s/comments/%s", e.apiBaseURL, postID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating Reddit API request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+e.token)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0")
-
-	resp, err := e.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetching Reddit comments for %s: %w", postID, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Reddit API returned status %d for post %s", resp.StatusCode, postID)
-	}
-
 	var listings []redditListing
-	if err := json.NewDecoder(resp.Body).Decode(&listings); err != nil {
-		return nil, fmt.Errorf("decoding Reddit comments response: %w", err)
+	var lastErr error
+
+	// Try OAuth endpoint first, fall back to public endpoint.
+	for _, attempt := range []struct {
+		url  string
+		auth bool
+	}{
+		{fmt.Sprintf("%s/comments/%s.json", e.apiBaseURL, postID), true},
+		{fmt.Sprintf("%s/comments/%s.json", e.baseURL, postID), false},
+	} {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, attempt.url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("creating Reddit API request: %w", err)
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0")
+		if attempt.auth {
+			if err := e.ensureToken(ctx); err != nil {
+				lastErr = fmt.Errorf("auth: %w", err)
+				continue
+			}
+			req.Header.Set("Authorization", "Bearer "+e.token)
+		}
+
+		resp, err := e.client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("fetching Reddit comments for %s: %w", postID, err)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("Reddit API returned status %d for post %s", resp.StatusCode, postID)
+			continue
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&listings); err != nil {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("decoding Reddit comments response: %w", err)
+			continue
+		}
+		resp.Body.Close()
+
+		if len(listings) < 2 {
+			listings = nil
+			lastErr = nil
+		}
+		break
 	}
-	if len(listings) < 2 {
+
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	if listings == nil {
 		return nil, nil
 	}
 
