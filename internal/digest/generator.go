@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"digesterr/internal/feed"
@@ -405,8 +406,17 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 			Summary string `json:"summary"`
 		} `json:"highlights"`
 	}
+	cleaned := strings.TrimSpace(llmResponse)
+	cleaned = strings.TrimPrefix(cleaned, "```json\n")
+	cleaned = strings.TrimPrefix(cleaned, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```\n")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSuffix(cleaned, "\n```")
+	cleaned = strings.TrimSuffix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+
 	var output llmOutput
-	if err := json.Unmarshal([]byte(llmResponse), &output); err != nil {
+	if err := json.Unmarshal([]byte(cleaned), &output); err != nil {
 		content.Summary = llmResponse
 	} else {
 		content.Summary = output.Summary

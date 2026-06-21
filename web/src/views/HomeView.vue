@@ -17,7 +17,7 @@ import { feedApi } from '../services/api'
 import type { Item, DigestResult } from '../types/api'
 import {
   Rss, Settings, LogOut, Sun, Moon,
-  Menu, ArrowLeft, Sparkles, Star, Trash2, Circle, CircleDot, Check,
+  Menu, ArrowLeft, Sparkles, Star, Trash2, Circle, CircleDot, Check, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -33,6 +33,7 @@ const showingSaved = ref(false)
 const windowWidth = ref(window.innerWidth)
 const sidebarOpen = ref(false)
 const showThemeMenu = ref(false)
+const contentOnly = ref(false)
 const digestFilter = ref<'all' | 'unread' | 'read'>('all')
 
 const isDesktop = computed(() => windowWidth.value >= 900)
@@ -254,10 +255,10 @@ function absoluteTime(val: any): string {
   <div class="flex h-screen flex-col">
     <!-- Header -->
     <header class="flex h-12 items-center gap-2 border-b bg-background px-4 shrink-0">
-      <Button v-if="!isDesktop" variant="ghost" size="icon" @click="sidebarOpen = !sidebarOpen">
+      <Button v-if="!isDesktop || contentOnly" variant="ghost" size="icon" @click="sidebarOpen = !sidebarOpen">
         <Menu class="size-4" />
       </Button>
-      <template v-if="!isDesktop && (feedStore.selectedItem || digestStore.selectedResult)">
+      <template v-if="(feedStore.selectedItem || digestStore.selectedResult) && (!isDesktop || contentOnly)">
         <Button variant="ghost" size="sm" @click="goBackToList">
           <ArrowLeft class="size-4" /><span class="text-xs">Back</span>
         </Button>
@@ -297,59 +298,119 @@ function absoluteTime(val: any): string {
       </div>
     </header>
 
-    <!-- Main 3-pane layout -->
+    <!-- Main layout -->
     <template v-if="isDesktop">
-      <SplitterGroup direction="horizontal" auto-save-id="digesterr" class="flex-1">
-        <SplitterPanel :default-size="18" :min-size="14" :max-size="28">
-          <aside class="h-full border-r bg-sidebar overflow-y-auto p-3">
-            <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
-          </aside>
-        </SplitterPanel>
-        <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
-
-        <!-- Middle pane: feed items or digest results -->
-        <SplitterPanel :default-size="30" :min-size="20" :max-size="50">
-          <!-- Digest results list -->
-          <div v-if="digestStore.activeConfigId && !feedMode" class="h-full overflow-y-auto p-3 border-r">
-            <div class="mb-2">
-              <FilterBar
-                :options="[
-                  { value: 'all', label: 'All' },
-                  { value: 'unread', label: 'Unread' },
-                  { value: 'read', label: 'Read' },
-                ]"
-                v-model="digestFilter"
-              />
-            </div>
-            <div v-if="digestStore.loading" class="text-sm text-muted-foreground p-2">Loading...</div>
-            <div v-else-if="filteredResults.length === 0" class="text-xs text-muted-foreground p-2">No results.</div>
-            <div v-else class="space-y-1">
-              <button v-for="result in filteredResults" :key="result.id"
-                class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
-                :class="{ 'bg-accent/10 font-medium text-accent': result.id === digestStore.selectedResult?.id, 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
-                @click="markDigestRead(result); digestStore.selectResult(result); router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)"
-              >
-                <div class="flex items-start gap-1 min-w-0">
-                  <CircleDot v-if="result.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
-                  <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
-                  <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ new Date(result.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}</p>
-                </div>
-                <p class="text-xs text-muted-foreground/70 mt-0.5 min-w-0">{{ new Date(result.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }}</p>
-                <span class="absolute right-2 bottom-2 text-[10px] text-accent font-medium">{{ result.itemCount }} items</span>
-              </button>
-            </div>
+      <template v-if="contentOnly">
+        <!-- Content-only: overlay sidebar + full-width content -->
+        <div v-if="sidebarOpen" class="fixed inset-0 z-30" @click="sidebarOpen = false"><div class="absolute inset-0 bg-black/50" /></div>
+        <aside :class="['fixed left-0 top-12 z-40 h-[calc(100vh-3rem)] w-64 bg-sidebar border-r shadow-xl transition-transform duration-200 overflow-y-auto p-3', sidebarOpen ? 'translate-x-0' : '-translate-x-full']">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Feeds</span>
+            <Button variant="ghost" size="icon" @click="contentOnly = false" title="Expand sidebar">
+              <PanelLeftOpen class="size-4" />
+            </Button>
           </div>
-          <!-- Feed items list -->
-          <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" :relative-time="relativeTime" :absolute-time="absoluteTime" @select-item="selectItem" />
-        </SplitterPanel>
-        <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
+          <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
+        </aside>
+        <!-- Digest content -->
+        <DigestContent v-if="digestStore.selectedResult && !feedMode" class="flex-1 overflow-y-auto" />
+        <!-- Digest results list -->
+        <div v-else-if="digestStore.activeConfigId && !feedMode" class="flex-1 overflow-y-auto p-3 border-r">
+          <div class="mb-2">
+            <FilterBar
+              :options="[
+                { value: 'all', label: 'All' },
+                { value: 'unread', label: 'Unread' },
+                { value: 'read', label: 'Read' },
+              ]"
+              v-model="digestFilter"
+            />
+          </div>
+          <div v-if="digestStore.loading" class="text-sm text-muted-foreground p-2">Loading...</div>
+          <div v-else-if="filteredResults.length === 0" class="text-xs text-muted-foreground p-2">No results.</div>
+          <div v-else class="space-y-1">
+            <button v-for="result in filteredResults" :key="result.id"
+              class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
+              :class="{ 'bg-accent/10 font-medium text-accent': result.id === digestStore.selectedResult?.id, 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
+              @click="markDigestRead(result); digestStore.selectResult(result); router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)"
+            >
+              <div class="flex items-start gap-1 min-w-0">
+                <CircleDot v-if="result.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
+                <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
+                <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ new Date(result.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}</p>
+              </div>
+              <p class="text-xs text-muted-foreground/70 mt-0.5 min-w-0">{{ new Date(result.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }}</p>
+              <span class="absolute right-2 bottom-2 text-[10px] text-accent font-medium">{{ result.itemCount }} items</span>
+            </button>
+          </div>
+        </div>
+        <!-- Feed: item content full-width -->
+        <ItemContent v-else-if="feedStore.selectedItem && feedMode" :absolute-time="absoluteTime" :unsave-item="unsaveItem" class="flex-1 overflow-y-auto" />
+        <!-- Feed: item list full-width -->
+        <ItemList v-else-if="feedMode" :saved-items="savedItems" :showing-saved="showingSaved" :relative-time="relativeTime" :absolute-time="absoluteTime" @select-item="selectItem" class="flex-1 overflow-y-auto" />
+        <!-- Nothing selected -->
+        <div v-else class="flex-1 flex items-center justify-center text-sm text-muted-foreground">Select an item to view</div>
+      </template>
+      <template v-else>
+        <!-- 3-pane layout -->
+        <SplitterGroup direction="horizontal" auto-save-id="digesterr" class="flex-1">
+          <SplitterPanel :default-size="18" :min-size="14" :max-size="28">
+            <aside class="h-full border-r bg-sidebar overflow-y-auto p-3">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Feeds</span>
+                <Button variant="ghost" size="icon" @click="contentOnly = true" title="Collapse sidebar">
+                  <PanelLeftClose class="size-4" />
+                </Button>
+              </div>
+              <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
+            </aside>
+          </SplitterPanel>
+          <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
 
-        <!-- Right pane: item content or digest content -->
-        <SplitterPanel :default-size="52" :min-size="30">
-          <DigestContent v-if="digestStore.selectedResult && !feedMode" />
-          <ItemContent v-else :absolute-time="absoluteTime" :unsave-item="unsaveItem" />
-        </SplitterPanel>
-      </SplitterGroup>
+          <!-- Middle pane: feed items or digest results -->
+          <SplitterPanel :default-size="30" :min-size="20" :max-size="50">
+            <!-- Digest results list -->
+            <div v-if="digestStore.activeConfigId && !feedMode" class="h-full overflow-y-auto p-3 border-r">
+              <div class="mb-2">
+                <FilterBar
+                  :options="[
+                    { value: 'all', label: 'All' },
+                    { value: 'unread', label: 'Unread' },
+                    { value: 'read', label: 'Read' },
+                  ]"
+                  v-model="digestFilter"
+                />
+              </div>
+              <div v-if="digestStore.loading" class="text-sm text-muted-foreground p-2">Loading...</div>
+              <div v-else-if="filteredResults.length === 0" class="text-xs text-muted-foreground p-2">No results.</div>
+              <div v-else class="space-y-1">
+                <button v-for="result in filteredResults" :key="result.id"
+                  class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
+                  :class="{ 'bg-accent/10 font-medium text-accent': result.id === digestStore.selectedResult?.id, 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
+                  @click="markDigestRead(result); digestStore.selectResult(result); router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)"
+                >
+                  <div class="flex items-start gap-1 min-w-0">
+                    <CircleDot v-if="result.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
+                    <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
+                    <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ new Date(result.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}</p>
+                  </div>
+                  <p class="text-xs text-muted-foreground/70 mt-0.5 min-w-0">{{ new Date(result.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }}</p>
+                  <span class="absolute right-2 bottom-2 text-[10px] text-accent font-medium">{{ result.itemCount }} items</span>
+                </button>
+              </div>
+            </div>
+            <!-- Feed items list -->
+            <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" :relative-time="relativeTime" :absolute-time="absoluteTime" @select-item="selectItem" />
+          </SplitterPanel>
+          <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
+
+          <!-- Right pane: item content or digest content -->
+          <SplitterPanel :default-size="52" :min-size="30">
+            <DigestContent v-if="digestStore.selectedResult && !feedMode" />
+            <ItemContent v-else :absolute-time="absoluteTime" :unsave-item="unsaveItem" />
+          </SplitterPanel>
+        </SplitterGroup>
+      </template>
     </template>
 
     <!-- Tablet -->
@@ -359,9 +420,35 @@ function absoluteTime(val: any): string {
         <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
       </aside>
       <template v-if="digestStore.activeConfigId && !feedMode">
-        <div class="flex-1 overflow-y-auto p-3">
-          <div v-if="!digestStore.selectedResult" class="text-xs text-muted-foreground">Select a result</div>
-          <DigestContent v-else />
+        <DigestContent v-if="digestStore.selectedResult" class="flex-1 overflow-y-auto" />
+        <div v-else class="flex-1 overflow-y-auto p-3">
+          <div class="mb-2">
+            <FilterBar
+              :options="[
+                { value: 'all', label: 'All' },
+                { value: 'unread', label: 'Unread' },
+                { value: 'read', label: 'Read' },
+              ]"
+              v-model="digestFilter"
+            />
+          </div>
+          <div v-if="digestStore.loading" class="text-sm text-muted-foreground p-2">Loading...</div>
+          <div v-else-if="filteredResults.length === 0" class="text-xs text-muted-foreground p-2">No results.</div>
+          <div v-else class="space-y-1">
+            <button v-for="result in filteredResults" :key="result.id"
+              class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
+              :class="{ 'bg-accent/10 font-medium text-accent': result.id === digestStore.selectedResult?.id, 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
+              @click="markDigestRead(result); digestStore.selectResult(result); router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)"
+            >
+              <div class="flex items-start gap-1 min-w-0">
+                <CircleDot v-if="result.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
+                <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
+                <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ new Date(result.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}</p>
+              </div>
+              <p class="text-xs text-muted-foreground/70 mt-0.5 min-w-0">{{ new Date(result.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }}</p>
+              <span class="absolute right-2 bottom-2 text-[10px] text-accent font-medium">{{ result.itemCount }} items</span>
+            </button>
+          </div>
         </div>
       </template>
       <template v-else>
@@ -377,7 +464,35 @@ function absoluteTime(val: any): string {
         <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
       </aside>
       <div v-if="digestStore.activeConfigId && !feedMode && digestStore.selectedResult" class="flex-1 overflow-y-auto"><DigestContent /></div>
-      <div v-else-if="digestStore.activeConfigId && !feedMode" class="flex-1 overflow-y-auto p-3 text-xs text-muted-foreground">Select a result</div>
+      <div v-else-if="digestStore.activeConfigId && !feedMode" class="flex-1 overflow-y-auto p-3">
+        <div class="mb-2">
+          <FilterBar
+            :options="[
+              { value: 'all', label: 'All' },
+              { value: 'unread', label: 'Unread' },
+              { value: 'read', label: 'Read' },
+            ]"
+            v-model="digestFilter"
+          />
+        </div>
+        <div v-if="digestStore.loading" class="text-sm text-muted-foreground p-2">Loading...</div>
+        <div v-else-if="filteredResults.length === 0" class="text-xs text-muted-foreground p-2">No results.</div>
+        <div v-else class="space-y-1">
+          <button v-for="result in filteredResults" :key="result.id"
+            class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
+            :class="{ 'bg-accent/10 font-medium text-accent': result.id === digestStore.selectedResult?.id, 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
+            @click="markDigestRead(result); digestStore.selectResult(result); router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)"
+          >
+            <div class="flex items-start gap-1 min-w-0">
+              <CircleDot v-if="result.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
+              <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
+              <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ new Date(result.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}</p>
+            </div>
+            <p class="text-xs text-muted-foreground/70 mt-0.5 min-w-0">{{ new Date(result.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }}</p>
+            <span class="absolute right-2 bottom-2 text-[10px] text-accent font-medium">{{ result.itemCount }} items</span>
+          </button>
+        </div>
+      </div>
       <div v-else-if="!feedStore.selectedItem" class="flex-1 overflow-y-auto">
         <ItemList :saved-items="savedItems" :showing-saved="showingSaved" :relative-time="relativeTime" :absolute-time="absoluteTime" @select-item="selectItem" />
       </div>

@@ -90,6 +90,12 @@ function feedIcon(feedId: number): string {
         </Button>
       </div>
 
+      <!-- Summary -->
+      <div v-if="digestContent?.summary" class="mb-6 p-4 rounded-lg border bg-muted/30">
+        <h3 class="text-sm font-semibold mb-2">Summary</h3>
+        <p class="text-sm leading-relaxed text-foreground/85">{{ digestContent.summary }}</p>
+      </div>
+
       <!-- Highlights grouped by feed -->
       <div v-if="Object.keys(groupedHighlights).length" class="mb-6">
         <div v-for="(group, feedName) in groupedHighlights" :key="feedName" class="mb-6">
