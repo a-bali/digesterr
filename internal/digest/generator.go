@@ -417,10 +417,10 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 
 	var output llmOutput
 	if err := json.Unmarshal([]byte(cleaned), &output); err != nil {
-		content.Summary = llmResponse
-	} else {
-		content.Summary = output.Summary
+		slog.Error("failed to parse LLM response", "error", err, "response", llmResponse)
+		return nil, fmt.Errorf("parsing LLM response: %w", err)
 	}
+	content.Summary = output.Summary
 
 	for _, h := range highlights {
 		var topComments []commentRef
