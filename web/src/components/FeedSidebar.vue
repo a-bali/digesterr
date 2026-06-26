@@ -49,6 +49,7 @@ const newDigest = ref({
   sourceIds: [] as number[],
   highlights: 5,
   comments: 10,
+  maxItems: 100,
   prompt: defaultPrompt,
 })
 
@@ -192,10 +193,10 @@ function resetEditFeed() {
   editFeedCategory.value = ''
 }
 
-function makeConfigJson(sourceIds: number[], highlights: number, comments: number, prompt: string): string {
+function makeConfigJson(sourceIds: number[], highlights: number, comments: number, maxItems: number, prompt: string): string {
   const mode = digestSourceMode.value
   const config: any = {
-    default_highlights: highlights, default_comments: comments, prompt: prompt || undefined,
+    default_highlights: highlights, default_comments: comments, max_items: maxItems, prompt: prompt || undefined,
   }
   if (mode === 'categories') {
     config.categories = sourceIds.map(id => ({ id, highlights, comments }))
@@ -206,19 +207,20 @@ function makeConfigJson(sourceIds: number[], highlights: number, comments: numbe
 }
 
 async function addDigest() {
-  const json = makeConfigJson(newDigest.value.sourceIds, newDigest.value.highlights, newDigest.value.comments, newDigest.value.prompt)
+  const json = makeConfigJson(newDigest.value.sourceIds, newDigest.value.highlights, newDigest.value.comments, newDigest.value.maxItems, newDigest.value.prompt)
   await digestStore.createConfig(newDigest.value.name, newDigest.value.schedule, json)
   showAddDigest.value = false
-  newDigest.value = { name: '', schedule: '0 8 * * *', sourceIds: [], highlights: 5, comments: 10, prompt: defaultPrompt }
+  newDigest.value = { name: '', schedule: '0 8 * * *', sourceIds: [], highlights: 5, comments: 10, maxItems: 100, prompt: defaultPrompt }
 }
 
 function startEditDigest(cfg: DigestConfig) {
-  let ids: number[] = []; let highlights = 5; let comments = 10; let prompt = ''
+  let ids: number[] = []; let highlights = 5; let comments = 10; let maxItems = 100; let prompt = ''
   let mode: 'categories' | 'feeds' = 'categories'
   try {
     const parsed = JSON.parse(cfg.config)
     if (parsed.default_highlights) highlights = parsed.default_highlights
     if (parsed.default_comments) comments = parsed.default_comments
+    if (parsed.max_items) maxItems = parsed.max_items
     if (parsed.prompt) prompt = parsed.prompt
     if (Array.isArray(parsed.categories) && parsed.categories.length) {
       mode = 'categories'; ids = parsed.categories.map((c: any) => c.id)
@@ -228,13 +230,13 @@ function startEditDigest(cfg: DigestConfig) {
   } catch { /* defaults */ }
   editingDigest.value = cfg
   digestSourceMode.value = mode
-  newDigest.value = { name: cfg.name, schedule: cfg.schedule, sourceIds: ids, highlights, comments, prompt }
+  newDigest.value = { name: cfg.name, schedule: cfg.schedule, sourceIds: ids, highlights, comments, maxItems, prompt }
   showEditDigest.value = true
 }
 
 async function saveEditDigest() {
   if (!editingDigest.value) return
-  const json = makeConfigJson(newDigest.value.sourceIds, newDigest.value.highlights, newDigest.value.comments, newDigest.value.prompt)
+  const json = makeConfigJson(newDigest.value.sourceIds, newDigest.value.highlights, newDigest.value.comments, newDigest.value.maxItems, newDigest.value.prompt)
   await digestStore.updateConfig(editingDigest.value.id, newDigest.value.name, newDigest.value.schedule, json)
   showEditDigest.value = false; editingDigest.value = null
 }
@@ -547,9 +549,10 @@ function toggleCategory(catId: number) {
             />
           </div>
         </div>
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-3 gap-3">
           <div class="space-y-1"><label class="text-xs font-medium">Max highlights</label><Input v-model.number="newDigest.highlights" type="number" min="1" max="10" /></div>
           <div class="space-y-1"><label class="text-xs font-medium">Max comments</label><Input v-model.number="newDigest.comments" type="number" min="1" max="50" /></div>
+          <div class="space-y-1"><label class="text-xs font-medium">Max items</label><Input v-model.number="newDigest.maxItems" type="number" min="1" max="1000" /></div>
         </div>
         <div class="space-y-1">
           <label class="text-xs font-medium">Prompt (optional)</label>
@@ -591,9 +594,10 @@ function toggleCategory(catId: number) {
             />
           </div>
         </div>
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-3 gap-3">
           <div class="space-y-1"><label class="text-xs font-medium">Max highlights</label><Input v-model.number="newDigest.highlights" type="number" min="1" max="10" /></div>
           <div class="space-y-1"><label class="text-xs font-medium">Max comments</label><Input v-model.number="newDigest.comments" type="number" min="1" max="50" /></div>
+          <div class="space-y-1"><label class="text-xs font-medium">Max items</label><Input v-model.number="newDigest.maxItems" type="number" min="1" max="1000" /></div>
         </div>
         <div class="space-y-1">
           <label class="text-xs font-medium">Prompt</label>

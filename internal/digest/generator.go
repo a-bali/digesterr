@@ -27,6 +27,7 @@ type digestConfigJSON struct {
 	} `json:"feeds"`
 	DefaultHighlights int    `json:"default_highlights"`
 	DefaultComments   int    `json:"default_comments"`
+	MaxItems          int    `json:"max_items"`
 	Prompt            string `json:"prompt"`
 }
 
@@ -91,17 +92,29 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*stor
 
 	feedLimits := g.buildFeedLimits(ctx, cfg.UserID, dcfg)
 
-	limit := int64(100)
-	items, err := g.queries.ListUnreadDigestItems(ctx, store.ListUnreadDigestItemsParams{
-		UserID: cfg.UserID,
-		Limit:  limit,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("listing unread digest items: %w", err)
+	maxItems := dcfg.MaxItems
+	if maxItems <= 0 {
+		maxItems = 100
+	}
+	perFeed := maxItems / len(feedLimits)
+	if perFeed < 1 {
+		perFeed = 1
 	}
 
-	filtered := make([]digestItem, 0, len(items))
-	for _, item := range items {
+	var allItems []store.Item
+	for feedID := range feedLimits {
+		feedItems, err := g.queries.ListUnreadDigestItemsByFeed(ctx, store.ListUnreadDigestItemsByFeedParams{
+			FeedID: feedID,
+			Limit:  int64(perFeed),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("listing unread items for feed %d: %w", feedID, err)
+		}
+		allItems = append(allItems, feedItems...)
+	}
+
+	filtered := make([]digestItem, 0, len(allItems))
+	for _, item := range allItems {
 		if lim, ok := feedLimits[item.FeedID]; ok {
 			filtered = append(filtered, digestItem{Item: item, Highlights: lim.Highlights, Comments: lim.Comments})
 		}

@@ -391,6 +391,62 @@ func (q *Queries) ListUnreadDigestItems(ctx context.Context, arg ListUnreadDiges
 	return items, nil
 }
 
+const listUnreadDigestItemsByFeed = `-- name: ListUnreadDigestItemsByFeed :many
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items
+WHERE feed_id = ? AND status = 'unread'
+ORDER BY points DESC
+LIMIT ?
+`
+
+type ListUnreadDigestItemsByFeedParams struct {
+	FeedID int64 `json:"feed_id"`
+	Limit  int64 `json:"limit"`
+}
+
+func (q *Queries) ListUnreadDigestItemsByFeed(ctx context.Context, arg ListUnreadDigestItemsByFeedParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listUnreadDigestItemsByFeed, arg.FeedID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateDigestResultStatus = `-- name: UpdateDigestResultStatus :one
 UPDATE digest_results
 SET status = ?, updated_at = DATETIME('now')

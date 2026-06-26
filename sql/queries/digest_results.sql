@@ -51,3 +51,9 @@ FROM digest_configs dc
 LEFT JOIN digest_results dr ON dr.config_id = dc.id
 WHERE dc.user_id = ?
 GROUP BY dc.id;
+
+-- name: ListUnreadDigestItemsByFeed :many
+SELECT * FROM items
+WHERE feed_id = ? AND status = 'unread'
+ORDER BY points DESC
+LIMIT ?;
