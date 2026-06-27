@@ -174,6 +174,7 @@ watch(
     } else if (path === '/saved') {
       showingSaved.value = true; sidebarOpen.value = false
       feedStore.activeFeedId = null; feedStore.selectedItem = null; pendingItemId.value = null
+      digestStore.activeConfigId = null; digestStore.selectedResult = null
       if (savedItems.value.length === 0) {
         for (const feed of feedStore.feeds) {
           try { savedItems.value.push(...(await feedApi.getItems(feed.id, { status: 'saved' })).items) } catch { /* skip */ }
