@@ -7,9 +7,8 @@ export function cn(...inputs: ClassValue[]) {
 
 export function stripContent(content: string): string {
   if (!content) return ''
-  const el = document.createElement('div')
-  el.innerHTML = content
-  return (el.textContent || '')
+  const doc = new DOMParser().parseFromString(content, 'text/html')
+  return (doc.body.textContent || '')
     .replace(/\s+/g, ' ')
     .trim()
 }

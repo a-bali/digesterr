@@ -227,7 +227,8 @@ func spaHandler(api http.Handler, fs http.FileSystem) http.Handler {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
-		r.URL.Path = "/index.html"
+		slog.Debug("spa fallback", "path", r.URL.Path)
+		r.URL.Path = "/"
 		fileServer.ServeHTTP(w, r)
 	})
 }

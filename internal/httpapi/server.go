@@ -112,12 +112,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 type responseRecorder struct {
 	http.ResponseWriter
-	status int
+	status       int
+	wroteHeader  bool
 }
 
 func (rr *responseRecorder) WriteHeader(code int) {
-	rr.status = code
+	if !rr.wroteHeader {
+		rr.status = code
+		rr.wroteHeader = true
+	}
 	rr.ResponseWriter.WriteHeader(code)
+}
+
+func (rr *responseRecorder) Write(b []byte) (int, error) {
+	if !rr.wroteHeader {
+		rr.WriteHeader(http.StatusOK)
+	}
+	return rr.ResponseWriter.Write(b)
 }
 
 func envOr(key, fallback string) string {

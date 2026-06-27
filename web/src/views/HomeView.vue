@@ -8,16 +8,19 @@ import FeedSidebar from '../components/FeedSidebar.vue'
 import ItemList from '../components/ItemList.vue'
 import ItemContent from '../components/ItemContent.vue'
 import DigestContent from '../components/DigestContent.vue'
+import Skeleton from '../components/ui/Skeleton.vue'
+import Tooltip from '../components/ui/Tooltip.vue'
 import { useAuthStore } from '../stores/auth'
 import { useFeedStore } from '../stores/feed'
 import { useCategoryStore } from '../stores/category'
 import { useDigestStore } from '../stores/digest'
 import { useThemeStore } from '../stores/theme'
 import { feedApi } from '../services/api'
+import { stripContent } from '../lib/utils'
 import type { Item, DigestResult } from '../types/api'
 import {
   Rss, Settings, LogOut, Sun, Moon,
-  Menu, ArrowLeft, Sparkles, Star, Trash2, Circle, CircleDot, Check, PanelLeftClose, PanelLeftOpen,
+  Menu, ArrowLeft, Sparkles, Star, Trash2, Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -249,6 +252,54 @@ function absoluteTime(val: any): string {
   if (!d) return ''
   return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
+
+const displayItems = computed(() => showingSaved.value ? savedItems.value : feedStore.items)
+const scale = computed(() => {
+  const items = displayItems.value
+  if (items.length === 0) return { points_max: 0, points_avg: 0, comments_max: 0, comments_avg: 0 }
+  let pointsMax = 0, commentsMax = 0, pointsSum = 0, commentsSum = 0, pointsCount = 0, commentsCount = 0
+  for (const item of items) {
+    if (item.points > 0) {
+      if (item.points > pointsMax) pointsMax = item.points
+      pointsSum += item.points
+      pointsCount++
+    }
+    if (item.comments_count > 0) {
+      if (item.comments_count > commentsMax) commentsMax = item.comments_count
+      commentsSum += item.comments_count
+      commentsCount++
+    }
+  }
+  return {
+    points_max: pointsMax,
+    points_avg: pointsCount > 0 ? Math.round(pointsSum / pointsCount) : 0,
+    comments_max: commentsMax,
+    comments_avg: commentsCount > 0 ? Math.round(commentsSum / commentsCount) : 0,
+  }
+})
+function accentOpacity(val: number, max: number): number {
+  if (max <= 0) return 0.4
+  const r = Math.log(Math.max(val, 1)) / Math.log(Math.max(max, 2))
+  if (r > 0.8) return 1
+  if (r > 0.5) return 0.65
+  if (r > 0.2) return 0.4
+  return 0.2
+}
+function accentStyle(val: number, max: number): string {
+  return `color: hsl(var(--accent) / ${accentOpacity(val, max)})`
+}
+function pointsTitle(val: number): string {
+  const avg = scale.value.points_avg
+  const diff = val - avg
+  const sign = diff >= 0 ? '+' : ''
+  return `${val} points (${sign}${diff})`
+}
+function commentsTitle(val: number): string {
+  const avg = scale.value.comments_avg
+  const diff = val - avg
+  const sign = diff >= 0 ? '+' : ''
+  return `${val} comments (${sign}${diff})`
+}
 </script>
 
 <template>
@@ -385,7 +436,7 @@ function absoluteTime(val: any): string {
               <div v-else-if="filteredResults.length === 0" class="text-xs text-muted-foreground p-2">No results.</div>
               <div v-else class="space-y-1">
                 <button v-for="result in filteredResults" :key="result.id"
-                  class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
+            class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden appearance-none"
                   :class="{ 'bg-accent/10 font-medium text-accent': result.id === digestStore.selectedResult?.id, 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
                   @click="markDigestRead(result); digestStore.selectResult(result); router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)"
                 >
@@ -493,8 +544,45 @@ function absoluteTime(val: any): string {
           </button>
         </div>
       </div>
-      <div v-else-if="!feedStore.selectedItem" class="flex-1 overflow-y-auto">
-        <ItemList :saved-items="savedItems" :showing-saved="showingSaved" :relative-time="relativeTime" :absolute-time="absoluteTime" @select-item="selectItem" />
+      <div v-else-if="!feedStore.selectedItem" class="flex-1 min-h-0 overflow-y-auto">
+        <Skeleton v-if="feedStore.loading" class="m-3 h-12" />
+        <div v-else-if="!feedStore.activeFeedId && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
+        <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
+        <template v-else>
+          <button v-for="item in displayItems" :key="item.id"
+            class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
+            :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved' }"
+            @click="selectItem(item)">
+            <div class="flex items-start gap-1 min-w-0">
+              <CircleDot v-if="item.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
+              <CircleCheck v-else-if="item.status === 'saved'" class="size-3 shrink-0 mt-0.5 text-accent" />
+              <span v-else-if="item.status === 'digested'" class="size-3 shrink-0 mt-0.5 inline-flex items-center justify-center text-[10px] leading-none text-muted-foreground/60" title="digested">◐</span>
+              <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
+              <span v-if="item.status === 'saved'" class="text-accent shrink-0 mt-0.5"><Check class="size-3" /></span>
+              <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ item.title }}</p>
+              <span class="text-[10px] text-muted-foreground/70 shrink-0 mt-0.5" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
+            </div>
+            <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0 pr-16">{{ stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</p>
+            <div class="absolute right-2 bottom-2 flex items-center gap-2">
+              <Tooltip v-if="item.points > 0">
+                <template #trigger>
+                  <span class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.points, scale.points_max)">
+                    <ArrowUp class="size-3" /> {{ item.points }}
+                  </span>
+                </template>
+                {{ pointsTitle(item.points) }}
+              </Tooltip>
+              <Tooltip v-if="item.comments_count > 0 || item.comment_url">
+                <template #trigger>
+                  <span class="flex items-center gap-0.5 text-[10px]" :style="item.comments_count > 0 ? accentStyle(item.comments_count, scale.comments_max) : 'color: hsl(var(--accent) / 0.3)'">
+                    <MessageSquare class="size-3" /> <template v-if="item.comments_count > 0">{{ item.comments_count }}</template>
+                  </span>
+                </template>
+                <template v-if="item.comments_count > 0">{{ commentsTitle(item.comments_count) }}</template>
+              </Tooltip>
+            </div>
+          </button>
+        </template>
       </div>
       <div v-else class="flex-1 overflow-y-auto p-4">
         <ItemContent :absolute-time="absoluteTime" :unsave-item="unsaveItem" />
