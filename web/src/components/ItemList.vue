@@ -115,10 +115,13 @@ onUnmounted(() => {})
     <div v-else-if="!feedStore.activeFeedId && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
     <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
     <template v-else>
-      <button v-for="item in displayItems" :key="item.id"
-      class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden appearance-none"
+      <div v-for="item in displayItems" :key="item.id"
+      role="button" tabindex="0"
+      class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
       :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved' }"
-      @click="emit('selectItem', item)">
+      @click="emit('selectItem', item)"
+      @keydown.enter.prevent="emit('selectItem', item)"
+      @keydown.space.prevent="emit('selectItem', item)">
       <div class="flex items-start gap-1 min-w-0">
         <CircleDot v-if="item.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
         <CircleCheck v-else-if="item.status === 'saved'" class="size-3 shrink-0 mt-0.5 text-accent" />
@@ -147,7 +150,7 @@ onUnmounted(() => {})
           <template v-if="item.comments_count > 0">{{ commentsTitle(item.comments_count) }}</template>
         </Tooltip>
       </div>
-    </button>
+    </div>
     <div v-if="!props.showingSaved && feedStore.loadingMore" class="p-3">
       <Skeleton class="h-12" />
     </div>

@@ -549,10 +549,13 @@ function commentsTitle(val: number): string {
         <div v-else-if="!feedStore.activeFeedId && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
         <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
         <template v-else>
-          <button v-for="item in displayItems" :key="item.id"
-            class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
+          <div v-for="item in displayItems" :key="item.id"
+            role="button" tabindex="0"
+            class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
             :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved' }"
-            @click="selectItem(item)">
+            @click="selectItem(item)"
+            @keydown.enter.prevent="selectItem(item)"
+            @keydown.space.prevent="selectItem(item)">
             <div class="flex items-start gap-1 min-w-0">
               <CircleDot v-if="item.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
               <CircleCheck v-else-if="item.status === 'saved'" class="size-3 shrink-0 mt-0.5 text-accent" />
@@ -581,7 +584,7 @@ function commentsTitle(val: number): string {
                 <template v-if="item.comments_count > 0">{{ commentsTitle(item.comments_count) }}</template>
               </Tooltip>
             </div>
-          </button>
+          </div>
         </template>
       </div>
       <div v-else class="flex-1 overflow-y-auto p-4">
