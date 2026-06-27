@@ -34,18 +34,26 @@ export class ApiError extends Error {
   }
 }
 
+let refreshPromise: Promise<boolean> | null = null
+
 async function tryRefresh(): Promise<boolean> {
-  try {
-    const res = await fetch('/api/auth/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
-    if (res.ok) {
-      const body = await res.json()
-      setAuthToken(body.access_token)
-      return true
+  if (refreshPromise) return refreshPromise
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' } })
+      if (res.ok) {
+        const body = await res.json()
+        setAuthToken(body.access_token)
+        return true
+      }
+      return false
+    } catch {
+      return false
+    } finally {
+      refreshPromise = null
     }
-    return false
-  } catch {
-    return false
-  }
+  })()
+  return refreshPromise
 }
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
