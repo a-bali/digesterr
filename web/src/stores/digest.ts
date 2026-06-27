@@ -12,6 +12,8 @@ export const useDigestStore = defineStore('digest', () => {
   const resultItems = ref<DigestResultItemWithData[]>([])
   const loading = ref(false)
   const generating = ref(false)
+  const loadingMore = ref(false)
+  const hasMore = ref(false)
   const unreadCounts = ref<Record<number, number>>({})
 
   const activeConfig = computed(() => configs.value.find(c => c.id === activeConfigId.value) || null)
@@ -70,8 +72,11 @@ export const useDigestStore = defineStore('digest', () => {
     selectedResult.value = null
     resultItems.value = []
     loading.value = true
+    hasMore.value = false
     try {
-      results.value = (await digestApi.listResults(id)).map(normalize)
+      const resp = await digestApi.listResults(id, { limit: 50, offset: 0 })
+      results.value = resp.results.map(normalize)
+      hasMore.value = resp.has_more
     } catch (e) {
       toast.error('Failed to load digest results', { description: e instanceof ApiError ? e.message : undefined })
     } finally {
@@ -133,11 +138,27 @@ export const useDigestStore = defineStore('digest', () => {
     }
   }
 
+  async function fetchMoreResults() {
+    if (!activeConfigId.value || !hasMore.value || loadingMore.value || loading.value) return
+    loadingMore.value = true
+    try {
+      const resp = await digestApi.listResults(activeConfigId.value, { limit: 50, offset: results.value.length })
+      results.value.push(...resp.results.map(normalize))
+      hasMore.value = resp.has_more
+    } catch {
+      // silent
+    } finally {
+      loadingMore.value = false
+    }
+  }
+
   async function silentRefresh() {
     try {
       configs.value = await digestApi.listConfigs()
       if (activeConfigId.value) {
-        results.value = (await digestApi.listResults(activeConfigId.value)).map(normalize)
+        const resp = await digestApi.listResults(activeConfigId.value, { limit: 50, offset: 0 })
+        results.value = resp.results.map(normalize)
+        hasMore.value = resp.has_more
       }
     } catch {
       // silent
@@ -166,9 +187,9 @@ export const useDigestStore = defineStore('digest', () => {
 
   return {
     configs, activeConfigId, results, selectedResult, resultItems,
-    loading, generating, activeConfig, unreadCounts,
+    loading, generating, loadingMore, hasMore, activeConfig, unreadCounts,
     fetchConfigs, createConfig, updateConfig, deleteConfig,
     setActiveConfig, selectResult, generateNow, markResultRead, deleteResult,
-    updateResultStatus, silentRefresh, fetchUnreadCounts,
+    updateResultStatus, silentRefresh, fetchUnreadCounts, fetchMoreResults,
   }
 })

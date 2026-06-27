@@ -137,7 +137,8 @@ export const digestApi = {
   getConfig: (id: number) => api<DigestConfig>(`/digest-configs/${id}`),
   generate: (configId: number) =>
     api<DigestResult>(`/digest-configs/${configId}/generate`, { method: 'POST' }),
-  listResults: (configId: number) => api<DigestResult[]>(`/digest-configs/${configId}/results`),
+  listResults: (configId: number, opts?: { limit?: number; offset?: number }) =>
+    api<{ results: DigestResult[]; has_more: boolean }>(`/digest-configs/${configId}/results${qs({ limit: opts?.limit, offset: opts?.offset })}`),
   getResult: (id: number) => api<DigestResult>(`/digest-results/${id}`),
   updateResultStatus: (id: number, status: string) =>
     api<DigestResult>(`/digest-results/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),

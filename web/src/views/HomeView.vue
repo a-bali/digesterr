@@ -237,6 +237,14 @@ function onMobileScroll() {
   }
 }
 
+function onDigestScroll(e: Event) {
+  const el = e.target as HTMLElement
+  if (!el || !digestStore.hasMore || digestStore.loadingMore || digestStore.loading) return
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
+    digestStore.fetchMoreResults()
+  }
+}
+
 function parseItemDate(val: any): Date | null {
   if (!val) return null
   if (typeof val === 'object') { if (!val.Valid) return null; val = val.Time }
@@ -375,7 +383,7 @@ function commentsTitle(val: number): string {
         <!-- Digest content -->
         <DigestContent v-if="digestStore.selectedResult && !feedMode" class="flex-1 overflow-y-auto" />
         <!-- Digest results list -->
-        <div v-else-if="digestStore.activeConfigId && !feedMode" class="flex-1 overflow-y-auto p-3 border-r">
+         <div v-else-if="digestStore.activeConfigId && !feedMode" class="flex-1 overflow-y-auto p-3 border-r" @scroll="onDigestScroll">
           <div class="mb-2">
             <FilterBar
               :options="[
@@ -430,7 +438,7 @@ function commentsTitle(val: number): string {
           <!-- Middle pane: feed items or digest results -->
           <SplitterPanel :default-size="30" :min-size="20" :max-size="50">
             <!-- Digest results list -->
-            <div v-if="digestStore.activeConfigId && !feedMode" class="h-full overflow-y-auto p-3 border-r">
+            <div v-if="digestStore.activeConfigId && !feedMode" class="h-full overflow-y-auto p-3 border-r" @scroll="onDigestScroll">
               <div class="mb-2">
                 <FilterBar
                   :options="[
@@ -481,7 +489,7 @@ function commentsTitle(val: number): string {
       </aside>
       <template v-if="digestStore.activeConfigId && !feedMode">
         <DigestContent v-if="digestStore.selectedResult" class="flex-1 overflow-y-auto" />
-        <div v-else class="flex-1 overflow-y-auto p-3">
+        <div v-else class="flex-1 overflow-y-auto p-3" @scroll="onDigestScroll">
           <div class="mb-2">
             <FilterBar
               :options="[
@@ -524,7 +532,7 @@ function commentsTitle(val: number): string {
         <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
       </aside>
       <div v-if="digestStore.activeConfigId && !feedMode && digestStore.selectedResult" class="flex-1 overflow-y-auto"><DigestContent /></div>
-      <div v-else-if="digestStore.activeConfigId && !feedMode" class="flex-1 overflow-y-auto p-3">
+      <div v-else-if="digestStore.activeConfigId && !feedMode" class="flex-1 overflow-y-auto p-3" @scroll="onDigestScroll">
         <div class="mb-2">
           <FilterBar
             :options="[

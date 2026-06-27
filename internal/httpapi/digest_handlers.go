@@ -148,9 +148,25 @@ func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	results, err := s.queries.ListDigestResultsByConfig(r.Context(), store.ListDigestResultsByConfigParams{
+
+	limit := 50
+	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
+			limit = v
+		}
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+			offset = v
+		}
+	}
+
+	results, err := s.queries.ListDigestResultsByConfigPaginated(r.Context(), store.ListDigestResultsByConfigPaginatedParams{
 		ConfigID: configID,
 		UserID:   userID,
+		Limit:    int64(limit),
+		Offset:   int64(offset),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list digest results")
@@ -159,7 +175,16 @@ func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request)
 	if results == nil {
 		results = []store.DigestResult{}
 	}
-	writeJSON(w, http.StatusOK, results)
+
+	hasMore := len(results) > limit
+	if hasMore {
+		results = results[:limit]
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"results":  results,
+		"has_more": hasMore,
+	})
 }
 
 func (s *Server) handleGetDigestResult(w http.ResponseWriter, r *http.Request) {

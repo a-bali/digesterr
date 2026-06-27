@@ -9,6 +9,9 @@ SELECT * FROM digest_results WHERE id = ? AND user_id = ?;
 -- name: ListDigestResultsByConfig :many
 SELECT * FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC;
 
+-- name: ListDigestResultsByConfigPaginated :many
+SELECT * FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
+
 -- name: UpdateDigestResultStatus :one
 UPDATE digest_results
 SET status = ?, updated_at = DATETIME('now')

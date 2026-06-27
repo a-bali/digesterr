@@ -334,6 +334,54 @@ func (q *Queries) ListDigestResultsByConfig(ctx context.Context, arg ListDigestR
 	return items, nil
 }
 
+const listDigestResultsByConfigPaginated = `-- name: ListDigestResultsByConfigPaginated :many
+SELECT id, user_id, config_id, config_snapshot, content, status, created_at, updated_at FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+`
+
+type ListDigestResultsByConfigPaginatedParams struct {
+	ConfigID int64 `json:"config_id"`
+	UserID   int64 `json:"user_id"`
+	Limit    int64 `json:"limit"`
+	Offset   int64 `json:"offset"`
+}
+
+func (q *Queries) ListDigestResultsByConfigPaginated(ctx context.Context, arg ListDigestResultsByConfigPaginatedParams) ([]DigestResult, error) {
+	rows, err := q.db.QueryContext(ctx, listDigestResultsByConfigPaginated,
+		arg.ConfigID,
+		arg.UserID,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DigestResult{}
+	for rows.Next() {
+		var i DigestResult
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ConfigID,
+			&i.ConfigSnapshot,
+			&i.Content,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnreadDigestItems = `-- name: ListUnreadDigestItems :many
 SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
 JOIN feeds f ON f.id = i.feed_id
