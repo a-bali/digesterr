@@ -12,6 +12,7 @@ import Dialog from './ui/Dialog'
 import TagInput from './TagInput.vue'
 import Tooltip from './ui/Tooltip'
 import { BookmarkCheck, Rss, RefreshCw, Check, Plus, Sparkles, Settings, Trash2, MessageSquare, ChevronDown, X } from 'lucide-vue-next'
+import { useRoute } from 'vue-router'
 
 const props = withDefaults(defineProps<{
   showingSaved?: boolean
@@ -26,6 +27,7 @@ const emit = defineEmits<{
 const feedStore = useFeedStore()
 const categoryStore = useCategoryStore()
 const digestStore = useDigestStore()
+const route = useRoute()
 const refreshingFeeds = ref(new Set<number>())
 const generatingDigests = ref(new Set<number>())
 
@@ -302,7 +304,7 @@ function toggleCategory(catId: number) {
 <template>
   <div>
     <!-- Saved -->
-    <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': props.showingSaved }" @click="emit('showSaved')">
+    <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': route.path === '/saved' }" @click="emit('showSaved')">
       <BookmarkCheck class="size-3.5 shrink-0 text-accent" /> <span class="truncate">Saved</span>
     </button>
 
