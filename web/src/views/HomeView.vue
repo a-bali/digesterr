@@ -49,6 +49,7 @@ const accentColors: Record<string, string> = {
 }
 
 const pendingItemId = ref<number | null>(null)
+const mobileScrollEl = ref<HTMLElement | null>(null)
 
 function onResize() { windowWidth.value = window.innerWidth }
 
@@ -226,6 +227,14 @@ async function selectItem(item: Item) {
 async function unsaveItem(item: Item) {
   await feedStore.updateItemStatus(item, 'read')
   savedItems.value = savedItems.value.filter(i => i.id !== item.id)
+}
+
+function onMobileScroll() {
+  const el = mobileScrollEl.value
+  if (!el || !feedStore.hasMore || feedStore.loadingMore || feedStore.loading) return
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
+    feedStore.fetchMoreItems()
+  }
 }
 
 function parseItemDate(val: any): Date | null {
@@ -544,7 +553,8 @@ function commentsTitle(val: number): string {
           </button>
         </div>
       </div>
-      <div v-else-if="!feedStore.selectedItem" class="flex-1 min-h-0 overflow-y-auto">
+      <div v-else-if="!feedStore.selectedItem" class="flex-1 min-h-0 overflow-y-auto"
+        ref="mobileScrollEl" @scroll="onMobileScroll">
         <Skeleton v-if="feedStore.loading" class="m-3 h-12" />
         <div v-else-if="!feedStore.activeFeedId && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
         <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
