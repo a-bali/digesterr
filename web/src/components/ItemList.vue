@@ -5,6 +5,7 @@ import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
 import FilterBar from './FilterBar.vue'
 import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare } from 'lucide-vue-next'
+import { stripContent } from '../lib/utils'
 
 const props = defineProps<{
   savedItems: any[]
@@ -74,19 +75,6 @@ function commentsTitle(val: number): string {
   return `${val} comments (${sign}${diff})`
 }
 
-function stripContent(content: string): string {
-  if (!content) return ''
-  return content
-    .replace(/<[^>]*>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&#32;/g, ' ')
-    .replace(/&quot;/g, '"')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
 
 function onScroll() {
   const el = scrollEl.value

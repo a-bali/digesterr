@@ -120,6 +120,15 @@ func ExtractContent(ctx context.Context, pageURL string, client *http.Client, lo
 		}
 		return fmt.Sprintf(`<pre style="white-space:pre-wrap">%s</pre>`, htmlEscape(string(body))), nil
 
+	case strings.HasPrefix(contentType, "application/pdf"):
+		logger.Info("content extraction: pdf detected, trying Jina.ai")
+		html, err := ExtractWithJina(ctx, pageURL, client, logger)
+		if err != nil {
+			logger.Info("content extraction: jina failed for pdf, falling back to browser link", "error", err)
+			return fmt.Sprintf(`<p><a href="%s" target="_blank">Open in browser ↗</a></p>`, htmlEscape(pageURL)), nil
+		}
+		return html, nil
+
 	default:
 		return fmt.Sprintf(`<p><a href="%s" target="_blank">Open in browser ↗</a></p>`, htmlEscape(pageURL)), nil
 	}
