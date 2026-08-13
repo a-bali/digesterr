@@ -115,19 +115,32 @@ describe('DigestContent', () => {
     expect(wrapper.text()).toContain('[5]')
   })
 
-  it('links feed names to the in-app feed view', () => {
+  it('renders one feed header per feed, linking to the in-app feed view', () => {
     const hnLinks = wrapper.findAll('a').filter(a => a.attributes('href') === '/feeds/42')
-    // Once in the highlights header, once in the All Items header.
-    expect(hnLinks.length).toBe(2)
+    expect(hnLinks.length).toBe(1)
     const redditLinks = wrapper.findAll('a').filter(a => a.attributes('href') === '/feeds/7')
     expect(redditLinks.length).toBe(1)
   })
 
-  it('groups All Items by feed', () => {
-    const headers = wrapper.findAll('h4').map(h => h.text())
-    expect(headers).toContain('HN')
-    expect(headers).toContain('Reddit')
-    expect(wrapper.text()).toContain('Item One')
-    expect(wrapper.text()).toContain('Item Two')
+  it('groups each feed into one section: highlights then its all-items', () => {
+    const sections = wrapper.findAll('[data-feed-section]')
+    expect(sections.length).toBe(2)
+
+    const hn = sections[0].text()
+    const reddit = sections[1].text()
+
+    // HN: highlight card first, then its non-highlighted item.
+    expect(hn).toContain('Highlight One')
+    expect(hn).toContain('Item One')
+    expect(hn.indexOf('Highlight One')).toBeLessThan(hn.indexOf('Item One'))
+
+    // Reddit: only an all-items row (no highlights).
+    expect(reddit).toContain('Item Two')
+    expect(reddit).not.toContain('Highlight One')
+  })
+
+  it('labels each feed section\'s all-items with "All items"', () => {
+    const labels = wrapper.findAll('p').filter(p => p.text() === 'All items')
+    expect(labels.length).toBe(2)
   })
 })
