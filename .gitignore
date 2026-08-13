@@ -7,6 +7,12 @@ bin/
 /digesterr
 *.db*
 
+# Air
+tmp/
+
+# Local env (never commit)
+.env
+
 # Build artifacts
 cmd/digesterr/static/*
 !cmd/digesterr/static/.gitkeep

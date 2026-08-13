@@ -1,0 +1,23 @@
+# Air config — loads .env, rebuilds on Go/SQL changes
+root = "."
+tmp_dir = "tmp"
+
+env_files = [".env"]
+
+[build]
+  cmd = "go build -o ./tmp/digesterr ./cmd/digesterr"
+  bin = "./tmp/digesterr"
+  # overlayfs in this container doesn't deliver inotify events reliably — poll instead
+  poll = true
+  poll_interval = 500
+  include_ext = ["go", "sql"]
+  exclude_dir = ["web", "tmp", "data", ".git", "node_modules", "bin"]
+  exclude_regex = ["_test\\.go$"]
+  stop_on_error = true
+  delay = 1000
+  send_interrupt = true
+  kill_delay = 500
+
+[log]
+  time = true
+  main_only = false
