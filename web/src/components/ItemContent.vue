@@ -109,9 +109,9 @@ onUnmounted(() => {
           <RefreshCw class="size-3 inline animate-spin mr-1" /> Extraction in progress…
         </div>
         <div v-else-if="feedStore.selectedItem.extract_status === 'failed'"
-          class="p-4 rounded-md bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
-          <p class="text-xs font-medium text-amber-700 dark:text-amber-400 mb-1">Extraction failed after {{ feedStore.selectedItem.extract_retries }} attempt{{ feedStore.selectedItem.extract_retries === 1 ? '' : 's' }}</p>
-          <pre class="text-xs text-amber-600 dark:text-amber-500 whitespace-pre-wrap">{{ feedStore.selectedItem.extract_content }}</pre>
+          class="p-4 rounded-md bg-warning/10 dark:bg-warning/15 border border-warning/30">
+          <p class="text-xs font-medium text-warning-foreground dark:text-warning mb-1">Extraction failed after {{ feedStore.selectedItem.extract_retries }} attempt{{ feedStore.selectedItem.extract_retries === 1 ? '' : 's' }}</p>
+          <pre class="text-xs text-warning-foreground/80 dark:text-warning/90 whitespace-pre-wrap">{{ feedStore.selectedItem.extract_content }}</pre>
         </div>
         <div v-else-if="feedStore.selectedItem.extract_status === 'done'"
           class="prose prose-sm dark:prose-invert max-w-none [&_a]:text-accent [&_a]:hover:underline" v-html="feedStore.selectedItem.extract_content" />

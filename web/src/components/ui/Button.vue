@@ -25,15 +25,18 @@ const buttonVariants = cva(
 
 type ButtonVariants = VariantProps<typeof buttonVariants>
 
+// Default type="button": a button that happens to live inside a <form> must
+// not submit it (e.g. "Delete" next to "Save"). Submit buttons opt in.
 const props = withDefaults(defineProps<{
   variant?: ButtonVariants['variant']
   size?: ButtonVariants['size']
+  type?: 'button' | 'submit' | 'reset'
   disabled?: boolean
-}>(), { variant: 'default', size: 'default' })
+}>(), { variant: 'default', size: 'default', type: 'button' })
 </script>
 
 <template>
-  <button :class="buttonVariants({ variant: props.variant, size: props.size })" :disabled="props.disabled">
+  <button :type="props.type" :class="buttonVariants({ variant: props.variant, size: props.size })" :disabled="props.disabled">
     <slot />
   </button>
 </template>

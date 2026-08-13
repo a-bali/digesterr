@@ -96,16 +96,16 @@ function submit() {
   <Dialog :open="true" :title="config ? 'Edit Digest Config' : 'Create Digest Config'" @update:open="emit('update:open', $event)">
     <form @submit.prevent="submit" class="space-y-4">
       <div class="space-y-1">
-        <label class="text-xs font-medium">Name</label>
+        <label class="text-sm font-medium">Name</label>
         <Input v-model="form.name" placeholder="Digest name (e.g. Daily Tech)" required />
       </div>
       <div class="space-y-1">
-        <label class="text-xs font-medium">Schedule (cron syntax)</label>
+        <label class="text-sm font-medium">Schedule (cron syntax)</label>
         <Input v-model="form.schedule" placeholder="0 8 * * *" required />
         <p class="text-xs text-muted-foreground mt-0.5">0 8 * * * (daily 8am), 0 */6 * * * (every 6h)</p>
       </div>
       <div class="space-y-1">
-        <label class="text-xs font-medium">Source</label>
+        <label class="text-sm font-medium">Source</label>
         <div class="flex rounded-md border border-border overflow-hidden text-xs w-fit">
           <button type="button" class="px-2 py-1 transition-colors" :class="sourceMode === 'categories' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'" @click="sourceMode = 'categories'">Categories</button>
           <button type="button" class="px-2 py-1 border-x border-border transition-colors" :class="sourceMode === 'feeds' ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'" @click="sourceMode = 'feeds'">Feeds</button>
@@ -126,12 +126,12 @@ function submit() {
         </div>
       </div>
       <div class="grid grid-cols-3 gap-3">
-        <div class="space-y-1"><label class="text-xs font-medium">Max highlights</label><Input v-model.number="form.highlights" type="number" min="1" max="10" /></div>
-        <div class="space-y-1"><label class="text-xs font-medium">Max comments</label><Input v-model.number="form.comments" type="number" min="1" max="50" /></div>
-        <div class="space-y-1"><label class="text-xs font-medium">Max items</label><Input v-model.number="form.maxItems" type="number" min="1" max="1000" /></div>
+        <div class="space-y-1"><label class="text-sm font-medium">Max highlights</label><Input v-model.number="form.highlights" type="number" min="1" max="10" /></div>
+        <div class="space-y-1"><label class="text-sm font-medium">Max comments</label><Input v-model.number="form.comments" type="number" min="1" max="50" /></div>
+        <div class="space-y-1"><label class="text-sm font-medium">Max items</label><Input v-model.number="form.maxItems" type="number" min="1" max="1000" /></div>
       </div>
       <div class="space-y-1">
-        <label class="text-xs font-medium">Prompt (optional)</label>
+        <label class="text-sm font-medium">Prompt (optional)</label>
         <textarea v-model="form.prompt" rows="3" class="flex w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs" />
       </div>
       <div class="flex gap-2">

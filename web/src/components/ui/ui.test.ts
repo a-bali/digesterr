@@ -30,6 +30,16 @@ describe('Button', () => {
     const wrapper = mount(Button, { props: { disabled: true }, slots: { default: 'Disabled' } })
     expect(wrapper.find('button').attributes('disabled')).toBeDefined()
   })
+
+  it('defaults to type="button" so it never submits an enclosing form', () => {
+    const wrapper = mount(Button, { slots: { default: 'Delete' } })
+    expect(wrapper.find('button').attributes('type')).toBe('button')
+  })
+
+  it('can opt in to type="submit"', () => {
+    const wrapper = mount(Button, { props: { type: 'submit' }, slots: { default: 'Save' } })
+    expect(wrapper.find('button').attributes('type')).toBe('submit')
+  })
 })
 
 describe('Input', () => {

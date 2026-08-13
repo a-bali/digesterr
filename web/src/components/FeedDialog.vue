@@ -3,6 +3,7 @@ import { reactive, watch } from 'vue'
 import { useCategoryStore } from '../stores/category'
 import Dialog from './ui/Dialog.vue'
 import Input from './ui/Input.vue'
+import Select from './ui/Select.vue'
 import Button from './ui/Button.vue'
 import type { Feed } from '../types/api'
 
@@ -56,33 +57,32 @@ const dialogId = Math.random().toString(36).slice(2)
   <Dialog :open="true" :title="feed ? 'Edit Feed' : 'Add Feed'" @update:open="emit('update:open', $event)">
     <form @submit.prevent="submit" class="space-y-4">
       <div class="space-y-1">
-        <label class="text-xs font-medium">Category</label>
-        <input
+        <label class="text-sm font-medium">Category</label>
+        <Input
           v-model="form.category"
           :list="`${dialogId}-cats`"
           placeholder="Select existing or type new name…"
-          class="flex h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
         />
         <datalist :id="`${dialogId}-cats`">
           <option v-for="cat in categoryStore.categories" :key="cat.id" :value="cat.name" />
         </datalist>
       </div>
       <div class="space-y-1">
-        <label class="text-xs font-medium">Type</label>
-        <select v-model="form.type" @change="onTypeChange(($event.target as HTMLSelectElement).value)" class="flex h-9 w-full rounded-md border border-border bg-background px-3 text-sm">
+        <label class="text-sm font-medium">Type</label>
+        <Select v-model="form.type" @change="onTypeChange(($event.target as HTMLSelectElement).value)">
           <option v-for="t in ['rss','hn','lobsters','reddit']" :key="t" :value="t">{{ typeLabel(t) }}</option>
-        </select>
+        </Select>
       </div>
       <div class="space-y-1">
-        <label class="text-xs font-medium">Name</label>
+        <label class="text-sm font-medium">Name</label>
         <Input v-model="form.name" placeholder="Feed name" required />
       </div>
       <div v-if="form.type === 'hn' || form.type === 'lobsters'" class="space-y-1">
-        <label class="text-xs font-medium">URL</label>
+        <label class="text-sm font-medium">URL</label>
         <p class="text-sm text-muted-foreground bg-muted rounded px-2 py-1.5">{{ form.url }}</p>
       </div>
       <div v-else-if="form.type === 'reddit'" class="space-y-1">
-        <label class="text-xs font-medium">URL</label>
+        <label class="text-sm font-medium">URL</label>
         <div class="flex items-center gap-0">
           <span class="text-xs text-muted-foreground bg-muted rounded-l-md px-2 py-1.5 border border-border border-r-0 whitespace-nowrap">https://www.reddit.com/r/</span>
           <Input v-model="form.url" placeholder="subreddit" required class="rounded-none" />
@@ -90,7 +90,7 @@ const dialogId = Math.random().toString(36).slice(2)
         </div>
       </div>
       <div v-else class="space-y-1">
-        <label class="text-xs font-medium">URL</label>
+        <label class="text-sm font-medium">URL</label>
         <Input v-model="form.url" placeholder="Feed URL" required />
       </div>
       <label class="flex items-center gap-2 text-sm cursor-pointer">
