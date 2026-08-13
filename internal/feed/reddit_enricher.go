@@ -281,6 +281,14 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 	return nil
 }
 
+// redditCommentFetchLimit caps the comment tree fetch. Reddit's /comments
+// endpoint accepts limit up to 100 and applies it to top-level comments (their
+// reply subtrees are included). An uncapped fetch downloads the whole tree —
+// multi-MB on busy threads — and its default "confidence" sort is not score
+// order. sort=top biases the window toward high-scoring top-level comments;
+// the caller re-sorts by raw score afterwards.
+const redditCommentFetchLimit = 100
+
 func (e *RedditEnricher) FetchComments(ctx context.Context, item store.Item, maxComments int) ([]Comment, error) {
 	postID := extractRedditPostID(item.Hash, item.CommentUrl, item.Url)
 	if postID == "" {
@@ -291,12 +299,15 @@ func (e *RedditEnricher) FetchComments(ctx context.Context, item store.Item, max
 	var lastErr error
 
 	// Try OAuth endpoint first, fall back to public endpoint.
+	commentsURL := func(base string) string {
+		return fmt.Sprintf("%s/comments/%s.json?sort=top&threaded=true&limit=%d", base, postID, redditCommentFetchLimit)
+	}
 	for _, attempt := range []struct {
 		url  string
 		auth bool
 	}{
-		{fmt.Sprintf("%s/comments/%s.json", e.apiBaseURL, postID), true},
-		{fmt.Sprintf("%s/comments/%s.json", e.baseURL, postID), false},
+		{commentsURL(e.apiBaseURL), true},
+		{commentsURL(e.baseURL), false},
 	} {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, attempt.url, nil)
 		if err != nil {

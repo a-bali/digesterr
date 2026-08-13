@@ -207,6 +207,60 @@ func TestRedditEnricherEnrichEmptyResponse(t *testing.T) {
 	}
 }
 
+func TestRedditEnricherFetchComments(t *testing.T) {
+	// Shape mirrors a real /comments response with sort=top&threaded=true&limit:
+	// post listing + threaded comment listing containing replies and a "more" stub.
+	const redditCommentsJSON = `[
+  {"data": {"children": []}},
+  {"data": {"children": [
+    {"kind": "t1", "data": {"id": "pinned", "score": 1, "body": "pinned", "author": "mod", "permalink": "/r/x/comments/abc/pinned/"}},
+    {"kind": "t1", "data": {"id": "top", "score": 50, "body": "top", "author": "a", "permalink": "/r/x/comments/abc/top/", "replies": {"data": {"children": [
+      {"kind": "t1", "data": {"id": "reply", "score": 200, "body": "reply", "author": "b", "permalink": "/r/x/comments/abc/reply/"}}
+    ]}}}},
+    {"kind": "more", "data": {"children": ["t1_zzz"]}},
+    {"kind": "t1", "data": {"id": "low", "score": 5, "body": "low", "author": "c", "permalink": "/r/x/comments/abc/low/"}}
+  ]}}
+]`
+	var apiResp []map[string]interface{}
+	if err := json.Unmarshal([]byte(redditCommentsJSON), &apiResp); err != nil {
+		t.Fatalf("bad fixture JSON: %v", err)
+	}
+	respBody, _ := json.Marshal(apiResp)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("sort") != "top" {
+			t.Errorf("expected sort=top, got %q", q.Get("sort"))
+		}
+		if q.Get("threaded") != "true" {
+			t.Errorf("expected threaded=true, got %q", q.Get("threaded"))
+		}
+		if q.Get("limit") != "100" {
+			t.Errorf("expected limit=100, got %q", q.Get("limit"))
+		}
+		w.Write(respBody)
+	}))
+	defer server.Close()
+
+	e := &RedditEnricher{client: server.Client(), apiBaseURL: server.URL, baseURL: server.URL}
+	item := store.Item{ID: 1, Hash: "t3_abc"}
+
+	comments, err := e.FetchComments(context.Background(), item, 2)
+	if err != nil {
+		t.Fatalf("FetchComments failed: %v", err)
+	}
+	if len(comments) != 2 {
+		t.Fatalf("expected 2 comments after truncation, got %d", len(comments))
+	}
+	// Local re-sort must rank the 200-score reply first, demote the pinned comment.
+	if comments[0].Points != 200 || comments[1].Points != 50 {
+		t.Fatalf("expected top-2 by score (200, 50), got %d, %d", comments[0].Points, comments[1].Points)
+	}
+	if comments[0].URL == "" {
+		t.Error("expected permalink URL on comment")
+	}
+}
+
 func TestRedditEnricherEnrichKeepsRedditURL(t *testing.T) {
 	db, err := testutil.OpenTestDB()
 	if err != nil {
