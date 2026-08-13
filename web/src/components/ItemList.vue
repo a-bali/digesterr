@@ -93,7 +93,7 @@ function onFilterChange(val: string) {
 
 <template>
   <div class="h-full overflow-y-auto" ref="scrollEl" @scroll="onScroll">
-    <div class="p-2 border-b">
+    <div v-if="!showingSaved" class="p-2 border-b">
       <FilterBar
         :options="[
           { value: 'all', label: 'All' },
@@ -138,7 +138,7 @@ function onFilterChange(val: string) {
         </Tooltip>
         <Tooltip v-if="item.comments_count > 0 || item.comment_url">
           <template #trigger>
-            <span class="flex items-center gap-0.5 text-[10px]" :style="item.comments_count > 0 ? accentStyle(item.comments_count, scale.comments_max) : 'color: hsl(var(--accent) / 0.3)'">
+            <span class="flex items-center gap-0.5 text-[10px]" :style="item.comments_count > 0 ? accentStyle(item.comments_count, scale.comments_max) : undefined" :class="item.comments_count > 0 ? '' : 'text-accent/30'">
               <MessageSquare class="size-3" /> <template v-if="item.comments_count > 0">{{ item.comments_count }}</template>
             </span>
           </template>

@@ -136,7 +136,7 @@ function submit() {
       </div>
       <div class="flex gap-2">
         <Button type="submit">{{ config ? 'Save' : 'Create' }}</Button>
-        <Button v-if="config" variant="outline" class="text-red-500" @click="emit('delete', config.id)">Delete</Button>
+        <Button v-if="config" variant="outline" class="text-destructive" @click="emit('delete', config.id)">Delete</Button>
       </div>
     </form>
   </Dialog>

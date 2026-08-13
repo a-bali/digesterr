@@ -68,10 +68,10 @@ function iconForFeedId(feedId: number): string {
 
       <div class="flex gap-2 mb-4 flex-wrap">
         <Button size="sm" variant="outline" @click="toggleStatus">
-          <Check class="size-3" /> {{ store.selectedResult.status === 'read' ? 'Mark Unread' : 'Mark Read' }}
+          <Check /> {{ store.selectedResult.status === 'read' ? 'Mark Unread' : 'Mark Read' }}
         </Button>
         <Button size="sm" variant="outline" @click="deleteResult">
-          <Trash2 class="size-3" /> Delete
+          <Trash2 /> Delete
         </Button>
       </div>
 

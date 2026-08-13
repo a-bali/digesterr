@@ -77,23 +77,23 @@ onUnmounted(() => {
       </div>
       <div class="flex gap-2 mb-4 flex-wrap">
         <Button size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, feedStore.selectedItem!.status === 'read' ? 'unread' : 'read')">
-          <Check class="size-3" /> {{ feedStore.selectedItem?.status === 'read' ? 'Mark Unread' : 'Mark Read' }}
+          <Check /> {{ feedStore.selectedItem?.status === 'read' ? 'Mark Unread' : 'Mark Read' }}
         </Button>
         <Button v-if="feedStore.selectedItem?.status === 'digested'" size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, 'unread')">
-          <Files class="size-3" /> Mark Undigested
+          <Files /> Mark Undigested
         </Button>
         <Button v-else size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, 'digested')">
-          <Files class="size-3" /> Mark Digested
+          <Files /> Mark Digested
         </Button>
         <Button v-if="feedStore.selectedItem!.status === 'saved'" size="sm" variant="outline" @click="unsaveItem(feedStore.selectedItem!)">
-          <BookmarkCheck class="size-3" /> Unsave
+          <BookmarkCheck /> Unsave
         </Button>
         <Button v-else size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, 'saved')">
-          <Bookmark class="size-3" /> Save
+          <Bookmark /> Save
         </Button>
         <Button size="sm" variant="outline" :disabled="extracting" @click="doExtract">
-          <template v-if="extracting"><RefreshCw class="size-3 animate-spin" /> Extracting</template>
-          <template v-else><Download class="size-3" /> {{ feedStore.selectedItem.extract_status === 'done' ? 'Re-extract' : 'Extract' }}</template>
+          <template v-if="extracting"><RefreshCw class="animate-spin" /> Extracting</template>
+          <template v-else><Download /> {{ feedStore.selectedItem.extract_status === 'done' ? 'Re-extract' : 'Extract' }}</template>
         </Button>
       </div>
 

@@ -43,7 +43,7 @@ async function submit() {
           <label class="text-sm font-medium" for="password">Password</label>
           <Input id="password" v-model="password" type="password" placeholder="••••••••" required />
         </div>
-        <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
+        <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
         <Button type="submit" class="w-full" :disabled="store.loading">
           {{ isSignup ? 'Sign Up' : 'Sign In' }}
         </Button>

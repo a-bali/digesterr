@@ -1,17 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
-import { useThemeStore } from '../stores/theme'
+import { useThemeStore, accents } from '../stores/theme'
 import Button from './ui/Button.vue'
 import { Sun, Moon } from 'lucide-vue-next'
 
 const theme = useThemeStore()
 const open = ref(false)
 const root = ref<HTMLElement | null>(null)
-
-const accents: Record<string, string> = {
-  blue: '217 91% 60%', green: '142 71% 45%', purple: '271 81% 56%',
-  orange: '24 95% 53%', rose: '346 77% 50%', teal: '173 80% 36%', amber: '38 92% 50%',
-}
 
 function onClickOutside(e: MouseEvent) {
   if (root.value && !root.value.contains(e.target as Node)) open.value = false
@@ -42,7 +37,7 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
           <button v-for="a in ['blue','green','purple','orange','rose','teal','amber']" :key="a"
             class="size-5 rounded-full border transition-all"
             :class="theme.accent === a ? 'border-foreground scale-110' : 'border-transparent'"
-            :style="{ backgroundColor: `hsl(${accents[a]})` }"
+            :style="{ backgroundColor: `hsl(${accents[a][0]})` }"
             @click="theme.setAccent(a); open = false" />
         </div>
       </div>

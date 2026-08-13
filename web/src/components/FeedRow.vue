@@ -29,7 +29,7 @@ const feedStore = useFeedStore()
           <span class="truncate cursor-help">{{ feed.name }}</span>
         </template>
         <p>Last fetched: {{ absoluteTime(feed.last_fetched_at) || 'never' }}</p>
-        <p v-if="feed.status === 'error'" class="text-red-500">Failed</p>
+        <p v-if="feed.status === 'error'" class="text-destructive">Failed</p>
       </Tooltip>
       <span v-if="(feedStore.unreadCounts[feed.id] ?? 0) > 0" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-1.5">{{ feedStore.unreadCounts[feed.id] }}</span>
     </button>

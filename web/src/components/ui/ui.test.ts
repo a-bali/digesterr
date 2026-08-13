@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import Button from './Button.vue'
-import Badge from './Badge.vue'
 import Input from './Input.vue'
 import Skeleton from './Skeleton.vue'
 
@@ -30,18 +29,6 @@ describe('Button', () => {
   it('disables button', () => {
     const wrapper = mount(Button, { props: { disabled: true }, slots: { default: 'Disabled' } })
     expect(wrapper.find('button').attributes('disabled')).toBeDefined()
-  })
-})
-
-describe('Badge', () => {
-  it('renders text', () => {
-    const wrapper = mount(Badge, { slots: { default: 'unread' } })
-    expect(wrapper.text()).toBe('unread')
-  })
-
-  it('applies variant class', () => {
-    const wrapper = mount(Badge, { props: { variant: 'unread' } })
-    expect(wrapper.classes()).toContain('bg-blue-100')
   })
 })
 

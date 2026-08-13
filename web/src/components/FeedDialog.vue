@@ -99,7 +99,7 @@ const dialogId = Math.random().toString(36).slice(2)
       </label>
       <div class="flex gap-2">
         <Button type="submit">{{ feed ? 'Save' : 'Add' }}</Button>
-        <Button v-if="feed" variant="outline" class="text-red-500" @click="emit('delete', feed.id)">Delete</Button>
+        <Button v-if="feed" variant="outline" class="text-destructive" @click="emit('delete', feed.id)">Delete</Button>
       </div>
     </form>
   </Dialog>
