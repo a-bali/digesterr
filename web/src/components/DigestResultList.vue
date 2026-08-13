@@ -56,7 +56,6 @@ function onScroll(e: Event) {
       />
     </div>
     <div v-if="digestStore.loading" class="text-sm text-muted-foreground p-2">Loading...</div>
-    <div v-else-if="filteredResults.length === 0" class="text-xs text-muted-foreground p-2">No results.</div>
     <div v-else class="space-y-1">
       <button v-for="result in filteredResults" :key="result.id"
         class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
