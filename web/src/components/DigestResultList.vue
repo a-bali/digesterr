@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import { useDigestStore } from '../stores/digest'
 import FilterBar from './FilterBar.vue'
-import { Circle, CircleDot } from 'lucide-vue-next'
+import { Circle, CircleDot, CircleCheck, Layers } from 'lucide-vue-next'
 import type { DigestResult } from '../types/api'
 
 const emit = defineEmits<{ (e: 'select', result: DigestResult): void }>()
@@ -48,9 +48,9 @@ function onScroll(e: Event) {
     <div class="mb-2">
       <FilterBar
         :options="[
-          { value: 'all', label: 'All' },
-          { value: 'unread', label: 'Unread' },
-          { value: 'read', label: 'Read' },
+          { value: 'all', label: 'All', icon: Layers },
+          { value: 'unread', label: 'Unread', icon: CircleDot },
+          { value: 'read', label: 'Read', icon: CircleCheck },
         ]"
         v-model="digestFilter"
       />

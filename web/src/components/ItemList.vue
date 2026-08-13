@@ -4,7 +4,7 @@ import { useFeedStore } from '../stores/feed'
 import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
 import FilterBar from './FilterBar.vue'
-import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare } from 'lucide-vue-next'
+import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, Layers, Sparkles, Bookmark } from 'lucide-vue-next'
 import { stripContent } from '../lib/utils'
 import { relativeTime, absoluteTime } from '../lib/format'
 
@@ -96,11 +96,11 @@ function onFilterChange(val: string) {
     <div v-if="!showingSaved" class="p-2 border-b">
       <FilterBar
         :options="[
-          { value: 'all', label: 'All' },
-          { value: 'unread', label: 'Unread' },
-          { value: 'read', label: 'Read' },
-          { value: 'digested', label: 'Digested' },
-          { value: 'saved', label: 'Saved' },
+          { value: 'all', label: 'All', icon: Layers },
+          { value: 'unread', label: 'Unread', icon: CircleDot },
+          { value: 'read', label: 'Read', icon: CircleCheck },
+          { value: 'digested', label: 'Digested', icon: Sparkles },
+          { value: 'saved', label: 'Saved', icon: Bookmark },
         ]"
         :model-value="feedStore.filter"
         @update:model-value="onFilterChange"
