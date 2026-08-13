@@ -26,6 +26,20 @@ make lint                # go vet ./...
 make clean               # remove binary and DB file
 ```
 
+### Dev loop (this container, overlayfs)
+
+Air's watcher does not work on this container's overlayfs (both poll and fsnotify
+fail to detect changes). Use entr for the Go backend + vite dev server for the frontend:
+
+```bash
+bash scripts/dev-backend.sh   # Go backend hot reload (builds + restarts on .go/.sql change)
+pnpm --dir web dev            # vite HMR frontend (port 5173, proxies /api -> Go on :10001)
+```
+
+- Backend URL: `http://hermes:10001` (PORT from .env), frontend: `http://hermes:10002` (5173)
+- Vite proxies `/api` to the Go backend; the SPA is served by vite in dev, not the Go binary
+- `.air.toml` is kept as a reference config for normal filesystems (macOS/Linux)
+
 Use `nix develop --no-pure-eval --accept-flake-config` or `devenv shell` to enter a shell with all tools. Use `devenv up` to run both servers with env vars pre-set.
 
 ## Architecture
