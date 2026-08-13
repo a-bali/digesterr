@@ -1,6 +1,7 @@
 import pluginVue from 'eslint-plugin-vue'
 import vueParser from 'vue-eslint-parser'
 import tsParser from '@typescript-eslint/parser'
+import tsPlugin from '@typescript-eslint/eslint-plugin'
 import globals from 'globals'
 
 export default [
@@ -22,7 +23,11 @@ export default [
     rules: {
       'vue/multi-word-component-names': 'off',
       'vue/no-v-html': 'off',
-      'no-unused-vars': 'warn',
+      // TypeScript-aware unused-vars (base rule can't parse TS type params in
+      // defineProps/defineEmits and produces false positives).
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
     },
+    plugins: { '@typescript-eslint': tsPlugin },
   },
 ]

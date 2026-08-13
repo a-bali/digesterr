@@ -1,6 +1,5 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { toast } from 'vue-sonner'
 import { authApi, getAuthToken, setAuthToken, setOnUnauthorized } from '../services/api'
 import type { User } from '../types/api'
 import { router } from '../router'

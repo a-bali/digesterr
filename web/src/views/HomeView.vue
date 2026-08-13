@@ -19,8 +19,8 @@ import { feedApi } from '../services/api'
 import { stripContent } from '../lib/utils'
 import type { Item, DigestResult } from '../types/api'
 import {
-  Rss, Settings, LogOut, Sun, Moon,
-  Menu, ArrowLeft, Sparkles, Star, Trash2, Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, PanelLeftClose, PanelLeftOpen,
+  Rss, LogOut, Sun, Moon,
+  Menu, ArrowLeft, Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-vue-next'
 
 const router = useRouter()

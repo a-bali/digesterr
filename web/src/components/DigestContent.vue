@@ -3,7 +3,6 @@ import { computed } from 'vue'
 import { useDigestStore } from '../stores/digest'
 import { useFeedStore } from '../stores/feed'
 import type { DigestContent, DigestContentItem } from '../types/api'
-import type { Feed } from '../types/api'
 import Button from './ui/Button.vue'
 import { MessageSquare, ExternalLink, Clock, MessageCircle, Trash2, Check, ArrowUp } from 'lucide-vue-next'
 

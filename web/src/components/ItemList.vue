@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
@@ -90,10 +90,6 @@ function onFilterChange(val: string) {
   }
 }
 
-// Reset scroll position when items are replaced (filter change, feed switch)
-const prevItemsLen = ref(0)
-onMounted(() => {})
-onUnmounted(() => {})
 </script>
 
 <template>

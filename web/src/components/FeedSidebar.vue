@@ -4,17 +4,17 @@ import { toast } from 'vue-sonner'
 import { useCategoryStore } from '../stores/category'
 import { useFeedStore } from '../stores/feed'
 import { useDigestStore } from '../stores/digest'
-import { feedApi, digestApi } from '../services/api'
+import { feedApi } from '../services/api'
 import type { DigestConfig, Feed } from '../types/api'
 import Button from './ui/Button.vue'
 import Input from './ui/Input.vue'
 import Dialog from './ui/Dialog.vue'
 import TagInput from './TagInput.vue'
 import Tooltip from './ui/Tooltip.vue'
-import { BookmarkCheck, Rss, RefreshCw, Check, Plus, Sparkles, Settings, Trash2, MessageSquare, ChevronDown, X } from 'lucide-vue-next'
+import { BookmarkCheck, Rss, RefreshCw, Check, Plus, Sparkles, Settings, MessageSquare, ChevronDown } from 'lucide-vue-next'
 import { useRoute } from 'vue-router'
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   showingSaved?: boolean
 }>(), { showingSaved: false })
 
@@ -262,22 +262,6 @@ async function generateNow(e: Event, cfgId: number) {
     const next = new Set(generatingDigests.value); next.delete(cfgId); generatingDigests.value = next
   }
 }
-
-function isRedditType(t: string) { return t === 'reddit' }
-
-function setFeedUrlForType(type: string) {
-  if (type === 'hn') {
-    newFeed.value.url = 'https://news.ycombinator.com/rss'
-  } else if (type === 'lobsters') {
-    newFeed.value.url = 'https://lobste.rs/rss'
-  } else if (type === 'reddit') {
-    newFeed.value.url = 'https://www.reddit.com/r/'
-  } else if (newFeed.value.type !== type && !isPresetType(type)) {
-    newFeed.value.url = ''
-  }
-}
-
-function isPresetType(t: string) { return t === 'hn' || t === 'lobsters' || t === 'reddit' }
 
 onMounted(() => {
   digestStore.fetchConfigs()

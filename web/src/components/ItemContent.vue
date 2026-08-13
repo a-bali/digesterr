@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue'
+import { ref, onUnmounted } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import { itemApi } from '../services/api'
 import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
-import { BookOpen, ExternalLink, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files } from 'lucide-vue-next'
+import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files } from 'lucide-vue-next'
 
 defineProps<{
   absoluteTime: (val: any) => string

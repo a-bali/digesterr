@@ -10,9 +10,9 @@ import {
 } from 'reka-ui'
 import { cn } from '../../lib/utils'
 
-const props = withDefaults(defineProps<{
+defineProps<{
   items: { label: string; icon?: string; disabled?: boolean; onClick?: () => void }[]
-}>(), {})
+}>()
 </script>
 
 <template>
