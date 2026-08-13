@@ -1,0 +1,133 @@
+import { describe, it, expect, beforeEach } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { createRouter, createMemoryHistory } from 'vue-router'
+import DigestContent from './DigestContent.vue'
+import { useDigestStore } from '../stores/digest'
+import type { DigestResult } from '../types/api'
+
+const content = JSON.stringify({
+  summary: 'Test summary',
+  highlights: [
+    {
+      item_id: 1,
+      feed_id: 42,
+      feed_name: 'HN',
+      title: 'Highlight One',
+      url: 'https://example.com/1',
+      comment_url: 'https://news.ycombinator.com/item?id=1',
+      points: 100,
+      comments_count: 30,
+      published_at: '2026-08-13T07:00:00Z',
+      llm_summary: 'A summary.',
+      top_comments: [
+        { author: 'alice', text: 'Great insight', points: 5, url: 'https://news.ycombinator.com/item?id=10' },
+        { author: 'bob', text: 'Without url' },
+      ],
+    },
+  ],
+  items: [
+    {
+      item_id: 2,
+      feed_id: 42,
+      feed_name: 'HN',
+      title: 'Item One',
+      url: 'https://example.com/2',
+      comment_url: '',
+      points: 5,
+      comments_count: 2,
+      published_at: '2026-08-13T06:00:00Z',
+    },
+    {
+      item_id: 3,
+      feed_id: 7,
+      feed_name: 'Reddit',
+      title: 'Item Two',
+      url: 'https://example.com/3',
+      comment_url: '',
+      points: 3,
+      comments_count: 1,
+      published_at: '2026-08-13T05:00:00Z',
+    },
+  ],
+})
+
+function makeResult(): DigestResult {
+  return {
+    id: 1,
+    user_id: 1,
+    config_id: 1,
+    config_snapshot: '{}',
+    content,
+    status: 'new',
+    created_at: '2026-08-13T08:00:00Z',
+    updated_at: '2026-08-13T08:00:00Z',
+  }
+}
+
+function mountDigestContent() {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  useDigestStore().selectedResult = makeResult()
+
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', component: { template: '<div />' } },
+      { path: '/feeds/:feedId(\\d+)/:itemId(\\d+)?', component: { template: '<div />' } },
+      { path: '/digests/:configId(\\d+)/:resultId(\\d+)?', component: { template: '<div />' } },
+      { path: '/saved', component: { template: '<div />' } },
+    ],
+  })
+
+  return mount(DigestContent, { global: { plugins: [pinia, router] } })
+}
+
+describe('DigestContent', () => {
+  let wrapper: ReturnType<typeof mountDigestContent>
+
+  beforeEach(() => {
+    wrapper = mountDigestContent()
+  })
+
+  it('renders summary and counts', () => {
+    expect(wrapper.text()).toContain('Test summary')
+    expect(wrapper.text()).toContain('1 highlights')
+    expect(wrapper.text()).toContain('3 items')
+  })
+
+  it('links highlight titles with accent hover, not underline', () => {
+    const hlLink = wrapper.findAll('a').find(a => a.text().includes('Highlight One'))
+    expect(hlLink).toBeDefined()
+    expect(hlLink!.classes()).toContain('hover:text-accent')
+    expect(hlLink!.classes()).not.toContain('hover:underline')
+  })
+
+  it('renders comment author as plain text, not a link', () => {
+    const authorSpans = wrapper.findAll('span').filter(s => s.text() === 'alice')
+    expect(authorSpans.length).toBe(1)
+    expect(wrapper.findAll('a').filter(a => a.text() === 'alice').length).toBe(0)
+    // The comment text itself is still a link.
+    expect(wrapper.findAll('a').some(a => a.text() === 'Great insight')).toBe(true)
+  })
+
+  it('renders comment score when present', () => {
+    expect(wrapper.text()).toContain('[5]')
+  })
+
+  it('links feed names to the in-app feed view', () => {
+    const hnLinks = wrapper.findAll('a').filter(a => a.attributes('href') === '/feeds/42')
+    // Once in the highlights header, once in the All Items header.
+    expect(hnLinks.length).toBe(2)
+    const redditLinks = wrapper.findAll('a').filter(a => a.attributes('href') === '/feeds/7')
+    expect(redditLinks.length).toBe(1)
+  })
+
+  it('groups All Items by feed', () => {
+    const headers = wrapper.findAll('h4').map(h => h.text())
+    expect(headers).toContain('HN')
+    expect(headers).toContain('Reddit')
+    expect(wrapper.text()).toContain('Item One')
+    expect(wrapper.text()).toContain('Item Two')
+  })
+})

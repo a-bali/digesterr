@@ -189,6 +189,13 @@ func (e *HNEnricher) FetchComments(ctx context.Context, item store.Item, maxComm
 		return countDesc(comments[i].ID) > countDesc(comments[j].ID)
 	})
 
+	// HN doesn't expose per-comment scores; the descendant count is what we
+	// rank by, so expose it as the comment's score for display in digests.
+	for i := range comments {
+		comments[i].Points = countDesc(comments[i].ID)
+		comments[i].ValidPoints = true
+	}
+
 	if maxComments > 0 && len(comments) > maxComments {
 		comments = comments[:maxComments]
 	}

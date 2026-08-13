@@ -177,3 +177,67 @@ func TestHNEnricherEnrichContextCanceled(t *testing.T) {
 		t.Fatal("expected error for canceled context")
 	}
 }
+
+func TestHNEnricherFetchComments(t *testing.T) {
+	// Tree: A(1) -> B(2) -> D(4); A(1) -> C(3).
+	// Descendant counts: A=3, B=1, C=0, D=0.
+	algoliaResp := map[string]interface{}{
+		"id": 123,
+		"children": []map[string]interface{}{
+			{
+				"id": 1, "author": "alice", "text": "comment A",
+				"children": []map[string]interface{}{
+					{
+						"id": 2, "author": "bob", "text": "comment B",
+						"children": []map[string]interface{}{
+							{"id": 4, "author": "dave", "text": "comment D", "children": []map[string]interface{}{}},
+						},
+					},
+					{"id": 3, "author": "carol", "text": "comment C", "children": []map[string]interface{}{}},
+				},
+			},
+		},
+	}
+	respBody, _ := json.Marshal(algoliaResp)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/api/v1/items/123" {
+			t.Fatalf("expected path /api/v1/items/123, got %s", got)
+		}
+		w.Write(respBody)
+	}))
+	defer server.Close()
+
+	e := &HNEnricher{client: server.Client(), algoliaURL: server.URL}
+	item := store.Item{
+		CommentUrl: "https://news.ycombinator.com/item?id=123",
+	}
+
+	comments, err := e.FetchComments(context.Background(), item, 2)
+	if err != nil {
+		t.Fatalf("FetchComments failed: %v", err)
+	}
+	if len(comments) != 2 {
+		t.Fatalf("expected 2 comments (maxComments), got %d", len(comments))
+	}
+
+	// Ranked by descendant count: A(3) first, then B(1).
+	want := []struct {
+		id     int64
+		points int
+	}{
+		{id: 1, points: 3},
+		{id: 2, points: 1},
+	}
+	for i, w := range want {
+		if comments[i].ID != w.id {
+			t.Errorf("comment %d: expected ID %d, got %d", i, w.id, comments[i].ID)
+		}
+		if comments[i].Points != w.points {
+			t.Errorf("comment %d: expected points %d (descendant count), got %d", i, w.points, comments[i].Points)
+		}
+		if !comments[i].ValidPoints {
+			t.Errorf("comment %d: expected ValidPoints true so digest shows the score", i)
+		}
+	}
+}

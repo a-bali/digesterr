@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { RouterLink } from 'vue-router'
 import { useDigestStore } from '../stores/digest'
 import { useFeedStore } from '../stores/feed'
 import type { DigestContent, DigestContentItem } from '../types/api'
@@ -19,8 +20,7 @@ const digestContent = computed<DigestContent | null>(() => {
   }
 })
 
-const groupedHighlights = computed<Record<string, { feedId: number; items: DigestContentItem[] }>>(() => {
-  const items = digestContent.value?.highlights || []
+function groupByFeed(items: DigestContentItem[]): Record<string, { feedId: number; items: DigestContentItem[] }> {
   const groups: Record<string, { feedId: number; items: DigestContentItem[] }> = {}
   for (const item of items) {
     const key = item.feed_name || 'Unknown'
@@ -28,7 +28,10 @@ const groupedHighlights = computed<Record<string, { feedId: number; items: Diges
     groups[key].items.push(item)
   }
   return groups
-})
+}
+
+const groupedHighlights = computed(() => groupByFeed(digestContent.value?.highlights || []))
+const groupedItems = computed(() => groupByFeed(digestContent.value?.items || []))
 
 const highlightCount = computed(() => digestContent.value?.highlights?.length || 0)
 const itemCount = computed(() => (digestContent.value?.items?.length || 0) + highlightCount.value)
@@ -86,7 +89,7 @@ function iconForFeedId(feedId: number): string {
         <div v-for="(group, feedName) in groupedHighlights" :key="feedName" class="mb-6">
           <h3 class="text-sm font-semibold mb-3 flex items-center gap-1 text-accent">
             <img v-if="iconForFeedId(group.feedId)" :src="iconForFeedId(group.feedId)" class="size-3.5 shrink-0 rounded" @error="($event.target as HTMLImageElement).style.display = 'none'" />
-            {{ feedName }}
+            <RouterLink :to="`/feeds/${group.feedId}`" class="hover:underline">{{ feedName }}</RouterLink>
           </h3>
           <div class="space-y-4">
             <div
@@ -95,7 +98,7 @@ function iconForFeedId(feedId: number): string {
               class="p-4 rounded-lg border bg-card"
             >
               <div class="flex items-start gap-2 mb-2">
-                <a :href="item.url" target="_blank" class="text-sm font-medium hover:underline flex-1">
+                <a :href="item.url" target="_blank" class="text-sm font-medium hover:text-accent flex-1">
                   {{ item.title }}
                   <ExternalLink class="size-3 inline opacity-50" />
                 </a>
@@ -115,18 +118,11 @@ function iconForFeedId(feedId: number): string {
                 <p class="text-xs font-medium text-muted-foreground mb-1">Top comments</p>
                 <div v-for="c in item.top_comments" :key="c.url || c.text.substring(0, 20)"
                   class="text-xs mb-1 pl-2 border-l-2 border-border">
-                  <template v-if="c.url">
-                    <a :href="c.url" target="_blank" class="font-medium text-muted-foreground hover:text-accent">{{ c.author }}</a>
-                    <span v-if="c.points != null" class="ml-1 text-accent text-[10px]">[{{ c.points }}]</span>
-                    <span class="mx-1 text-muted-foreground/40">–</span>
-                    <a :href="c.url" target="_blank" class="text-foreground/80 hover:text-accent">{{ c.text }}</a>
-                  </template>
-                  <template v-else>
-                    <span class="font-medium text-muted-foreground">{{ c.author }}</span>
-                    <span v-if="c.points != null" class="ml-1 text-accent text-[10px]">[{{ c.points }}]</span>
-                    <span class="mx-1 text-muted-foreground/40">–</span>
-                    <span class="text-foreground/80">{{ c.text }}</span>
-                  </template>
+                  <span class="font-medium text-muted-foreground">{{ c.author }}</span>
+                  <span v-if="c.points != null" class="ml-1 text-accent text-[10px]">[{{ c.points }}]</span>
+                  <span class="mx-1 text-muted-foreground/40">–</span>
+                  <a v-if="c.url" :href="c.url" target="_blank" class="text-foreground/80 hover:text-accent">{{ c.text }}</a>
+                  <span v-else class="text-foreground/80">{{ c.text }}</span>
                 </div>
               </div>
             </div>
@@ -134,31 +130,37 @@ function iconForFeedId(feedId: number): string {
         </div>
       </div>
 
-      <!-- All Items -->
-      <div v-if="digestContent?.items?.length">
+      <!-- All Items grouped by feed -->
+      <div v-if="Object.keys(groupedItems).length" class="mb-6">
         <h3 class="text-sm font-semibold mb-3 flex items-center gap-1">
           <MessageSquare class="size-3.5" /> All Items
         </h3>
-        <div class="space-y-2">
-          <a
-            v-for="item in digestContent.items"
-            :key="item.item_id"
-            :href="item.url"
-            target="_blank"
-            class="flex items-center justify-between p-2 rounded-md hover:bg-muted transition-colors border"
-          >
-            <div class="flex-1 min-w-0">
-              <span class="text-sm font-medium truncate block">{{ item.title }}</span>
-              <div class="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
-                <span class="flex items-center gap-1"><Clock class="size-3" /> {{ absoluteTime(item.published_at) }}</span>
-                <span class="flex items-center gap-1"><ArrowUp class="size-3" /> {{ item.points }}</span>
-                <a v-if="item.comment_url" :href="item.comment_url" target="_blank" class="flex items-center gap-1 hover:text-accent">
-                  <MessageCircle class="size-3" /> {{ item.comments_count }}
-                </a>
+        <div v-for="(group, feedName) in groupedItems" :key="'items-' + feedName" class="mb-4">
+          <h4 class="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
+            <img v-if="iconForFeedId(group.feedId)" :src="iconForFeedId(group.feedId)" class="size-3 shrink-0 rounded" @error="($event.target as HTMLImageElement).style.display = 'none'" />
+            <RouterLink :to="`/feeds/${group.feedId}`" class="hover:text-accent">{{ feedName }}</RouterLink>
+          </h4>
+          <div class="space-y-2">
+            <a
+              v-for="item in group.items"
+              :key="item.item_id"
+              :href="item.url"
+              target="_blank"
+              class="group flex items-center justify-between p-2 rounded-md hover:bg-muted transition-colors border"
+            >
+              <div class="flex-1 min-w-0">
+                <span class="text-sm font-medium truncate block group-hover:text-accent transition-colors">{{ item.title }}</span>
+                <div class="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                  <span class="flex items-center gap-1"><Clock class="size-3" /> {{ absoluteTime(item.published_at) }}</span>
+                  <span class="flex items-center gap-1"><ArrowUp class="size-3" /> {{ item.points }}</span>
+                  <a v-if="item.comment_url" :href="item.comment_url" target="_blank" class="flex items-center gap-1 hover:text-accent">
+                    <MessageCircle class="size-3" /> {{ item.comments_count }}
+                  </a>
+                </div>
               </div>
-            </div>
-            <ExternalLink class="size-3 shrink-0 ml-2 opacity-50" />
-          </a>
+              <ExternalLink class="size-3 shrink-0 ml-2 opacity-50" />
+            </a>
+          </div>
         </div>
       </div>
 
