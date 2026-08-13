@@ -143,4 +143,12 @@ describe('DigestContent', () => {
     const labels = wrapper.findAll('p').filter(p => p.text() === 'All items')
     expect(labels.length).toBe(2)
   })
+
+  it('shows "Select an item" with an icon when no digest result is selected', () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const empty = mount(DigestContent, { global: { plugins: [pinia] } })
+    expect(empty.text()).toContain('Select an item')
+    expect(empty.find('svg').exists()).toBe(true)
+  })
 })

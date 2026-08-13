@@ -5,7 +5,7 @@ import { useDigestStore } from '../stores/digest'
 import { useFeedStore } from '../stores/feed'
 import type { DigestContent, DigestContentItem } from '../types/api'
 import Button from './ui/Button.vue'
-import { ExternalLink, Clock, MessageCircle, Trash2, Check, ArrowUp } from 'lucide-vue-next'
+import { ExternalLink, Clock, MessageCircle, Trash2, Check, ArrowUp, BookOpen } from 'lucide-vue-next'
 import { absoluteTime, feedIcon } from '../lib/format'
 
 const store = useDigestStore()
@@ -66,8 +66,8 @@ function iconForFeedId(feedId: number): string {
 
 <template>
   <div class="h-full overflow-y-auto p-6" data-digest-content>
-    <div v-if="!store.selectedResult" class="flex h-full items-center justify-center text-muted-foreground text-sm">
-      Select a digest result to view
+    <div v-if="!store.selectedResult" class="flex h-full items-center justify-center text-muted-foreground">
+      <BookOpen class="size-8 mr-2" /> <span>Select an item</span>
     </div>
     <template v-else>
       <h1 class="text-xl font-semibold mb-2">
