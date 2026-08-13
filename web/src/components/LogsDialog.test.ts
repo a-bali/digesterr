@@ -19,7 +19,17 @@ function sampleEntries() {
       { time: '2026-08-13T12:00:03Z', level: 'WARN', type: 'feed', message: 'fetch slow' },
     ],
     total: 3,
+    has_more: false,
   }
+}
+
+function manyEntries(n: number, start = 0) {
+  return Array.from({ length: n }, (_, i) => ({
+    time: `2026-08-13T12:00:${String(i + start).padStart(2, '0')}Z`,
+    level: 'INFO',
+    type: 'http',
+    message: `entry ${i + start}`,
+  }))
 }
 
 // The dialog content renders inside a reka-ui DialogPortal (teleported to
@@ -82,5 +92,64 @@ describe('LogsDialog', () => {
     expect(options).toContain('http')
     expect(options).toContain('digest')
     expect(options).toContain('feed')
+  })
+
+  it('applies the wide content class to the dialog', async () => {
+    const wrapper = mount(LogsDialog)
+    await openDialog(wrapper)
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog!.className).toContain('max-w-[min(66vw,1100px)]')
+  })
+
+  it('lazy-loads older entries when scrolling to the bottom', async () => {
+    mockedList
+      .mockResolvedValueOnce({ entries: manyEntries(200), total: 250, has_more: true })
+      .mockResolvedValueOnce({ entries: manyEntries(50, 200), total: 250, has_more: false })
+
+    const wrapper = mount(LogsDialog)
+    await openDialog(wrapper)
+    expect(mockedList).toHaveBeenLastCalledWith({ limit: 200 })
+    expect(bodyText()).toContain('showing 200 of 250')
+
+    const scroller = document.body.querySelector('[data-logs-dialog] .overflow-y-auto') as HTMLElement
+    // Scroll near the bottom to trigger loading older entries.
+    Object.defineProperty(scroller, 'scrollTop', { value: 100000, configurable: true })
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 400, configurable: true })
+    scroller.dispatchEvent(new Event('scroll'))
+    await flushPromises()
+
+    expect(mockedList).toHaveBeenLastCalledWith({ limit: 200, offset: 200 })
+    expect(bodyText()).toContain('entry 249')
+    expect(bodyText()).not.toContain('showing 200 of 250')
+  })
+
+  it('dedupes overlapping entries across pages', async () => {
+    const firstPage = manyEntries(3)
+    const older = [
+      { time: '2026-08-13T12:10:00Z', level: 'INFO', type: 'http', message: 'entry 3' },
+      { time: '2026-08-13T12:10:01Z', level: 'INFO', type: 'http', message: 'entry 4' },
+    ]
+    mockedList
+      .mockResolvedValueOnce({ entries: firstPage, total: 5, has_more: true })
+      .mockResolvedValueOnce({ entries: [firstPage[2], ...older], total: 5, has_more: false })
+
+    const wrapper = mount(LogsDialog)
+    await openDialog(wrapper)
+    const scroller = document.body.querySelector('[data-logs-dialog] .overflow-y-auto') as HTMLElement
+    Object.defineProperty(scroller, 'scrollTop', { value: 100000, configurable: true })
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 400, configurable: true })
+    scroller.dispatchEvent(new Event('scroll'))
+    await flushPromises()
+
+    // 'entry 2' appears only once despite overlapping page boundary; new
+    // entries 3 and 4 were appended.
+    const matches = bodyText().match(/entry 2/g)
+    expect(matches).toHaveLength(1)
+    expect(bodyText()).toContain('entry 3')
+    expect(bodyText()).toContain('entry 4')
   })
 })

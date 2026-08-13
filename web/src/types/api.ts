@@ -138,6 +138,7 @@ export interface LogEntry {
 export interface LogsResponse {
   entries: LogEntry[]
   total: number
+  has_more: boolean
 }
 
 export interface AuthResponse {

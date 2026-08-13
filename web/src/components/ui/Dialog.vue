@@ -17,7 +17,10 @@ const props = withDefaults(defineProps<{
   open?: boolean
   title?: string
   description?: string
-}>(), {})
+  contentClass?: string
+}>(), {
+  contentClass: '',
+})
 
 const emit = defineEmits<{
   (e: 'update:open', v: boolean): void
@@ -36,6 +39,7 @@ const emit = defineEmits<{
       <DialogContent
         :class="cn(
           'fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-background p-6 shadow-lg animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
+          props.contentClass,
         )"
       >
         <div class="flex items-center justify-between mb-4">

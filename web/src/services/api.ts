@@ -148,6 +148,6 @@ export const digestApi = {
 }
 
 export const logsApi = {
-  list: (opts?: { limit?: number; level?: string; type?: string }) =>
-    api<LogsResponse>(`/logs${qs({ limit: opts?.limit, level: opts?.level, type: opts?.type })}`),
+  list: (opts?: { limit?: number; offset?: number; level?: string; type?: string }) =>
+    api<LogsResponse>(`/logs${qs({ limit: opts?.limit, offset: opts?.offset, level: opts?.level, type: opts?.type })}`),
 }

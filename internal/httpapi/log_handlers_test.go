@@ -66,3 +66,57 @@ func TestListLogsFilters(t *testing.T) {
 		t.Fatalf("expected 1 digest entry, got %d", resp.Total)
 	}
 }
+
+func TestListLogsPagination(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createTestUser(t, queries, "logspage@example.com", "password123")
+	token := getTestToken(t, server.auth, &user)
+
+	now := time.Now()
+	for i := 0; i < 5; i++ {
+		server.logs.Add(logbuf.Entry{Time: now.Add(-time.Duration(5-i) * time.Second), Level: "INFO", Type: "app", Message: "m" + itoa(int64(i))})
+	}
+
+	var resp struct {
+		Entries []logbuf.Entry `json:"entries"`
+		Total   int            `json:"total"`
+		HasMore bool           `json:"has_more"`
+	}
+
+	// First page: 2 newest (m4, m3).
+	w := makeRequest(server, http.MethodGet, "/api/logs?limit=2", nil, token)
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Entries) != 2 || resp.Total != 5 || !resp.HasMore {
+		t.Fatalf("page 1: got len=%d total=%d has_more=%v", len(resp.Entries), resp.Total, resp.HasMore)
+	}
+	if resp.Entries[0].Message != "m4" || resp.Entries[1].Message != "m3" {
+		t.Fatalf("page 1 order wrong: %v", resp.Entries)
+	}
+
+	// Second page: next 2 (m2, m1).
+	w = makeRequest(server, http.MethodGet, "/api/logs?limit=2&offset=2", nil, token)
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Entries) != 2 || !resp.HasMore {
+		t.Fatalf("page 2: got len=%d has_more=%v", len(resp.Entries), resp.HasMore)
+	}
+	if resp.Entries[0].Message != "m2" || resp.Entries[1].Message != "m1" {
+		t.Fatalf("page 2 order wrong: %v", resp.Entries)
+	}
+
+	// Third page: last one, has_more false.
+	w = makeRequest(server, http.MethodGet, "/api/logs?limit=2&offset=4", nil, token)
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Entries) != 1 || resp.HasMore {
+		t.Fatalf("page 3: got len=%d has_more=%v", len(resp.Entries), resp.HasMore)
+	}
+	if resp.Entries[0].Message != "m0" {
+		t.Fatalf("page 3 message wrong: %v", resp.Entries[0].Message)
+	}
+
+	// Offset past the end: empty page, has_more false.
+	w = makeRequest(server, http.MethodGet, "/api/logs?limit=2&offset=10", nil, token)
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Entries) != 0 || resp.HasMore {
+		t.Fatalf("offset past end: got len=%d has_more=%v", len(resp.Entries), resp.HasMore)
+	}
+}
