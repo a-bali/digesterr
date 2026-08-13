@@ -13,8 +13,8 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "composite": true,
-    "baseUrl": "src",
-    "paths": { "@/*": ["./*"] },
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] },
     "ignoreDeprecations": "6.0"
   },
   "include": ["src/**/*.ts", "src/**/*.vue"]

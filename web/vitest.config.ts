@@ -9,6 +9,14 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    environmentOptions: {
+      jsdom: {
+        url: 'http://localhost/',
+      },
+    },
+    // Node 25+ ships a broken native globalThis.localStorage that shadows jsdom's.
+    // Disable it so tests use jsdom's real Storage.
+    execArgv: ['--no-webstorage'],
     include: ['src/**/*.{test,spec}.ts'],
   },
 })

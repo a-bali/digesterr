@@ -1,17 +1,22 @@
-# Air config — loads .env, rebuilds on Go/SQL changes
+# Air config — dev loop for digesterr.
+# Loads .env, rebuilds frontend + backend on changes.
 root = "."
 tmp_dir = "tmp"
 
 env_files = [".env"]
 
 [build]
-  cmd = "go build -o ./tmp/digesterr ./cmd/digesterr"
+  cmd = "bash scripts/air-build.sh"
   bin = "./tmp/digesterr"
   # overlayfs in this container doesn't deliver inotify events reliably — poll instead
   poll = true
   poll_interval = 500
-  include_ext = ["go", "sql"]
-  exclude_dir = ["web", "tmp", "data", ".git", "node_modules", "bin"]
+  # Watch Go + frontend sources; exclude generated/build dirs.
+  include_ext = ["go", "sql", "ts", "vue", "tsx", "js", "css", "html"]
+  # In poll mode air only registers dirs listed here (include_ext is ignored at registration).
+  # Watch the source roots explicitly; air walks them recursively.
+  include_dir = ["cmd", "internal", "sql", "web/src", "scripts"]
+  exclude_dir = ["web/dist", "web/node_modules", "tmp", "data", ".git", "node_modules", "bin", "cmd/digesterr/static"]
   exclude_regex = ["_test\\.go$"]
   stop_on_error = true
   delay = 1000

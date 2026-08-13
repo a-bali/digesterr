@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { cn } from '../../lib/utils'
 
-const model = defineModel<string>({ required: false })
+// modelValue is string|number because v-model.number on numeric inputs
+// passes a number; the native <input> emits strings unless the .number
+// modifier coerces. Accept both.
+const model = defineModel<string | number>({ required: false })
 </script>
 
 <template>

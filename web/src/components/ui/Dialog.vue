@@ -11,7 +11,7 @@ import {
 } from 'reka-ui'
 import { cn } from '../../lib/utils'
 import { X } from 'lucide-vue-next'
-import Button from '../../components/ui/Button'
+import Button from '../../components/ui/Button.vue'
 
 const props = withDefaults(defineProps<{
   open?: boolean

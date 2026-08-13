@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import Button from '../components/ui/Button'
-import Input from '../components/ui/Input'
+import Button from '../components/ui/Button.vue'
+import Input from '../components/ui/Input.vue'
 import { useAuthStore } from '../stores/auth'
 
 const store = useAuthStore()
@@ -57,3 +57,5 @@ async function submit() {
     </div>
   </div>
 </template>
+
+

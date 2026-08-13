@@ -2,7 +2,7 @@
 import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
-import Button from '../components/ui/Button'
+import Button from '../components/ui/Button.vue'
 import FilterBar from '../components/FilterBar.vue'
 import FeedSidebar from '../components/FeedSidebar.vue'
 import ItemList from '../components/ItemList.vue'
@@ -104,7 +104,7 @@ interface FilteredResult extends DigestResult {
 }
 
 const filteredResults = computed<FilteredResult[]>(() => {
-  const r = digestStore.results
+  const r: DigestResult[] = digestStore.results
   const filtered = digestFilter.value === 'all' ? r : r.filter(res => res.status === digestFilter.value)
   return filtered.map(res => {
     let itemCount = 0
@@ -120,6 +120,14 @@ const filteredResults = computed<FilteredResult[]>(() => {
 
 function markDigestRead(result: DigestResult) {
   if (result.status !== 'read') digestStore.updateResultStatus(result.id, 'read')
+}
+
+function isSelectedResult(result: DigestResult): boolean {
+  return result.id === digestStore.selectedResult?.id
+}
+
+function isSelectedItem(item: Item): boolean {
+  return item.id === feedStore.selectedItem?.id
 }
 
 let pollInterval: ReturnType<typeof setInterval> | null = null
@@ -271,7 +279,7 @@ function absoluteTime(val: any): string {
   return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-const displayItems = computed(() => showingSaved.value ? savedItems.value : feedStore.items)
+const displayItems = computed<Item[]>(() => showingSaved.value ? savedItems.value : feedStore.items)
 const scale = computed(() => {
   const items = displayItems.value
   if (items.length === 0) return { points_max: 0, points_avg: 0, comments_max: 0, comments_avg: 0 }
@@ -400,7 +408,7 @@ function commentsTitle(val: number): string {
           <div v-else class="space-y-1">
             <button v-for="result in filteredResults" :key="result.id"
               class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
-              :class="{ 'bg-accent/10 font-medium text-accent': result.id === digestStore.selectedResult?.id, 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
+              :class="{ 'bg-accent/10 font-medium text-accent': isSelectedResult(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
               @click="markDigestRead(result); digestStore.selectResult(result); router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)"
             >
               <div class="flex items-start gap-1 min-w-0">
@@ -455,7 +463,7 @@ function commentsTitle(val: number): string {
               <div v-else class="space-y-1">
                 <button v-for="result in filteredResults" :key="result.id"
             class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden appearance-none"
-                  :class="{ 'bg-accent/10 font-medium text-accent': result.id === digestStore.selectedResult?.id, 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
+                  :class="{ 'bg-accent/10 font-medium text-accent': isSelectedResult(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
                   @click="markDigestRead(result); digestStore.selectResult(result); router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)"
                 >
                   <div class="flex items-start gap-1 min-w-0">
@@ -506,7 +514,7 @@ function commentsTitle(val: number): string {
           <div v-else class="space-y-1">
             <button v-for="result in filteredResults" :key="result.id"
               class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
-              :class="{ 'bg-accent/10 font-medium text-accent': result.id === digestStore.selectedResult?.id, 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
+              :class="{ 'bg-accent/10 font-medium text-accent': isSelectedResult(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
               @click="markDigestRead(result); digestStore.selectResult(result); router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)"
             >
               <div class="flex items-start gap-1 min-w-0">
@@ -549,7 +557,7 @@ function commentsTitle(val: number): string {
         <div v-else class="space-y-1">
           <button v-for="result in filteredResults" :key="result.id"
             class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
-            :class="{ 'bg-accent/10 font-medium text-accent': result.id === digestStore.selectedResult?.id, 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
+            :class="{ 'bg-accent/10 font-medium text-accent': isSelectedResult(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
             @click="markDigestRead(result); digestStore.selectResult(result); router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)"
           >
             <div class="flex items-start gap-1 min-w-0">
@@ -571,7 +579,7 @@ function commentsTitle(val: number): string {
           <div v-for="item in displayItems" :key="item.id"
             role="button" tabindex="0"
             class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
-            :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved' }"
+            :class="{ 'bg-accent/10 font-medium text-accent': isSelectedItem(item), 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved' }"
             @click="selectItem(item)"
             @keydown.enter.prevent="selectItem(item)"
             @keydown.space.prevent="selectItem(item)">
@@ -612,3 +620,4 @@ function commentsTitle(val: number): string {
     </template>
   </div>
 </template>
+

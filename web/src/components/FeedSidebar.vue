@@ -6,11 +6,11 @@ import { useFeedStore } from '../stores/feed'
 import { useDigestStore } from '../stores/digest'
 import { feedApi, digestApi } from '../services/api'
 import type { DigestConfig, Feed } from '../types/api'
-import Button from './ui/Button'
-import Input from './ui/Input'
-import Dialog from './ui/Dialog'
+import Button from './ui/Button.vue'
+import Input from './ui/Input.vue'
+import Dialog from './ui/Dialog.vue'
 import TagInput from './TagInput.vue'
-import Tooltip from './ui/Tooltip'
+import Tooltip from './ui/Tooltip.vue'
 import { BookmarkCheck, Rss, RefreshCw, Check, Plus, Sparkles, Settings, Trash2, MessageSquare, ChevronDown, X } from 'lucide-vue-next'
 import { useRoute } from 'vue-router'
 
@@ -382,10 +382,11 @@ function toggleCategory(catId: number) {
           <ChevronDown class="size-4 transition-transform" :class="collapsedCategories.has(catId) ? '-rotate-90' : ''" />
         </span>
       </button>
-      <div v-if="!collapsedCategories.has(catId)" v-for="feed in feedStore.feeds.filter(f => f.category_id === catId)" :key="feed.id"
-        class="group flex items-center w-full rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors"
-        :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }"
-      >
+      <template v-if="!collapsedCategories.has(catId)">
+        <div v-for="feed in feedStore.feeds.filter(f => f.category_id === catId)" :key="feed.id"
+          class="group flex items-center w-full rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors"
+          :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }"
+        >
         <button class="flex items-center gap-2 flex-1 min-w-0" @click="emit('selectFeed', feed.id)">
           <img v-if="feedIcon(feed)" :src="feedIcon(feed)" class="size-3.5 shrink-0 rounded" @error="($event.target as HTMLImageElement).style.display = 'none'" />
           <Rss v-else class="size-3.5 shrink-0 text-accent" />
@@ -408,7 +409,8 @@ function toggleCategory(catId: number) {
           <RefreshCw v-if="refreshingFeeds.has(feed.id)" class="size-3 animate-spin" />
           <RefreshCw v-else class="size-3" />
         </button>
-      </div>
+        </div>
+      </template>
     </div>
 
     <!-- Add Feed Dialog -->
