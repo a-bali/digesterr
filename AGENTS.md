@@ -32,12 +32,13 @@ Air's watcher does not work on this container's overlayfs (both poll and fsnotif
 fail to detect changes). Use entr for the Go backend + vite dev server for the frontend:
 
 ```bash
-bash scripts/dev-backend.sh   # Go backend hot reload (builds + restarts on .go/.sql change)
-pnpm --dir web dev            # vite HMR frontend (port 5173, proxies /api -> Go on :10001)
+bash scripts/dev-backend.sh    # Go backend hot reload (builds + restarts on .go/.sql change)
+bash scripts/dev-frontend.sh   # vite HMR frontend on :10001, proxies /api -> Go on :8080
 ```
 
-- Backend URL: `http://hermes:10001` (PORT from .env), frontend: `http://hermes:10002` (5173)
-- Vite proxies `/api` to the Go backend; the SPA is served by vite in dev, not the Go binary
+- **`http://hermes:10001` = vite dev server** — this is the URL to open. SPA with HMR,
+  `/api` proxied to the Go backend on :8080 (internal, not host-visible)
+- `.env` sets `PORT=8080` for Go; vite always runs on 10001 (host-visible port)
 - `.air.toml` is kept as a reference config for normal filesystems (macOS/Linux)
 
 Use `nix develop --no-pure-eval --accept-flake-config` or `devenv shell` to enter a shell with all tools. Use `devenv up` to run both servers with env vars pre-set.
