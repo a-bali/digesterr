@@ -56,6 +56,7 @@ func createTestUser(t *testing.T, queries *store.Queries, email, password string
 	user, err := queries.CreateUser(t.Context(), store.CreateUserParams{
 		Email:        email,
 		PasswordHash: hash,
+		ApiKey:       "",
 	})
 	if err != nil {
 		t.Fatalf("failed to create test user: %v", err)

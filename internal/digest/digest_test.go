@@ -149,6 +149,7 @@ func TestGeneratorBuildFeedLimits(t *testing.T) {
 	user, err := queries.CreateUser(ctx, store.CreateUserParams{
 		Email:        "test@test.com",
 		PasswordHash: "hash",
+		ApiKey:       "",
 	})
 	if err != nil {
 		t.Fatalf("create user: %v", err)
@@ -389,6 +390,7 @@ func TestGeneratorFullPipeline(t *testing.T) {
 	user, err := queries.CreateUser(ctx, store.CreateUserParams{
 		Email:        "test@test.com",
 		PasswordHash: "hash",
+		ApiKey:       "",
 	})
 	if err != nil {
 		t.Fatalf("create user: %v", err)

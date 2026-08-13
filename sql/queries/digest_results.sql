@@ -60,3 +60,12 @@ SELECT * FROM items
 WHERE feed_id = ? AND status = 'unread'
 ORDER BY points DESC
 LIMIT ?;
+
+-- name: ListDigestResultsByUserStatus :many
+SELECT * FROM digest_results WHERE user_id = ? AND status = ? ORDER BY created_at DESC;
+
+-- name: MarkAllUserDigestResultsRead :exec
+UPDATE digest_results SET status = 'read', updated_at = DATETIME('now') WHERE user_id = ? AND status = 'new';
+
+-- name: MarkDigestConfigRead :exec
+UPDATE digest_results SET status = 'read', updated_at = DATETIME('now') WHERE config_id = ? AND user_id = ? AND status = 'new';

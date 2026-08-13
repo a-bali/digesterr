@@ -85,6 +85,23 @@ func NewServer(queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffe
 
 	mux.HandleFunc("GET /api/logs", s.requireAuth(s.handleListLogs))
 
+	mux.HandleFunc("GET /reader/api/0/token", s.readerAuth(s.handleReaderToken))
+	mux.HandleFunc("GET /reader/api/0/user-info", s.readerAuth(s.handleReaderUserInfo))
+	mux.HandleFunc("POST /reader/api/0/accounts/ClientLogin", s.handleReaderClientLogin)
+	mux.HandleFunc("GET /reader/api/0/subscription/list", s.readerAuth(s.handleReaderSubscriptionList))
+	mux.HandleFunc("GET /reader/api/0/tag/list", s.readerAuth(s.handleReaderTagList))
+	mux.HandleFunc("GET /reader/api/0/subscription/export", s.readerAuth(s.handleReaderSubscriptionExport))
+	mux.HandleFunc("GET /reader/api/0/unread-count", s.readerAuth(s.handleReaderUnreadCount))
+	mux.HandleFunc("GET /reader/api/0/stream/items/ids", s.readerAuth(s.handleReaderStreamItemsIDs))
+	mux.HandleFunc("GET /reader/api/0/stream/items/contents", s.readerAuth(s.handleReaderStreamItemsContents))
+	mux.HandleFunc("GET /reader/api/0/stream/contents/{streamID...}", s.readerAuth(s.handleReaderStreamContents))
+	mux.HandleFunc("POST /reader/api/0/edit-tag", s.readerAuth(s.handleReaderEditTag))
+	mux.HandleFunc("POST /reader/api/0/mark-all-as-read", s.readerAuth(s.handleReaderMarkAllAsRead))
+	mux.HandleFunc("POST /reader/api/0/subscription/quickadd", s.readerAuth(s.handleReaderNoOp))
+	mux.HandleFunc("POST /reader/api/0/subscription/edit", s.readerAuth(s.handleReaderNoOp))
+	mux.HandleFunc("POST /reader/api/0/rename-tag", s.readerAuth(s.handleReaderNoOp))
+	mux.HandleFunc("POST /reader/api/0/disable-tag", s.readerAuth(s.handleReaderNoOp))
+
 	return s
 }
 

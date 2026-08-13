@@ -132,6 +132,10 @@ func migrateSchema(db *sql.DB) error {
 		sql  string
 	}{
 		{
+			"add users.api_key",
+			"ALTER TABLE users ADD COLUMN api_key TEXT NOT NULL DEFAULT ''",
+		},
+		{
 			"add items.guid",
 			"ALTER TABLE items ADD COLUMN guid TEXT NOT NULL DEFAULT ''",
 		},
@@ -238,6 +242,12 @@ func spaHandler(api http.Handler, fs http.FileSystem) http.Handler {
 	fileServer := http.FileServer(fs)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if len(r.URL.Path) >= 4 && r.URL.Path[:4] == "/api" {
+			api.ServeHTTP(w, r)
+			return
+		}
+		// The Google Reader API is mounted under /reader/ and must bypass the
+		// SPA file server (same as /api).
+		if len(r.URL.Path) >= 7 && r.URL.Path[:7] == "/reader" {
 			api.ServeHTTP(w, r)
 			return
 		}

@@ -70,8 +70,33 @@ Use `nix develop --no-pure-eval --accept-flake-config` or `devenv shell` to ente
 - `internal/schema/` — embedded DB schema (single source of truth)
 - `internal/store/` — sqlc-generated DB access (do not edit manually)
 - `internal/httpapi/` — HTTP handlers and routing
+- `internal/httpapi/reader*.go` — Google Reader API (mounted under `/reader/`)
 - `internal/schema/schema.sql` — also used by sqlc for code generation (`sqlc.yaml` points here)
 - `sql/queries/` — sqlc query definitions
+
+## Google Reader API
+
+Digesterr exposes a Google Reader–compatible API (mimicking Miniflux) under
+`/reader/`, so any Google Reader client (Read You, FeedMe, Reeder,
+NetNewsWire, …) can read digesterr.
+
+- **Auth:** no username/password. Each user has an API key (`users.api_key`,
+  generated at signup, returned as `"api_key"` in the signup response).
+  Clients authenticate with `Authorization: GoogleLogin auth=<key>` or
+  `X-Auth-Token: <key>`. Set the API endpoint base URL to
+  `https://<host>/reader/`.
+- **Feed mapping:** a feed → `feed/<id>`; a digest config → `digest/<id>`
+  (digests appear as feeds); a digest result → `digest-item/<id>` (appears as
+  an item in that feed).
+- **State mapping:** item `digested` → read; item `saved` → starred (+read);
+  digest result `new`/`read` → unread/read.
+- **Endpoints:** `token`, `user-info`, `accounts/ClientLogin`,
+  `subscription/list`, `subscription/export` (OPML), `unread-count`,
+  `tag/list`, `stream/items/ids`, `stream/items/contents`,
+  `stream/contents/<streamID>`, `edit-tag`, `mark-all-as-read`, plus no-op
+  stubs for feed-management calls (`quickadd`, `subscription/edit`,
+  `rename-tag`, `disable-tag`).
+- Feed add/remove is intentionally not supported (stubbed as no-ops).
 
 ## Development
 

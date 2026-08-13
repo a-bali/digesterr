@@ -24,6 +24,7 @@ func TestCreateAndValidateRefreshToken(t *testing.T) {
 	user, err := queries.CreateUser(context.Background(), store.CreateUserParams{
 		Email:        "refresh@example.com",
 		PasswordHash: "hash",
+		ApiKey:       "",
 	})
 	if err != nil {
 		t.Fatalf("failed to create user: %v", err)
@@ -64,6 +65,7 @@ func TestDeleteRefreshToken(t *testing.T) {
 	user, err := queries.CreateUser(context.Background(), store.CreateUserParams{
 		Email:        "delete-rt@example.com",
 		PasswordHash: "hash",
+		ApiKey:       "",
 	})
 	if err != nil {
 		t.Fatalf("failed to create user: %v", err)
@@ -91,6 +93,7 @@ func TestDeleteAllUserRefreshTokens(t *testing.T) {
 	user, err := queries.CreateUser(context.Background(), store.CreateUserParams{
 		Email:        "multi-rt@example.com",
 		PasswordHash: "hash",
+		ApiKey:       "",
 	})
 	if err != nil {
 		t.Fatalf("failed to create user: %v", err)
@@ -118,6 +121,7 @@ func TestRefreshTokenRotation(t *testing.T) {
 	user, err := queries.CreateUser(context.Background(), store.CreateUserParams{
 		Email:        "rotation@example.com",
 		PasswordHash: "hash",
+		ApiKey:       "",
 	})
 	if err != nil {
 		t.Fatalf("failed to create user: %v", err)

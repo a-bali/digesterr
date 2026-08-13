@@ -46,6 +46,20 @@ WHERE i.id = ? AND f.user_id = ?;
 -- name: GetUnreadCounts :many
 SELECT f.id AS feed_id, CAST(COALESCE((SELECT COUNT(*) FROM items WHERE feed_id = f.id AND status = 'unread'), 0) AS INTEGER) AS unread_count FROM feeds f WHERE f.user_id = ?;
 
+-- name: NewestUnreadItemPerFeed :many
+SELECT f.id AS feed_id,
+       CAST(COALESCE(MAX(strftime('%s', COALESCE(i.published_at, i.fetched_at))), 0) AS INTEGER) AS newest_sec
+FROM feeds f
+LEFT JOIN items i ON i.feed_id = f.id AND i.status = 'unread'
+WHERE f.user_id = ?
+GROUP BY f.id;
+
+-- name: CountStarredItems :one
+SELECT CAST(COUNT(*) AS INTEGER) AS count FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = ? AND i.status = 'saved';
+
+
 -- name: ListItemsByFeedPaginated :many
 SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?;
 
@@ -60,3 +74,24 @@ UPDATE items SET extract_content = ?, extract_status = ?, extract_retries = ?, e
 
 -- name: MarkFeedRead :exec
 UPDATE items SET status = 'read', updated_at = DATETIME('now') WHERE feed_id = ? AND status = 'unread';
+
+-- name: MarkAllUserItemsRead :exec
+UPDATE items SET status = 'read', updated_at = DATETIME('now') WHERE feed_id IN (SELECT id FROM feeds WHERE user_id = ?) AND status = 'unread';
+
+-- name: ListItemsByUserStatus :many
+SELECT i.* FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = ? AND i.status = ?
+ORDER BY i.published_at DESC, i.created_at DESC;
+
+-- name: ListItemsByUserRead :many
+SELECT i.* FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = ? AND i.status IN ('read', 'digested')
+ORDER BY i.published_at DESC, i.created_at DESC;
+
+-- name: ListItemsByCategory :many
+SELECT i.* FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.category_id = ?
+ORDER BY i.published_at DESC, i.created_at DESC;

@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -9,6 +11,15 @@ import (
 	"digesterr/internal/auth"
 	"digesterr/internal/store"
 )
+
+// generateAPIKey returns a random 32-byte key hex-encoded (64 lowercase hex chars).
+func generateAPIKey() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
 
 func refreshCookie(r *http.Request, value string, maxAge int) *http.Cookie {
 	secure := r.TLS != nil
@@ -45,9 +56,16 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	apiKey, err := generateAPIKey()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate api key")
+		return
+	}
+
 	user, err := s.queries.CreateUser(r.Context(), store.CreateUserParams{
 		Email:        req.Email,
 		PasswordHash: hash,
+		ApiKey:       apiKey,
 	})
 	if err != nil {
 		writeError(w, http.StatusConflict, "email already exists")
@@ -70,6 +88,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"user":         user,
 		"access_token": accessToken,
+		"api_key":      apiKey,
 	})
 }
 

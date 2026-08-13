@@ -382,6 +382,47 @@ func (q *Queries) ListDigestResultsByConfigPaginated(ctx context.Context, arg Li
 	return items, nil
 }
 
+const listDigestResultsByUserStatus = `-- name: ListDigestResultsByUserStatus :many
+SELECT id, user_id, config_id, config_snapshot, content, status, created_at, updated_at FROM digest_results WHERE user_id = ? AND status = ? ORDER BY created_at DESC
+`
+
+type ListDigestResultsByUserStatusParams struct {
+	UserID int64  `json:"user_id"`
+	Status string `json:"status"`
+}
+
+func (q *Queries) ListDigestResultsByUserStatus(ctx context.Context, arg ListDigestResultsByUserStatusParams) ([]DigestResult, error) {
+	rows, err := q.db.QueryContext(ctx, listDigestResultsByUserStatus, arg.UserID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DigestResult{}
+	for rows.Next() {
+		var i DigestResult
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ConfigID,
+			&i.ConfigSnapshot,
+			&i.Content,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnreadDigestItems = `-- name: ListUnreadDigestItems :many
 SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
 JOIN feeds f ON f.id = i.feed_id
@@ -493,6 +534,29 @@ func (q *Queries) ListUnreadDigestItemsByFeed(ctx context.Context, arg ListUnrea
 		return nil, err
 	}
 	return items, nil
+}
+
+const markAllUserDigestResultsRead = `-- name: MarkAllUserDigestResultsRead :exec
+UPDATE digest_results SET status = 'read', updated_at = DATETIME('now') WHERE user_id = ? AND status = 'new'
+`
+
+func (q *Queries) MarkAllUserDigestResultsRead(ctx context.Context, userID int64) error {
+	_, err := q.db.ExecContext(ctx, markAllUserDigestResultsRead, userID)
+	return err
+}
+
+const markDigestConfigRead = `-- name: MarkDigestConfigRead :exec
+UPDATE digest_results SET status = 'read', updated_at = DATETIME('now') WHERE config_id = ? AND user_id = ? AND status = 'new'
+`
+
+type MarkDigestConfigReadParams struct {
+	ConfigID int64 `json:"config_id"`
+	UserID   int64 `json:"user_id"`
+}
+
+func (q *Queries) MarkDigestConfigRead(ctx context.Context, arg MarkDigestConfigReadParams) error {
+	_, err := q.db.ExecContext(ctx, markDigestConfigRead, arg.ConfigID, arg.UserID)
+	return err
 }
 
 const updateDigestResultStatus = `-- name: UpdateDigestResultStatus :one

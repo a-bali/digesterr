@@ -2,6 +2,7 @@ CREATE TABLE users (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     email       TEXT    NOT NULL UNIQUE,
     password_hash TEXT  NOT NULL,
+    api_key     TEXT    NOT NULL DEFAULT '',
     created_at  DATETIME NOT NULL DEFAULT (DATETIME('now')),
     updated_at  DATETIME NOT NULL DEFAULT (DATETIME('now'))
 );
@@ -113,3 +114,4 @@ CREATE INDEX idx_digest_result_items_item_id ON digest_result_items(item_id);
 CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens(user_id);
 CREATE INDEX idx_refresh_tokens_token_hash ON refresh_tokens(token_hash);
 CREATE UNIQUE INDEX idx_items_feed_hash ON items(feed_id, hash) WHERE hash != '';
+CREATE UNIQUE INDEX idx_users_api_key ON users(api_key) WHERE api_key != '';

@@ -11,6 +11,19 @@ import (
 	"time"
 )
 
+const countStarredItems = `-- name: CountStarredItems :one
+SELECT CAST(COUNT(*) AS INTEGER) AS count FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = ? AND i.status = 'saved'
+`
+
+func (q *Queries) CountStarredItems(ctx context.Context, userID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countStarredItems, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createItem = `-- name: CreateItem :one
 INSERT INTO items (feed_id, hash, title, url, content, comment_url, author, published_at, points, comments_count, status)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -209,6 +222,57 @@ func (q *Queries) GetUnreadCounts(ctx context.Context, userID int64) ([]GetUnrea
 	for rows.Next() {
 		var i GetUnreadCountsRow
 		if err := rows.Scan(&i.FeedID, &i.UnreadCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listItemsByCategory = `-- name: ListItemsByCategory :many
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.category_id = ?
+ORDER BY i.published_at DESC, i.created_at DESC
+`
+
+func (q *Queries) ListItemsByCategory(ctx context.Context, categoryID sql.NullInt64) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByCategory, categoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -437,6 +501,113 @@ func (q *Queries) ListItemsByFeedPaginated(ctx context.Context, arg ListItemsByF
 	return items, nil
 }
 
+const listItemsByUserRead = `-- name: ListItemsByUserRead :many
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = ? AND i.status IN ('read', 'digested')
+ORDER BY i.published_at DESC, i.created_at DESC
+`
+
+func (q *Queries) ListItemsByUserRead(ctx context.Context, userID int64) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByUserRead, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listItemsByUserStatus = `-- name: ListItemsByUserStatus :many
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = ? AND i.status = ?
+ORDER BY i.published_at DESC, i.created_at DESC
+`
+
+type ListItemsByUserStatusParams struct {
+	UserID int64  `json:"user_id"`
+	Status string `json:"status"`
+}
+
+func (q *Queries) ListItemsByUserStatus(ctx context.Context, arg ListItemsByUserStatusParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByUserStatus, arg.UserID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listItemsNeedingExtraction = `-- name: ListItemsNeedingExtraction :many
 SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? AND url != '' AND extract_status IN ('pending', 'failed') AND extract_retries < 3 ORDER BY extract_retries ASC, published_at DESC
 `
@@ -539,6 +710,15 @@ func (q *Queries) ListUnreadItemsForEnrichment(ctx context.Context, arg ListUnre
 	return items, nil
 }
 
+const markAllUserItemsRead = `-- name: MarkAllUserItemsRead :exec
+UPDATE items SET status = 'read', updated_at = DATETIME('now') WHERE feed_id IN (SELECT id FROM feeds WHERE user_id = ?) AND status = 'unread'
+`
+
+func (q *Queries) MarkAllUserItemsRead(ctx context.Context, userID int64) error {
+	_, err := q.db.ExecContext(ctx, markAllUserItemsRead, userID)
+	return err
+}
+
 const markFeedRead = `-- name: MarkFeedRead :exec
 UPDATE items SET status = 'read', updated_at = DATETIME('now') WHERE feed_id = ? AND status = 'unread'
 `
@@ -546,6 +726,43 @@ UPDATE items SET status = 'read', updated_at = DATETIME('now') WHERE feed_id = ?
 func (q *Queries) MarkFeedRead(ctx context.Context, feedID int64) error {
 	_, err := q.db.ExecContext(ctx, markFeedRead, feedID)
 	return err
+}
+
+const newestUnreadItemPerFeed = `-- name: NewestUnreadItemPerFeed :many
+SELECT f.id AS feed_id,
+       CAST(COALESCE(MAX(strftime('%s', COALESCE(i.published_at, i.fetched_at))), 0) AS INTEGER) AS newest_sec
+FROM feeds f
+LEFT JOIN items i ON i.feed_id = f.id AND i.status = 'unread'
+WHERE f.user_id = ?
+GROUP BY f.id
+`
+
+type NewestUnreadItemPerFeedRow struct {
+	FeedID    int64 `json:"feed_id"`
+	NewestSec int64 `json:"newest_sec"`
+}
+
+func (q *Queries) NewestUnreadItemPerFeed(ctx context.Context, userID int64) ([]NewestUnreadItemPerFeedRow, error) {
+	rows, err := q.db.QueryContext(ctx, newestUnreadItemPerFeed, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NewestUnreadItemPerFeedRow{}
+	for rows.Next() {
+		var i NewestUnreadItemPerFeedRow
+		if err := rows.Scan(&i.FeedID, &i.NewestSec); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateItemExtraction = `-- name: UpdateItemExtraction :one

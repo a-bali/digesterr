@@ -97,6 +97,7 @@ type User struct {
 	ID           int64     `json:"id"`
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"password_hash"`
+	ApiKey       string    `json:"api_key"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

@@ -1,0 +1,396 @@
+package httpapi
+
+import (
+	"net/http"
+	"net/url"
+	"testing"
+
+	"digesterr/internal/store"
+)
+
+// editSeed is the fixture for edit-tag / mark-all-as-read tests. Feed A holds
+// items in various states, feed B holds a single unread item (used to assert
+// per-feed isolation), and cfg holds two digest results (one new, one read).
+type editSeed struct {
+	feedA        store.Feed
+	feedB        store.Feed
+	cfg          store.DigestConfig
+	aUnread      store.Item
+	aRead        store.Item
+	aSaved       store.Item
+	bUnread      store.Item
+	drNew        store.DigestResult
+	drRead       store.DigestResult
+}
+
+func seedEditState(t *testing.T, queries *store.Queries, userID int64) editSeed {
+	t.Helper()
+	var seed editSeed
+
+	var err error
+	seed.feedA, err = queries.CreateFeed(t.Context(), store.CreateFeedParams{
+		UserID: userID,
+		Type:   "rss",
+		Name:   "Feed A",
+		Url:    "https://a.example.com/feed",
+		Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("failed to create feed A: %v", err)
+	}
+	seed.feedB, err = queries.CreateFeed(t.Context(), store.CreateFeedParams{
+		UserID: userID,
+		Type:   "rss",
+		Name:   "Feed B",
+		Url:    "https://b.example.com/feed",
+		Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("failed to create feed B: %v", err)
+	}
+
+	seed.aUnread = createSeedItem(t, queries, seed.feedA.ID, "a-unread", "A unread", "unread", streamTimes.aUnreadNewest)
+	seed.aRead = createSeedItem(t, queries, seed.feedA.ID, "a-read", "A read", "read", streamTimes.aRead)
+	seed.aSaved = createSeedItem(t, queries, seed.feedA.ID, "a-saved", "A saved", "saved", streamTimes.aSaved)
+	seed.bUnread = createSeedItem(t, queries, seed.feedB.ID, "b-unread", "B unread", "unread", streamTimes.bUnread)
+
+	seed.cfg, err = queries.CreateDigestConfig(t.Context(), store.CreateDigestConfigParams{
+		UserID:   userID,
+		Name:     "Daily",
+		Schedule: "daily",
+		Config:   "{}",
+	})
+	if err != nil {
+		t.Fatalf("failed to create digest config: %v", err)
+	}
+	seed.drNew, err = queries.CreateDigestResult(t.Context(), store.CreateDigestResultParams{
+		UserID:         userID,
+		ConfigID:       seed.cfg.ID,
+		ConfigSnapshot: "{}",
+		Content:        "{}",
+		Status:         "new",
+	})
+	if err != nil {
+		t.Fatalf("failed to create new digest result: %v", err)
+	}
+	seed.drRead, err = queries.CreateDigestResult(t.Context(), store.CreateDigestResultParams{
+		UserID:         userID,
+		ConfigID:       seed.cfg.ID,
+		ConfigSnapshot: "{}",
+		Content:        "{}",
+		Status:         "read",
+	})
+	if err != nil {
+		t.Fatalf("failed to create read digest result: %v", err)
+	}
+
+	return seed
+}
+
+func itemStatus(t *testing.T, queries *store.Queries, id int64) string {
+	t.Helper()
+	item, err := queries.GetItem(t.Context(), id)
+	if err != nil {
+		t.Fatalf("failed to get item %d: %v", id, err)
+	}
+	return item.Status
+}
+
+func digestStatus(t *testing.T, queries *store.Queries, id, userID int64) string {
+	t.Helper()
+	dr, err := queries.GetDigestResult(t.Context(), store.GetDigestResultParams{ID: id, UserID: userID})
+	if err != nil {
+		t.Fatalf("failed to get digest result %d: %v", id, err)
+	}
+	return dr.Status
+}
+
+// postReaderForm POSTs a form-encoded body to a reader endpoint with valid
+// auth and asserts a 200 response with body "OK".
+func postReaderForm(t *testing.T, server *Server, path string, form url.Values) {
+	t.Helper()
+	w := readerRequest(server, http.MethodPost, path, form.Encode(), map[string]string{
+		"Authorization": "GoogleLogin auth=testkey123",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("%s: expected 200, got %d: %s", path, w.Code, w.Body.String())
+	}
+	if got := w.Body.String(); got != "OK" {
+		t.Fatalf("%s: expected body %q, got %q", path, "OK", got)
+	}
+}
+
+func editTagForm(add, remove string, ids ...string) url.Values {
+	form := url.Values{}
+	for _, id := range ids {
+		form.Add("i", id)
+	}
+	if add != "" {
+		form.Add("a", add)
+	}
+	if remove != "" {
+		form.Add("r", remove)
+	}
+	return form
+}
+
+func TestReaderEditTagAddRead(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	postReaderForm(t, server, "/reader/api/0/edit-tag", editTagForm(readerTagRead, "", itemStreamID(seed.aUnread.ID)))
+
+	if got := itemStatus(t, queries, seed.aUnread.ID); got != "read" {
+		t.Fatalf("expected unread item to become read, got %q", got)
+	}
+}
+
+func TestReaderEditTagRemoveRead(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	postReaderForm(t, server, "/reader/api/0/edit-tag", editTagForm("", readerTagRead, itemStreamID(seed.aRead.ID)))
+
+	if got := itemStatus(t, queries, seed.aRead.ID); got != "unread" {
+		t.Fatalf("expected read item to become unread, got %q", got)
+	}
+}
+
+func TestReaderEditTagAddStarred(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	postReaderForm(t, server, "/reader/api/0/edit-tag", editTagForm(readerTagStarred, "", itemStreamID(seed.aUnread.ID)))
+
+	if got := itemStatus(t, queries, seed.aUnread.ID); got != "saved" {
+		t.Fatalf("expected unread item to become saved, got %q", got)
+	}
+}
+
+func TestReaderEditTagRemoveStarred(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	postReaderForm(t, server, "/reader/api/0/edit-tag", editTagForm("", readerTagStarred, itemStreamID(seed.aSaved.ID)))
+
+	if got := itemStatus(t, queries, seed.aSaved.ID); got != "read" {
+		t.Fatalf("expected saved item to fall back to read, got %q", got)
+	}
+}
+
+func TestReaderEditTagDigestAddRead(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	postReaderForm(t, server, "/reader/api/0/edit-tag", editTagForm(readerTagRead, "", digestItemStreamID(seed.drNew.ID)))
+
+	if got := digestStatus(t, queries, seed.drNew.ID, user.ID); got != "read" {
+		t.Fatalf("expected new digest result to become read, got %q", got)
+	}
+}
+
+func TestReaderEditTagDigestAddStarredNoOp(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	postReaderForm(t, server, "/reader/api/0/edit-tag", editTagForm(readerTagStarred, "", digestItemStreamID(seed.drNew.ID)))
+
+	if got := digestStatus(t, queries, seed.drNew.ID, user.ID); got != "new" {
+		t.Fatalf("expected digest result status unchanged, got %q", got)
+	}
+}
+
+func TestReaderEditTagMultipleIDs(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	postReaderForm(t, server, "/reader/api/0/edit-tag",
+		editTagForm(readerTagRead, "", itemStreamID(seed.aUnread.ID), itemStreamID(seed.bUnread.ID), digestItemStreamID(seed.drNew.ID)))
+
+	if got := itemStatus(t, queries, seed.aUnread.ID); got != "read" {
+		t.Fatalf("expected item A to become read, got %q", got)
+	}
+	if got := itemStatus(t, queries, seed.bUnread.ID); got != "read" {
+		t.Fatalf("expected item B to become read, got %q", got)
+	}
+	if got := digestStatus(t, queries, seed.drNew.ID, user.ID); got != "read" {
+		t.Fatalf("expected digest result to become read, got %q", got)
+	}
+}
+
+func TestReaderEditTagUnknownTagNoOp(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	postReaderForm(t, server, "/reader/api/0/edit-tag", editTagForm("user/-/label/Tech", "", itemStreamID(seed.aUnread.ID)))
+
+	if got := itemStatus(t, queries, seed.aUnread.ID); got != "unread" {
+		t.Fatalf("expected unknown tag to leave item unread, got %q", got)
+	}
+}
+
+func TestReaderEditTagMissingI(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seedEditState(t, queries, user.ID)
+
+	// Missing/empty `i` must still return 200 OK.
+	postReaderForm(t, server, "/reader/api/0/edit-tag", editTagForm(readerTagRead, ""))
+}
+
+func TestReaderMarkAllAsReadFeed(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	postReaderForm(t, server, "/reader/api/0/mark-all-as-read", url.Values{
+		"s": {feedStreamID(seed.feedA.ID)},
+	})
+
+	if got := itemStatus(t, queries, seed.aUnread.ID); got != "read" {
+		t.Fatalf("expected feed A unread item read, got %q", got)
+	}
+	if got := itemStatus(t, queries, seed.bUnread.ID); got != "unread" {
+		t.Fatalf("expected feed B unread item untouched, got %q", got)
+	}
+}
+
+func TestReaderMarkAllAsReadDigest(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	postReaderForm(t, server, "/reader/api/0/mark-all-as-read", url.Values{
+		"s": {digestStreamID(seed.cfg.ID)},
+	})
+
+	if got := digestStatus(t, queries, seed.drNew.ID, user.ID); got != "read" {
+		t.Fatalf("expected new digest result read, got %q", got)
+	}
+	if got := digestStatus(t, queries, seed.drRead.ID, user.ID); got != "read" {
+		t.Fatalf("expected already-read digest result to stay read, got %q", got)
+	}
+	// Items are untouched by a digest-scope mark-all-as-read.
+	if got := itemStatus(t, queries, seed.aUnread.ID); got != "unread" {
+		t.Fatalf("expected feed A unread item untouched, got %q", got)
+	}
+}
+
+func TestReaderMarkAllAsReadGlobal(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	postReaderForm(t, server, "/reader/api/0/mark-all-as-read", url.Values{
+		"s": {readerStreamReadingList},
+	})
+
+	if got := itemStatus(t, queries, seed.aUnread.ID); got != "read" {
+		t.Fatalf("expected feed A unread item read, got %q", got)
+	}
+	if got := itemStatus(t, queries, seed.bUnread.ID); got != "read" {
+		t.Fatalf("expected feed B unread item read, got %q", got)
+	}
+	// Already-read and saved items are left as-is.
+	if got := itemStatus(t, queries, seed.aRead.ID); got != "read" {
+		t.Fatalf("expected read item to stay read, got %q", got)
+	}
+	if got := itemStatus(t, queries, seed.aSaved.ID); got != "saved" {
+		t.Fatalf("expected saved item to stay saved, got %q", got)
+	}
+	if got := digestStatus(t, queries, seed.drNew.ID, user.ID); got != "read" {
+		t.Fatalf("expected new digest result read, got %q", got)
+	}
+}
+
+func TestReaderMarkAllAsReadGlobalEmptyStream(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	// Missing `s` falls back to global mark-all-read.
+	postReaderForm(t, server, "/reader/api/0/mark-all-as-read", url.Values{})
+
+	if got := itemStatus(t, queries, seed.aUnread.ID); got != "read" {
+		t.Fatalf("expected feed A unread item read, got %q", got)
+	}
+	if got := digestStatus(t, queries, seed.drNew.ID, user.ID); got != "read" {
+		t.Fatalf("expected new digest result read, got %q", got)
+	}
+}
+
+func TestReaderMarkAllAsReadForeignFeed(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	other, err := queries.CreateUser(t.Context(), store.CreateUserParams{
+		Email:        "other@example.com",
+		PasswordHash: "unused",
+		ApiKey:       "otherkey999",
+	})
+	if err != nil {
+		t.Fatalf("failed to create other user: %v", err)
+	}
+	otherFeed, err := queries.CreateFeed(t.Context(), store.CreateFeedParams{
+		UserID: other.ID,
+		Type:   "rss",
+		Name:   "Other Feed",
+		Url:    "https://other.example.com/feed",
+		Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("failed to create other feed: %v", err)
+	}
+
+	// Marking a feed not owned by this user is a safe no-op returning 200.
+	postReaderForm(t, server, "/reader/api/0/mark-all-as-read", url.Values{"s": {feedStreamID(otherFeed.ID)}})
+
+	// Nothing owned by the user changed.
+	if got := itemStatus(t, queries, seed.aUnread.ID); got != "unread" {
+		t.Fatalf("expected unread item untouched, got %q", got)
+	}
+}
+
+func TestReaderNoOpEndpoints(t *testing.T) {
+	server, queries := setupTestServer(t)
+	createReaderUser(t, queries, "testkey123")
+
+	paths := []string{
+		"/reader/api/0/subscription/quickadd",
+		"/reader/api/0/subscription/edit",
+		"/reader/api/0/rename-tag",
+		"/reader/api/0/disable-tag",
+	}
+	for _, path := range paths {
+		postReaderForm(t, server, path, url.Values{"ignored": {"value"}})
+	}
+}
+
+func TestReaderEditTagUnauthorized(t *testing.T) {
+	server, queries := setupTestServer(t)
+	createReaderUser(t, queries, "testkey123")
+
+	w := readerRequest(server, http.MethodPost, "/reader/api/0/edit-tag", "", nil)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("edit-tag without key: expected 401, got %d", w.Code)
+	}
+}
+
+func TestReaderMarkAllAsReadUnauthorized(t *testing.T) {
+	server, queries := setupTestServer(t)
+	createReaderUser(t, queries, "testkey123")
+
+	w := readerRequest(server, http.MethodPost, "/reader/api/0/mark-all-as-read", "", nil)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("mark-all-as-read without key: expected 401, got %d", w.Code)
+	}
+}
