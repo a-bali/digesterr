@@ -33,80 +33,64 @@ export const useFeedStore = defineStore('feed', () => {
 
   const unreadCounts = ref<Record<number, number>>({})
 
+  // Monotonic request id to drop stale responses (feed switches, filter changes).
   let fetchReq = 0
+
+  function toastError(msg: string, e: unknown) {
+    toast.error(msg, { description: e instanceof ApiError ? e.message : undefined })
+  }
+
+  // Loads a single page of items for a feed, replacing or appending to `items`.
+  async function loadPage(feedId: number, replace: boolean) {
+    const rid = ++fetchReq
+    if (replace) {
+      loading.value = true
+      items.value = []
+      hasMore.value = false
+    } else {
+      loadingMore.value = true
+    }
+    try {
+      const resp = await feedApi.getItems(feedId, {
+        status: filter.value === 'all' ? undefined : filter.value,
+        limit: PAGE_SIZE,
+        offset: replace ? 0 : items.value.length,
+      })
+      if (rid !== fetchReq) return
+      if (replace) items.value = resp.items
+      else items.value.push(...resp.items)
+      hasMore.value = resp.has_more
+    } catch (e) {
+      toastError('Failed to load items', e)
+    } finally {
+      if (replace) loading.value = false
+      else loadingMore.value = false
+    }
+  }
 
   async function fetchFeeds() {
     try {
       feeds.value = await feedApi.list()
       unreadCounts.value = await feedApi.unreadCounts()
     } catch (e) {
-      toast.error('Failed to load feeds', { description: e instanceof ApiError ? e.message : undefined })
+      toastError('Failed to load feeds', e)
     }
   }
 
   async function setActiveFeed(id: number) {
     activeFeedId.value = id
     selectedItem.value = null
-    fetchReq++
-    loading.value = true
-    items.value = []
-    hasMore.value = false
-    try {
-      const rid = fetchReq
-      const resp = await feedApi.getItems(id, {
-        status: filter.value === 'all' ? undefined : filter.value,
-        limit: PAGE_SIZE,
-        offset: 0,
-      })
-      if (rid !== fetchReq) return
-      items.value = resp.items
-      hasMore.value = resp.has_more
-    } catch (e) {
-      toast.error('Failed to load items', { description: e instanceof ApiError ? e.message : undefined })
-    } finally {
-      loading.value = false
-    }
+    await loadPage(id, true)
   }
 
   async function fetchFirstPage() {
     if (!activeFeedId.value) return
-    fetchReq++
-    loading.value = true
-    items.value = []
-    hasMore.value = false
-    try {
-      const rid = fetchReq
-      const resp = await feedApi.getItems(activeFeedId.value, {
-        status: filter.value === 'all' ? undefined : filter.value,
-        limit: PAGE_SIZE,
-        offset: 0,
-      })
-      if (rid !== fetchReq) return
-      items.value = resp.items
-      hasMore.value = resp.has_more
-    } catch (e) {
-      toast.error('Failed to load items', { description: e instanceof ApiError ? e.message : undefined })
-    } finally {
-      loading.value = false
-    }
+    await loadPage(activeFeedId.value, true)
   }
 
   async function fetchMoreItems() {
     if (!activeFeedId.value || !hasMore.value || loadingMore.value || loading.value) return
-    loadingMore.value = true
-    try {
-      const resp = await feedApi.getItems(activeFeedId.value, {
-        status: filter.value === 'all' ? undefined : filter.value,
-        limit: PAGE_SIZE,
-        offset: items.value.length,
-      })
-      items.value.push(...resp.items)
-      hasMore.value = resp.has_more
-    } catch (e) {
-      toast.error('Failed to load more items', { description: e instanceof ApiError ? e.message : undefined })
-    } finally {
-      loadingMore.value = false
-    }
+    await loadPage(activeFeedId.value, false)
   }
 
   function selectItem(item: Item) {
@@ -129,30 +113,7 @@ export const useFeedStore = defineStore('feed', () => {
       if (selectedItem.value?.id === item.id) selectedItem.value = updated
       fetchUnreadCounts()
     } catch (e) {
-      toast.error('Failed to update item', { description: e instanceof ApiError ? e.message : undefined })
-    }
-  }
-
-  async function fetchItems() {
-    if (!activeFeedId.value) return
-    fetchReq++
-    loading.value = true
-    items.value = []
-    hasMore.value = false
-    try {
-      const rid = fetchReq
-      const resp = await feedApi.getItems(activeFeedId.value, {
-        status: filter.value === 'all' ? undefined : filter.value,
-        limit: PAGE_SIZE,
-        offset: 0,
-      })
-      if (rid !== fetchReq) return
-      items.value = resp.items
-      hasMore.value = resp.has_more
-    } catch (e) {
-      toast.error('Failed to load items', { description: e instanceof ApiError ? e.message : undefined })
-    } finally {
-      loading.value = false
+      toastError('Failed to update item', e)
     }
   }
 
@@ -167,7 +128,7 @@ export const useFeedStore = defineStore('feed', () => {
   return {
     feeds, activeFeedId, items, selectedItem, filter, loading, loadingMore, hasMore,
     activeFeed, unreadCounts,
-    fetchFeeds, setActiveFeed, fetchFirstPage, fetchMoreItems, fetchItems,
+    fetchFeeds, setActiveFeed, fetchFirstPage, fetchMoreItems,
     selectItem, updateItemStatus, changeFilter, fetchUnreadCounts,
   }
 })

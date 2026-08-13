@@ -5,9 +5,9 @@ import { itemApi } from '../services/api'
 import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
 import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files } from 'lucide-vue-next'
+import { absoluteTime } from '../lib/format'
 
 defineProps<{
-  absoluteTime: (val: any) => string
   unsaveItem: (item: any) => Promise<void>
 }>()
 

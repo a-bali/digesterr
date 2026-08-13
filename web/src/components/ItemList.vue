@@ -6,12 +6,11 @@ import Tooltip from './ui/Tooltip.vue'
 import FilterBar from './FilterBar.vue'
 import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare } from 'lucide-vue-next'
 import { stripContent } from '../lib/utils'
+import { relativeTime, absoluteTime } from '../lib/format'
 
 const props = defineProps<{
   savedItems: any[]
   showingSaved: boolean
-  relativeTime: (val: any) => string
-  absoluteTime: (val: any) => string
 }>()
 
 const emit = defineEmits<{
@@ -93,7 +92,7 @@ function onFilterChange(val: string) {
 </script>
 
 <template>
-  <div class="h-full border-r overflow-y-auto" ref="scrollEl" @scroll="onScroll">
+  <div class="h-full overflow-y-auto" ref="scrollEl" @scroll="onScroll">
     <div class="p-2 border-b">
       <FilterBar
         :options="[

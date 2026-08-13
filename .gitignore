@@ -19,3 +19,6 @@ cmd/digesterr/static/*
 
 # OS
 .DS_Store
+
+# Hermes agent working state
+.hermes/

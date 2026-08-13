@@ -5,6 +5,7 @@ import { useFeedStore } from '../stores/feed'
 import type { DigestContent, DigestContentItem } from '../types/api'
 import Button from './ui/Button.vue'
 import { MessageSquare, ExternalLink, Clock, MessageCircle, Trash2, Check, ArrowUp } from 'lucide-vue-next'
+import { absoluteTime, feedIcon } from '../lib/format'
 
 const store = useDigestStore()
 const feedStore = useFeedStore()
@@ -32,13 +33,6 @@ const groupedHighlights = computed<Record<string, { feedId: number; items: Diges
 const highlightCount = computed(() => digestContent.value?.highlights?.length || 0)
 const itemCount = computed(() => (digestContent.value?.items?.length || 0) + highlightCount.value)
 
-function absoluteTime(val: string): string {
-  if (!val) return ''
-  const d = new Date(val)
-  if (isNaN(d.getTime())) return ''
-  return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
-
 async function deleteResult() {
   if (!store.selectedResult) return
   await store.deleteResult(store.selectedResult.id)
@@ -50,17 +44,9 @@ function toggleStatus() {
   store.updateResultStatus(store.selectedResult.id, newStatus)
 }
 
-function feedIcon(feedId: number): string {
+function iconForFeedId(feedId: number): string {
   const feed = feedStore.feeds.find(f => f.id === feedId)
-  if (!feed) return ''
-  if (feed.type === 'hn') return 'https://news.ycombinator.com/favicon.ico'
-  if (feed.type === 'lobsters') return 'https://lobste.rs/favicon.ico'
-  try {
-    const domain = new URL(feed.url).hostname
-    return `https://icons.duckduckgo.com/ip3/${domain}.ico`
-  } catch {
-    return ''
-  }
+  return feed ? feedIcon(feed) : ''
 }
 </script>
 
@@ -99,7 +85,7 @@ function feedIcon(feedId: number): string {
       <div v-if="Object.keys(groupedHighlights).length" class="mb-6">
         <div v-for="(group, feedName) in groupedHighlights" :key="feedName" class="mb-6">
           <h3 class="text-sm font-semibold mb-3 flex items-center gap-1 text-accent">
-            <img v-if="feedIcon(group.feedId)" :src="feedIcon(group.feedId)" class="size-3.5 shrink-0 rounded" @error="($event.target as HTMLImageElement).style.display = 'none'" />
+            <img v-if="iconForFeedId(group.feedId)" :src="iconForFeedId(group.feedId)" class="size-3.5 shrink-0 rounded" @error="($event.target as HTMLImageElement).style.display = 'none'" />
             {{ feedName }}
           </h3>
           <div class="space-y-4">
