@@ -26,20 +26,29 @@ make lint                # go vet ./...
 make clean               # remove binary and DB file
 ```
 
-### Dev loop (this container, overlayfs)
+### Dev loop (live reload, both sides)
 
-Air's watcher does not work on this container's overlayfs (both poll and fsnotify
-fail to detect changes). Use entr for the Go backend + vite dev server for the frontend:
+Two standard tools, no scripts:
 
 ```bash
-bash scripts/dev-backend.sh    # Go backend hot reload (builds + restarts on .go/.sql change)
-bash scripts/dev-frontend.sh   # vite HMR frontend on :10001, proxies /api -> Go on :8080
+air                       # Go backend hot reload (watches .go/.sql, restarts on :8080)
+pnpm --dir web dev        # vite HMR frontend (:10001, proxies /api -> :8080)
 ```
 
-- **`http://hermes:10001` = vite dev server** — this is the URL to open. SPA with HMR,
+- **`http://hermes:10001` = vite dev server** — the URL to open. SPA with HMR,
   `/api` proxied to the Go backend on :8080 (internal, not host-visible)
-- `.env` sets `PORT=8080` for Go; vite always runs on 10001 (host-visible port)
-- `.air.toml` is kept as a reference config for normal filesystems (macOS/Linux)
+- `.air.toml` uses `poll = true` (required on this container's overlayfs; harmless elsewhere)
+- `.env` (gitignored) sets `PORT=8080`, `DATABASE_PATH`, `JWT_SECRET`, and provider secrets
+- `vite.config.ts` bakes in `port: 10001`, `host: true`, `allowedHosts: ['hermes']`, and the `/api` proxy
+
+### Prod build (frontend baked into the Go binary)
+
+```bash
+make build     # pnpm build -> cp web/dist cmd/digesterr/static -> go build (embeds via go:embed)
+```
+
+`cmd/digesterr/main.go` embeds `static/*` (`//go:embed static/*`). At runtime it serves
+`web/dist` if present (dev fallback), otherwise the embedded files.
 
 Use `nix develop --no-pure-eval --accept-flake-config` or `devenv shell` to enter a shell with all tools. Use `devenv up` to run both servers with env vars pre-set.
 

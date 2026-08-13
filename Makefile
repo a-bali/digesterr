@@ -11,8 +11,8 @@ generate:
 
 build-web:
 	cd web && pnpm install && pnpm build
-	rm -rf cmd/digesterr/static
-	cp -r web/dist cmd/digesterr/static
+	rm -rf cmd/digesterr/static/*
+	cp -r web/dist/. cmd/digesterr/static/
 
 build: build-web
 	go build -o bin/digesterr ./cmd/digesterr

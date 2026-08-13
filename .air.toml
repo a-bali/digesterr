@@ -1,8 +1,6 @@
-# Air config — REFERENCE for normal filesystems (macOS/Linux with working inotify).
-# On this Hermes container (overlayfs) air's watcher does NOT detect changes
-# (poll and fsnotify both fail) — use scripts/dev-backend.sh (entr) instead:
-#   bash scripts/dev-backend.sh   # Go backend hot reload (port from .env, e.g. 10001)
-#   pnpm --dir web dev            # vite HMR frontend (port 5173, proxies /api -> :10001)
+# Air config — Go backend hot reload (dev mode).
+# Frontend runs separately: `pnpm --dir web dev` (vite HMR on :10001, proxies /api -> :8080).
+# poll=true is required on overlayfs (this container); harmless elsewhere.
 root = "."
 tmp_dir = "tmp"
 
