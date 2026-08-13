@@ -10,7 +10,9 @@ export default defineConfig({
     extensions: ['.vue', '.mjs', '.js', '.ts'],
   },
   server: {
-    port: 5173,
+    port: 10001,
+    host: true,
+    allowedHosts: ['hermes'],
     watch: { usePolling: true },
     proxy: {
       '/api': {
