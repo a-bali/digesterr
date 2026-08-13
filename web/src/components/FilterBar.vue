@@ -17,13 +17,21 @@ const useDropdown = ref(false)
 
 let observer: ResizeObserver | null = null
 
-// Collapse to a dropdown when the segmented buttons would overflow the
-// container. Measured from actual content (scrollWidth) rather than a
-// per-option width guess, so a 3-option and a 5-option filter collapse at
-// the same effective density.
+// Shared collapse threshold (px). Both the feed and digest filters live in the
+// same-width list pane, so we collapse on this fixed width rather than on each
+// filter's own content width — otherwise a 3-option filter (digest) would stay
+// as buttons while a 5-option filter (feed) collapsed in the same pane, and the
+// two controls would look different.
+const COLLAPSE_WIDTH = 400
+
+// Collapse to a dropdown when the pane is narrow OR the buttons genuinely don't
+// fit. Buttons are content-sized (no flex-1 stretch), so a 3-option and a
+// 5-option filter render at the same density.
 function measure() {
   if (!container.value || !row.value) return
-  useDropdown.value = row.value.scrollWidth > container.value.clientWidth + 1
+  useDropdown.value =
+    container.value.clientWidth < COLLAPSE_WIDTH ||
+    row.value.scrollWidth > container.value.clientWidth + 1
 }
 
 onMounted(() => {
@@ -46,13 +54,14 @@ function onSelectChange(e: Event) {
          can still read scrollWidth and re-expand when the pane widens. -->
     <div
       ref="row"
-      class="flex items-center gap-1 w-full"
+      class="flex items-center gap-1"
       :class="useDropdown ? 'invisible absolute inset-0' : ''"
       :aria-hidden="useDropdown || undefined"
     >
       <button
         v-for="opt in options" :key="opt.value"
-        class="flex flex-1 items-center justify-center gap-1 px-2 py-1 text-xs rounded-md whitespace-nowrap transition-colors"
+        type="button"
+        class="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md whitespace-nowrap transition-colors"
         :class="modelValue === opt.value ? 'bg-accent text-accent-foreground' : 'hover:bg-muted text-muted-foreground'"
         @click="emit('update:modelValue', opt.value)"
       >
