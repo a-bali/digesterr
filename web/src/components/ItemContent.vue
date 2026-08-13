@@ -7,6 +7,11 @@ import Separator from './ui/Separator.vue'
 import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files } from 'lucide-vue-next'
 import { absoluteTime } from '../lib/format'
 
+// Prose styling for raw HTML content. The [&_table...] / [&_td...] rules
+// collapse Reddit's 2-column Atom-feed layout (thumbnail | body) into a
+// vertical stack so the self-text isn't squeezed into half the pane width.
+const proseClass = 'prose prose-sm dark:prose-invert max-w-none [&_a]:text-accent [&_a]:hover:underline [&_table]:block [&_table]:w-full [&_tbody]:block [&_tr]:flex [&_tr]:flex-col [&_tr]:border-0 [&_td]:block [&_td]:w-full [&_td]:p-0 [&_td]:border-0 [&_td_img]:w-full'
+
 defineProps<{
   unsaveItem: (item: any) => Promise<void>
 }>()
@@ -114,7 +119,7 @@ onUnmounted(() => {
           <pre class="text-xs text-warning-foreground/80 dark:text-warning/90 whitespace-pre-wrap">{{ feedStore.selectedItem.extract_content }}</pre>
         </div>
         <div v-else-if="feedStore.selectedItem.extract_status === 'done'"
-          class="prose prose-sm dark:prose-invert max-w-none [&_a]:text-accent [&_a]:hover:underline" v-html="feedStore.selectedItem.extract_content" />
+          :class="proseClass" v-html="feedStore.selectedItem.extract_content" />
       </template>
 
       <!-- Original Content -->
@@ -122,7 +127,7 @@ onUnmounted(() => {
         <Separator class="mb-4" />
         <p class="text-xs font-semibold text-muted-foreground uppercase mb-2">Original</p>
       </template>
-      <div class="prose prose-sm dark:prose-invert max-w-none [&_a]:text-accent [&_a]:hover:underline" v-html="feedStore.selectedItem.content" />
+      <div :class="proseClass" v-html="feedStore.selectedItem.content" />
     </div>
   </div>
 </template>
