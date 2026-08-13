@@ -10,6 +10,7 @@ import (
 	"digesterr/internal/auth"
 	"digesterr/internal/digest"
 	"digesterr/internal/feed"
+	"digesterr/internal/logbuf"
 	"digesterr/internal/store"
 )
 
@@ -19,14 +20,16 @@ type Server struct {
 	auth      *auth.Service
 	poller    *feed.Poller
 	generator *digest.Generator
+	logs      *logbuf.Buffer
 }
 
-func NewServer(queries *store.Queries, authSvc *auth.Service) *Server {
+func NewServer(queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffer) *Server {
 	s := &Server{
 		mux:     http.NewServeMux(),
 		queries: queries,
 		auth:    authSvc,
 		poller:  feed.NewPoller(queries),
+		logs:    logs,
 	}
 
 	llmEndpoint := envOr("LLM_ENDPOINT", "https://api.openai.com/v1")
@@ -79,6 +82,8 @@ func NewServer(queries *store.Queries, authSvc *auth.Service) *Server {
 	mux.HandleFunc("PATCH /api/digest-results/{id}", s.requireAuth(s.handleUpdateDigestResultStatus))
 	mux.HandleFunc("DELETE /api/digest-results/{id}", s.requireAuth(s.handleDeleteDigestResult))
 	mux.HandleFunc("GET /api/digest-results/{id}/items", s.requireAuth(s.handleListDigestResultItemsWithData))
+
+	mux.HandleFunc("GET /api/logs", s.requireAuth(s.handleListLogs))
 
 	return s
 }

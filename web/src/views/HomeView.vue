@@ -8,6 +8,7 @@ import ItemList from '../components/ItemList.vue'
 import ItemContent from '../components/ItemContent.vue'
 import DigestContent from '../components/DigestContent.vue'
 import DigestResultList from '../components/DigestResultList.vue'
+import LogsDialog from '../components/LogsDialog.vue'
 import ThemeMenu from '../components/ThemeMenu.vue'
 import { useAuthStore } from '../stores/auth'
 import { useFeedStore } from '../stores/feed'
@@ -185,6 +186,7 @@ function onSelectDigestResult(result: { id: number }) {
         <span class="font-semibold shrink-0 hidden sm:inline">Digesterr</span>
       </template>
       <div class="ml-auto flex items-center gap-1">
+        <LogsDialog />
         <ThemeMenu />
         <Button variant="ghost" size="sm" class="hidden sm:flex" @click="auth.signout()">
           <LogOut class="size-4" /> {{ auth.user?.email }}

@@ -1,4 +1,4 @@
-import type { AuthResponse, Category, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, Item } from '../types/api'
+import type { AuthResponse, Category, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, Item, LogsResponse } from '../types/api'
 
 const TOKEN_KEY = 'digesterr-token'
 
@@ -145,4 +145,9 @@ export const digestApi = {
   deleteResult: (id: number) => api<void>(`/digest-results/${id}`, { method: 'DELETE' }),
   listResultItems: (resultId: number) => api<DigestResultItemWithData[]>(`/digest-results/${resultId}/items`),
   unreadCounts: () => api<Record<number, number>>('/digest-unread-counts'),
+}
+
+export const logsApi = {
+  list: (opts?: { limit?: number; level?: string; type?: string }) =>
+    api<LogsResponse>(`/logs${qs({ limit: opts?.limit, level: opts?.level, type: opts?.type })}`),
 }

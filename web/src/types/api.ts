@@ -127,6 +127,19 @@ export interface DigestComment {
   url?: string
 }
 
+export interface LogEntry {
+  time: string
+  level: string
+  type: string
+  message: string
+  attrs?: Record<string, string>
+}
+
+export interface LogsResponse {
+  entries: LogEntry[]
+  total: number
+}
+
 export interface AuthResponse {
   user: User
   access_token: string

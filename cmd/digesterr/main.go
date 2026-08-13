@@ -9,12 +9,15 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 
 	"digesterr/internal/auth"
 	"digesterr/internal/httpapi"
+	"digesterr/internal/logbuf"
 	"digesterr/internal/schema"
 	"digesterr/internal/store"
 )
@@ -49,10 +52,30 @@ func main() {
 	}
 
 	logLevel := slog.LevelInfo
-	if os.Getenv("DIGESTERR_LOG_LEVEL") == "debug" {
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		switch strings.ToLower(v) {
+		case "debug":
+			logLevel = slog.LevelDebug
+		case "warn":
+			logLevel = slog.LevelWarn
+		case "error":
+			logLevel = slog.LevelError
+		}
+	} else if os.Getenv("DIGESTERR_LOG_LEVEL") == "debug" {
+		// Backwards-compatible alias for the old env var.
 		logLevel = slog.LevelDebug
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
+
+	bufSize := 1000
+	if v := os.Getenv("LOG_BUFFER_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			bufSize = n
+		}
+	}
+	logBuf := logbuf.New(bufSize)
+
+	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
+	slog.SetDefault(slog.New(logbuf.NewHandler(inner, logBuf, &slog.HandlerOptions{Level: logLevel, AddSource: true})))
 
 	db, err := sql.Open("sqlite", dbPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_texttotime=true&_time_format=sqlite")
 	if err != nil {
@@ -73,7 +96,7 @@ func main() {
 
 	queries := store.New(db)
 	authSvc := auth.NewService(jwtSecret, queries)
-	server := httpapi.NewServer(queries, authSvc)
+	server := httpapi.NewServer(queries, authSvc, logBuf)
 	server.StartPoller(context.Background(), 1*time.Hour)
 	server.StartScheduler(context.Background())
 
