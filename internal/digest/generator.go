@@ -85,6 +85,8 @@ type digestItemRef struct {
 }
 
 func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*store.DigestResult, error) {
+	start := time.Now()
+	genLogger := slog.With("config_id", cfg.ID, "config_name", cfg.Name)
 	var dcfg digestConfigJSON
 	if err := json.Unmarshal([]byte(cfg.Config), &dcfg); err != nil {
 		return nil, fmt.Errorf("parsing digest config: %w", err)
@@ -92,6 +94,9 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*stor
 
 	feedLimits := g.buildFeedLimits(ctx, cfg.UserID, dcfg)
 
+	if len(feedLimits) == 0 {
+		genLogger.Warn("digest config matched no feeds", "user_id", cfg.UserID)
+	}
 	maxItems := dcfg.MaxItems
 	if maxItems <= 0 {
 		maxItems = 100
@@ -124,13 +129,13 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*stor
 		return nil, fmt.Errorf("no unread items found for digest config %d", cfg.ID)
 	}
 
-	g.enrichAndExtractItems(ctx, filtered)
+	g.enrichAndExtractItems(ctx, filtered, genLogger)
 
 	highlights, rest := g.selectHighlights(filtered)
 
-	g.fetchCommentsForHighlights(ctx, highlights)
+	g.fetchCommentsForHighlights(ctx, highlights, genLogger)
 
-	content, err := g.buildContent(ctx, dcfg, highlights, rest)
+	content, err := g.buildContent(ctx, dcfg, highlights, rest, genLogger)
 	if err != nil {
 		return nil, fmt.Errorf("building digest content: %w", err)
 	}
@@ -172,7 +177,7 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*stor
 		})
 	}
 
-	slog.Info("digest generated", "result_id", result.ID, "config_id", cfg.ID, "highlights", len(highlights), "items", len(rest))
+	slog.Info("digest generated", "result_id", result.ID, "config_id", cfg.ID, "config_name", cfg.Name, "highlights", len(highlights), "items", len(rest), "duration", time.Since(start))
 	return &result, nil
 }
 
@@ -252,7 +257,7 @@ func (g *Generator) buildFeedLimits(ctx context.Context, userID int64, dcfg dige
 	return limits
 }
 
-func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestItem) {
+func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestItem, genLogger *slog.Logger) {
 	byFeedType := make(map[string][]*store.Item)
 	for i := range items {
 		feedObj, err := g.queries.GetFeedByID(ctx, items[i].FeedID)
@@ -270,12 +275,12 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 		}
 		if b, ok := enricher.(feed.BulkEnricher); ok {
 			if err := b.BulkEnrich(ctx, feedItems); err != nil {
-				slog.Debug("bulk enrich failed for digest", "type", feedType, "error", err)
+				genLogger.Debug("bulk enrich failed for digest", "type", feedType, "error", err)
 			}
 		} else {
 			for _, item := range feedItems {
 				if err := enricher.Enrich(ctx, item); err != nil {
-					slog.Debug("enrich failed for digest item", "item_id", item.ID, "error", err)
+					genLogger.Debug("enrich failed for digest item", "item_id", item.ID, "error", err)
 				}
 			}
 		}
@@ -287,7 +292,7 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 				CommentUrl:    item.CommentUrl,
 			})
 		}
-		slog.Debug("digest enriched items", "type", feedType, "count", len(feedItems))
+		genLogger.Debug("digest enriched items", "type", feedType, "count", len(feedItems))
 	}
 
 	for i := range items {
@@ -299,9 +304,9 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 		if err != nil || feedObj.ID == 0 || feedObj.ExtractContent == 0 {
 			continue
 		}
-		slog.Info("extracting content for digest item", "item_id", item.ID)
+		genLogger.Info("extracting content for digest item", "item_id", item.ID, "url", item.Url)
 		if err := g.extractor.ExtractItem(ctx, item.ID); err != nil {
-			slog.Debug("extraction failed for digest item", "item_id", item.ID, "error", err)
+			genLogger.Debug("extraction failed for digest item", "item_id", item.ID, "error", err)
 		}
 		refreshed, rerr := g.queries.GetItem(ctx, item.ID)
 		if rerr == nil {
@@ -336,7 +341,7 @@ func (g *Generator) selectHighlights(items []digestItem) ([]digestItem, []digest
 	return highlights, rest
 }
 
-func (g *Generator) fetchCommentsForHighlights(ctx context.Context, highlights []digestItem) {
+func (g *Generator) fetchCommentsForHighlights(ctx context.Context, highlights []digestItem, genLogger *slog.Logger) {
 	for i := range highlights {
 		item := &highlights[i]
 		feedObj, err := g.queries.GetFeedByID(ctx, item.FeedID)
@@ -349,16 +354,16 @@ func (g *Generator) fetchCommentsForHighlights(ctx context.Context, highlights [
 		}
 		comments, err := cf.FetchComments(ctx, item.Item, item.Comments)
 		if err != nil {
-			slog.Debug("failed to fetch comments for highlight", "item_id", item.ID, "error", err)
+			genLogger.Debug("failed to fetch comments for highlight", "item_id", item.ID, "error", err)
 			continue
 		}
 		sort.Slice(comments, func(a, b int) bool { return comments[a].Points > comments[b].Points })
 		item.FetchedComments = comments
-		slog.Info("fetched comments for highlight", "item_id", item.ID, "count", len(comments))
+		genLogger.Info("fetched comments for highlight", "item_id", item.ID, "url", item.Url, "count", len(comments))
 	}
 }
 
-func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, highlights, rest []digestItem) (*digestResultContent, error) {
+func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, highlights, rest []digestItem, genLogger *slog.Logger) (*digestResultContent, error) {
 	content := &digestResultContent{}
 
 	feedNames, _ := g.buildFeedNameMap(ctx)
@@ -407,10 +412,13 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 
 	userPrompt += "For each HIGHLIGHT article, provide a 2-3 sentence highlight capturing the key insight and why it matters — skip introductory phrases like \"The article discusses\" or \"The author explains\". Format your response as JSON with keys \"summary\" (string of overall digest summary) and \"highlights\" (array of {title, summary})."
 
+	llmStart := time.Now()
+	genLogger.Info("calling LLM for digest", "input_bytes", len(systemPrompt)+len(userPrompt))
 	llmResponse, err := g.llm.Chat(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("LLM chat failed: %w", err)
 	}
+	genLogger.Info("LLM digest response received", "output_bytes", len(llmResponse), "duration", time.Since(llmStart))
 
 	type llmOutput struct {
 		Summary    string `json:"summary"`
@@ -430,7 +438,7 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 
 	var output llmOutput
 	if err := json.Unmarshal([]byte(cleaned), &output); err != nil {
-		slog.Error("failed to parse LLM response", "error", err, "response", llmResponse)
+		genLogger.Error("failed to parse LLM response", "error", err, "output_bytes", len(llmResponse))
 		return nil, fmt.Errorf("parsing LLM response: %w", err)
 	}
 	content.Summary = output.Summary

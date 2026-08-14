@@ -186,7 +186,7 @@ func (e *RedditEnricher) Enrich(ctx context.Context, item *store.Item) error {
 			Url string `json:"url"`
 			ID  int64  `json:"id"`
 		}{Url: post.URL, ID: item.ID}); err != nil {
-			slog.Warn("failed to update Reddit item URL", "item_id", item.ID, "error", err)
+			slog.Warn("failed to update Reddit item URL", "item_id", item.ID, "item_url", item.Url, "error", err)
 		} else {
 			item.Url = post.URL
 		}
@@ -268,7 +268,7 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 				Url string `json:"url"`
 				ID  int64  `json:"id"`
 			}{Url: child.Data.URL, ID: item.ID}); err != nil {
-				slog.Warn("failed to update Reddit item URL", "item_id", item.ID, "error", err)
+				slog.Warn("failed to update Reddit item URL", "item_id", item.ID, "item_url", item.Url, "error", err)
 			} else {
 				item.Url = child.Data.URL
 			}
@@ -276,7 +276,7 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 	}
 	slog.Debug("reddit bulk enrichment completed", "requested", len(ids), "matched", matched)
 	if matched == 0 {
-		slog.Warn("reddit bulk enrich matched no items — API response may be empty or rate-limited")
+		slog.Warn("reddit bulk enrich matched no items — API response may be empty or rate-limited", "requested", len(ids))
 	}
 	return nil
 }

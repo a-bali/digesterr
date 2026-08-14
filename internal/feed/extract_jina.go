@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	readability "codeberg.org/readeck/go-readability/v2"
 	"github.com/yuin/goldmark"
@@ -98,7 +99,10 @@ func ExtractContent(ctx context.Context, pageURL string, client *http.Client, lo
 
 	switch {
 	case strings.HasPrefix(contentType, "text/html") || strings.HasPrefix(contentType, "application/xhtml+xml"):
-		return extractHTMLContent(ctx, resp.Body, pageURL, client, logger)
+		start := time.Now()
+		out, err := extractHTMLContent(ctx, resp.Body, pageURL, client, logger)
+		logger.Debug("content extraction: direct fetch complete", "content_type", contentType, "bytes", len(out), "duration", time.Since(start))
+		return out, err
 
 	case strings.HasPrefix(contentType, "image/"):
 		return fmt.Sprintf(`<img src="%s" style="max-width:100%%" />`, htmlEscape(pageURL)), nil
@@ -118,6 +122,7 @@ func ExtractContent(ctx context.Context, pageURL string, client *http.Client, lo
 		if err != nil {
 			return "", fmt.Errorf("read body: %w", err)
 		}
+		logger.Debug("content extraction: plain text captured", "bytes", len(body))
 		return fmt.Sprintf(`<pre style="white-space:pre-wrap">%s</pre>`, htmlEscape(string(body))), nil
 
 	case strings.HasPrefix(contentType, "application/pdf"):
@@ -149,11 +154,12 @@ func extractHTMLContent(ctx context.Context, body io.Reader, pageURL string, cli
 
 	logger.Info("content extraction: readability failed", "error", err)
 
+	start := time.Now()
 	html, jerr := ExtractWithJina(ctx, pageURL, client, logger)
 	if jerr != nil {
 		logger.Info("content extraction: jina failed", "error", jerr)
 		return "", jerr
 	}
-	logger.Debug("content extraction: jina succeeded", "bytes", len(html))
+	logger.Debug("content extraction: jina succeeded", "bytes", len(html), "duration", time.Since(start))
 	return html, nil
 }

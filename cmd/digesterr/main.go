@@ -85,7 +85,7 @@ func main() {
 
 	handler := spaHandler(server, staticFileSystem())
 
-	slog.Info("starting digesterr", "port", port)
+	slog.Info("starting digesterr", "port", port, "log_level", resolveLogLevel(*logLevelFlag).String())
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", port), handler); err != nil {
 		slog.Error("server failed", "error", err)
 		os.Exit(1)

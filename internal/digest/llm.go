@@ -78,7 +78,8 @@ func (c *LLMClient) Chat(ctx context.Context, systemPrompt, userPrompt string) (
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
-	slog.Debug("calling LLM", "endpoint", c.endpoint, "model", c.model)
+	slog.Debug("calling LLM", "endpoint", c.endpoint, "model", c.model, "input_bytes", len(systemPrompt)+len(userPrompt))
+	start := time.Now()
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("sending request: %w", err)
@@ -89,6 +90,8 @@ func (c *LLMClient) Chat(ctx context.Context, systemPrompt, userPrompt string) (
 	if err != nil {
 		return "", fmt.Errorf("reading response: %w", err)
 	}
+
+	slog.Debug("LLM response received", "model", c.model, "output_bytes", len(respBody), "status", resp.StatusCode, "duration", time.Since(start))
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("LLM API returned status %d: %s", resp.StatusCode, string(respBody))

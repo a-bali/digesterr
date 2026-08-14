@@ -297,7 +297,7 @@ func (s *Server) handleGenerateDigest(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.generator.Generate(r.Context(), cfg)
 	if err != nil {
-		slog.Error("digest generation failed", "config_id", configID, "error", err)
+		slog.Error("digest generation failed", "config_id", configID, "config_name", cfg.Name, "user_id", userID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to generate digest: "+err.Error())
 		return
 	}
