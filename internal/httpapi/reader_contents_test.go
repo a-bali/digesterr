@@ -131,6 +131,31 @@ func TestReaderStreamItemsContents(t *testing.T) {
 	}
 }
 
+// TestReaderStreamItemsContentsExtractedSummary verifies that NetNewsWire-visible
+// summary.content carries the extracted body (NNW ignores the content field).
+func TestReaderStreamItemsContentsExtractedSummary(t *testing.T) {
+	server, queries, db := setupStreamTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedReaderStream(t, queries, db, user.ID)
+
+	if _, err := db.Exec("UPDATE items SET extract_content = ?, extract_status = 'done' WHERE id = ?",
+		"<p>full extracted article</p>", seed.aUnreadNewest.ID); err != nil {
+		t.Fatalf("failed to set extracted content: %v", err)
+	}
+
+	resp := getContents(t, server, "/reader/api/0/stream/items/contents?i="+itemStreamID(seed.aUnreadNewest.ID)+"&output=json")
+	if len(resp.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(resp.Items))
+	}
+	it := resp.Items[0]
+	if it.Summary.Content != "<p>full extracted article</p>" {
+		t.Fatalf("expected summary to carry extracted body, got %q", it.Summary.Content)
+	}
+	if it.Content.Content != "<p>full extracted article</p>" {
+		t.Fatalf("expected content to carry extracted body, got %q", it.Content.Content)
+	}
+}
+
 func TestReaderStreamItemsContentsSavedAndUnknown(t *testing.T) {
 	server, queries, db := setupStreamTestServer(t)
 	user := createReaderUser(t, queries, "testkey123")

@@ -68,10 +68,21 @@ onMounted(() => {
     digestStore.fetchUnreadCounts()
     digestStore.silentRefresh()
   }, 10000)
+  // External clients (e.g. NetNewsWire via the Reader API) can change item
+  // statuses while this tab is backgrounded. Refresh on focus so the list
+  // reflects starred/read changes made elsewhere.
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 onUnmounted(() => {
   if (pollInterval) clearInterval(pollInterval)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
+
+function onVisibilityChange() {
+  if (document.visibilityState !== 'visible') return
+  if (showingSaved.value) fetchSavedItems()
+  else if (feedStore.activeFeedId != null) feedStore.fetchFirstPage()
+}
 
 // ---- URL → state sync ----
 watch(
@@ -107,11 +118,7 @@ watch(
       showingSaved.value = true; sidebarOpen.value = false
       feedStore.activeFeedId = null; feedStore.selectedItem = null; pendingItemId.value = null
       digestStore.activeConfigId = null; digestStore.selectedResult = null
-      if (savedItems.value.length === 0) {
-        for (const feed of feedStore.feeds) {
-          try { savedItems.value.push(...(await feedApi.getItems(feed.id, { status: 'saved' })).items) } catch { /* skip */ }
-        }
-      }
+      await fetchSavedItems()
     } else if (path === '/') {
       showingSaved.value = false; feedStore.activeFeedId = null; feedStore.selectedItem = null; pendingItemId.value = null
     }
@@ -162,6 +169,14 @@ async function selectItem(item: Item) {
 async function unsaveItem(item: Item) {
   await feedStore.updateItemStatus(item, 'read')
   savedItems.value = savedItems.value.filter(i => i.id !== item.id)
+}
+
+async function fetchSavedItems() {
+  const acc: Item[] = []
+  for (const feed of feedStore.feeds) {
+    try { acc.push(...(await feedApi.getItems(feed.id, { status: 'saved' })).items) } catch { /* skip */ }
+  }
+  savedItems.value = acc
 }
 
 function onSelectDigestResult(result: { id: number }) {
