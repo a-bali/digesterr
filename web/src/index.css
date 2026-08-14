@@ -70,3 +70,25 @@ body {
   background: hsl(var(--background));
   color: hsl(var(--foreground));
 }
+
+/* Themed scrollbars — colors resolve from the theme tokens defined on
+   :root/.dark (and the inline --accent override), so switching mode or
+   accent recolors every scrollbar instantly, no reload needed. Dimensions
+   stay native: no width changes and no custom scrollbar components, so
+   overlay scrollbars keep their behavior and no layout shift occurs. */
+* {
+  scrollbar-color: hsl(var(--muted-foreground) / 0.45) hsl(var(--border) / 0.35);
+}
+
+*::-webkit-scrollbar-track {
+  background: hsl(var(--border) / 0.35);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.45);
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.8);
+}
