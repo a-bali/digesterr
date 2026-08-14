@@ -4,11 +4,11 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"digesterr/internal/auth"
+	"digesterr/internal/config"
 	"digesterr/internal/digest"
 	"digesterr/internal/feed"
 	"digesterr/internal/logbuf"
@@ -28,21 +28,25 @@ type Server struct {
 	publicBaseURL string
 }
 
-func NewServer(queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffer) *Server {
+func NewServer(queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffer, cfg config.Config) *Server {
 	s := &Server{
 		mux:           http.NewServeMux(),
 		queries:       queries,
 		auth:          authSvc,
 		poller:        feed.NewPoller(queries),
 		logs:          logs,
-		publicBaseURL: strings.TrimRight(envOr("PUBLIC_BASE_URL", ""), "/"),
+		publicBaseURL: strings.TrimRight(cfg.Server.PublicBaseURL, "/"),
 	}
 
-	llmEndpoint := envOr("LLM_ENDPOINT", "https://api.openai.com/v1")
-	llmAPIKey := envOr("LLM_API_KEY", "")
-	llmModel := envOr("LLM_MODEL", "gpt-4o-mini")
-	llmClient := digest.NewLLMClient(llmEndpoint, llmAPIKey, llmModel)
+	llmClient := digest.NewLLMClient(cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model)
 	s.generator = digest.NewGenerator(queries, llmClient, s.poller)
+
+	// Data retention and provider credentials come from the merged config
+	// (defaults < config file < env < CLI flags). The expiry age is shared by
+	// feed refresh (Poller) and digest generation (Generator calls the same
+	// Poller expiry path).
+	s.poller.SetExpiry(cfg.Feed.ExpireItems.Duration(), cfg.Feed.ExpireDigests.Duration())
+	s.poller.SetRedditCredentials(cfg.Reddit.ClientID, cfg.Reddit.ClientSecret)
 
 	mux := s.mux
 
@@ -158,11 +162,4 @@ func (rr *responseRecorder) Write(b []byte) (int, error) {
 		rr.WriteHeader(http.StatusOK)
 	}
 	return rr.ResponseWriter.Write(b)
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

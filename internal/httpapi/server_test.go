@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"digesterr/internal/auth"
+	"digesterr/internal/config"
 	"digesterr/internal/logbuf"
 	"digesterr/internal/store"
 )
@@ -26,7 +27,7 @@ func setupTestServer(t *testing.T) (*Server, *store.Queries) {
 	t.Helper()
 	queries := setupTestDB(t)
 	authSvc := auth.NewService("test-jwt-secret-for-testing", queries)
-	server := NewServer(queries, authSvc, logbuf.New(100))
+	server := NewServer(queries, authSvc, logbuf.New(100), config.Default())
 	return server, queries
 }
 

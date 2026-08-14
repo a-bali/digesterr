@@ -38,6 +38,10 @@ func NewLLMClient(endpoint, apiKey, model string) *LLMClient {
 	}
 }
 
+// HasAPIKey reports whether an API key is configured. Digest generation logs
+// an error when the LLM is needed but no key is set.
+func (c *LLMClient) HasAPIKey() bool { return c.apiKey != "" }
+
 type chatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`

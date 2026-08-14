@@ -7,40 +7,27 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"digesterr/internal/config"
 )
 
 func TestResolveLogLevel(t *testing.T) {
 	cases := []struct {
-		name    string
-		flagVal string
-		env     map[string]string
-		want    slog.Level
+		name  string
+		level string
+		want  slog.Level
 	}{
-		{"default is info", "", nil, slog.LevelInfo},
-		{"flag debug", "debug", nil, slog.LevelDebug},
-		{"flag warn", "warn", nil, slog.LevelWarn},
-		{"flag error", "error", nil, slog.LevelError},
-		{"flag overrides env", "warn", map[string]string{"LOG_LEVEL": "debug"}, slog.LevelWarn},
-		{"invalid flag falls back", "trace", nil, slog.LevelInfo},
-		{"env debug", "", map[string]string{"LOG_LEVEL": "debug"}, slog.LevelDebug},
-		{"env warn", "", map[string]string{"LOG_LEVEL": "warn"}, slog.LevelWarn},
-		{"invalid env falls back", "", map[string]string{"LOG_LEVEL": "verbose"}, slog.LevelInfo},
-		{"legacy alias debug", "", map[string]string{"DIGESTERR_LOG_LEVEL": "debug"}, slog.LevelDebug},
-		{"env wins over legacy alias", "", map[string]string{"LOG_LEVEL": "warn", "DIGESTERR_LOG_LEVEL": "debug"}, slog.LevelWarn},
+		{"default is info", "", slog.LevelInfo},
+		{"debug", "debug", slog.LevelDebug},
+		{"info", "info", slog.LevelInfo},
+		{"warn", "warn", slog.LevelWarn},
+		{"error", "error", slog.LevelError},
+		{"invalid falls back", "verbose", slog.LevelInfo},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			for k, v := range c.env {
-				t.Setenv(k, v)
-			}
-			// Ensure no stray env leaks between subtests.
-			for _, k := range []string{"LOG_LEVEL", "DIGESTERR_LOG_LEVEL"} {
-				if _, ok := c.env[k]; !ok {
-					t.Setenv(k, "")
-				}
-			}
-			if got := resolveLogLevel(c.flagVal); got != c.want {
-				t.Errorf("resolveLogLevel(%q, %v) = %v, want %v", c.flagVal, c.env, got, c.want)
+			if got := resolveLogLevel(c.level); got != c.want {
+				t.Errorf("resolveLogLevel(%q) = %v, want %v", c.level, got, c.want)
 			}
 		})
 	}
@@ -326,12 +313,21 @@ func TestSetupLoggerExplicitCategory(t *testing.T) {
 // for the "LOG_LEVEL override works" rule — it fails if setupLogger stops
 // honoring resolveLogLevel's result.
 func TestSetupLoggerEnvTogglesDebug(t *testing.T) {
+	loadCfg := func(t *testing.T) config.Config {
+		t.Helper()
+		cfg, err := config.Load(filepath.Join(t.TempDir(), "missing.yaml"))
+		if err != nil {
+			t.Fatalf("config.Load: %v", err)
+		}
+		return cfg
+	}
+
 	t.Run("LOG_LEVEL=debug shows debug", func(t *testing.T) {
 		t.Setenv("LOG_LEVEL", "debug")
 		t.Setenv("DIGESTERR_LOG_LEVEL", "")
 
 		var out bytes.Buffer
-		setupLogger(resolveLogLevel(""), 10, &out)
+		setupLogger(resolveLogLevel(loadCfg(t).Logging.Level), 10, &out)
 
 		slog.Debug("debug visible via env")
 		text := out.String()
@@ -344,8 +340,11 @@ func TestSetupLoggerEnvTogglesDebug(t *testing.T) {
 		t.Setenv("LOG_LEVEL", "debug")
 		t.Setenv("DIGESTERR_LOG_LEVEL", "")
 
+		cfg := loadCfg(t)
+		cfg.Logging.Level = "warn" // what -l/--log-level does in main()
+
 		var out bytes.Buffer
-		setupLogger(resolveLogLevel("warn"), 10, &out)
+		setupLogger(resolveLogLevel(cfg.Logging.Level), 10, &out)
 
 		slog.Debug("debug hidden by flag")
 		slog.Warn("warn visible via flag")
@@ -358,4 +357,3 @@ func TestSetupLoggerEnvTogglesDebug(t *testing.T) {
 		}
 	})
 }
-

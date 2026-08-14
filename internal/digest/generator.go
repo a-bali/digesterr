@@ -106,6 +106,19 @@ type digestItemRef struct {
 func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*store.DigestResult, error) {
 	start := time.Now()
 	genLogger := slog.With("config_id", cfg.ID, "config_name", cfg.Name)
+
+	// Data retention runs during digest generation as well as feed refresh:
+	// delete items/digest results older than the configured windows. Saved
+	// items are exempt (see DeleteExpiredItems).
+	if g.extractor != nil {
+		items, digests, err := g.extractor.ExpireOldData(ctx)
+		if err != nil {
+			genLogger.Error("data expiry failed during digest generation", "error", err)
+		} else if items > 0 || digests > 0 {
+			genLogger.Info("expired old data during digest generation", "items", items, "digest_results", digests)
+		}
+	}
+
 	var dcfg digestConfigJSON
 	if err := json.Unmarshal([]byte(cfg.Config), &dcfg); err != nil {
 		return nil, fmt.Errorf("parsing digest config: %w", err)
@@ -437,6 +450,11 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 
 	llmStart := time.Now()
 	genLogger.Info("calling LLM for digest", "input_bytes", len(systemPrompt)+len(userPrompt))
+	// Surface a clear error when the LLM is needed but not configured: the
+	// request would otherwise fail with an obscure auth error downstream.
+	if c, ok := g.llm.(interface{ HasAPIKey() bool }); ok && !c.HasAPIKey() {
+		genLogger.Error("LLM API key is not configured (llm.api_key / LLM_API_KEY); digest generation will fail")
+	}
 	llmResponse, err := g.llm.Chat(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("LLM chat failed: %w", err)

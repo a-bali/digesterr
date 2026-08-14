@@ -12,11 +12,11 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"time"
 
 	_ "modernc.org/sqlite"
 
 	"digesterr/internal/auth"
+	"digesterr/internal/config"
 	"digesterr/internal/httpapi"
 	"digesterr/internal/logbuf"
 	"digesterr/internal/logging"
@@ -45,24 +45,53 @@ func staticFileSystem() http.FileSystem {
 }
 
 func main() {
-	logLevelFlag := flag.String("log-level", "", "log level: debug, info, warn, error (default info; overrides LOG_LEVEL)")
+	configPath := flag.String("config", "", "path to YAML config file (default ~/.digesterr.yaml)")
+	flag.StringVar(configPath, "c", "", "path to YAML config file (shorthand for -config)")
+	dbFlag := flag.String("db", "", "SQLite database path (overrides config file and env)")
+	flag.StringVar(dbFlag, "d", "", "SQLite database path (shorthand for -db)")
+	portFlag := flag.String("port", "", "HTTP listen port (overrides config file and env)")
+	flag.StringVar(portFlag, "p", "", "HTTP listen port (shorthand for -port)")
+	logLevelFlag := flag.String("log-level", "", "log level: debug, info, warn, error (default info; overrides config file and env)")
+	flag.StringVar(logLevelFlag, "l", "", "log level (shorthand for -log-level)")
 	flag.Parse()
+
+	path := *configPath
+	if path == "" {
+		path = config.DefaultPath()
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		slog.Error("failed to load configuration", "path", path, "error", err)
+		os.Exit(1)
+	}
+	// CLI flags override both the config file and environment variables.
+	if *dbFlag != "" {
+		cfg.DB.Path = *dbFlag
+	}
+	if *portFlag != "" {
+		p, err := strconv.Atoi(*portFlag)
+		if err != nil {
+			slog.Error("invalid -port value", "value", *portFlag)
+			os.Exit(1)
+		}
+		cfg.Server.Port = p
+	}
+	if *logLevelFlag != "" {
+		cfg.Logging.Level = *logLevelFlag
+	}
 
 	// Set up logging first so even early fatal errors carry the configured
 	// level, source, and category attributes.
-	logBuf := setupLogger(resolveLogLevel(*logLevelFlag), logBufferSize(), os.Stderr)
+	logBuf := setupLogger(resolveLogLevel(cfg.Logging.Level), cfg.Logging.BufferSize, os.Stderr)
 
-	dbPath := envOr("DATABASE_PATH", "digesterr.db")
-	port := envOr("PORT", "8080")
-	jwtSecret := envOr("JWT_SECRET", "")
-	if jwtSecret == "" {
-		slog.Error("JWT_SECRET environment variable is required")
+	if cfg.Server.JWTSecret == "" {
+		slog.Error("JWT_SECRET (server.jwt_secret) is required")
 		os.Exit(1)
 	}
 
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_texttotime=true&_time_format=sqlite")
+	db, err := sql.Open("sqlite", cfg.DB.Path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_texttotime=true&_time_format=sqlite")
 	if err != nil {
-		slog.Error("failed to open database", "error", err)
+		slog.Error("failed to open database", "path", cfg.DB.Path, "error", err)
 		os.Exit(1)
 	}
 	defer db.Close()
@@ -78,15 +107,15 @@ func main() {
 	}
 
 	queries := store.New(db)
-	authSvc := auth.NewService(jwtSecret, queries)
-	server := httpapi.NewServer(queries, authSvc, logBuf)
-	server.StartPoller(context.Background(), 1*time.Hour)
+	authSvc := auth.NewService(cfg.Server.JWTSecret, queries)
+	server := httpapi.NewServer(queries, authSvc, logBuf, cfg)
+	server.StartPoller(context.Background(), cfg.Feed.SyncInterval.Duration())
 	server.StartScheduler(context.Background())
 
 	handler := spaHandler(server, staticFileSystem())
 
-	slog.Info("starting digesterr", "port", port, "log_level", resolveLogLevel(*logLevelFlag).String())
-	if err := http.ListenAndServe(fmt.Sprintf(":%s", port), handler); err != nil {
+	slog.Info("starting digesterr", "port", cfg.Server.Port, "log_level", resolveLogLevel(cfg.Logging.Level).String(), "config", path)
+	if err := http.ListenAndServe(fmt.Sprintf(":%d", cfg.Server.Port), handler); err != nil {
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
 	}
@@ -226,6 +255,14 @@ CREATE INDEX IF NOT EXISTS idx_feeds_category ON feeds(category);
 PRAGMA foreign_keys=ON;
 `,
 		},
+		{
+			"add items.created_at index",
+			"CREATE INDEX IF NOT EXISTS idx_items_created_at ON items(created_at)",
+		},
+		{
+			"add digest_results.created_at index",
+			"CREATE INDEX IF NOT EXISTS idx_digest_results_created_at ON digest_results(created_at)",
+		},
 	}
 	for _, m := range migrations {
 		if skip, err := migrationSkipped(db, m.name); err != nil {
@@ -282,48 +319,18 @@ func migrationSkipped(db *sql.DB, name string) (bool, error) {
 	return false, nil
 }
 
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+// resolveLogLevel picks the effective slog level for a configured level
+// string (from config file, env, or -log-level flag). The default is info;
+// invalid values fall back to info with a warning.
+func resolveLogLevel(level string) slog.Level {
+	if level == "" {
+		level = "info"
 	}
-	return fallback
-}
-
-// resolveLogLevel picks the effective slog level for the process. The
-// -log-level flag wins over the LOG_LEVEL environment variable, which wins
-// over the legacy DIGESTERR_LOG_LEVEL alias. The default is info. Invalid
-// values fall back to info with a warning.
-func resolveLogLevel(flagVal string) slog.Level {
-	if flagVal != "" {
-		if lv, ok := logging.ParseLevel(flagVal); ok {
-			return lv
-		}
-		slog.Warn("invalid -log-level value, falling back to info", "value", flagVal)
-		return slog.LevelInfo
+	if lv, ok := logging.ParseLevel(level); ok {
+		return lv
 	}
-	if v := os.Getenv("LOG_LEVEL"); v != "" {
-		if lv, ok := logging.ParseLevel(v); ok {
-			return lv
-		}
-		slog.Warn("invalid LOG_LEVEL value, falling back to info", "value", v)
-		return slog.LevelInfo
-	}
-	if os.Getenv("DIGESTERR_LOG_LEVEL") == "debug" {
-		// Backwards-compatible alias for the old env var.
-		return slog.LevelDebug
-	}
+	slog.Warn("invalid log level value, falling back to info", "value", level)
 	return slog.LevelInfo
-}
-
-// logBufferSize returns the /api/logs ring buffer capacity from
-// LOG_BUFFER_SIZE (default 1000).
-func logBufferSize() int {
-	if v := os.Getenv("LOG_BUFFER_SIZE"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return n
-		}
-	}
-	return 1000
 }
 
 // setupLogger configures the default slog logger: a text handler on w with

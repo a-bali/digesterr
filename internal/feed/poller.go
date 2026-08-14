@@ -22,6 +22,11 @@ type Poller struct {
 	fetchers        map[string]Fetcher
 	enrichers       map[string]Enricher
 	commentFetchers map[string]CommentFetcher
+	// expireItems deletes items older than this during refresh/generation
+	// (saved items are exempt); expireDigests deletes digest results older
+	// than this. Zero disables expiry.
+	expireItems   time.Duration
+	expireDigests time.Duration
 }
 
 func NewPoller(queries *store.Queries) *Poller {
@@ -60,6 +65,47 @@ func (p *Poller) Enrichers() map[string]Enricher {
 	return p.enrichers
 }
 
+// SetExpiry configures data retention: items older than itemsAge and digest
+// results older than digestsAge are deleted during feed refresh and digest
+// generation. A zero duration disables the respective expiry.
+func (p *Poller) SetExpiry(itemsAge, digestsAge time.Duration) {
+	p.expireItems = itemsAge
+	p.expireDigests = digestsAge
+}
+
+// SetRedditCredentials overrides the Reddit API credentials used by the
+// reddit enricher. The enricher is constructed with environment fallbacks;
+// the merged config (file + env) wins here.
+func (p *Poller) SetRedditCredentials(clientID, clientSecret string) {
+	if e, ok := p.enrichers["reddit"]; ok {
+		if re, ok := e.(*RedditEnricher); ok {
+			re.SetCredentials(clientID, clientSecret)
+		}
+	}
+}
+
+// ExpireOldData deletes items and digest results older than the configured
+// retention windows. Saved items and items still referenced by digest
+// results are never deleted. Returns the number of rows deleted. Expiry is
+// skipped for a window of zero.
+func (p *Poller) ExpireOldData(ctx context.Context) (itemsDeleted, digestsDeleted int64, err error) {
+	if p.expireItems > 0 {
+		n, err := p.queries.DeleteExpiredItems(ctx, time.Now().Add(-p.expireItems))
+		if err != nil {
+			return itemsDeleted, digestsDeleted, fmt.Errorf("deleting expired items: %w", err)
+		}
+		itemsDeleted = n
+	}
+	if p.expireDigests > 0 {
+		n, err := p.queries.DeleteExpiredDigestResults(ctx, time.Now().Add(-p.expireDigests))
+		if err != nil {
+			return itemsDeleted, digestsDeleted, fmt.Errorf("deleting expired digest results: %w", err)
+		}
+		digestsDeleted = n
+	}
+	return itemsDeleted, digestsDeleted, nil
+}
+
 func (p *Poller) CommentFetchers() map[string]CommentFetcher {
 	return p.commentFetchers
 }
@@ -93,7 +139,22 @@ func (p *Poller) Start(ctx context.Context, interval time.Duration) {
 	}
 }
 
+// expireOldData runs ExpireOldData and logs the outcome. Called at the start
+// of every feed refresh cycle and from digest generation.
+func (p *Poller) expireOldData(ctx context.Context) {
+	items, digests, err := p.ExpireOldData(ctx)
+	if err != nil {
+		slog.Error("data expiry failed", "error", err)
+		return
+	}
+	if items > 0 || digests > 0 {
+		slog.Info("expired old data", "items", items, "digest_results", digests)
+	}
+}
+
 func (p *Poller) PollAll(ctx context.Context) {
+	p.expireOldData(ctx)
+
 	feeds, err := p.queries.ListActiveFeeds(ctx)
 	if err != nil {
 		slog.Error("failed to list active feeds", "error", err)

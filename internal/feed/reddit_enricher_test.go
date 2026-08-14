@@ -3,6 +3,7 @@ package feed
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -300,5 +301,27 @@ func TestRedditEnricherEnrichKeepsRedditURL(t *testing.T) {
 	}
 	if item.Url != "https://www.reddit.com/r/test/comments/selfpost/" {
 		t.Fatalf("expected URL to remain unchanged, got %s", item.Url)
+	}
+}
+
+// TestRedditCredentialsMissingLogsError verifies that Reddit enrichment logs
+// an error when a reddit feed needs the API but reddit.client_id /
+// REDDIT_CLIENT_ID is not configured.
+func TestRedditCredentialsMissingLogsError(t *testing.T) {
+	t.Setenv("REDDIT_CLIENT_ID", "")
+	t.Setenv("REDDIT_CLIENT_SECRET", "")
+
+	e := NewRedditEnricher(nil)
+	capture := testutil.CaptureSlog(t, slog.LevelError)
+	if err := e.ensureToken(context.Background()); err != nil {
+		t.Fatalf("ensureToken with missing credentials: %v", err)
+	}
+
+	rec, ok := capture.Find("Reddit API credentials not configured (reddit.client_id / REDDIT_CLIENT_ID) — enrichment will fail")
+	if !ok {
+		t.Fatal("missing 'Reddit API credentials not configured' error record")
+	}
+	if rec.Level != slog.LevelError {
+		t.Errorf("missing-credentials record level = %v, want error", rec.Level)
 	}
 }

@@ -2,12 +2,15 @@ package feed
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"digesterr/internal/store"
+	"digesterr/internal/testutil"
 )
 
 func TestItemHashStableAcrossTitleEdits(t *testing.T) {
@@ -150,5 +153,171 @@ func TestPollFeedNoDuplicateAfterTitleEdit(t *testing.T) {
 	// that the title edit does not create a second row.
 	if items[0].Title != "NP-Overrated" {
 		t.Errorf("expected the original title to be preserved, got %q", items[0].Title)
+	}
+}
+
+// TestExpireOldData verifies feed/digest data retention: items older than
+// the configured window are deleted, saved items are exempt, items still
+// referenced by a digest result are exempt, and digest results older than
+// the window are deleted (their join rows cascade).
+func TestExpireOldData(t *testing.T) {
+	db, err := testutil.OpenTestDB()
+	if err != nil {
+		t.Fatalf("open test db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	queries := store.New(db)
+
+	user, err := queries.CreateUser(t.Context(), store.CreateUserParams{
+		Email:        "expiry@example.com",
+		PasswordHash: "hash",
+		ApiKey:       "expiry-key",
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	feedObj, err := queries.CreateFeed(t.Context(), store.CreateFeedParams{
+		UserID: user.ID,
+		Type:   "rss",
+		Name:   "Expiry Feed",
+		Url:    "https://example.com/feed.xml",
+		Config: "{}",
+		Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create feed: %v", err)
+	}
+
+	mkItem := func(title, status string) store.Item {
+		t.Helper()
+		item, err := queries.CreateItem(t.Context(), store.CreateItemParams{
+			FeedID:        feedObj.ID,
+			Hash:          "h-" + title,
+			Title:         title,
+			Url:           "https://example.com/" + title,
+			Content:       "content",
+			CommentUrl:    "",
+			Author:        "",
+			PublishedAt:   sql.NullTime{},
+			Points:        10,
+			CommentsCount: 1,
+			Status:        status,
+		})
+		if err != nil {
+			t.Fatalf("create item %s: %v", title, err)
+		}
+		return item
+	}
+
+	// 48h old, in SQLite's DATETIME text format (matches _time_format=sqlite).
+	oldTS := time.Now().Add(-48 * time.Hour).UTC().Format("2006-01-02 15:04:05")
+	setOld := func(id int64) {
+		t.Helper()
+		if _, err := db.Exec("UPDATE items SET created_at = ? WHERE id = ?", oldTS, id); err != nil {
+			t.Fatalf("age item %d: %v", id, err)
+		}
+	}
+
+	mkItem("fresh-unread", "unread")  // recent, kept
+	old := mkItem("old-read", "read") // old, deleted
+	setOld(old.ID)
+	oldSaved := mkItem("old-saved", "saved") // old but saved, kept
+	setOld(oldSaved.ID)
+	linked := mkItem("old-linked", "digested") // old but in a digest, kept
+	setOld(linked.ID)
+
+	dcfg, err := queries.CreateDigestConfig(t.Context(), store.CreateDigestConfigParams{
+		UserID:   user.ID,
+		Name:     "Expiry Config",
+		Schedule: "0 8 * * *",
+		Config:   "{}",
+	})
+	if err != nil {
+		t.Fatalf("create digest config: %v", err)
+	}
+
+	freshResult, err := queries.CreateDigestResult(t.Context(), store.CreateDigestResultParams{
+		UserID:         user.ID,
+		ConfigID:       dcfg.ID,
+		ConfigSnapshot: "{}",
+		Content:        "{}",
+		Status:         "new",
+	})
+	if err != nil {
+		t.Fatalf("create fresh digest result: %v", err)
+	}
+	if _, err := queries.CreateDigestResultItem(t.Context(), store.CreateDigestResultItemParams{
+		ResultID:    freshResult.ID,
+		ItemID:      linked.ID,
+		IsHighlight: 1,
+	}); err != nil {
+		t.Fatalf("link item to digest: %v", err)
+	}
+
+	oldResult, err := queries.CreateDigestResult(t.Context(), store.CreateDigestResultParams{
+		UserID:         user.ID,
+		ConfigID:       dcfg.ID,
+		ConfigSnapshot: "{}",
+		Content:        "{}",
+		Status:         "new",
+	})
+	if err != nil {
+		t.Fatalf("create old digest result: %v", err)
+	}
+	if _, err := db.Exec("UPDATE digest_results SET created_at = ? WHERE id = ?", oldTS, oldResult.ID); err != nil {
+		t.Fatalf("age digest result: %v", err)
+	}
+
+	poller := NewPoller(queries)
+	poller.SetExpiry(24*time.Hour, 24*time.Hour)
+
+	itemsDeleted, digestsDeleted, err := poller.ExpireOldData(t.Context())
+	if err != nil {
+		t.Fatalf("ExpireOldData: %v", err)
+	}
+	if itemsDeleted != 1 {
+		t.Errorf("items deleted = %d, want 1 (only old-read)", itemsDeleted)
+	}
+	if digestsDeleted != 1 {
+		t.Errorf("digest results deleted = %d, want 1", digestsDeleted)
+	}
+
+	remaining, err := queries.ListItemsByFeed(t.Context(), feedObj.ID)
+	if err != nil {
+		t.Fatalf("list remaining items: %v", err)
+	}
+	got := make(map[string]bool, len(remaining))
+	for _, it := range remaining {
+		got[it.Title] = true
+	}
+	if !got["fresh-unread"] || !got["old-saved"] || !got["old-linked"] {
+		t.Errorf("expected fresh-unread, old-saved, old-linked to remain, got %v", got)
+	}
+	if got["old-read"] {
+		t.Error("old-read item survived expiry")
+	}
+
+	// The fresh digest result keeps its item link.
+	links, err := queries.ListDigestResultItems(t.Context(), freshResult.ID)
+	if err != nil {
+		t.Fatalf("list fresh result items: %v", err)
+	}
+	if len(links) != 1 {
+		t.Errorf("fresh digest result has %d linked items, want 1", len(links))
+	}
+
+	// The old digest result is gone.
+	if _, err := queries.GetDigestResult(t.Context(), store.GetDigestResultParams{ID: oldResult.ID, UserID: user.ID}); err == nil {
+		t.Error("old digest result survived expiry")
+	}
+
+	// Zero windows disable expiry entirely.
+	poller.SetExpiry(0, 0)
+	itemsDeleted, digestsDeleted, err = poller.ExpireOldData(t.Context())
+	if err != nil {
+		t.Fatalf("ExpireOldData (disabled): %v", err)
+	}
+	if itemsDeleted != 0 || digestsDeleted != 0 {
+		t.Errorf("disabled expiry deleted items=%d digests=%d, want 0/0", itemsDeleted, digestsDeleted)
 	}
 }

@@ -79,6 +79,14 @@ func NewRedditEnricher(queries *store.Queries) *RedditEnricher {
 	}
 }
 
+// SetCredentials overrides the Reddit API credentials. The merged config
+// (file + env) is applied by the server after construction; the constructor
+// keeps the env fallback for direct use in tests.
+func (e *RedditEnricher) SetCredentials(clientID, clientSecret string) {
+	e.clientID = clientID
+	e.clientSecret = clientSecret
+}
+
 func (e *RedditEnricher) ensureToken(ctx context.Context) error {
 	e.tokenMu.Lock()
 	if e.token != "" && time.Now().Before(e.tokenExpiry) {
@@ -88,7 +96,7 @@ func (e *RedditEnricher) ensureToken(ctx context.Context) error {
 	e.tokenMu.Unlock()
 
 	if e.clientID == "" || e.clientSecret == "" {
-		slog.Warn("Reddit API credentials not configured — enrichment will likely fail with 403")
+		slog.Error("Reddit API credentials not configured (reddit.client_id / REDDIT_CLIENT_ID) — enrichment will fail")
 		return nil
 	}
 

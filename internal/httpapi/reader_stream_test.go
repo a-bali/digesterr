@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"digesterr/internal/auth"
+	"digesterr/internal/config"
 	"digesterr/internal/logbuf"
 	"digesterr/internal/store"
 )
@@ -24,7 +25,7 @@ func setupStreamTestServer(t *testing.T) (*Server, *store.Queries, *sql.DB) {
 	t.Cleanup(func() { db.Close() })
 	queries := store.New(db)
 	authSvc := auth.NewService("test-jwt-secret-for-testing", queries)
-	return NewServer(queries, authSvc, logbuf.New(100)), queries, db
+	return NewServer(queries, authSvc, logbuf.New(100), config.Default()), queries, db
 }
 
 // streamSeed holds the rows created for a stream test, so tests can assert
