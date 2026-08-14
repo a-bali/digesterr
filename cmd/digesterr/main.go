@@ -276,9 +276,14 @@ func spaHandler(api http.Handler, fs http.FileSystem) http.Handler {
 			api.ServeHTTP(w, r)
 			return
 		}
-		// The Google Reader API is mounted under /reader/ and must bypass the
-		// SPA file server (same as /api).
+		// The Google Reader API is mounted under /reader/ and its ClientLogin
+		// endpoint also at /accounts/ — both must bypass the SPA file server
+		// (same as /api).
 		if len(r.URL.Path) >= 7 && r.URL.Path[:7] == "/reader" {
+			api.ServeHTTP(w, r)
+			return
+		}
+		if len(r.URL.Path) >= 9 && r.URL.Path[:9] == "/accounts" {
 			api.ServeHTTP(w, r)
 			return
 		}

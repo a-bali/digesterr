@@ -19,6 +19,14 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
+      '/reader': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/accounts': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
     },
   },
 })
