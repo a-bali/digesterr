@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -73,9 +74,9 @@ func TestReaderStreamItemsContents(t *testing.T) {
 	}
 
 	want := []string{
-		itemStreamID(seed.aUnreadNewest.ID),
-		itemStreamID(seed.aDigested.ID),
-		digestItemStreamID(seed.drNew.ID),
+		readerContentID(seed.aUnreadNewest.ID),
+		readerContentID(seed.aDigested.ID),
+		readerContentID(seed.drNew.ID + digestRefOffset),
 	}
 	if got := contentIDs(resp.Items); !equalStrings(got, want) {
 		t.Fatalf("ids mismatch:\n got %v\nwant %v", got, want)
@@ -131,7 +132,7 @@ func TestReaderStreamItemsContentsSavedAndUnknown(t *testing.T) {
 
 	path := "/reader/api/0/stream/items/contents" +
 		"?i=" + itemStreamID(seed.aSaved.ID) +
-		"&i=item/999999" +
+		"&i=999999" +
 		"&output=json"
 	resp := getContents(t, server, path)
 
@@ -160,6 +161,62 @@ func TestReaderStreamItemsContentsEmpty(t *testing.T) {
 	}
 }
 
+// TestReaderStreamItemsContentsPostTagURIs mirrors NetNewsWire's content
+// fetch: a form-encoded POST whose `i` params are long-form tag: URIs.
+func TestReaderStreamItemsContentsPostTagURIs(t *testing.T) {
+	server, queries, db := setupStreamTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedReaderStream(t, queries, db, user.ID)
+
+	form := url.Values{}
+	form.Add("T", "testkey123")
+	form.Add("output", "json")
+	form.Add("i", readerContentID(seed.aUnreadNewest.ID))
+	form.Add("i", readerContentID(seed.drNew.ID+digestRefOffset))
+
+	w := readerRequest(server, http.MethodPost, "/reader/api/0/stream/items/contents", form.Encode(), map[string]string{
+		"Authorization": "GoogleLogin auth=testkey123",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp readerContentsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	want := []string{
+		readerContentID(seed.aUnreadNewest.ID),
+		readerContentID(seed.drNew.ID + digestRefOffset),
+	}
+	if got := contentIDs(resp.Items); !equalStrings(got, want) {
+		t.Fatalf("post contents ids mismatch:\n got %v\nwant %v", got, want)
+	}
+}
+
+func TestParseReaderItemRef(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int64
+		ok   bool
+	}{
+		{"tag:google.com,2005:reader/item/0000000000001744", 5956, true}, // NetNewsWire, padded hex
+		{"tag:google.com,2005:reader/item/1744", 5956, true},            // unpadded hex
+		{"0000000000001744", 5956, true},                                 // Reeder bare hex
+		{"5956", 5956, true},                                             // Liferea decimal
+		{"item/5956", 0, false},                                          // legacy custom form
+		{"digest-item/9", 0, false},                                      // legacy custom form
+		{"", 0, false},
+		{"garbage", 0, false},
+	}
+	for _, tc := range cases {
+		got, ok := parseReaderItemRef(tc.in)
+		if ok != tc.ok || (ok && got != tc.want) {
+			t.Errorf("parseReaderItemRef(%q) = (%d, %v), want (%d, %v)", tc.in, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
 func TestReaderStreamContentsReadingList(t *testing.T) {
 	server, queries, db := setupStreamTestServer(t)
 	user := createReaderUser(t, queries, "testkey123")
@@ -170,10 +227,10 @@ func TestReaderStreamContentsReadingList(t *testing.T) {
 
 	// Unread items + new digest results, newest first.
 	want := []string{
-		itemStreamID(seed.aUnreadNewest.ID),
-		digestItemStreamID(seed.drNew.ID),
-		itemStreamID(seed.aUnreadOldest.ID),
-		itemStreamID(seed.bUnread.ID),
+		readerContentID(seed.aUnreadNewest.ID),
+		readerContentID(seed.drNew.ID + digestRefOffset),
+		readerContentID(seed.aUnreadOldest.ID),
+		readerContentID(seed.bUnread.ID),
 	}
 	if got := contentIDs(resp.Items); !equalStrings(got, want) {
 		t.Fatalf("reading-list contents ids mismatch:\n got %v\nwant %v", got, want)
@@ -197,11 +254,11 @@ func TestReaderStreamContentsFeed(t *testing.T) {
 	resp := getContents(t, server, "/reader/api/0/stream/contents/"+feedStreamID(seed.feedA.ID)+"?output=json")
 
 	want := []string{
-		itemStreamID(seed.aSaved.ID),
-		itemStreamID(seed.aUnreadNewest.ID),
-		itemStreamID(seed.aRead.ID),
-		itemStreamID(seed.aUnreadOldest.ID),
-		itemStreamID(seed.aDigested.ID),
+		readerContentID(seed.aSaved.ID),
+		readerContentID(seed.aUnreadNewest.ID),
+		readerContentID(seed.aRead.ID),
+		readerContentID(seed.aUnreadOldest.ID),
+		readerContentID(seed.aDigested.ID),
 	}
 	if got := contentIDs(resp.Items); !equalStrings(got, want) {
 		t.Fatalf("feed contents ids mismatch:\n got %v\nwant %v", got, want)

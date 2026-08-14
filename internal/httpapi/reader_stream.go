@@ -20,13 +20,66 @@ const (
 	readerStreamStarred     = "user/-/state/com.google/starred"
 )
 
-// itemStreamID builds the Google Reader stream-item id for a regular feed
-// item. The contents endpoint (Task 5) resolves these back to items.
-func itemStreamID(id int64) string { return fmt.Sprintf("item/%d", id) }
+// Google Reader item-id wire formats, mirroring Miniflux so off-the-shelf
+// clients (NetNewsWire, Reeder, Read You, …) can parse and round-trip ids.
+const (
+	readerItemIDPrefix = "tag:google.com,2005:reader/item/"
+	readerItemIDFormat = "tag:google.com,2005:reader/item/%016x"
+	// digestRefOffset shifts digest-result ids into a range disjoint from
+	// item ids, so both share the reader's flat integer item-id space without
+	// colliding. Clients echo these ids back verbatim (or re-encoded as a
+	// tag: URI) and never inspect their value.
+	digestRefOffset = int64(1) << 40
+)
 
-// digestItemStreamID builds the Google Reader stream-item id for a digest
-// result, which surfaces as a synthetic item in merged streams.
-func digestItemStreamID(id int64) string { return fmt.Sprintf("digest-item/%d", id) }
+// itemStreamID returns the reader item-reference id (a plain decimal string)
+// for a regular feed item. Google Reader clients store this verbatim and echo
+// it back as the `i` parameter — sometimes re-encoded as a tag: URI, which
+// parseReaderItemRef accepts.
+func itemStreamID(id int64) string { return strconv.FormatInt(id, 10) }
+
+// digestItemStreamID returns the reader item-reference id (a plain decimal
+// string) for a digest result, offset into a range disjoint from item ids.
+func digestItemStreamID(id int64) string { return strconv.FormatInt(id+digestRefOffset, 10) }
+
+// readerContentID renders a reader reference id (already offset for digests)
+// as the long-form content id carried in stream/items/contents responses.
+func readerContentID(refID int64) string { return fmt.Sprintf(readerItemIDFormat, refID) }
+
+// parseReaderItemRef parses an `i` parameter value into a reader reference id.
+// It accepts the three forms real clients send:
+//   - "tag:google.com,2005:reader/item/<hex>" (NetNewsWire, padded or not)
+//   - a 16-char bare hex string (Reeder)
+//   - a plain decimal string (Liferea)
+func parseReaderItemRef(s string) (int64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	if rest, ok := strings.CutPrefix(s, readerItemIDPrefix); ok {
+		if n, err := strconv.ParseInt(rest, 16, 64); err == nil {
+			return n, true
+		}
+		return 0, false
+	}
+	if len(s) == 16 {
+		if n, err := strconv.ParseInt(s, 16, 64); err == nil {
+			return n, true
+		}
+	}
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return n, true
+	}
+	return 0, false
+}
+
+// splitReaderItemRef maps a reader reference id back to (kind, numeric id).
+func splitReaderItemRef(ref int64) (readerEditKind, int64) {
+	if ref >= digestRefOffset {
+		return readerEditDigest, ref - digestRefOffset
+	}
+	return readerEditItem, ref
+}
 
 // readerItemRef is a single entry in the stream items/ids response.
 type readerItemRef struct {

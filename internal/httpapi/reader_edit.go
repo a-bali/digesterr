@@ -25,24 +25,15 @@ const (
 	readerEditDigest                       // "digest-item/<id>"
 )
 
-// resolveEditTarget parses an edit-tag item id into a kind and numeric id.
+// resolveEditTarget parses an edit-tag item id (any of the forms accepted by
+// parseReaderItemRef) into a kind and numeric id.
 func resolveEditTarget(id string) (readerEditKind, int64) {
-	switch {
-	case strings.HasPrefix(id, "item/"):
-		n, err := strconv.ParseInt(strings.TrimPrefix(id, "item/"), 10, 64)
-		if err != nil {
-			return readerEditSkip, 0
-		}
-		return readerEditItem, n
-	case strings.HasPrefix(id, "digest-item/"):
-		n, err := strconv.ParseInt(strings.TrimPrefix(id, "digest-item/"), 10, 64)
-		if err != nil {
-			return readerEditSkip, 0
-		}
-		return readerEditDigest, n
-	default:
+	ref, ok := parseReaderItemRef(id)
+	if !ok {
 		return readerEditSkip, 0
 	}
+	kind, n := splitReaderItemRef(ref)
+	return kind, n
 }
 
 // setItemStatus updates an item's status after verifying the item belongs to
