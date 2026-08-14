@@ -10,7 +10,7 @@ import DigestContent from '../components/DigestContent.vue'
 import DigestResultList from '../components/DigestResultList.vue'
 import LogsDialog from '../components/LogsDialog.vue'
 import ThemeMenu from '../components/ThemeMenu.vue'
-import { useAuthStore } from '../stores/auth'
+import AccountMenu from '../components/AccountMenu.vue'
 import { useFeedStore } from '../stores/feed'
 import { useCategoryStore } from '../stores/category'
 import { useDigestStore } from '../stores/digest'
@@ -18,11 +18,10 @@ import { feedApi } from '../services/api'
 import type { Item } from '../types/api'
 import { useBreakpoints } from '../composables/useMediaQuery'
 import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts'
-import { Rss, LogOut, Menu, ArrowLeft } from 'lucide-vue-next'
+import { Rss, Menu, ArrowLeft } from 'lucide-vue-next'
 
 const router = useRouter()
 const route = useRoute()
-const auth = useAuthStore()
 const feedStore = useFeedStore()
 const digestStore = useDigestStore()
 const categoryStore = useCategoryStore()
@@ -188,9 +187,8 @@ function onSelectDigestResult(result: { id: number }) {
       <div class="ml-auto flex items-center gap-1">
         <LogsDialog />
         <ThemeMenu />
-        <Button variant="ghost" size="sm" class="hidden sm:flex" @click="auth.signout()">
-          <LogOut class="size-4" /> {{ auth.user?.email }}
-        </Button>
+        <!-- Change password / Google Reader API dialogs hook into the events emitted here. -->
+        <AccountMenu />
       </div>
     </header>
 

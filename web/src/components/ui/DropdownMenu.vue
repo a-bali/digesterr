@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { Component } from 'vue'
 import {
   DropdownMenuArrow,
   DropdownMenuContent,
@@ -11,7 +12,7 @@ import {
 import { cn } from '../../lib/utils'
 
 defineProps<{
-  items: { label: string; icon?: string; disabled?: boolean; onClick?: () => void }[]
+  items: { label: string; icon?: Component; disabled?: boolean; onClick?: () => void }[]
 }>()
 </script>
 
@@ -35,6 +36,7 @@ defineProps<{
           class="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-muted focus:bg-muted data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
           @click="item.onClick"
         >
+          <component :is="item.icon" v-if="item.icon" class="size-4 shrink-0" />
           {{ item.label }}
         </DropdownMenuItem>
         <DropdownMenuSeparator v-if="$slots.separator" class="my-1 h-px bg-border" />
