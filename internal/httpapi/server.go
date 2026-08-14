@@ -90,6 +90,7 @@ func NewServer(queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffe
 	mux.HandleFunc("GET /reader/api/0/token", s.readerAuth(s.handleReaderToken))
 	mux.HandleFunc("GET /reader/api/0/user-info", s.readerAuth(s.handleReaderUserInfo))
 	mux.HandleFunc("POST /reader/api/0/accounts/ClientLogin", s.handleReaderClientLogin)
+	mux.HandleFunc("POST /accounts/ClientLogin", s.handleReaderClientLogin)
 	mux.HandleFunc("GET /reader/api/0/subscription/list", s.readerAuth(s.handleReaderSubscriptionList))
 	mux.HandleFunc("GET /reader/api/0/tag/list", s.readerAuth(s.handleReaderTagList))
 	mux.HandleFunc("GET /reader/api/0/subscription/export", s.readerAuth(s.handleReaderSubscriptionExport))

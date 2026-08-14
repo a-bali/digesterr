@@ -124,7 +124,7 @@ func TestReaderClientLogin(t *testing.T) {
 	server, queries := setupTestServer(t)
 	createReaderUser(t, queries, "testkey123")
 
-	form := url.Values{"Email": {"testkey123"}}
+	form := url.Values{"Email": {"reader@example.com"}, "Passwd": {"testkey123"}}
 	w := readerRequest(server, http.MethodPost, "/reader/api/0/accounts/ClientLogin", form.Encode(), nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
@@ -134,17 +134,45 @@ func TestReaderClientLogin(t *testing.T) {
 	}
 }
 
-func TestReaderClientLoginPasswdFallback(t *testing.T) {
+func TestReaderClientLoginRootPath(t *testing.T) {
 	server, queries := setupTestServer(t)
 	createReaderUser(t, queries, "testkey123")
 
-	form := url.Values{"Passwd": {"testkey123"}}
-	w := readerRequest(server, http.MethodPost, "/reader/api/0/accounts/ClientLogin", form.Encode(), nil)
+	form := url.Values{"Email": {"reader@example.com"}, "Passwd": {"testkey123"}}
+	w := readerRequest(server, http.MethodPost, "/accounts/ClientLogin", form.Encode(), nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
 	if body := w.Body.String(); !strings.Contains(body, "Auth=testkey123") {
 		t.Fatalf("expected body to contain %q, got %q", "Auth=testkey123", body)
+	}
+}
+
+func TestReaderClientLoginWrongKey(t *testing.T) {
+	server, queries := setupTestServer(t)
+	createReaderUser(t, queries, "testkey123")
+
+	form := url.Values{"Email": {"reader@example.com"}, "Passwd": {"wrongkey"}}
+	w := readerRequest(server, http.MethodPost, "/reader/api/0/accounts/ClientLogin", form.Encode(), nil)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d", w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "Error=BadAuthentication") {
+		t.Fatalf("expected body to contain %q, got %q", "Error=BadAuthentication", body)
+	}
+}
+
+func TestReaderClientLoginWrongEmail(t *testing.T) {
+	server, queries := setupTestServer(t)
+	createReaderUser(t, queries, "testkey123")
+
+	form := url.Values{"Email": {"wrong@example.com"}, "Passwd": {"testkey123"}}
+	w := readerRequest(server, http.MethodPost, "/reader/api/0/accounts/ClientLogin", form.Encode(), nil)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d", w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "Error=BadAuthentication") {
+		t.Fatalf("expected body to contain %q, got %q", "Error=BadAuthentication", body)
 	}
 }
 
@@ -152,7 +180,8 @@ func TestReaderClientLoginBadAuth(t *testing.T) {
 	server, queries := setupTestServer(t)
 	createReaderUser(t, queries, "testkey123")
 
-	form := url.Values{"Email": {"wrongkey"}}
+	// Missing Passwd.
+	form := url.Values{"Email": {"reader@example.com"}}
 	w := readerRequest(server, http.MethodPost, "/reader/api/0/accounts/ClientLogin", form.Encode(), nil)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status 401, got %d", w.Code)

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -58,21 +59,32 @@ func (s *Server) handleReaderUserInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleReaderClientLogin is the Google Reader ClientLogin endpoint. It is not
-// guarded by readerAuth because this is where the client supplies its API key
-// (via the Email or Passwd form field) in exchange for SID/LSID/Auth tokens.
+// guarded by readerAuth because this is where the client authenticates: the
+// Email field carries the username (email) and the Passwd field carries the
+// API key. On success it returns SID/LSID/Auth tokens; every subsequent
+// request then authenticates with "GoogleLogin auth=<key>" (or X-Auth-Token).
 func (s *Server) handleReaderClientLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		writeText(w, http.StatusUnauthorized, "Error=BadAuthentication")
 		return
 	}
 
-	key := strings.TrimSpace(r.Form.Get("Email"))
-	if key == "" {
-		key = strings.TrimSpace(r.Form.Get("Passwd"))
+	email := strings.TrimSpace(r.Form.Get("Email"))
+	apiKey := strings.TrimSpace(r.Form.Get("Passwd"))
+	if email == "" || apiKey == "" {
+		writeText(w, http.StatusUnauthorized, "Error=BadAuthentication")
+		return
 	}
 
-	user, err := s.queries.GetUserByAPIKey(r.Context(), key)
+	user, err := s.queries.GetUserByEmail(r.Context(), email)
 	if err != nil {
+		writeText(w, http.StatusUnauthorized, "Error=BadAuthentication")
+		return
+	}
+
+	// Constant-time compare, and reject an empty stored key so a user created
+	// before the API-key feature can't authenticate with a blank password.
+	if user.ApiKey == "" || subtle.ConstantTimeCompare([]byte(user.ApiKey), []byte(apiKey)) != 1 {
 		writeText(w, http.StatusUnauthorized, "Error=BadAuthentication")
 		return
 	}
