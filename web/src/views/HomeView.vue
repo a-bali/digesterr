@@ -11,6 +11,7 @@ import DigestResultList from '../components/DigestResultList.vue'
 import LogsDialog from '../components/LogsDialog.vue'
 import ThemeMenu from '../components/ThemeMenu.vue'
 import AccountMenu from '../components/AccountMenu.vue'
+import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
 import { useFeedStore } from '../stores/feed'
 import { useCategoryStore } from '../stores/category'
 import { useDigestStore } from '../stores/digest'
@@ -32,6 +33,7 @@ const savedItems = ref<Item[]>([])
 const showingSaved = ref(false)
 const sidebarOpen = ref(false)
 const pendingItemId = ref<number | null>(null)
+const showChangePassword = ref(false)
 
 const feedMode = computed(() => feedStore.activeFeedId != null || showingSaved.value)
 const digestMode = computed(() => digestStore.activeConfigId != null && !feedMode.value)
@@ -188,9 +190,11 @@ function onSelectDigestResult(result: { id: number }) {
         <LogsDialog />
         <ThemeMenu />
         <!-- Change password / Google Reader API dialogs hook into the events emitted here. -->
-        <AccountMenu />
+        <AccountMenu @change-password="showChangePassword = true" />
       </div>
     </header>
+
+    <ChangePasswordDialog :open="showChangePassword" @update:open="showChangePassword = $event" />
 
     <!-- Body -->
     <div class="flex flex-1 min-h-0">
