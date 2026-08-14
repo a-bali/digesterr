@@ -1,0 +1,11 @@
+.git
+.gitignore
+.worktrees
+.air.toml
+.env
+bin/
+data/
+tmp/
+web/node_modules
+web/dist
+digesterr.dev.yaml

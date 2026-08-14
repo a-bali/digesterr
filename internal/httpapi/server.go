@@ -50,6 +50,10 @@ func NewServer(queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffe
 
 	mux := s.mux
 
+	// Health endpoints are unauthenticated so cluster probes work.
+	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /api/health", s.handleHealth)
+
 	mux.HandleFunc("POST /api/auth/signup", s.handleSignup)
 	mux.HandleFunc("POST /api/auth/signin", s.handleSignin)
 	mux.HandleFunc("POST /api/auth/refresh", s.handleRefresh)
