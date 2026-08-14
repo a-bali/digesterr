@@ -272,7 +272,7 @@ func (s *Server) digestContentObject(r *http.Request, userID int64, dr store.Dig
 
 	// NetNewsWire reads only `summary` as the article body, so render the full
 	// digest once and put it in both fields (matching the item content path).
-	rendered := renderDigestHTML(dr.Content)
+	rendered := renderDigestHTML(dr.Content, s.webBaseURL(r))
 
 	digestURL := s.digestResultWebURL(r, dr.ConfigID, dr.ID)
 	created := dr.CreatedAt
@@ -360,7 +360,8 @@ type digestContentComment struct {
 // user-controlled strings are escaped to prevent HTML injection. When the
 // content carries sections (category/feed grouping), they are rendered in
 // order; older content without sections falls back to the flat layout.
-func renderDigestHTML(contentJSON string) string {
+// feedBaseURL is the digesterr web UI base URL used for feed-name links.
+func renderDigestHTML(contentJSON, feedBaseURL string) string {
 	var c digestContentJSON
 	if err := json.Unmarshal([]byte(contentJSON), &c); err != nil {
 		c = digestContentJSON{}
@@ -374,10 +375,10 @@ func renderDigestHTML(contentJSON string) string {
 
 	if len(c.Sections) > 0 {
 		for _, sec := range c.Sections {
-			renderDigestSectionHTML(&b, sec, 2)
+			renderDigestSectionHTML(&b, sec, 2, feedBaseURL)
 		}
 	} else {
-		renderDigestFlatHTML(&b, c.Highlights, c.Items)
+		renderDigestFlatHTML(&b, c.Highlights, c.Items, feedBaseURL)
 	}
 
 	return b.String()
@@ -386,23 +387,25 @@ func renderDigestHTML(contentJSON string) string {
 // renderDigestSectionHTML renders one digest section (category or feed) as
 // HTML. Category sections emit a heading and recurse into their feed sections;
 // feed sections emit a heading followed by highlights and the item list.
-func renderDigestSectionHTML(b *strings.Builder, sec digestSectionJSON, level int) {
+func renderDigestSectionHTML(b *strings.Builder, sec digestSectionJSON, level int, feedBaseURL string) {
 	name := html.EscapeString(sec.Name)
 	if sec.Kind == "category" {
 		fmt.Fprintf(b, `<h%d>%s</h%d>`+"\n", level, name, level)
 		for _, sub := range sec.Sections {
-			renderDigestSectionHTML(b, sub, level+1)
+			renderDigestSectionHTML(b, sub, level+1, feedBaseURL)
 		}
 		return
 	}
 	// Feed section.
 	fmt.Fprintf(b, `<h%d>%s</h%d>`+"\n", level, name, level)
-	renderDigestFlatHTML(b, sec.Highlights, sec.Items)
+	renderDigestFlatHTML(b, sec.Highlights, sec.Items, feedBaseURL)
 }
 
 // renderDigestFlatHTML renders highlight cards followed by the plain item
-// list, mirroring the historical digest layout.
-func renderDigestFlatHTML(b *strings.Builder, highlights, items []digestContentRef) {
+// list, mirroring the historical digest layout. Each highlight shows the
+// title (linking out), a feed-name link into digesterr, a date-time and
+// points/comments line, the LLM summary, and top comments.
+func renderDigestFlatHTML(b *strings.Builder, highlights, items []digestContentRef, feedBaseURL string) {
 	for _, h := range highlights {
 		title := html.EscapeString(h.Title)
 		if h.URL != "" {
@@ -411,15 +414,34 @@ func renderDigestFlatHTML(b *strings.Builder, highlights, items []digestContentR
 			fmt.Fprintf(b, `<h3>%s</h3>`+"\n", title)
 		}
 
-		var meta []string
+		// Feed-name link into digesterr (next to the title).
+		if h.FeedID > 0 {
+			feedURL := fmt.Sprintf("%s/feeds/%d", feedBaseURL, h.FeedID)
+			feedName := html.EscapeString(h.FeedName)
+			if feedName == "" {
+				feedName = "feed"
+			}
+			fmt.Fprintf(b, `<p class="digest-feed"><a href="%s">%s</a></p>`+"\n", html.EscapeString(feedURL), feedName)
+		}
+
+		// Date-time, then points and comments, on one line.
+		var parts []string
+		if h.PublishedAt != "" {
+			parts = append(parts, html.EscapeString(h.PublishedAt))
+		}
 		if h.Points > 0 {
-			meta = append(meta, fmt.Sprintf("%d points", h.Points))
+			parts = append(parts, fmt.Sprintf("%d points", h.Points))
 		}
 		if h.CommentsCount > 0 {
-			meta = append(meta, fmt.Sprintf("%d comments", h.CommentsCount))
+			commentsLabel := fmt.Sprintf("%d comments", h.CommentsCount)
+			if h.CommentURL != "" {
+				parts = append(parts, fmt.Sprintf(`<a href="%s">%s</a>`, html.EscapeString(h.CommentURL), commentsLabel))
+			} else {
+				parts = append(parts, commentsLabel)
+			}
 		}
-		if len(meta) > 0 {
-			fmt.Fprintf(b, `<p class="digest-meta">%s</p>`+"\n", html.EscapeString(strings.Join(meta, " · ")))
+		if len(parts) > 0 {
+			fmt.Fprintf(b, `<p class="digest-meta">%s</p>`+"\n", strings.Join(parts, " · "))
 		}
 
 		if h.LLMSummary != "" {
