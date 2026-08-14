@@ -17,8 +17,11 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-# The static files must be present for go:embed to compile.
-COPY --from=web /src/web/dist ./web/dist
+# The repo only carries a placeholder cmd/digesterr/static/.gitkeep — the
+# go:embed in main.go embeds static/*, so put the real web build there before
+# compiling. (web/dist is not copied to the runtime stage; the embedded files
+# are the only static source in the container.)
+COPY --from=web /src/web/dist ./cmd/digesterr/static/
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/digesterr ./cmd/digesterr
 
 # ---- Stage 3: runtime ----
