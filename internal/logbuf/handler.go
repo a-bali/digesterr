@@ -15,6 +15,10 @@ type Handler struct {
 	inner slog.Handler
 	buf   *Buffer
 	opts  *slog.HandlerOptions
+	// attrs accumulates attributes set via slog.With / WithAttrs. They live
+	// on the handler (not on the record), so they must be remembered here to
+	// surface in the captured buffer entry alongside record-level attrs.
+	attrs []slog.Attr
 }
 
 // NewHandler wraps inner and captures records into buf. The buffer's records
@@ -29,6 +33,8 @@ func (h *Handler) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 // Handle captures the record into the buffer and forwards to the inner handler.
+// Record-level attributes override handler-level (slog.With) attributes of the
+// same key, mirroring slog's output precedence.
 func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 	entry := Entry{
 		Time:    r.Time,
@@ -36,25 +42,34 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 		Type:    typeForSource(r.PC, h.opts),
 		Message: r.Message,
 	}
+	attrs := make(map[string]string, len(h.attrs)+r.NumAttrs())
+	for _, a := range h.attrs {
+		if a.Key != "" {
+			attrs[a.Key] = fmt.Sprint(a.Value.Any())
+		}
+	}
 	if r.NumAttrs() > 0 {
-		attrs := make(map[string]string, r.NumAttrs())
 		r.Attrs(func(a slog.Attr) bool {
 			if a.Key != "" {
 				attrs[a.Key] = fmt.Sprint(a.Value.Any())
 			}
 			return true
 		})
-		if len(attrs) > 0 {
-			entry.Attrs = attrs
-		}
+	}
+	if len(attrs) > 0 {
+		entry.Attrs = attrs
 	}
 	h.buf.Add(entry)
 	return h.inner.Handle(ctx, r)
 }
 
-// WithAttrs forwards to the inner handler.
+// WithAttrs forwards to the inner handler and remembers the attributes so
+// they appear in captured entries.
 func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &Handler{inner: h.inner.WithAttrs(attrs), buf: h.buf, opts: h.opts}
+	merged := make([]slog.Attr, 0, len(h.attrs)+len(attrs))
+	merged = append(merged, h.attrs...)
+	merged = append(merged, attrs...)
+	return &Handler{inner: h.inner.WithAttrs(attrs), buf: h.buf, opts: h.opts, attrs: merged}
 }
 
 // WithGroup forwards to the inner handler.

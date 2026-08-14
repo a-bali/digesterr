@@ -4,7 +4,7 @@ import Dialog from './ui/Dialog.vue'
 import Button from './ui/Button.vue'
 import { logsApi } from '../services/api'
 import type { LogEntry } from '../types/api'
-import { ScrollText, RefreshCw } from 'lucide-vue-next'
+import { ChevronRight, RefreshCw, ScrollText } from 'lucide-vue-next'
 
 const PAGE_SIZE = 200
 
@@ -15,13 +15,28 @@ const loadingMore = ref(false)
 const hasMore = ref(false)
 const total = ref(0)
 const levelFilter = ref('')
-const typeFilter = ref('')
+const categoryFilter = ref('')
+const expanded = ref<Set<string>>(new Set())
 const error = ref('')
 
-const types = computed(() => {
+// Canonical display order for categories; unknown categories sort after.
+const CATEGORY_ORDER = ['http', 'feed', 'item', 'digest', 'app', 'auth']
+
+// The backend stamps an explicit "category" attribute on some records (e.g.
+// item-level logs emitted from the http layer); otherwise the source-derived
+// type is the category. Fall back to "app" so the badge never renders empty.
+function categoryOf(e: LogEntry): string {
+  return e.attrs?.category || e.type || 'app'
+}
+
+const categories = computed(() => {
   const set = new Set<string>()
-  for (const e of entries.value) if (e.type) set.add(e.type)
-  return [...set].sort()
+  for (const e of entries.value) set.add(categoryOf(e))
+  return [...set].sort((a, b) => {
+    const ai = CATEGORY_ORDER.indexOf(a)
+    const bi = CATEGORY_ORDER.indexOf(b)
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi) || a.localeCompare(b)
+  })
 })
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -34,13 +49,39 @@ const levelClass: Record<string, string> = {
 }
 
 function entryKey(e: LogEntry): string {
-  return `${e.time}|${e.level}|${e.type}|${e.message}`
+  return `${e.time}|${e.level}|${categoryOf(e)}|${e.message}|${JSON.stringify(e.attrs || {})}`
+}
+
+// Structured context fields to show in the expanded section. The category
+// itself is already rendered as the row badge, so it is not repeated.
+function attrEntries(e: LogEntry): [string, string][] {
+  if (!e.attrs) return []
+  return Object.entries(e.attrs).filter(([k]) => k !== 'category')
+}
+
+function expandable(e: LogEntry): boolean {
+  return attrEntries(e).length > 0
+}
+
+function isExpanded(e: LogEntry): boolean {
+  return expanded.value.has(entryKey(e))
+}
+
+function toggleExpanded(e: LogEntry) {
+  const key = entryKey(e)
+  const next = new Set(expanded.value)
+  if (next.has(key)) {
+    next.delete(key)
+  } else {
+    next.add(key)
+  }
+  expanded.value = next
 }
 
 function filterParams() {
   return {
     level: levelFilter.value || undefined,
-    type: typeFilter.value || undefined,
+    type: categoryFilter.value || undefined,
   }
 }
 
@@ -95,6 +136,7 @@ function onOpenChange(v: boolean) {
 }
 
 function onFilterChange() {
+  expanded.value = new Set()
   if (open.value) load()
 }
 
@@ -107,11 +149,6 @@ function fmtTime(t: string): string {
   const d = new Date(t)
   if (isNaN(d.getTime())) return t
   return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-}
-
-function attrString(e: LogEntry): string {
-  if (!e.attrs) return ''
-  return Object.entries(e.attrs).map(([k, v]) => `${k}=${v}`).join(' ')
 }
 
 onUnmounted(() => {
@@ -147,12 +184,12 @@ onUnmounted(() => {
           <option value="error">ERROR</option>
         </select>
         <select
-          v-model="typeFilter"
+          v-model="categoryFilter"
           class="h-8 rounded-md border border-border bg-background px-2 text-xs"
           @change="onFilterChange"
         >
-          <option value="">All types</option>
-          <option v-for="t in types" :key="t" :value="t">{{ t }}</option>
+          <option value="">All categories</option>
+          <option v-for="c in categories" :key="c" :value="c">{{ c }}</option>
         </select>
         <span v-if="hasMore" class="text-xs text-muted-foreground">showing {{ entries.length }} of {{ total }}</span>
         <Button variant="outline" size="sm" class="ml-auto" :disabled="loading" @click="load">
@@ -164,21 +201,47 @@ onUnmounted(() => {
       <p v-if="error" class="text-xs text-red-500">{{ error }}</p>
 
       <div class="max-h-[60vh] overflow-y-auto rounded-md border bg-muted/20" @scroll="onScroll">
-        <div
-          v-for="(e, i) in entries"
-          :key="i"
-          class="flex items-start gap-2 border-b border-border/50 px-2 py-1 font-mono text-xs leading-relaxed last:border-b-0"
-          :class="e.level === 'ERROR' ? 'bg-red-500/5' : e.level === 'WARN' ? 'bg-amber-500/5' : ''"
-        >
-          <span class="shrink-0 text-muted-foreground">{{ fmtTime(e.time) }}</span>
-          <span class="shrink-0 rounded px-1 py-px text-[10px] font-semibold" :class="levelClass[e.level] || 'bg-muted text-muted-foreground'">
-            {{ e.level }}
-          </span>
-          <span class="shrink-0 text-muted-foreground">{{ e.type }}</span>
-          <span class="min-w-0 flex-1 break-words">
-            {{ e.message }}<span v-if="attrString(e)" class="text-muted-foreground"> — {{ attrString(e) }}</span>
-          </span>
-        </div>
+        <template v-for="(e, i) in entries" :key="i">
+          <div
+            class="flex cursor-pointer items-start gap-2 border-b border-border/50 px-2 py-1 font-mono text-xs leading-relaxed last:border-b-0 hover:bg-muted/40"
+            :class="e.level === 'ERROR' ? 'bg-red-500/5' : e.level === 'WARN' ? 'bg-amber-500/5' : ''"
+            :data-expandable="expandable(e)"
+            @click="toggleExpanded(e)"
+          >
+            <button
+              v-if="expandable(e)"
+              class="mt-px shrink-0 text-muted-foreground hover:text-foreground"
+              :aria-label="isExpanded(e) ? 'Collapse details' : 'Expand details'"
+              :aria-expanded="isExpanded(e)"
+              @click.stop="toggleExpanded(e)"
+            >
+              <ChevronRight class="size-3 transition-transform" :class="isExpanded(e) ? 'rotate-90' : ''" />
+            </button>
+            <span v-else class="mt-px size-3 shrink-0" />
+            <span class="shrink-0 text-muted-foreground">{{ fmtTime(e.time) }}</span>
+            <span class="shrink-0 rounded px-1 py-px text-[10px] font-semibold" :class="levelClass[e.level] || 'bg-muted text-muted-foreground'">
+              {{ e.level }}
+            </span>
+            <span class="shrink-0 rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
+              {{ categoryOf(e) }}
+            </span>
+            <span class="min-w-0 flex-1 break-words">
+              {{ e.message }}
+            </span>
+          </div>
+          <div v-if="isExpanded(e)" class="border-b border-border/50 bg-background/60 px-2 pb-2 pl-5">
+            <div
+              v-if="attrEntries(e).length"
+              class="grid grid-cols-[max-content,1fr] gap-x-4 gap-y-0.5 rounded-md border border-border/60 bg-muted/10 px-3 py-2 font-mono text-[11px]"
+            >
+              <template v-for="[k, v] in attrEntries(e)" :key="k">
+                <span class="text-muted-foreground">{{ k }}</span>
+                <span class="min-w-0 break-words text-foreground">{{ v }}</span>
+              </template>
+            </div>
+            <p v-else class="text-[11px] text-muted-foreground">No additional fields.</p>
+          </div>
+        </template>
         <div v-if="loadingMore" class="px-3 py-3 text-center text-xs text-muted-foreground">Loading older…</div>
         <div v-if="!entries.length && !loading" class="px-3 py-6 text-center text-xs text-muted-foreground">
           No log entries match the current filters.
