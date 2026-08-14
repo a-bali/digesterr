@@ -76,6 +76,7 @@ func TestReaderSubscriptionList(t *testing.T) {
 		Subscriptions []struct {
 			ID         string `json:"id"`
 			Title      string `json:"title"`
+			URL        string `json:"url"`
 			Categories []struct {
 				ID    string `json:"id"`
 				Label string `json:"label"`
@@ -92,6 +93,7 @@ func TestReaderSubscriptionList(t *testing.T) {
 	var hn *struct {
 		ID         string `json:"id"`
 		Title      string `json:"title"`
+		URL        string `json:"url"`
 		Categories []struct {
 			ID    string `json:"id"`
 			Label string `json:"label"`
@@ -100,6 +102,7 @@ func TestReaderSubscriptionList(t *testing.T) {
 	var daily *struct {
 		ID         string `json:"id"`
 		Title      string `json:"title"`
+		URL        string `json:"url"`
 		Categories []struct {
 			ID    string `json:"id"`
 			Label string `json:"label"`
@@ -120,6 +123,9 @@ func TestReaderSubscriptionList(t *testing.T) {
 	if hn.Title != "HN" {
 		t.Fatalf("expected HN feed title %q, got %q", "HN", hn.Title)
 	}
+	if hn.URL != "https://hn.example.com" {
+		t.Fatalf("expected HN feed url %q, got %q", "https://hn.example.com", hn.URL)
+	}
 	if len(hn.Categories) != 1 || hn.Categories[0].Label != "Tech" || hn.Categories[0].ID != "user/-/label/Tech" {
 		t.Fatalf("expected HN feed in Tech category, got %v", hn.Categories)
 	}
@@ -129,6 +135,9 @@ func TestReaderSubscriptionList(t *testing.T) {
 	}
 	if daily.Title != "Daily" {
 		t.Fatalf("expected digest title %q, got %q", "Daily", daily.Title)
+	}
+	if daily.URL != "" {
+		t.Fatalf("expected digest config to have no url, got %q", daily.URL)
 	}
 	if len(daily.Categories) != 0 {
 		t.Fatalf("expected digest config to have no categories, got %v", daily.Categories)

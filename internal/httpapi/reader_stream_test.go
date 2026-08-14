@@ -173,7 +173,7 @@ type streamItemRef struct {
 
 type streamResponse struct {
 	ItemRefs     []streamItemRef `json:"itemRefs"`
-	Continuation string          `json:"continuation"`
+	Continuation *string         `json:"continuation"`
 }
 
 func getStream(t *testing.T, server *Server, path string) streamResponse {
@@ -343,8 +343,8 @@ func TestReaderStreamPagination(t *testing.T) {
 	if len(page1.ItemRefs) != 2 {
 		t.Fatalf("expected 2 itemRefs, got %d", len(page1.ItemRefs))
 	}
-	if page1.Continuation != "2" {
-		t.Fatalf("expected continuation %q, got %q", "2", page1.Continuation)
+	if page1.Continuation == nil || *page1.Continuation != "2" {
+		t.Fatalf("expected continuation %q, got %v", "2", page1.Continuation)
 	}
 
 	wantPage1 := []string{
@@ -364,8 +364,8 @@ func TestReaderStreamPagination(t *testing.T) {
 	if got := refIDs(page2.ItemRefs); !equalStrings(got, wantPage2) {
 		t.Fatalf("page 2 ids mismatch:\n got %v\nwant %v", got, wantPage2)
 	}
-	if page2.Continuation != "" {
-		t.Fatalf("expected empty continuation on final page, got %q", page2.Continuation)
+	if page2.Continuation != nil {
+		t.Fatalf("expected continuation to be omitted on final page, got %q", *page2.Continuation)
 	}
 }
 
@@ -396,8 +396,8 @@ func TestReaderStreamUnknownStream(t *testing.T) {
 	if len(resp.ItemRefs) != 0 {
 		t.Fatalf("expected empty itemRefs for unknown stream, got %v", refIDs(resp.ItemRefs))
 	}
-	if resp.Continuation != "" {
-		t.Fatalf("expected empty continuation, got %q", resp.Continuation)
+	if resp.Continuation != nil {
+		t.Fatalf("expected omitted continuation, got %q", *resp.Continuation)
 	}
 }
 

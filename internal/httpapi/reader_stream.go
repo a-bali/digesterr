@@ -38,7 +38,7 @@ type readerItemRef struct {
 
 type readerItemRefsResponse struct {
 	ItemRefs     []readerItemRef `json:"itemRefs"`
-	Continuation string          `json:"continuation"`
+	Continuation string          `json:"continuation,omitempty"`
 }
 
 // streamEntry is a normalized, timestamped entry in a reader stream. It may
