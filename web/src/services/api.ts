@@ -97,6 +97,8 @@ export const authApi = {
   signout: () => api<void>('/auth/signout', { method: 'POST' }),
   changePassword: (oldPassword: string, newPassword: string) =>
     api<void>('/auth/change-password', { method: 'POST', body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }) }),
+  getApiKey: () => api<{ api_key: string }>('/auth/api-key'),
+  rotateApiKey: () => api<{ api_key: string }>('/auth/api-key/rotate', { method: 'POST' }),
 }
 
 export const categoryApi = {

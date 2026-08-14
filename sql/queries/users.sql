@@ -17,3 +17,9 @@ UPDATE users
 SET password_hash = ?, updated_at = DATETIME('now')
 WHERE id = ?
 RETURNING *;
+
+-- name: UpdateUserAPIKey :one
+UPDATE users
+SET api_key = ?, updated_at = DATETIME('now')
+WHERE id = ?
+RETURNING *;
