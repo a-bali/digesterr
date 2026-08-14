@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import { itemApi } from '../services/api'
 import Button from './ui/Button.vue'
@@ -17,6 +17,11 @@ defineProps<{
 }>()
 
 const feedStore = useFeedStore()
+
+// Source feed for the selected item, resolved from the feed list by feed_id.
+const selectedFeed = computed(() =>
+  feedStore.feeds.find(f => f.id === feedStore.selectedItem?.feed_id) || null,
+)
 
 const extracting = ref(false)
 const extractedCollapsed = ref(false)
@@ -71,6 +76,10 @@ onUnmounted(() => {
       <div class="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mb-4">
         <span v-if="feedStore.selectedItem.author">By {{ feedStore.selectedItem.author }}</span>
         <span class="text-xs text-muted-foreground">{{ absoluteTime(feedStore.selectedItem.published_at) }}</span>
+        <a v-if="selectedFeed" :href="selectedFeed.url" target="_blank"
+          class="text-accent hover:underline" title="Open feed">
+          {{ selectedFeed.name }}
+        </a>
         <span v-if="feedStore.selectedItem.points">▴ {{ feedStore.selectedItem.points }}</span>
         <a v-if="feedStore.selectedItem.comment_url"
           :href="feedStore.selectedItem.comment_url" target="_blank"

@@ -3,7 +3,8 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ItemContent from './ItemContent.vue'
 import { useFeedStore } from '../stores/feed'
-import type { Item } from '../types/api'
+import { absoluteTime } from '../lib/format'
+import type { Feed, Item } from '../types/api'
 
 function makeItem(overrides: Partial<Item> = {}): Item {
   return {
@@ -31,10 +32,30 @@ function makeItem(overrides: Partial<Item> = {}): Item {
   }
 }
 
-function mountItemContent(item: Item | null) {
+function makeFeed(overrides: Partial<Feed> = {}): Feed {
+  return {
+    id: 1,
+    user_id: 1,
+    category_id: null,
+    type: 'rss',
+    name: 'Example Feed',
+    url: 'https://example.com/feed.xml',
+    config: '',
+    last_fetched_at: null,
+    status: 'ok',
+    extract_content: 0,
+    created_at: '2026-08-13T07:00:00Z',
+    updated_at: '2026-08-13T07:00:00Z',
+    ...overrides,
+  }
+}
+
+function mountItemContent(item: Item | null, feeds: Feed[] = []) {
   const pinia = createPinia()
   setActivePinia(pinia)
-  useFeedStore().selectedItem = item
+  const store = useFeedStore()
+  store.selectedItem = item
+  store.feeds = feeds
   return mount(ItemContent, {
     props: { unsaveItem: async () => {} },
     global: { plugins: [pinia] },
@@ -119,5 +140,33 @@ describe('ItemContent collapsible blocks', () => {
     const plain = mountItemContent(makeItem({ extract_status: '' }))
     expect(plain.text()).toContain('Original body')
     expect(toggleButtons(plain).length).toBe(0)
+  })
+})
+
+describe('ItemContent feed link', () => {
+  it('shows the feed name as a link to the feed URL next to the time', () => {
+    const feed = makeFeed({ id: 7, name: 'HN', url: 'https://news.ycombinator.com/rss' })
+    const wrapper = mountItemContent(makeItem({ feed_id: 7 }), [feed])
+
+    const link = wrapper.find('a[href="https://news.ycombinator.com/rss"]')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('target')).toBe('_blank')
+    expect(link.text()).toBe('HN')
+    // Feed link sits next to the unchanged timestamp in the metadata row.
+    const time = wrapper.find('span.text-xs')
+    expect(time.text()).toBe(absoluteTime(makeItem().published_at))
+    expect(wrapper.text()).toContain('HN')
+  })
+
+  it('renders no feed link when the item feed is unknown', () => {
+    const wrapper = mountItemContent(makeItem({ feed_id: 99 }), [makeFeed({ id: 1 })])
+    expect(wrapper.find('a[title="Open feed"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Example Feed')
+  })
+
+  it('keeps the timestamp format unchanged when a feed link is present', () => {
+    const wrapper = mountItemContent(makeItem(), [makeFeed()])
+    const time = wrapper.find('span.text-xs')
+    expect(time.text()).toBe(absoluteTime(makeItem().published_at))
   })
 })
