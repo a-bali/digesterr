@@ -60,10 +60,12 @@ type readerOrigin struct {
 }
 
 // handleReaderStreamItemsContents implements
-// GET /reader/api/0/stream/items/contents?i=<id>&i=<id>&output=json.
+// GET/POST /reader/api/0/stream/items/contents?i=<id>&i=<id>&output=json.
 //
-// Each i param resolves to a full content object; unknown or invalid ids are
-// silently skipped while preserving input order.
+// NetNewsWire POSTs form-encoded (T=<token>&output=json&i=<id>&…), other
+// clients GET with query params, so the handler parses both. Each i param
+// resolves to a full content object; unknown or invalid ids are silently
+// skipped while preserving input order.
 func (s *Server) handleReaderStreamItemsContents(w http.ResponseWriter, r *http.Request) {
 	userID, ok := userIDFromContext(r.Context())
 	if !ok {
@@ -71,10 +73,20 @@ func (s *Server) handleReaderStreamItemsContents(w http.ResponseWriter, r *http.
 		return
 	}
 
-	ids := r.URL.Query()["i"]
-	items := make([]readerContentStreamItem, 0, len(ids))
-	for _, rawID := range ids {
-		if obj, ok := s.resolveContentObject(r, userID, rawID); ok {
+	// ParseForm merges URL query and (for POST) form body into r.Form.
+	if err := r.ParseForm(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid form body")
+		return
+	}
+
+	rawIDs := r.Form["i"]
+	items := make([]readerContentStreamItem, 0, len(rawIDs))
+	for _, rawID := range rawIDs {
+		ref, ok := parseReaderItemRef(rawID)
+		if !ok {
+			continue
+		}
+		if obj, ok := s.resolveContentObject(r, userID, ref); ok {
 			items = append(items, obj)
 		}
 	}
@@ -117,7 +129,11 @@ func (s *Server) handleReaderStreamContents(w http.ResponseWriter, r *http.Reque
 
 	items := make([]readerContentStreamItem, 0, len(entries))
 	for _, e := range entries {
-		if obj, ok := s.resolveContentObject(r, userID, e.id); ok {
+		ref, ok := parseReaderItemRef(e.id)
+		if !ok {
+			continue
+		}
+		if obj, ok := s.resolveContentObject(r, userID, ref); ok {
 			items = append(items, obj)
 		}
 	}
@@ -125,17 +141,14 @@ func (s *Server) handleReaderStreamContents(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, readerContentsResponse{Direction: "ltr", Items: items})
 }
 
-// resolveContentObject maps a stream-item id ("item/<id>" or "digest-item/<id>")
-// to a full content object. It returns ok=false for unknown, malformed, or
-// cross-user ids so callers can skip them silently.
-func (s *Server) resolveContentObject(r *http.Request, userID int64, rawID string) (readerContentStreamItem, bool) {
+// resolveContentObject maps a reader reference id (item id, or digest-result
+// id offset by digestRefOffset) to a full content object. It returns ok=false
+// for unknown, malformed, or cross-user ids so callers can skip them silently.
+func (s *Server) resolveContentObject(r *http.Request, userID int64, ref int64) (readerContentStreamItem, bool) {
 	ctx := r.Context()
+	kind, id := splitReaderItemRef(ref)
 
-	if rest, ok := strings.CutPrefix(rawID, "digest-item/"); ok {
-		id, err := strconv.ParseInt(rest, 10, 64)
-		if err != nil {
-			return readerContentStreamItem{}, false
-		}
+	if kind == readerEditDigest {
 		dr, err := s.queries.GetDigestResult(ctx, store.GetDigestResultParams{ID: id, UserID: userID})
 		if err != nil {
 			return readerContentStreamItem{}, false
@@ -143,19 +156,11 @@ func (s *Server) resolveContentObject(r *http.Request, userID int64, rawID strin
 		return s.digestContentObject(ctx, userID, dr), true
 	}
 
-	if rest, ok := strings.CutPrefix(rawID, "item/"); ok {
-		id, err := strconv.ParseInt(rest, 10, 64)
-		if err != nil {
-			return readerContentStreamItem{}, false
-		}
-		item, err := s.queries.GetItemWithFeedOwner(ctx, store.GetItemWithFeedOwnerParams{ID: id, UserID: userID})
-		if err != nil {
-			return readerContentStreamItem{}, false
-		}
-		return s.itemContentObject(ctx, item), true
+	item, err := s.queries.GetItemWithFeedOwner(ctx, store.GetItemWithFeedOwnerParams{ID: id, UserID: userID})
+	if err != nil {
+		return readerContentStreamItem{}, false
 	}
-
-	return readerContentStreamItem{}, false
+	return s.itemContentObject(ctx, item), true
 }
 
 // itemContentObject builds a content object for a regular feed item.
@@ -179,7 +184,7 @@ func (s *Server) itemContentObject(ctx context.Context, item store.Item) readerC
 	ts := itemTimestamp(item)
 
 	return readerContentStreamItem{
-		ID:            itemStreamID(item.ID),
+		ID:            readerContentID(item.ID),
 		CrawlTimeMsec: strconv.FormatInt(ts.UnixMilli(), 10),
 		TimestampUsec: strconv.FormatInt(ts.UnixMicro(), 10),
 		Published:     published,
@@ -210,7 +215,7 @@ func (s *Server) digestContentObject(ctx context.Context, userID int64, dr store
 	created := dr.CreatedAt
 
 	return readerContentStreamItem{
-		ID:            digestItemStreamID(dr.ID),
+		ID:            readerContentID(dr.ID + digestRefOffset),
 		CrawlTimeMsec: strconv.FormatInt(created.UnixMilli(), 10),
 		TimestampUsec: strconv.FormatInt(created.UnixMicro(), 10),
 		Published:     created.Unix(),
