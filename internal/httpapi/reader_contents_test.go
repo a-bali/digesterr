@@ -3,6 +3,7 @@ package httpapi
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -120,14 +121,29 @@ func TestReaderStreamItemsContents(t *testing.T) {
 	if !strings.Contains(digestItem.Content.Content, "Top HN story") {
 		t.Fatalf("expected digest content to contain highlight title, got: %s", digestItem.Content.Content)
 	}
-	if digestItem.Summary.Content != "Today's top stories" {
-		t.Fatalf("expected digest summary %q, got %q", "Today's top stories", digestItem.Summary.Content)
+	// NetNewsWire reads only `summary`, so the full rendered digest must be in
+	// both summary and content.
+	if digestItem.Summary.Content != digestItem.Content.Content {
+		t.Fatalf("expected digest summary to equal content, got summary %q", digestItem.Summary.Content)
 	}
-	if !strings.Contains(digestItem.Content.Content, "top stories") {
-		t.Fatalf("expected digest content to contain summary, got: %s", digestItem.Content.Content)
+	if !strings.Contains(digestItem.Summary.Content, "Top HN story") {
+		t.Fatalf("expected digest summary to contain highlight title, got: %s", digestItem.Summary.Content)
 	}
 	if !strings.Contains(digestItem.Content.Content, "Other story") {
 		t.Fatalf("expected digest content to contain all-items entry, got: %s", digestItem.Content.Content)
+	}
+	// The digest title links to the digest result in digesterr, and the feed
+	// link to the digest config.
+	wantDigestPath := fmt.Sprintf("/digests/%d/%d", seed.cfg.ID, seed.drNew.ID)
+	if len(digestItem.Alternate) != 1 || !strings.HasSuffix(digestItem.Alternate[0].Href, wantDigestPath) {
+		t.Fatalf("expected alternate href to end with %q, got %+v", wantDigestPath, digestItem.Alternate)
+	}
+	if len(digestItem.Canonical) != 1 || !strings.HasSuffix(digestItem.Canonical[0].Href, wantDigestPath) {
+		t.Fatalf("expected canonical href to end with %q, got %+v", wantDigestPath, digestItem.Canonical)
+	}
+	wantConfigPath := fmt.Sprintf("/digests/%d", seed.cfg.ID)
+	if !strings.HasSuffix(digestItem.Origin.HTMLURL, wantConfigPath) {
+		t.Fatalf("expected digest origin htmlUrl to end with %q, got %q", wantConfigPath, digestItem.Origin.HTMLURL)
 	}
 }
 

@@ -3,6 +3,7 @@ package digest
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"strconv"
 	"testing"
@@ -365,6 +366,47 @@ func TestGeneratorBuildSections(t *testing.T) {
 			t.Errorf("sections = %+v, want alphabetical feed order", sections)
 		}
 	})
+}
+
+type fakeLLM struct{ resp string }
+
+func (f fakeLLM) Chat(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+	return f.resp, nil
+}
+
+// TestBuildContentAssignsLLMSummaryToSections guards against the regression
+// where per-highlight LLM summaries were assigned after buildSections, leaving
+// the rendered (section-based) digest without any highlight summaries.
+func TestBuildContentAssignsLLMSummaryToSections(t *testing.T) {
+	queries, cleanup := setupDigestTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	g := &Generator{
+		queries: queries,
+		llm: fakeLLM{resp: `{"summary":"overall","highlights":[{"title":"A","summary":"hl A summary"}]}`},
+	}
+
+	highlights := []digestItem{{
+		Item: store.Item{ID: 1, FeedID: 7, Title: "A", Url: "https://a.example.com", Points: 100, CommentsCount: 3},
+	}}
+
+	content, err := g.buildContent(ctx, digestConfigJSON{}, highlights, nil, slog.Default())
+	if err != nil {
+		t.Fatalf("buildContent: %v", err)
+	}
+	if len(content.Sections) == 0 {
+		t.Fatalf("expected at least one section, got none")
+	}
+	var got string
+	for _, sec := range content.Sections {
+		for _, h := range sec.Highlights {
+			got = h.LLMSummary
+		}
+	}
+	if got != "hl A summary" {
+		t.Errorf("expected section highlight LLMSummary %q, got %q", "hl A summary", got)
+	}
 }
 
 func TestGeneratorSelectHighlights(t *testing.T) {

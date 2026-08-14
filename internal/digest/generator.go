@@ -36,14 +36,14 @@ type digestConfigJSON struct {
 }
 
 type Generator struct {
-	queries   *store.Queries
-	llm       *LLMClient
-	enrichers map[string]feed.Enricher
+	queries         *store.Queries
+	llm             llmChatter
+	enrichers       map[string]feed.Enricher
 	commentFetchers map[string]feed.CommentFetcher
-	extractor *feed.Poller
+	extractor       *feed.Poller
 }
 
-func NewGenerator(queries *store.Queries, llm *LLMClient, poller *feed.Poller) *Generator {
+func NewGenerator(queries *store.Queries, llm llmChatter, poller *feed.Poller) *Generator {
 	return &Generator{
 		queries:         queries,
 		llm:             llm,
@@ -512,17 +512,17 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 		})
 	}
 
-	content.Sections = g.buildSections(dcfg, content.Highlights, content.Items, feedInfos)
-
-	if output.Summary == "" && len(highlights) == 0 {
-		return content, nil
-	}
-
+	// Assign per-highlight LLM summaries to the flat array before building
+	// sections, so the nested section highlights carry them too. Rendering
+	// prefers sections when present, so assigning after buildSections would
+	// leave every highlight summary empty in the rendered digest.
 	for i, h := range output.Highlights {
 		if i < len(content.Highlights) {
 			content.Highlights[i].LLMSummary = h.Summary
 		}
 	}
+
+	content.Sections = g.buildSections(dcfg, content.Highlights, content.Items, feedInfos)
 
 	return content, nil
 }

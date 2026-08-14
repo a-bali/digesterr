@@ -35,6 +35,7 @@ type readerSubscription struct {
 	ID            string           `json:"id"`
 	Title         string           `json:"title"`
 	URL           string           `json:"url,omitempty"`
+	HTMLURL       string           `json:"htmlUrl,omitempty"`
 	Categories    []readerCategory `json:"categories"`
 	SortID        string           `json:"sortid"`
 	FirstItemMsec string           `json:"firstitemmsec"`
@@ -71,6 +72,7 @@ func (s *Server) handleReaderSubscriptionList(w http.ResponseWriter, r *http.Req
 			ID:            feedStreamID(f.ID),
 			Title:         f.Name,
 			URL:           f.Url,
+			HTMLURL:       s.feedWebURL(r, f.ID),
 			Categories:    []readerCategory{},
 			SortID:        readerSortID,
 			FirstItemMsec: "0",
@@ -89,6 +91,7 @@ func (s *Server) handleReaderSubscriptionList(w http.ResponseWriter, r *http.Req
 		subs = append(subs, readerSubscription{
 			ID:            digestStreamID(cfg.ID),
 			Title:         title,
+			HTMLURL:       s.digestConfigWebURL(r, cfg.ID),
 			Categories:    []readerCategory{},
 			SortID:        readerSortID,
 			FirstItemMsec: "0",
