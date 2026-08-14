@@ -4,7 +4,7 @@ import { useFeedStore } from '../stores/feed'
 import { itemApi } from '../services/api'
 import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
-import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files } from 'lucide-vue-next'
+import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown } from 'lucide-vue-next'
 import { absoluteTime } from '../lib/format'
 
 // Prose styling for raw HTML content. The [&_table...] / [&_td...] rules
@@ -19,6 +19,8 @@ defineProps<{
 const feedStore = useFeedStore()
 
 const extracting = ref(false)
+const extractedCollapsed = ref(false)
+const originalCollapsed = ref(false)
 let extractPoll: ReturnType<typeof setInterval> | null = null
 
 async function doExtract() {
@@ -105,29 +107,46 @@ onUnmounted(() => {
       <!-- Extracted Content -->
       <template v-if="feedStore.selectedItem.extract_status">
         <Separator class="mb-4" />
-        <p class="text-xs font-semibold text-muted-foreground uppercase mb-2">
-          Extracted
+        <button
+          type="button"
+          class="flex w-full items-center gap-1.5 text-left text-xs font-semibold text-muted-foreground uppercase mb-2 hover:text-foreground transition-colors"
+          :aria-expanded="!extractedCollapsed"
+          @click="extractedCollapsed = !extractedCollapsed"
+        >
+          <ChevronDown class="size-3.5 shrink-0 transition-transform" :class="extractedCollapsed ? '-rotate-90' : ''" />
+          <span>Extracted</span>
           <span v-if="feedStore.selectedItem.extract_status === 'done' && feedStore.selectedItem.extract_date" class="font-normal text-muted-foreground/60 ml-1">{{ absoluteTime(feedStore.selectedItem.extract_date) }}</span>
-        </p>
-        <div v-if="feedStore.selectedItem.extract_status === 'pending'"
-          class="p-4 text-sm text-muted-foreground bg-muted/30 rounded-md">
-          <RefreshCw class="size-3 inline animate-spin mr-1" /> Extraction in progress…
-        </div>
-        <div v-else-if="feedStore.selectedItem.extract_status === 'failed'"
-          class="p-4 rounded-md bg-warning/10 dark:bg-warning/15 border border-warning/30">
-          <p class="text-xs font-medium text-warning-foreground dark:text-warning mb-1">Extraction failed after {{ feedStore.selectedItem.extract_retries }} attempt{{ feedStore.selectedItem.extract_retries === 1 ? '' : 's' }}</p>
-          <pre class="text-xs text-warning-foreground/80 dark:text-warning/90 whitespace-pre-wrap">{{ feedStore.selectedItem.extract_content }}</pre>
-        </div>
-        <div v-else-if="feedStore.selectedItem.extract_status === 'done'"
-          :class="proseClass" v-html="feedStore.selectedItem.extract_content" />
+        </button>
+        <template v-if="!extractedCollapsed">
+          <div v-if="feedStore.selectedItem.extract_status === 'pending'"
+            class="p-4 text-sm text-muted-foreground bg-muted/30 rounded-md">
+            <RefreshCw class="size-3 inline animate-spin mr-1" /> Extraction in progress…
+          </div>
+          <div v-else-if="feedStore.selectedItem.extract_status === 'failed'"
+            class="p-4 rounded-md bg-warning/10 dark:bg-warning/15 border border-warning/30">
+            <p class="text-xs font-medium text-warning-foreground dark:text-warning mb-1">Extraction failed after {{ feedStore.selectedItem.extract_retries }} attempt{{ feedStore.selectedItem.extract_retries === 1 ? '' : 's' }}</p>
+            <pre class="text-xs text-warning-foreground/80 dark:text-warning/90 whitespace-pre-wrap">{{ feedStore.selectedItem.extract_content }}</pre>
+          </div>
+          <div v-else-if="feedStore.selectedItem.extract_status === 'done'"
+            :class="proseClass" v-html="feedStore.selectedItem.extract_content" />
+        </template>
       </template>
 
       <!-- Original Content -->
       <template v-if="feedStore.selectedItem.extract_status">
         <Separator class="mb-4" />
-        <p class="text-xs font-semibold text-muted-foreground uppercase mb-2">Original</p>
+        <button
+          type="button"
+          class="flex w-full items-center gap-1.5 text-left text-xs font-semibold text-muted-foreground uppercase mb-2 hover:text-foreground transition-colors"
+          :aria-expanded="!originalCollapsed"
+          @click="originalCollapsed = !originalCollapsed"
+        >
+          <ChevronDown class="size-3.5 shrink-0 transition-transform" :class="originalCollapsed ? '-rotate-90' : ''" />
+          <span>Original</span>
+        </button>
+        <div v-if="!originalCollapsed" :class="proseClass" v-html="feedStore.selectedItem.content" />
       </template>
-      <div :class="proseClass" v-html="feedStore.selectedItem.content" />
+      <div v-else :class="proseClass" v-html="feedStore.selectedItem.content" />
     </div>
   </div>
 </template>
