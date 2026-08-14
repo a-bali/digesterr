@@ -219,7 +219,9 @@ func (s *Server) itemContentObject(ctx context.Context, item store.Item) readerC
 		Title:         item.Title,
 		Canonical:     []readerCanonical{{Href: item.Url}},
 		Alternate:     []readerAlternate{{Href: item.Url, Type: "text/html"}},
-		Summary:       readerContentBody{Content: item.Content},
+		// NetNewsWire reads only `summary` as the article body, so both fields
+		// carry the full body (extracted when available), matching Miniflux.
+		Summary:       readerContentBody{Content: body},
 		Content:       readerContentBody{Content: body},
 		Author:        item.Author,
 		Origin:        readerOrigin{StreamID: feedStreamID(item.FeedID), Title: feedName, HTMLURL: ""},
