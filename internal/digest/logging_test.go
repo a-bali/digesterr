@@ -81,7 +81,7 @@ func TestGeneratorDigestInfoLogs(t *testing.T) {
 		}
 	}
 
-	llmBody := `{"summary":"Overall digest","highlights":[{"title":"Go 1.25 Released","summary":"s1"},{"title":"New SQLite Features","summary":"s2"}]}`
+	llmBody := `{"title":"Go Time","summary":"Overall digest","highlights":[{"title":"Go 1.25 Released","summary":"s1"},{"title":"New SQLite Features","summary":"s2"}]}`
 	llmSrv := llmTestServer(t, llmBody)
 	llm := NewLLMClient(llmSrv.URL, "test-key", "test-model")
 
@@ -130,6 +130,17 @@ func TestGeneratorDigestInfoLogs(t *testing.T) {
 	}
 	if genAttrs["category"] != "digest" {
 		t.Errorf("digest generated category = %q, want digest", genAttrs["category"])
+	}
+
+	// The generated digest title is stored in the result content JSON.
+	var stored struct {
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(result.Content), &stored); err != nil {
+		t.Fatalf("parsing stored digest content: %v", err)
+	}
+	if stored.Title != "Go Time" {
+		t.Errorf("stored digest title = %q, want %q", stored.Title, "Go Time")
 	}
 
 	// LLM input/output sizes and duration are on the info records from the
