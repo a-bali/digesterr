@@ -2,15 +2,17 @@
 import { ref, computed } from 'vue'
 import { X } from 'lucide-vue-next'
 
+export type TagValue = string | number
+
 const props = withDefaults(defineProps<{
-  items: { label: string; value: number }[]
-  modelValue: number[]
+  items: { label: string; value: TagValue }[]
+  modelValue: TagValue[]
   placeholder?: string
   allowCreate?: boolean
 }>(), { placeholder: 'Search…', allowCreate: false })
 
 const emit = defineEmits<{
-  (e: 'update:modelValue', v: number[]): void
+  (e: 'update:modelValue', v: TagValue[]): void
   (e: 'create', name: string): void
 }>()
 
@@ -27,13 +29,13 @@ const filtered = computed(() => {
   )
 })
 
-function select(val: number) {
+function select(val: TagValue) {
   emit('update:modelValue', [...props.modelValue, val])
   input.value = ''
   activeIdx.value = -1
 }
 
-function remove(val: number) {
+function remove(val: TagValue) {
   emit('update:modelValue', props.modelValue.filter(v => v !== val))
 }
 
@@ -65,7 +67,7 @@ function onBlur() {
 <template>
   <div class="relative" @click="focused = true">
     <div class="flex flex-wrap items-center gap-1 rounded-md border border-border bg-background px-2 py-1 min-h-9 text-sm cursor-text" :class="{ 'ring-2 ring-ring': focused }">
-      <span v-for="val in modelValue" :key="val" class="inline-flex items-center gap-0.5 rounded bg-accent/15 text-accent px-1.5 py-0.5 text-xs">
+      <span v-for="val in modelValue" :key="String(val)" class="inline-flex items-center gap-0.5 rounded bg-accent/15 text-accent px-1.5 py-0.5 text-xs">
         {{ items.find(i => i.value === val)?.label || val }}
         <button type="button" class="hover:text-accent-foreground" @click.stop="remove(val)"><X class="size-3" /></button>
       </span>
@@ -80,7 +82,7 @@ function onBlur() {
     </div>
     <ul v-if="focused && filtered.length" class="absolute left-0 right-0 top-full mt-1 z-50 max-h-40 overflow-y-auto rounded-md border border-border bg-background shadow-md text-sm">
       <li
-        v-for="(item, i) in filtered" :key="item.value"
+        v-for="(item, i) in filtered" :key="String(item.value)"
         class="px-3 py-1.5 cursor-pointer hover:bg-accent/10 transition-colors"
         :class="{ 'bg-accent/15': i === activeIdx }"
         @mousedown.prevent="select(item.value)"

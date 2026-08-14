@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -137,60 +136,26 @@ func TestUserIsolation(t *testing.T) {
 	userA := createTestUser(t, queries, "userA@example.com", "password123")
 	userB := createTestUser(t, queries, "userB@example.com", "password123")
 	tokenA := getTestToken(t, server.auth, &userA)
-	tokenB := getTestToken(t, server.auth, &userB)
 
-	makeRequest(server, http.MethodPost, "/api/categories", map[string]string{"name": "UserACat"}, tokenA)
-
-	cat, _ := queries.CreateCategory(t.Context(), store.CreateCategoryParams{
-		UserID: userB.ID,
-		Name:   "UserBCat",
-	})
-
-	w := makeRequest(server, http.MethodGet, "/api/categories", nil, tokenA)
-	var cats []store.Category
-	json.NewDecoder(w.Body).Decode(&cats)
-	if len(cats) != 1 || cats[0].Name != "UserACat" {
-		t.Fatalf("user A should only see their own category, got %v", cats)
-	}
-
-	w = makeRequest(server, http.MethodGet, "/api/categories/"+itoa(cat.ID), nil, tokenA)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("user A should not see user B's category, got %d", w.Code)
-	}
-
-	w = makeRequest(server, http.MethodDelete, "/api/categories/"+itoa(cat.ID), nil, tokenA)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("user A should not delete user B's category, got %d", w.Code)
-	}
-
-	w = makeRequest(server, http.MethodGet, "/api/categories", nil, tokenB)
-	json.NewDecoder(w.Body).Decode(&cats)
-	if len(cats) != 1 || cats[0].Name != "UserBCat" {
-		t.Fatalf("user B should only see their own category, got %v", cats)
-	}
-
-	// Item isolation
-	catA, _ := queries.CreateCategory(t.Context(), store.CreateCategoryParams{
-		UserID: userA.ID,
-		Name:   "FeedCat",
-	})
+	// Same category name on both users' feeds; the label stream must be
+	// scoped per user.
 	feedA, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
-		UserID:     userA.ID,
-		CategoryID: sql.NullInt64{Int64: catA.ID, Valid: true},
-		Type:       "rss",
-		Name:       "AFeed",
-		Url:        "https://a.example.com/feed",
-		Config:     "{}",
-		Status:     "active",
+		UserID:   userA.ID,
+		Category: "Shared",
+		Type:     "rss",
+		Name:     "AFeed",
+		Url:      "https://a.example.com/feed",
+		Config:   "{}",
+		Status:   "active",
 	})
 	feedB, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
-		UserID:     userB.ID,
-		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
-		Type:       "rss",
-		Name:       "BFeed",
-		Url:        "https://b.example.com/feed",
-		Config:     "{}",
-		Status:     "active",
+		UserID:   userB.ID,
+		Category: "Shared",
+		Type:     "rss",
+		Name:     "BFeed",
+		Url:      "https://b.example.com/feed",
+		Config:   "{}",
+		Status:   "active",
 	})
 	itemA, _ := queries.CreateItem(t.Context(), store.CreateItemParams{
 		FeedID:  feedA.ID,
@@ -209,6 +174,39 @@ func TestUserIsolation(t *testing.T) {
 		Status:  "unread",
 	})
 
+	// Category items are scoped to the owning user even when names collide.
+	itemsA, err := queries.ListItemsByCategory(t.Context(), store.ListItemsByCategoryParams{
+		Category: "Shared",
+		UserID:   userA.ID,
+	})
+	if err != nil {
+		t.Fatalf("list items by category: %v", err)
+	}
+	if len(itemsA) != 1 || itemsA[0].ID != itemA.ID {
+		t.Fatalf("user A should only see their own items in category 'Shared', got %v", itemsA)
+	}
+	itemsB, err := queries.ListItemsByCategory(t.Context(), store.ListItemsByCategoryParams{
+		Category: "Shared",
+		UserID:   userB.ID,
+	})
+	if err != nil {
+		t.Fatalf("list items by category: %v", err)
+	}
+	if len(itemsB) != 1 || itemsB[0].ID != itemB.ID {
+		t.Fatalf("user B should only see their own items in category 'Shared', got %v", itemsB)
+	}
+
+	// Feeds API returns only the authenticated user's feeds.
+	w := makeRequest(server, http.MethodGet, "/api/feeds", nil, tokenA)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var feeds []store.Feed
+	json.NewDecoder(w.Body).Decode(&feeds)
+	if len(feeds) != 1 || feeds[0].Name != "AFeed" {
+		t.Fatalf("user A should only see their own feeds, got %v", feeds)
+	}
+
 	w = makeRequest(server, http.MethodPatch, "/api/items/"+itoa(itemB.ID), map[string]string{"status": "read"}, tokenA)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("user A should not update user B's item, got %d", w.Code)
@@ -220,61 +218,16 @@ func TestUserIsolation(t *testing.T) {
 	}
 }
 
-func TestUpdateCategory(t *testing.T) {
-	server, queries := setupTestServer(t)
-	user := createTestUser(t, queries, "updatecat@example.com", "password123")
-	token := getTestToken(t, server.auth, &user)
-
-	w := makeRequest(server, http.MethodPost, "/api/categories", map[string]string{"name": "Original"}, token)
-	var cat store.Category
-	json.NewDecoder(w.Body).Decode(&cat)
-
-	w = makeRequest(server, http.MethodPatch, "/api/categories/"+itoa(cat.ID), map[string]string{"name": "Updated"}, token)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	json.NewDecoder(w.Body).Decode(&cat)
-	if cat.Name != "Updated" {
-		t.Fatalf("expected name 'Updated', got %s", cat.Name)
-	}
-}
-
-func TestGetSingleCategory(t *testing.T) {
-	server, queries := setupTestServer(t)
-	user := createTestUser(t, queries, "getcat@example.com", "password123")
-	token := getTestToken(t, server.auth, &user)
-
-	cat, _ := queries.CreateCategory(t.Context(), store.CreateCategoryParams{
-		UserID: user.ID,
-		Name:   "SingleCat",
-	})
-
-	w := makeRequest(server, http.MethodGet, "/api/categories/"+itoa(cat.ID), nil, token)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var result store.Category
-	json.NewDecoder(w.Body).Decode(&result)
-	if result.Name != "SingleCat" {
-		t.Fatalf("expected name 'SingleCat', got %s", result.Name)
-	}
-}
-
 func TestUpdateFeed(t *testing.T) {
 	server, queries := setupTestServer(t)
 	user := createTestUser(t, queries, "updatefeed@example.com", "password123")
 	token := getTestToken(t, server.auth, &user)
 
-	cat, _ := queries.CreateCategory(t.Context(), store.CreateCategoryParams{
-		UserID: user.ID,
-		Name:   "Tech",
-	})
-
 	w := makeRequest(server, http.MethodPost, "/api/feeds", map[string]interface{}{
-		"category_id": cat.ID,
-		"type":        "rss",
-		"name":        "OriginalFeed",
-		"url":         "https://example.com/feed",
+		"category": "Tech",
+		"type":     "rss",
+		"name":     "OriginalFeed",
+		"url":      "https://example.com/feed",
 	}, token)
 	var feed store.Feed
 	json.NewDecoder(w.Body).Decode(&feed)
@@ -289,6 +242,21 @@ func TestUpdateFeed(t *testing.T) {
 	if feed.Name != "UpdatedFeed" {
 		t.Fatalf("expected name 'UpdatedFeed', got %s", feed.Name)
 	}
+	if feed.Category != "Tech" {
+		t.Fatalf("expected category to be preserved, got %q", feed.Category)
+	}
+
+	// Moving a feed to a different category via PATCH.
+	w = makeRequest(server, http.MethodPatch, "/api/feeds/"+itoa(feed.ID), map[string]interface{}{
+		"category": "News",
+	}, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	json.NewDecoder(w.Body).Decode(&feed)
+	if feed.Category != "News" {
+		t.Fatalf("expected category 'News', got %q", feed.Category)
+	}
 }
 
 func TestDeleteFeed(t *testing.T) {
@@ -296,15 +264,11 @@ func TestDeleteFeed(t *testing.T) {
 	user := createTestUser(t, queries, "delfeed@example.com", "password123")
 	token := getTestToken(t, server.auth, &user)
 
-	cat, _ := queries.CreateCategory(t.Context(), store.CreateCategoryParams{
-		UserID: user.ID,
-		Name:   "Tech",
-	})
 	w := makeRequest(server, http.MethodPost, "/api/feeds", map[string]interface{}{
-		"category_id": cat.ID,
-		"type":        "rss",
-		"name":        "ToDelete",
-		"url":         "https://example.com/feed",
+		"category": "Tech",
+		"type":     "rss",
+		"name":     "ToDelete",
+		"url":      "https://example.com/feed",
 	}, token)
 	var feed store.Feed
 	json.NewDecoder(w.Body).Decode(&feed)
@@ -325,13 +289,9 @@ func TestUpdateItemStatus(t *testing.T) {
 	user := createTestUser(t, queries, "itemstatus@example.com", "password123")
 	token := getTestToken(t, server.auth, &user)
 
-	cat, _ := queries.CreateCategory(t.Context(), store.CreateCategoryParams{
-		UserID: user.ID,
-		Name:   "Tech",
-	})
 	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
-		UserID:     user.ID,
-		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
+		UserID:   user.ID,
+		Category: "Tech",
 		Type:       "rss",
 		Name:       "Test",
 		Url:        "https://example.com/feed",
@@ -372,13 +332,9 @@ func TestUpdateItemStatusInvalid(t *testing.T) {
 	user := createTestUser(t, queries, "iteminvalid@example.com", "password123")
 	token := getTestToken(t, server.auth, &user)
 
-	cat, _ := queries.CreateCategory(t.Context(), store.CreateCategoryParams{
-		UserID: user.ID,
-		Name:   "Tech",
-	})
 	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
-		UserID:     user.ID,
-		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
+		UserID:   user.ID,
+		Category: "Tech",
 		Type:       "rss",
 		Name:       "Test",
 		Url:        "https://example.com/feed",
@@ -450,13 +406,9 @@ func TestDigestResultReadCascade(t *testing.T) {
 	user := createTestUser(t, queries, "cascade@example.com", "password123")
 	token := getTestToken(t, server.auth, &user)
 
-	cat, _ := queries.CreateCategory(t.Context(), store.CreateCategoryParams{
-		UserID: user.ID,
-		Name:   "Tech",
-	})
 	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
-		UserID:     user.ID,
-		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
+		UserID:   user.ID,
+		Category: "Tech",
 		Type:       "rss",
 		Name:       "Test",
 		Url:        "https://example.com/feed",
@@ -533,13 +485,9 @@ func TestFeedItemsByStatus(t *testing.T) {
 	user := createTestUser(t, queries, "feeditems@example.com", "password123")
 	token := getTestToken(t, server.auth, &user)
 
-	cat, _ := queries.CreateCategory(t.Context(), store.CreateCategoryParams{
-		UserID: user.ID,
-		Name:   "Tech",
-	})
 	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
-		UserID:     user.ID,
-		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
+		UserID:   user.ID,
+		Category: "Tech",
 		Type:       "rss",
 		Name:       "Test",
 		Url:        "https://example.com/feed",
@@ -590,12 +538,12 @@ func TestInvalidPathParams(t *testing.T) {
 	user := createTestUser(t, queries, "badparam@example.com", "password123")
 	token := getTestToken(t, server.auth, &user)
 
-	w := makeRequest(server, http.MethodGet, "/api/categories/abc", nil, token)
+	w := makeRequest(server, http.MethodGet, "/api/feeds/abc", nil, token)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for non-numeric id, got %d", w.Code)
 	}
 
-	w = makeRequest(server, http.MethodGet, "/api/categories/99999", nil, token)
+	w = makeRequest(server, http.MethodGet, "/api/feeds/99999", nil, token)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for nonexistent id, got %d", w.Code)
 	}
@@ -631,18 +579,14 @@ func TestFetchFeedAnotherUsersFeed(t *testing.T) {
 	userB := createTestUser(t, queries, "fetchb@example.com", "password123")
 	tokenA := getTestToken(t, server.auth, &userA)
 
-	cat, _ := queries.CreateCategory(t.Context(), store.CreateCategoryParams{
-		UserID: userB.ID,
-		Name:   "B",
-	})
 	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
-		UserID:     userB.ID,
-		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
-		Type:       "rss",
-		Name:       "BFeed",
-		Url:        "https://b.example.com/feed",
-		Config:     "{}",
-		Status:     "active",
+		UserID:   userB.ID,
+		Category: "B",
+		Type:     "rss",
+		Name:     "BFeed",
+		Url:      "https://b.example.com/feed",
+		Config:   "{}",
+		Status:   "active",
 	})
 	w := makeRequest(server, http.MethodPost, "/api/feeds/"+itoa(feed.ID)+"/fetch", nil, tokenA)
 	if w.Code != http.StatusNotFound {

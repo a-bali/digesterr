@@ -14,21 +14,25 @@ import (
 	"digesterr/internal/store"
 )
 
+type digestCategorySelection struct {
+	Name       string `json:"name"`
+	Highlights int    `json:"highlights"`
+	Comments   int    `json:"comments"`
+}
+
+type digestFeedSelection struct {
+	ID         int `json:"id"`
+	Highlights int `json:"highlights"`
+	Comments   int `json:"comments"`
+}
+
 type digestConfigJSON struct {
-	Categories []struct {
-		ID         int `json:"id"`
-		Highlights int `json:"highlights"`
-		Comments   int `json:"comments"`
-	} `json:"categories"`
-	Feeds []struct {
-		ID         int `json:"id"`
-		Highlights int `json:"highlights"`
-		Comments   int `json:"comments"`
-	} `json:"feeds"`
-	DefaultHighlights int    `json:"default_highlights"`
-	DefaultComments   int    `json:"default_comments"`
-	MaxItems          int    `json:"max_items"`
-	Prompt            string `json:"prompt"`
+	Categories        []digestCategorySelection `json:"categories"`
+	Feeds             []digestFeedSelection     `json:"feeds"`
+	DefaultHighlights int                       `json:"default_highlights"`
+	DefaultComments   int                       `json:"default_comments"`
+	MaxItems          int                       `json:"max_items"`
+	Prompt            string                    `json:"prompt"`
 }
 
 type Generator struct {
@@ -58,8 +62,22 @@ type digestItem struct {
 
 type digestResultContent struct {
 	Summary    string          `json:"summary"`
+	Sections   []digestSection `json:"sections,omitempty"`
 	Highlights []digestItemRef `json:"highlights"`
 	Items      []digestItemRef `json:"items"`
+}
+
+// digestSection groups digest items. A category section (Kind "category")
+// nests feed sections; a feed section (Kind "feed") carries the items for one
+// feed. The flat Highlights/Items arrays are kept alongside for backward
+// compatibility with older digest results and readers.
+type digestSection struct {
+	Name       string          `json:"name"`
+	Kind       string          `json:"kind"`               // "category" or "feed"
+	FeedID     int64           `json:"feed_id,omitempty"`  // set for feed sections
+	Sections   []digestSection `json:"sections,omitempty"` // category sections nest feed sections
+	Highlights []digestItemRef `json:"highlights,omitempty"`
+	Items      []digestItemRef `json:"items,omitempty"`
 }
 
 type commentRef struct {
@@ -209,12 +227,15 @@ func (g *Generator) buildFeedLimits(ctx context.Context, userID int64, dcfg dige
 	}
 
 	for _, cat := range dcfg.Categories {
+		if cat.Name == "" {
+			continue
+		}
 		catFeeds, err := g.queries.ListFeedsByCategory(ctx, store.ListFeedsByCategoryParams{
-			CategoryID: sql.NullInt64{Int64: int64(cat.ID), Valid: true},
-			UserID:     userID,
+			Category: cat.Name,
+			UserID:   userID,
 		})
 		if err != nil {
-			slog.Debug("failed to list category feeds", "category_id", cat.ID, "error", err)
+			slog.Debug("failed to list category feeds", "category", cat.Name, "error", err)
 			continue
 		}
 		h := cat.Highlights
@@ -367,7 +388,7 @@ func (g *Generator) fetchCommentsForHighlights(ctx context.Context, highlights [
 func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, highlights, rest []digestItem, genLogger *slog.Logger) (*digestResultContent, error) {
 	content := &digestResultContent{}
 
-	feedNames, _ := g.buildFeedNameMap(ctx)
+	feedInfos := g.buildFeedInfoMap(ctx)
 
 	prompt := dcfg.Prompt
 	if prompt == "" {
@@ -466,7 +487,7 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 		content.Highlights = append(content.Highlights, digestItemRef{
 			ItemID:           h.ID,
 			FeedID:           h.FeedID,
-			FeedName:         feedNames[h.FeedID],
+			FeedName:         feedInfos[h.FeedID].name,
 			Title:            h.Title,
 			URL:              h.Url,
 			CommentURL:       h.CommentUrl,
@@ -481,7 +502,7 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 		content.Items = append(content.Items, digestItemRef{
 			ItemID:        item.ID,
 			FeedID:        item.FeedID,
-			FeedName:      feedNames[item.FeedID],
+			FeedName:      feedInfos[item.FeedID].name,
 			Title:         item.Title,
 			URL:           item.Url,
 			CommentURL:    item.CommentUrl,
@@ -490,6 +511,8 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 			PublishedAt:   formatNullTime(item.PublishedAt),
 		})
 	}
+
+	content.Sections = g.buildSections(dcfg, content.Highlights, content.Items, feedInfos)
 
 	if output.Summary == "" && len(highlights) == 0 {
 		return content, nil
@@ -504,16 +527,130 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 	return content, nil
 }
 
-func (g *Generator) buildFeedNameMap(ctx context.Context) (map[int64]string, error) {
+type feedInfo struct {
+	name     string
+	category string
+}
+
+func (g *Generator) buildFeedInfoMap(ctx context.Context) map[int64]feedInfo {
 	allUserFeeds, err := g.queries.ListAllFeeds(ctx)
 	if err != nil {
-		return nil, err
+		return nil
 	}
-	m := make(map[int64]string, len(allUserFeeds))
+	m := make(map[int64]feedInfo, len(allUserFeeds))
 	for _, f := range allUserFeeds {
-		m[f.ID] = f.Name
+		m[f.ID] = feedInfo{name: f.Name, category: f.Category}
 	}
-	return m, nil
+	return m
+}
+
+// buildSections groups digest items into a section tree: when categories are
+// selected in the config, one section per selected category (in config order)
+// with the category's feeds as nested feed sections; otherwise one feed
+// section per feed, ordered by feed name. Feeds whose items appear in the
+// digest but carry no category are emitted as top-level feed sections. The
+// flat highlights/items arrays are passed through unchanged.
+func (g *Generator) buildSections(dcfg digestConfigJSON, highlights, items []digestItemRef, feedInfos map[int64]feedInfo) []digestSection {
+	type feedGroup struct {
+		info       feedInfo
+		highlights []digestItemRef
+		items      []digestItemRef
+	}
+	byFeed := make(map[int64]*feedGroup)
+	var feedIDs []int64
+	collect := func(ref digestItemRef, highlight bool) {
+		grp, ok := byFeed[ref.FeedID]
+		if !ok {
+			grp = &feedGroup{info: feedInfos[ref.FeedID]}
+			byFeed[ref.FeedID] = grp
+			feedIDs = append(feedIDs, ref.FeedID)
+		}
+		if highlight {
+			grp.highlights = append(grp.highlights, ref)
+		} else {
+			grp.items = append(grp.items, ref)
+		}
+	}
+	for _, h := range highlights {
+		collect(h, true)
+	}
+	for _, it := range items {
+		collect(it, false)
+	}
+
+	feedSection := func(feedID int64, grp *feedGroup) digestSection {
+		return digestSection{
+			Name:       grp.info.name,
+			Kind:       "feed",
+			FeedID:     feedID,
+			Highlights: grp.highlights,
+			Items:      grp.items,
+		}
+	}
+
+	// Deterministic ordering: feeds by name.
+	sort.Slice(feedIDs, func(i, j int) bool {
+		return byFeed[feedIDs[i]].info.name < byFeed[feedIDs[j]].info.name
+	})
+
+	if len(dcfg.Categories) == 0 {
+		sections := make([]digestSection, 0, len(feedIDs))
+		for _, id := range feedIDs {
+			sections = append(sections, feedSection(id, byFeed[id]))
+		}
+		return sections
+	}
+
+	// Categories selected: group feeds by their category.
+	byCategory := make(map[string][]int64)
+	for _, id := range feedIDs {
+		cat := byFeed[id].info.category
+		byCategory[cat] = append(byCategory[cat], id)
+	}
+
+	// Category order: the config's selection order first, then any remaining
+	// categories (e.g. uncategorized feeds) alphabetically.
+	var catOrder []string
+	seen := make(map[string]bool)
+	for _, c := range dcfg.Categories {
+		if c.Name == "" || seen[c.Name] {
+			continue
+		}
+		seen[c.Name] = true
+		catOrder = append(catOrder, c.Name)
+	}
+	var rest []string
+	for cat := range byCategory {
+		if !seen[cat] && cat != "" {
+			rest = append(rest, cat)
+		}
+	}
+	sort.Strings(rest)
+	if !seen[""] {
+		rest = append(rest, "")
+	}
+	catOrder = append(catOrder, rest...)
+
+	var sections []digestSection
+	for _, cat := range catOrder {
+		ids := byCategory[cat]
+		if len(ids) == 0 {
+			continue
+		}
+		if cat == "" {
+			// Uncategorized feeds appear as standalone feed sections.
+			for _, id := range ids {
+				sections = append(sections, feedSection(id, byFeed[id]))
+			}
+			continue
+		}
+		sec := digestSection{Name: cat, Kind: "category"}
+		for _, id := range ids {
+			sec.Sections = append(sec.Sections, feedSection(id, byFeed[id]))
+		}
+		sections = append(sections, sec)
+	}
+	return sections
 }
 
 func contentForRendering(item store.Item) string {

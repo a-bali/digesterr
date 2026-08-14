@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -10,27 +9,19 @@ import (
 	"digesterr/internal/store"
 )
 
-// seedReaderSubscriptions creates a category, two feeds (one categorized, one
-// not), and a digest config for the given user. It returns the created rows so
-// tests can assert against their IDs.
-func seedReaderSubscriptions(t *testing.T, queries *store.Queries, userID int64) (store.Category, store.Feed, store.Feed, store.DigestConfig) {
+// seedReaderSubscriptions creates two feeds (one categorized, one not) and a
+// digest config for the given user. It returns the created rows so tests can
+// assert against their IDs.
+func seedReaderSubscriptions(t *testing.T, queries *store.Queries, userID int64) (store.Feed, store.Feed, store.DigestConfig) {
 	t.Helper()
 
-	cat, err := queries.CreateCategory(t.Context(), store.CreateCategoryParams{
-		UserID: userID,
-		Name:   "Tech",
-	})
-	if err != nil {
-		t.Fatalf("failed to create category: %v", err)
-	}
-
 	hn, err := queries.CreateFeed(t.Context(), store.CreateFeedParams{
-		UserID:     userID,
-		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
-		Type:       "rss",
-		Name:       "HN",
-		Url:        "https://hn.example.com",
-		Status:     "active",
+		UserID:   userID,
+		Category: "Tech",
+		Type:     "rss",
+		Name:     "HN",
+		Url:      "https://hn.example.com",
+		Status:   "active",
 	})
 	if err != nil {
 		t.Fatalf("failed to create HN feed: %v", err)
@@ -57,13 +48,13 @@ func seedReaderSubscriptions(t *testing.T, queries *store.Queries, userID int64)
 		t.Fatalf("failed to create digest config: %v", err)
 	}
 
-	return cat, hn, lobsters, cfg
+	return hn, lobsters, cfg
 }
 
 func TestReaderSubscriptionList(t *testing.T) {
 	server, queries := setupTestServer(t)
 	user := createReaderUser(t, queries, "testkey123")
-	_, hnFeed, _, dailyConfig := seedReaderSubscriptions(t, queries, user.ID)
+	hnFeed, _, dailyConfig := seedReaderSubscriptions(t, queries, user.ID)
 
 	w := readerRequest(server, http.MethodGet, "/reader/api/0/subscription/list?output=json", "", map[string]string{
 		"Authorization": "GoogleLogin auth=testkey123",

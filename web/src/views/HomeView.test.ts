@@ -6,7 +6,6 @@ import HomeView from './HomeView.vue'
 
 vi.mock('../services/api', () => ({
   authApi: { signout: vi.fn(), changePassword: vi.fn() },
-  categoryApi: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
   feedApi: {
     list: vi.fn().mockResolvedValue([]),
     create: vi.fn(),

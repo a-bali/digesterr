@@ -7,30 +7,20 @@ CREATE TABLE users (
     updated_at  DATETIME NOT NULL DEFAULT (DATETIME('now'))
 );
 
-CREATE TABLE categories (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id     INTEGER NOT NULL,
-    name        TEXT    NOT NULL,
-    created_at  DATETIME NOT NULL DEFAULT (DATETIME('now')),
-    updated_at  DATETIME NOT NULL DEFAULT (DATETIME('now')),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
 CREATE TABLE feeds (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         INTEGER NOT NULL,
-    category_id     INTEGER,
-    type             TEXT    NOT NULL,
-    name             TEXT    NOT NULL,
-    url              TEXT    NOT NULL DEFAULT '',
-    config           TEXT    NOT NULL DEFAULT '{}',
-    last_fetched_at  DATETIME,
-    status           TEXT    NOT NULL DEFAULT 'active',
-    extract_content  INTEGER NOT NULL DEFAULT 0,
-    created_at       DATETIME NOT NULL DEFAULT (DATETIME('now')),
-    updated_at       DATETIME NOT NULL DEFAULT (DATETIME('now')),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+    category        TEXT    NOT NULL DEFAULT '',
+    type            TEXT    NOT NULL,
+    name            TEXT    NOT NULL,
+    url             TEXT    NOT NULL DEFAULT '',
+    config          TEXT    NOT NULL DEFAULT '{}',
+    last_fetched_at DATETIME,
+    status          TEXT    NOT NULL DEFAULT 'active',
+    extract_content INTEGER NOT NULL DEFAULT 0,
+    created_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    updated_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE items (
@@ -101,9 +91,8 @@ CREATE TABLE refresh_tokens (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_categories_user_id ON categories(user_id);
 CREATE INDEX idx_feeds_user_id ON feeds(user_id);
-CREATE INDEX idx_feeds_category_id ON feeds(category_id);
+CREATE INDEX idx_feeds_category ON feeds(category);
 CREATE INDEX idx_items_feed_id ON items(feed_id);
 CREATE INDEX idx_items_status ON items(status);
 CREATE INDEX idx_digest_configs_user_id ON digest_configs(user_id);

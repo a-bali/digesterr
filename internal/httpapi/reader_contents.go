@@ -250,9 +250,21 @@ func digestCategories(status string) []string {
 // digestContentJSON is the shape of a digest result's stored Content JSON. It
 // mirrors internal/digest.digestResultContent (snake_case field names).
 type digestContentJSON struct {
-	Summary    string             `json:"summary"`
-	Highlights []digestContentRef `json:"highlights"`
-	Items      []digestContentRef `json:"items"`
+	Summary    string              `json:"summary"`
+	Sections   []digestSectionJSON `json:"sections,omitempty"`
+	Highlights []digestContentRef  `json:"highlights"`
+	Items      []digestContentRef  `json:"items"`
+}
+
+// digestSectionJSON mirrors internal/digest.digestSection: category sections
+// nest feed sections, feed sections carry the highlights/items.
+type digestSectionJSON struct {
+	Name       string              `json:"name"`
+	Kind       string              `json:"kind"`
+	FeedID     int64               `json:"feed_id,omitempty"`
+	Sections   []digestSectionJSON `json:"sections,omitempty"`
+	Highlights []digestContentRef  `json:"highlights,omitempty"`
+	Items      []digestContentRef  `json:"items,omitempty"`
 }
 
 type digestContentRef struct {
@@ -286,7 +298,9 @@ func digestSummary(contentJSON string) string {
 }
 
 // renderDigestHTML renders a digest result's content JSON as HTML. All
-// user-controlled strings are escaped to prevent HTML injection.
+// user-controlled strings are escaped to prevent HTML injection. When the
+// content carries sections (category/feed grouping), they are rendered in
+// order; older content without sections falls back to the flat layout.
 func renderDigestHTML(contentJSON string) string {
 	var c digestContentJSON
 	if err := json.Unmarshal([]byte(contentJSON), &c); err != nil {
@@ -299,12 +313,43 @@ func renderDigestHTML(contentJSON string) string {
 		fmt.Fprintf(&b, `<div class="digest-summary">%s</div>`+"\n", html.EscapeString(c.Summary))
 	}
 
-	for _, h := range c.Highlights {
+	if len(c.Sections) > 0 {
+		for _, sec := range c.Sections {
+			renderDigestSectionHTML(&b, sec, 2)
+		}
+	} else {
+		renderDigestFlatHTML(&b, c.Highlights, c.Items)
+	}
+
+	return b.String()
+}
+
+// renderDigestSectionHTML renders one digest section (category or feed) as
+// HTML. Category sections emit a heading and recurse into their feed sections;
+// feed sections emit a heading followed by highlights and the item list.
+func renderDigestSectionHTML(b *strings.Builder, sec digestSectionJSON, level int) {
+	name := html.EscapeString(sec.Name)
+	if sec.Kind == "category" {
+		fmt.Fprintf(b, `<h%d>%s</h%d>`+"\n", level, name, level)
+		for _, sub := range sec.Sections {
+			renderDigestSectionHTML(b, sub, level+1)
+		}
+		return
+	}
+	// Feed section.
+	fmt.Fprintf(b, `<h%d>%s</h%d>`+"\n", level, name, level)
+	renderDigestFlatHTML(b, sec.Highlights, sec.Items)
+}
+
+// renderDigestFlatHTML renders highlight cards followed by the plain item
+// list, mirroring the historical digest layout.
+func renderDigestFlatHTML(b *strings.Builder, highlights, items []digestContentRef) {
+	for _, h := range highlights {
 		title := html.EscapeString(h.Title)
 		if h.URL != "" {
-			fmt.Fprintf(&b, `<h3><a href="%s">%s</a></h3>`+"\n", html.EscapeString(h.URL), title)
+			fmt.Fprintf(b, `<h3><a href="%s">%s</a></h3>`+"\n", html.EscapeString(h.URL), title)
 		} else {
-			fmt.Fprintf(&b, `<h3>%s</h3>`+"\n", title)
+			fmt.Fprintf(b, `<h3>%s</h3>`+"\n", title)
 		}
 
 		var meta []string
@@ -315,11 +360,11 @@ func renderDigestHTML(contentJSON string) string {
 			meta = append(meta, fmt.Sprintf("%d comments", h.CommentsCount))
 		}
 		if len(meta) > 0 {
-			fmt.Fprintf(&b, `<p class="digest-meta">%s</p>`+"\n", html.EscapeString(strings.Join(meta, " · ")))
+			fmt.Fprintf(b, `<p class="digest-meta">%s</p>`+"\n", html.EscapeString(strings.Join(meta, " · ")))
 		}
 
 		if h.LLMSummary != "" {
-			fmt.Fprintf(&b, `<p>%s</p>`+"\n", html.EscapeString(h.LLMSummary))
+			fmt.Fprintf(b, `<p>%s</p>`+"\n", html.EscapeString(h.LLMSummary))
 		}
 
 		if len(h.TopComments) > 0 {
@@ -334,26 +379,24 @@ func renderDigestHTML(contentJSON string) string {
 				if tc.Points != nil {
 					points = fmt.Sprintf(" (%d)", *tc.Points)
 				}
-				fmt.Fprintf(&b, `<li>%s — %s%s</li>`, author, html.EscapeString(tc.Text), points)
+				fmt.Fprintf(b, `<li>%s — %s%s</li>`, author, html.EscapeString(tc.Text), points)
 			}
 			b.WriteString(`</ul>` + "\n")
 		}
 	}
 
-	if len(c.Items) > 0 {
+	if len(items) > 0 {
 		b.WriteString(`<hr/>` + "\n")
 		b.WriteString(`<h4>All items</h4>` + "\n")
 		b.WriteString(`<ul>`)
-		for _, it := range c.Items {
+		for _, it := range items {
 			title := html.EscapeString(it.Title)
 			if it.URL != "" {
-				fmt.Fprintf(&b, `<li><a href="%s">%s</a></li>`, html.EscapeString(it.URL), title)
+				fmt.Fprintf(b, `<li><a href="%s">%s</a></li>`, html.EscapeString(it.URL), title)
 			} else {
-				fmt.Fprintf(&b, `<li>%s</li>`, title)
+				fmt.Fprintf(b, `<li>%s</li>`, title)
 			}
 		}
 		b.WriteString(`</ul>` + "\n")
 	}
-
-	return b.String()
 }

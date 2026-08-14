@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"database/sql"
 	"fmt"
 	"net/http"
 	"sort"
@@ -205,14 +204,10 @@ func (s *Server) streamEntries(r *http.Request, userID int64, stream string, old
 
 	case strings.HasPrefix(stream, "user/-/label/"):
 		name := strings.TrimPrefix(stream, "user/-/label/")
-		cat, err := s.queries.GetCategoryByName(ctx, store.GetCategoryByNameParams{
-			UserID: userID,
-			Name:   name,
+		items, err := s.queries.ListItemsByCategory(ctx, store.ListItemsByCategoryParams{
+			Category: name,
+			UserID:   userID,
 		})
-		if err != nil {
-			return nil, nil
-		}
-		items, err := s.queries.ListItemsByCategory(ctx, sql.NullInt64{Int64: cat.ID, Valid: true})
 		if err != nil {
 			return nil, err
 		}

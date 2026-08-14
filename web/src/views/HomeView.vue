@@ -14,7 +14,6 @@ import AccountMenu from '../components/AccountMenu.vue'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
 import GoogleReaderApiDialog from '../components/GoogleReaderApiDialog.vue'
 import { useFeedStore } from '../stores/feed'
-import { useCategoryStore } from '../stores/category'
 import { useDigestStore } from '../stores/digest'
 import { feedApi } from '../services/api'
 import type { Item } from '../types/api'
@@ -26,7 +25,6 @@ const router = useRouter()
 const route = useRoute()
 const feedStore = useFeedStore()
 const digestStore = useDigestStore()
-const categoryStore = useCategoryStore()
 
 const { isDesktop, isTablet } = useBreakpoints()
 
@@ -64,7 +62,6 @@ useKeyboardShortcuts({
 let pollInterval: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
-  categoryStore.fetchCategories()
   feedStore.fetchFeeds()
   pollInterval = setInterval(() => {
     feedStore.fetchUnreadCounts()
