@@ -14,11 +14,12 @@ const mockedList = vi.mocked(logsApi.list)
 function sampleEntries() {
   return {
     entries: [
-      { time: '2026-08-13T12:00:01Z', level: 'INFO', type: 'http', message: 'request ok', attrs: { path: '/api/feeds', status: '200' } },
+      { time: '2026-08-13T12:00:01Z', level: 'INFO', type: 'http', message: 'request ok', attrs: { path: '/api/feeds', status: '200', duration: '12ms' } },
       { time: '2026-08-13T12:00:02Z', level: 'ERROR', type: 'digest', message: 'gen failed' },
       { time: '2026-08-13T12:00:03Z', level: 'WARN', type: 'feed', message: 'fetch slow' },
+      { time: '2026-08-13T12:00:04Z', level: 'INFO', type: 'http', message: 'extract item', attrs: { category: 'item', item_id: '42', url: 'https://example.com/a', feed_id: '7', feed_name: 'Example Feed', items: '12', content_size: '3456' } },
     ],
-    total: 3,
+    total: 4,
     has_more: false,
   }
 }
@@ -36,6 +37,14 @@ function manyEntries(n: number, start = 0) {
 // document.body), so read the live DOM, not the wrapper.
 function bodyText(): string {
   return document.body.textContent || ''
+}
+
+function scroller(): HTMLElement {
+  return document.body.querySelector('[data-logs-dialog] .overflow-y-auto') as HTMLElement
+}
+
+function rows(): HTMLElement[] {
+  return Array.from(document.body.querySelectorAll('[data-logs-dialog] [data-expandable]')) as HTMLElement[]
 }
 
 async function openDialog(wrapper: ReturnType<typeof mount>) {
@@ -57,7 +66,7 @@ describe('LogsDialog', () => {
     expect(trigger.find('svg').exists()).toBe(true)
   })
 
-  it('loads logs when opened and renders entries', async () => {
+  it('loads logs when opened and renders entries with level and category badges', async () => {
     const wrapper = mount(LogsDialog)
     await openDialog(wrapper)
 
@@ -67,31 +76,92 @@ describe('LogsDialog', () => {
     expect(bodyText()).toContain('fetch slow')
     expect(bodyText()).toContain('INFO')
     expect(bodyText()).toContain('ERROR')
-    expect(bodyText()).toContain('path=/api/feeds')
+    // Category badge: attrs.category wins for item records, type otherwise.
+    expect(bodyText()).toContain('item')
+    expect(bodyText()).toContain('feed')
+    // Structured attrs are hidden until the row is expanded.
+    expect(bodyText()).not.toContain('/api/feeds')
   })
 
-  it('passes filters to the API when changed', async () => {
+  it('passes level and category filters to the API when changed', async () => {
     const wrapper = mount(LogsDialog)
     await openDialog(wrapper)
 
     const selects = document.body.querySelectorAll('select')
-    const severity = selects[0] as HTMLSelectElement
-    severity.value = 'error'
-    severity.dispatchEvent(new Event('change'))
+    const level = selects[0] as HTMLSelectElement
+    level.value = 'error'
+    level.dispatchEvent(new Event('change'))
     await flushPromises()
 
     expect(mockedList).toHaveBeenLastCalledWith({ limit: 200, level: 'error' })
+
+    const category = selects[1] as HTMLSelectElement
+    category.value = 'item'
+    category.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    // Filters accumulate: the level filter is still active.
+    expect(mockedList).toHaveBeenLastCalledWith({ limit: 200, level: 'error', type: 'item' })
   })
 
-  it('derives the type dropdown from loaded entries', async () => {
+  it('derives the category dropdown from loaded entries', async () => {
     const wrapper = mount(LogsDialog)
     await openDialog(wrapper)
 
-    const typeSelect = document.body.querySelectorAll('select')[1]
-    const options = Array.from(typeSelect.querySelectorAll('option')).map(o => o.textContent)
+    const categorySelect = document.body.querySelectorAll('select')[1]
+    const options = Array.from(categorySelect.querySelectorAll('option')).map(o => o.textContent)
     expect(options).toContain('http')
-    expect(options).toContain('digest')
     expect(options).toContain('feed')
+    expect(options).toContain('item')
+    expect(options).toContain('digest')
+  })
+
+  it('expands an entry to reveal structured context fields', async () => {
+    const wrapper = mount(LogsDialog)
+    await openDialog(wrapper)
+
+    const expandable = rows().filter(r => r.dataset.expandable === 'true')
+    expect(expandable.length).toBe(2) // request ok + extract item
+
+    expandable[0].dispatchEvent(new Event('click'))
+    await flushPromises()
+
+    expect(bodyText()).toContain('path')
+    expect(bodyText()).toContain('/api/feeds')
+    expect(bodyText()).toContain('duration')
+    expect(bodyText()).toContain('12ms')
+    // The category attr is already shown as the badge, not repeated in the grid.
+    expect(bodyText()).not.toContain('feed_name=Example Feed')
+  })
+
+  it('shows item-level structured fields when the item row is expanded', async () => {
+    const wrapper = mount(LogsDialog)
+    await openDialog(wrapper)
+
+    const itemRow = rows().find(r => r.textContent?.includes('extract item'))!
+    itemRow.dispatchEvent(new Event('click'))
+    await flushPromises()
+
+    expect(bodyText()).toContain('item_id')
+    expect(bodyText()).toContain('42')
+    expect(bodyText()).toContain('feed_id')
+    expect(bodyText()).toContain('Example Feed')
+    expect(bodyText()).toContain('https://example.com/a')
+    expect(bodyText()).toContain('3456')
+  })
+
+  it('handles entries without attrs gracefully (not expandable, category falls back to type)', async () => {
+    const wrapper = mount(LogsDialog)
+    await openDialog(wrapper)
+
+    const genFailed = rows().find(r => r.textContent?.includes('gen failed'))!
+    expect(genFailed.dataset.expandable).toBe('false')
+    expect(genFailed.textContent).toContain('digest') // category badge from type
+
+    genFailed.dispatchEvent(new Event('click'))
+    await flushPromises()
+    // Nothing to expand: no details section appears.
+    expect(document.body.querySelector('[data-logs-dialog] .grid-cols-\\[max-content\\,1fr\\]')).toBeNull()
   })
 
   it('applies the wide content class to the dialog', async () => {
@@ -113,12 +183,12 @@ describe('LogsDialog', () => {
     expect(mockedList).toHaveBeenLastCalledWith({ limit: 200 })
     expect(bodyText()).toContain('showing 200 of 250')
 
-    const scroller = document.body.querySelector('[data-logs-dialog] .overflow-y-auto') as HTMLElement
+    const el = scroller()
     // Scroll near the bottom to trigger loading older entries.
-    Object.defineProperty(scroller, 'scrollTop', { value: 100000, configurable: true })
-    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
-    Object.defineProperty(scroller, 'scrollHeight', { value: 400, configurable: true })
-    scroller.dispatchEvent(new Event('scroll'))
+    Object.defineProperty(el, 'scrollTop', { value: 100000, configurable: true })
+    Object.defineProperty(el, 'clientHeight', { value: 400, configurable: true })
+    Object.defineProperty(el, 'scrollHeight', { value: 400, configurable: true })
+    el.dispatchEvent(new Event('scroll'))
     await flushPromises()
 
     expect(mockedList).toHaveBeenLastCalledWith({ limit: 200, offset: 200 })
@@ -138,11 +208,11 @@ describe('LogsDialog', () => {
 
     const wrapper = mount(LogsDialog)
     await openDialog(wrapper)
-    const scroller = document.body.querySelector('[data-logs-dialog] .overflow-y-auto') as HTMLElement
-    Object.defineProperty(scroller, 'scrollTop', { value: 100000, configurable: true })
-    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
-    Object.defineProperty(scroller, 'scrollHeight', { value: 400, configurable: true })
-    scroller.dispatchEvent(new Event('scroll'))
+    const el = scroller()
+    Object.defineProperty(el, 'scrollTop', { value: 100000, configurable: true })
+    Object.defineProperty(el, 'clientHeight', { value: 400, configurable: true })
+    Object.defineProperty(el, 'scrollHeight', { value: 400, configurable: true })
+    el.dispatchEvent(new Event('scroll'))
     await flushPromises()
 
     // 'entry 2' appears only once despite overlapping page boundary; new

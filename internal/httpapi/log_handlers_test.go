@@ -67,6 +67,39 @@ func TestListLogsFilters(t *testing.T) {
 	}
 }
 
+func TestListLogsFiltersByCategoryAttr(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createTestUser(t, queries, "logscat@example.com", "password123")
+	token := getTestToken(t, server.auth, &user)
+
+	now := time.Now()
+	// Item-level records logged from the http layer carry an explicit
+	// "category" attr while their source-derived type stays "http".
+	server.logs.Add(logbuf.Entry{Time: now.Add(-3 * time.Second), Level: "INFO", Type: "http", Message: "request ok"})
+	server.logs.Add(logbuf.Entry{Time: now.Add(-2 * time.Second), Level: "INFO", Type: "http", Message: "extract item", Attrs: map[string]string{"category": "item", "item_id": "42", "url": "https://example.com/a"}})
+	server.logs.Add(logbuf.Entry{Time: now.Add(-1 * time.Second), Level: "INFO", Type: "feed", Message: "polled feeds"})
+
+	var resp struct {
+		Entries []logbuf.Entry `json:"entries"`
+		Total   int            `json:"total"`
+	}
+
+	// type=item matches the explicit category attribute, not the type.
+	w := makeRequest(server, http.MethodGet, "/api/logs?type=item", nil, token)
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Total != 1 || resp.Entries[0].Message != "extract item" {
+		t.Fatalf("type=item: expected 1 item entry, got total=%d entries=%v", resp.Total, resp.Entries)
+	}
+
+	// type=http matches only entries whose effective category is http
+	// (the item-category entry is excluded).
+	w = makeRequest(server, http.MethodGet, "/api/logs?type=http", nil, token)
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Total != 1 || resp.Entries[0].Message != "request ok" {
+		t.Fatalf("type=http: expected 1 http entry, got total=%d entries=%v", resp.Total, resp.Entries)
+	}
+}
+
 func TestListLogsPagination(t *testing.T) {
 	server, queries := setupTestServer(t)
 	user := createTestUser(t, queries, "logspage@example.com", "password123")

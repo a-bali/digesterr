@@ -40,6 +40,31 @@ func TestHandlerCapturesAndTypes(t *testing.T) {
 	}
 }
 
+func TestHandlerCapturesWithAttrs(t *testing.T) {
+	buf := New(10)
+	var out bytes.Buffer
+	inner := slog.NewTextHandler(&out, nil)
+	opts := &slog.HandlerOptions{AddSource: true}
+	h := NewHandler(inner, buf, opts)
+	logger := slog.New(h).With("feed_id", int64(7), "feed_name", "Example")
+
+	// Handler-level attrs must be captured; a record-level attr with the same
+	// key overrides it, mirroring slog output.
+	logger.Info("polled feeds", "feed_name", "Renamed")
+
+	entries := buf.List(0)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 captured entry, got %d", len(entries))
+	}
+	e := entries[0]
+	if e.Attrs["feed_id"] != "7" {
+		t.Fatalf("handler attr feed_id = %q, want 7", e.Attrs["feed_id"])
+	}
+	if e.Attrs["feed_name"] != "Renamed" {
+		t.Fatalf("feed_name = %q, want Renamed (record attr wins)", e.Attrs["feed_name"])
+	}
+}
+
 func TestClassifyPath(t *testing.T) {
 	cases := []struct {
 		file string
