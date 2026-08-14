@@ -9,9 +9,10 @@ env_files = [".env"]
 [build]
   cmd = "go build -o ./tmp/digesterr ./cmd/digesterr"
   bin = "./tmp/digesterr"
+  full_bin = "./tmp/digesterr -c digesterr.dev.yaml"
   poll = true
   poll_interval = 500
-  include_ext = ["go", "sql"]
+  include_ext = ["go", "sql", "yaml"]
   exclude_dir = ["web", "tmp", "data", ".git", "node_modules", "bin", "cmd/digesterr/static"]
   exclude_regex = ["_test\\.go$"]
   stop_on_error = true
