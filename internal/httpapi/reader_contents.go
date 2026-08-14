@@ -8,15 +8,28 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"digesterr/internal/store"
 )
 
 // readerContentsResponse is the top-level envelope for both stream/items/contents
-// and stream/contents responses.
+// and stream/contents responses. The id and updated fields are mandatory:
+// NetNewsWire's ReaderAPIEntryWrapper decodes them as non-optional, so omitting
+// them makes the whole response fail to decode and no articles are created.
 type readerContentsResponse struct {
 	Direction string                    `json:"direction"`
+	ID        string                    `json:"id"`
+	Title     string                    `json:"title"`
+	Self      []readerHref              `json:"self"`
+	Updated   int64                     `json:"updated"`
+	Author    string                    `json:"author"`
 	Items     []readerContentStreamItem `json:"items"`
+}
+
+// readerHref is a bare href reference used by the self link.
+type readerHref struct {
+	Href string `json:"href"`
 }
 
 // readerContentStreamItem is a single full content object, mirroring Google
@@ -91,7 +104,14 @@ func (s *Server) handleReaderStreamItemsContents(w http.ResponseWriter, r *http.
 		}
 	}
 
-	writeJSON(w, http.StatusOK, readerContentsResponse{Direction: "ltr", Items: items})
+	writeJSON(w, http.StatusOK, readerContentsResponse{
+		Direction: "ltr",
+		ID:        readerStreamReadingList,
+		Title:     "Reading List",
+		Self:      []readerHref{},
+		Updated:   time.Now().Unix(),
+		Items:     items,
+	})
 }
 
 // handleReaderStreamContents implements
@@ -138,7 +158,14 @@ func (s *Server) handleReaderStreamContents(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	writeJSON(w, http.StatusOK, readerContentsResponse{Direction: "ltr", Items: items})
+	writeJSON(w, http.StatusOK, readerContentsResponse{
+		Direction: "ltr",
+		ID:        stream,
+		Title:     stream,
+		Self:      []readerHref{},
+		Updated:   time.Now().Unix(),
+		Items:     items,
+	})
 }
 
 // resolveContentObject maps a reader reference id (item id, or digest-result
