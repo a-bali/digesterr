@@ -367,6 +367,12 @@ func spaHandler(api http.Handler, fs http.FileSystem) http.Handler {
 			api.ServeHTTP(w, r)
 			return
 		}
+		// /healthz must bypass the SPA file server (like /api) so liveness
+		// probes get the real handler, not the index.html fallback.
+		if len(r.URL.Path) >= 8 && r.URL.Path[:8] == "/healthz" {
+			api.ServeHTTP(w, r)
+			return
+		}
 		path := r.URL.Path
 		if path == "/" {
 			path = "/index.html"
