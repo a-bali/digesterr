@@ -4,13 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -18,6 +19,7 @@ import (
 	"digesterr/internal/auth"
 	"digesterr/internal/httpapi"
 	"digesterr/internal/logbuf"
+	"digesterr/internal/logging"
 	"digesterr/internal/schema"
 	"digesterr/internal/store"
 )
@@ -43,6 +45,13 @@ func staticFileSystem() http.FileSystem {
 }
 
 func main() {
+	logLevelFlag := flag.String("log-level", "", "log level: debug, info, warn, error (default info; overrides LOG_LEVEL)")
+	flag.Parse()
+
+	// Set up logging first so even early fatal errors carry the configured
+	// level, source, and category attributes.
+	logBuf := setupLogger(resolveLogLevel(*logLevelFlag), logBufferSize(), os.Stderr)
+
 	dbPath := envOr("DATABASE_PATH", "digesterr.db")
 	port := envOr("PORT", "8080")
 	jwtSecret := envOr("JWT_SECRET", "")
@@ -50,32 +59,6 @@ func main() {
 		slog.Error("JWT_SECRET environment variable is required")
 		os.Exit(1)
 	}
-
-	logLevel := slog.LevelInfo
-	if v := os.Getenv("LOG_LEVEL"); v != "" {
-		switch strings.ToLower(v) {
-		case "debug":
-			logLevel = slog.LevelDebug
-		case "warn":
-			logLevel = slog.LevelWarn
-		case "error":
-			logLevel = slog.LevelError
-		}
-	} else if os.Getenv("DIGESTERR_LOG_LEVEL") == "debug" {
-		// Backwards-compatible alias for the old env var.
-		logLevel = slog.LevelDebug
-	}
-
-	bufSize := 1000
-	if v := os.Getenv("LOG_BUFFER_SIZE"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			bufSize = n
-		}
-	}
-	logBuf := logbuf.New(bufSize)
-
-	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
-	slog.SetDefault(slog.New(logbuf.NewHandler(inner, logBuf, &slog.HandlerOptions{Level: logLevel, AddSource: true})))
 
 	db, err := sql.Open("sqlite", dbPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_texttotime=true&_time_format=sqlite")
 	if err != nil {
@@ -231,6 +214,54 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// resolveLogLevel picks the effective slog level for the process. The
+// -log-level flag wins over the LOG_LEVEL environment variable, which wins
+// over the legacy DIGESTERR_LOG_LEVEL alias. The default is info. Invalid
+// values fall back to info with a warning.
+func resolveLogLevel(flagVal string) slog.Level {
+	if flagVal != "" {
+		if lv, ok := logging.ParseLevel(flagVal); ok {
+			return lv
+		}
+		slog.Warn("invalid -log-level value, falling back to info", "value", flagVal)
+		return slog.LevelInfo
+	}
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		if lv, ok := logging.ParseLevel(v); ok {
+			return lv
+		}
+		slog.Warn("invalid LOG_LEVEL value, falling back to info", "value", v)
+		return slog.LevelInfo
+	}
+	if os.Getenv("DIGESTERR_LOG_LEVEL") == "debug" {
+		// Backwards-compatible alias for the old env var.
+		return slog.LevelDebug
+	}
+	return slog.LevelInfo
+}
+
+// logBufferSize returns the /api/logs ring buffer capacity from
+// LOG_BUFFER_SIZE (default 1000).
+func logBufferSize() int {
+	if v := os.Getenv("LOG_BUFFER_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 1000
+}
+
+// setupLogger configures the default slog logger: a text handler on w with
+// level filtering, source attribution, and category stamping. Every record is
+// also captured into a ring buffer (returned for the /api/logs endpoint).
+func setupLogger(level slog.Level, capacity int, w io.Writer) *logbuf.Buffer {
+	opts := &slog.HandlerOptions{Level: level, AddSource: true}
+	text := slog.NewTextHandler(w, opts)
+	buf := logbuf.New(capacity)
+	slog.SetDefault(slog.New(logbuf.NewHandler(logging.NewHandler(text, opts), buf, opts)))
+	return buf
 }
 
 // spaHandler wraps an API handler to also serve static SPA files.

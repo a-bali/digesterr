@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"path"
 	"runtime"
-	"strings"
+
+	"digesterr/internal/logging"
 )
 
 // Handler is a slog.Handler that tees every record into a Buffer while still
@@ -73,25 +73,9 @@ func typeForSource(pc uintptr, opts *slog.HandlerOptions) string {
 	return ClassifyPath(f.File)
 }
 
-// ClassifyPath maps a source file path to a stable log "type":
-// internal/httpapi -> http, internal/digest -> digest, internal/feed -> feed,
-// internal/auth -> auth, cmd/digesterr -> app, anything else -> its dir name.
+// ClassifyPath maps a source file path to a stable log "type". It delegates
+// to logging.ClassifyPath so the buffer's "type" and the emitted "category"
+// stay consistent.
 func ClassifyPath(file string) string {
-	switch {
-	case strings.Contains(file, "internal/httpapi"):
-		return "http"
-	case strings.Contains(file, "internal/digest"):
-		return "digest"
-	case strings.Contains(file, "internal/feed"):
-		return "feed"
-	case strings.Contains(file, "internal/auth"):
-		return "auth"
-	case strings.Contains(file, "cmd/digesterr"):
-		return "app"
-	}
-	dir := path.Base(path.Dir(file))
-	if dir == "" || dir == "." {
-		return "other"
-	}
-	return dir
+	return logging.ClassifyPath(file)
 }
