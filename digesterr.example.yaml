@@ -1,0 +1,60 @@
+# Digesterr configuration file.
+#
+# Copy this file to ~/.digesterr.yaml (the default location) or point the
+# server at it with -c/--config <path>.
+#
+# Precedence (lowest to highest): built-in defaults < this file < environment
+# variables < CLI flags (-c/--config, -d/--db, -p/--port, -l/--log-level).
+#
+# Environment variable names are the YAML paths uppercased with '.' -> '_',
+# e.g. feed.sync_interval -> FEED_SYNC_INTERVAL. The legacy flat names
+# (PORT, DATABASE_PATH, JWT_SECRET, LOG_LEVEL, LOG_BUFFER_SIZE,
+# PUBLIC_BASE_URL, DIGESTERR_LOG_LEVEL) are still accepted; the canonical
+# name wins when both are set.
+
+server:
+  # HTTP listen port.             [SERVER_PORT, legacy PORT]
+  port: 8080
+  # JWT signing secret. Required; the server refuses to start without it.
+  #                                     [SERVER_JWT_SECRET, legacy JWT_SECRET]
+  jwt_secret: ""
+  # Absolute base URL of the web UI, used for links surfaced to Reader
+  # clients. Empty means "derive from the request host".
+  #                            [SERVER_PUBLIC_BASE_URL, legacy PUBLIC_BASE_URL]
+  public_base_url: ""
+
+db:
+  # SQLite database file path.    [DB_PATH, legacy DATABASE_PATH]
+  path: digesterr.db
+
+logging:
+  # One of debug, info, warn, error.   [LOGGING_LEVEL, legacy LOG_LEVEL]
+  level: info
+  # Capacity of the in-memory /api/logs ring buffer.
+  #                          [LOGGING_BUFFER_SIZE, legacy LOG_BUFFER_SIZE]
+  buffer_size: 1000
+
+llm:
+  # Base URL of any OpenAI-compatible API.  [LLM_ENDPOINT]
+  endpoint: https://api.openai.com/v1
+  # API key for digest generation. A digest config that needs the LLM logs an
+  # error when this is empty.                                    [LLM_API_KEY]
+  api_key: ""
+  # Model name used for digest summaries.              [LLM_MODEL]
+  model: gpt-4o-mini
+
+feed:
+  # How often feeds are polled for new items. Durations accept Go syntax
+  # (30m, 1h) plus d/mo/y suffixes (30d, 6mo, 1y).        [FEED_SYNC_INTERVAL]
+  sync_interval: 1h
+  # Delete items older than this during feed refresh and digest generation.
+  # Saved items are never deleted.                           [FEED_EXPIRE_ITEMS]
+  expire_items: 1y
+  # Delete digest results older than this.                   [FEED_EXPIRE_DIGESTS]
+  expire_digests: 1y
+
+reddit:
+  # Reddit API credentials for reddit feed enrichment. Enrichment logs an
+  # error when a reddit feed needs them and they are missing.
+  client_id: ""            # [REDDIT_CLIENT_ID]
+  client_secret: ""        # [REDDIT_CLIENT_SECRET]

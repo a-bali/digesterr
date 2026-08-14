@@ -21,6 +21,9 @@ RETURNING *;
 -- name: DeleteDigestResult :one
 DELETE FROM digest_results WHERE id = ? AND user_id = ? RETURNING id;
 
+-- name: DeleteExpiredDigestResults :execrows
+DELETE FROM digest_results WHERE created_at < ?;
+
 -- name: CreateDigestResultItem :one
 INSERT INTO digest_result_items (result_id, item_id, is_highlight)
 VALUES (?, ?, ?)

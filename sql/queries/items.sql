@@ -38,6 +38,12 @@ SELECT * FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? A
 -- name: DeleteItem :one
 DELETE FROM items WHERE id = ? RETURNING id;
 
+-- name: DeleteExpiredItems :execrows
+DELETE FROM items
+WHERE status != 'saved'
+  AND items.created_at < ?
+  AND NOT EXISTS (SELECT 1 FROM digest_result_items dri WHERE dri.item_id = items.id);
+
 -- name: GetItemWithFeedOwner :one
 SELECT i.* FROM items i
 JOIN feeds f ON f.id = i.feed_id

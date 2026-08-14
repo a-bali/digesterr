@@ -88,6 +88,18 @@ func (q *Queries) DeleteDigestResult(ctx context.Context, arg DeleteDigestResult
 	return id, err
 }
 
+const deleteExpiredDigestResults = `-- name: DeleteExpiredDigestResults :execrows
+DELETE FROM digest_results WHERE created_at < ?
+`
+
+func (q *Queries) DeleteExpiredDigestResults(ctx context.Context, createdAt time.Time) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteExpiredDigestResults, createdAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getDigestResult = `-- name: GetDigestResult :one
 SELECT id, user_id, config_id, config_snapshot, content, status, created_at, updated_at FROM digest_results WHERE id = ? AND user_id = ?
 `

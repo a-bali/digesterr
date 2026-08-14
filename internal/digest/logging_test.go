@@ -373,3 +373,83 @@ func TestSchedulerGenerationFailureLogs(t *testing.T) {
 	}
 	testutil.AssertAllCategorized(t, capture)
 }
+
+// TestGeneratorMissingLLMKeyLogsError verifies that digest generation logs an
+// error when the LLM is needed but no API key is configured (llm.api_key /
+// LLM_API_KEY empty). The generation itself still proceeds; the error is a
+// loud signal that the request will fail downstream.
+func TestGeneratorMissingLLMKeyLogsError(t *testing.T) {
+	queries, cleanup := setupDigestTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	user, err := queries.CreateUser(ctx, store.CreateUserParams{
+		Email:        "missing-llm-key@example.com",
+		PasswordHash: "hash",
+		ApiKey:       "missing-llm-key",
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	feedObj, err := queries.CreateFeed(ctx, store.CreateFeedParams{
+		UserID: user.ID,
+		Type:   "rss",
+		Name:   "LLM Key Feed",
+		Url:    "https://example.com/feed.xml",
+		Config: "{}",
+		Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create feed: %v", err)
+	}
+	for i, title := range []string{"Alpha Story", "Beta Story"} {
+		if _, err := queries.CreateItem(ctx, store.CreateItemParams{
+			FeedID:        feedObj.ID,
+			Hash:          "missingkey-h" + strconv.Itoa(i),
+			Title:         title,
+			Url:           "https://example.com/" + title,
+			Content:       "content",
+			Points:        50,
+			CommentsCount: 5,
+			Status:        "unread",
+		}); err != nil {
+			t.Fatalf("create item %d: %v", i, err)
+		}
+	}
+	cfg, err := queries.CreateDigestConfig(ctx, store.CreateDigestConfigParams{
+		UserID:   user.ID,
+		Name:     "No Key Digest",
+		Schedule: "0 8 * * *",
+		Config:   `{"feeds":[{"id":` + strconv.FormatInt(feedObj.ID, 10) + `,"highlights":1,"comments":2}]}`,
+	})
+	if err != nil {
+		t.Fatalf("create digest config: %v", err)
+	}
+
+	llmBody := `{"summary":"Overall digest","highlights":[{"title":"Alpha Story","summary":"s1"}]}`
+	llmSrv := llmTestServer(t, llmBody)
+	// Note the empty API key — the LLM is needed but not configured.
+	llm := NewLLMClient(llmSrv.URL, "", "test-model")
+
+	capture := testutil.CaptureSlog(t, slog.LevelError)
+	gen := NewGenerator(queries, llm, feed.NewPoller(queries))
+	result, err := gen.Generate(ctx, cfg)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if result == nil || result.ID == 0 {
+		t.Fatal("expected a generated digest result")
+	}
+
+	rec, ok := capture.Find("LLM API key is not configured (llm.api_key / LLM_API_KEY); digest generation will fail")
+	if !ok {
+		t.Fatal("missing 'LLM API key is not configured' error record")
+	}
+	if rec.Level != slog.LevelError {
+		t.Errorf("missing-key record level = %v, want error", rec.Level)
+	}
+	attrs := testutil.AttrMap(rec)
+	if attrs["category"] != "digest" {
+		t.Errorf("missing-key record category = %q, want digest", attrs["category"])
+	}
+}

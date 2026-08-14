@@ -121,6 +121,21 @@ func (q *Queries) CreateItemIfNotExists(ctx context.Context, arg CreateItemIfNot
 	return id, err
 }
 
+const deleteExpiredItems = `-- name: DeleteExpiredItems :execrows
+DELETE FROM items
+WHERE status != 'saved'
+  AND items.created_at < ?
+  AND NOT EXISTS (SELECT 1 FROM digest_result_items dri WHERE dri.item_id = items.id)
+`
+
+func (q *Queries) DeleteExpiredItems(ctx context.Context, createdAt time.Time) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteExpiredItems, createdAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteItem = `-- name: DeleteItem :one
 DELETE FROM items WHERE id = ? RETURNING id
 `
