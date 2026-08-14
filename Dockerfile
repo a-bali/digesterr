@@ -5,7 +5,7 @@
 
 # ---- Stage 1: web build ----
 FROM node:22-alpine AS web
-WORKDIR /src
+WORKDIR /src/web
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN corepack enable && pnpm install --frozen-lockfile
 COPY web/ .
