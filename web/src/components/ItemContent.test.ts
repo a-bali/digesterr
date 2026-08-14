@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createRouter, createMemoryHistory } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'
 import ItemContent from './ItemContent.vue'
 import { useFeedStore } from '../stores/feed'
@@ -56,9 +57,16 @@ function mountItemContent(item: Item | null, feeds: Feed[] = []) {
   const store = useFeedStore()
   store.selectedItem = item
   store.feeds = feeds
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', component: { template: '<div />' } },
+      { path: '/feeds/:feedId(\\d+)/:itemId(\\d+)?', component: { template: '<div />' } },
+    ],
+  })
   return mount(ItemContent, {
     props: { unsaveItem: async () => {} },
-    global: { plugins: [pinia] },
+    global: { plugins: [pinia, router] },
   })
 }
 
@@ -144,13 +152,13 @@ describe('ItemContent collapsible blocks', () => {
 })
 
 describe('ItemContent feed link', () => {
-  it('shows the feed name as a link to the feed URL next to the time', () => {
+  it('links the feed name to the in-app feed route next to the time', () => {
     const feed = makeFeed({ id: 7, name: 'HN', url: 'https://news.ycombinator.com/rss' })
     const wrapper = mountItemContent(makeItem({ feed_id: 7 }), [feed])
 
-    const link = wrapper.find('a[href="https://news.ycombinator.com/rss"]')
+    const link = wrapper.find('a[title="Open feed"]')
     expect(link.exists()).toBe(true)
-    expect(link.attributes('target')).toBe('_blank')
+    expect(link.attributes('href')).toBe('/feeds/7')
     expect(link.text()).toBe('HN')
     // Feed link sits next to the unchanged timestamp in the metadata row.
     const time = wrapper.find('span.text-xs')
