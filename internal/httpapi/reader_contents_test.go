@@ -69,6 +69,12 @@ func TestReaderStreamItemsContents(t *testing.T) {
 	if resp.Direction != "ltr" {
 		t.Fatalf("expected direction %q, got %q", "ltr", resp.Direction)
 	}
+	if resp.ID == "" {
+		t.Fatalf("expected non-empty envelope id (required by NetNewsWire), got %q", resp.ID)
+	}
+	if resp.Updated == 0 {
+		t.Fatalf("expected non-zero envelope updated timestamp, got %d", resp.Updated)
+	}
 	if len(resp.Items) != 3 {
 		t.Fatalf("expected 3 items, got %d: %v", len(resp.Items), contentIDs(resp.Items))
 	}
