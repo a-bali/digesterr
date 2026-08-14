@@ -89,6 +89,32 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 	return i, err
 }
 
+const updateUserAPIKey = `-- name: UpdateUserAPIKey :one
+UPDATE users
+SET api_key = ?, updated_at = DATETIME('now')
+WHERE id = ?
+RETURNING id, email, password_hash, api_key, created_at, updated_at
+`
+
+type UpdateUserAPIKeyParams struct {
+	ApiKey string `json:"api_key"`
+	ID     int64  `json:"id"`
+}
+
+func (q *Queries) UpdateUserAPIKey(ctx context.Context, arg UpdateUserAPIKeyParams) (User, error) {
+	row := q.db.QueryRowContext(ctx, updateUserAPIKey, arg.ApiKey, arg.ID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.ApiKey,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateUserPassword = `-- name: UpdateUserPassword :one
 UPDATE users
 SET password_hash = ?, updated_at = DATETIME('now')

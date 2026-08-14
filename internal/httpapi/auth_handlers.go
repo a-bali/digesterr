@@ -247,3 +247,50 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, refreshCookie(r, "", -1))
 	writeJSON(w, http.StatusOK, map[string]string{"message": "password changed"})
 }
+
+// handleGetAPIKey returns the current Google Reader API key for the
+// authenticated user. The key authenticates Google Reader clients against
+// /reader/ endpoints (Authorization: GoogleLogin auth=<key>).
+func (s *Server) handleGetAPIKey(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	user, err := s.queries.GetUserByID(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "user not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"api_key": user.ApiKey})
+}
+
+// handleRotateAPIKey generates a new random API key, persists it, and returns
+// it. The previous key stops authenticating immediately.
+func (s *Server) handleRotateAPIKey(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	apiKey, err := generateAPIKey()
+	if err != nil {
+		slog.Error("rotate api key: failed to generate key", logging.CategoryAttr(logging.CategoryAuth), "error", err, "user_id", userID)
+		writeError(w, http.StatusInternalServerError, "failed to generate api key")
+		return
+	}
+
+	if _, err := s.queries.UpdateUserAPIKey(r.Context(), store.UpdateUserAPIKeyParams{
+		ID:     userID,
+		ApiKey: apiKey,
+	}); err != nil {
+		slog.Error("rotate api key: failed to persist key", logging.CategoryAttr(logging.CategoryAuth), "error", err, "user_id", userID)
+		writeError(w, http.StatusInternalServerError, "failed to update api key")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"api_key": apiKey})
+}
