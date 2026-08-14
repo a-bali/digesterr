@@ -19,6 +19,12 @@ type LLMClient struct {
 	client   *http.Client
 }
 
+// llmChatter is the subset of the LLM client used by digest generation,
+// declared as an interface so generation can be tested with a fake.
+type llmChatter interface {
+	Chat(ctx context.Context, systemPrompt, userPrompt string) (string, error)
+}
+
 func NewLLMClient(endpoint, apiKey, model string) *LLMClient {
 	endpoint = strings.TrimRight(endpoint, "/")
 	if !strings.HasSuffix(endpoint, "/chat/completions") {

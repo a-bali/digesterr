@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"digesterr/internal/auth"
@@ -21,15 +22,20 @@ type Server struct {
 	poller    *feed.Poller
 	generator *digest.Generator
 	logs      *logbuf.Buffer
+	// publicBaseURL is the absolute base URL of the digesterr web UI, used to
+	// build in-app links surfaced to Reader clients (feed home pages, digest
+	// article links). Empty means "derive from the request host".
+	publicBaseURL string
 }
 
 func NewServer(queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffer) *Server {
 	s := &Server{
-		mux:     http.NewServeMux(),
-		queries: queries,
-		auth:    authSvc,
-		poller:  feed.NewPoller(queries),
-		logs:    logs,
+		mux:           http.NewServeMux(),
+		queries:       queries,
+		auth:          authSvc,
+		poller:        feed.NewPoller(queries),
+		logs:          logs,
+		publicBaseURL: strings.TrimRight(envOr("PUBLIC_BASE_URL", ""), "/"),
 	}
 
 	llmEndpoint := envOr("LLM_ENDPOINT", "https://api.openai.com/v1")

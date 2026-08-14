@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -168,6 +167,36 @@ func (s *Server) handleReaderStreamContents(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// webBaseURL returns the digesterr web UI base URL for in-app links surfaced
+// to Reader clients. It prefers PUBLIC_BASE_URL (absolute) and otherwise
+// derives the origin from the request so links resolve against the same host
+// the client is syncing with.
+func (s *Server) webBaseURL(r *http.Request) string {
+	if s.publicBaseURL != "" {
+		return s.publicBaseURL
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
+}
+
+// feedWebURL builds the digesterr web UI URL for a feed.
+func (s *Server) feedWebURL(r *http.Request, feedID int64) string {
+	return fmt.Sprintf("%s/feeds/%d", s.webBaseURL(r), feedID)
+}
+
+// digestResultWebURL builds the digesterr web UI URL for a digest result.
+func (s *Server) digestResultWebURL(r *http.Request, configID, resultID int64) string {
+	return fmt.Sprintf("%s/digests/%d/%d", s.webBaseURL(r), configID, resultID)
+}
+
+// digestConfigWebURL builds the digesterr web UI URL for a digest config.
+func (s *Server) digestConfigWebURL(r *http.Request, configID int64) string {
+	return fmt.Sprintf("%s/digests/%d", s.webBaseURL(r), configID)
+}
+
 // resolveContentObject maps a reader reference id (item id, or digest-result
 // id offset by digestRefOffset) to a full content object. It returns ok=false
 // for unknown, malformed, or cross-user ids so callers can skip them silently.
@@ -180,18 +209,19 @@ func (s *Server) resolveContentObject(r *http.Request, userID int64, ref int64) 
 		if err != nil {
 			return readerContentStreamItem{}, false
 		}
-		return s.digestContentObject(ctx, userID, dr), true
+		return s.digestContentObject(r, userID, dr), true
 	}
 
 	item, err := s.queries.GetItemWithFeedOwner(ctx, store.GetItemWithFeedOwnerParams{ID: id, UserID: userID})
 	if err != nil {
 		return readerContentStreamItem{}, false
 	}
-	return s.itemContentObject(ctx, item), true
+	return s.itemContentObject(r, item), true
 }
 
 // itemContentObject builds a content object for a regular feed item.
-func (s *Server) itemContentObject(ctx context.Context, item store.Item) readerContentStreamItem {
+func (s *Server) itemContentObject(r *http.Request, item store.Item) readerContentStreamItem {
+	ctx := r.Context()
 	feedName := ""
 	if f, err := s.queries.GetFeedByID(ctx, item.FeedID); err == nil {
 		feedName = f.Name
@@ -224,14 +254,15 @@ func (s *Server) itemContentObject(ctx context.Context, item store.Item) readerC
 		Summary:       readerContentBody{Content: body},
 		Content:       readerContentBody{Content: body},
 		Author:        item.Author,
-		Origin:        readerOrigin{StreamID: feedStreamID(item.FeedID), Title: feedName, HTMLURL: ""},
+		Origin:        readerOrigin{StreamID: feedStreamID(item.FeedID), Title: feedName, HTMLURL: s.feedWebURL(r, item.FeedID)},
 		Categories:    itemCategories(item.Status),
 		Annotations:   []string{},
 	}
 }
 
 // digestContentObject builds a content object for a digest result.
-func (s *Server) digestContentObject(ctx context.Context, userID int64, dr store.DigestResult) readerContentStreamItem {
+func (s *Server) digestContentObject(r *http.Request, userID int64, dr store.DigestResult) readerContentStreamItem {
+	ctx := r.Context()
 	configName := fmt.Sprintf("Digest %d", dr.ConfigID)
 	if cfg, err := s.queries.GetDigestConfig(ctx, store.GetDigestConfigParams{ID: dr.ConfigID, UserID: userID}); err == nil {
 		if cfg.Name != "" {
@@ -239,8 +270,11 @@ func (s *Server) digestContentObject(ctx context.Context, userID int64, dr store
 		}
 	}
 
-	summary := digestSummary(dr.Content)
+	// NetNewsWire reads only `summary` as the article body, so render the full
+	// digest once and put it in both fields (matching the item content path).
+	rendered := renderDigestHTML(dr.Content)
 
+	digestURL := s.digestResultWebURL(r, dr.ConfigID, dr.ID)
 	created := dr.CreatedAt
 
 	return readerContentStreamItem{
@@ -250,12 +284,12 @@ func (s *Server) digestContentObject(ctx context.Context, userID int64, dr store
 		Published:     created.Unix(),
 		Updated:       created.Unix(),
 		Title:         "Digest: " + configName,
-		Canonical:     []readerCanonical{},
-		Alternate:     []readerAlternate{},
-		Summary:       readerContentBody{Content: summary},
-		Content:       readerContentBody{Content: renderDigestHTML(dr.Content)},
+		Canonical:     []readerCanonical{{Href: digestURL}},
+		Alternate:     []readerAlternate{{Href: digestURL, Type: "text/html"}},
+		Summary:       readerContentBody{Content: rendered},
+		Content:       readerContentBody{Content: rendered},
 		Author:        "",
-		Origin:        readerOrigin{StreamID: digestStreamID(dr.ConfigID), Title: configName, HTMLURL: ""},
+		Origin:        readerOrigin{StreamID: digestStreamID(dr.ConfigID), Title: configName, HTMLURL: s.digestConfigWebURL(r, dr.ConfigID)},
 		Categories:    digestCategories(dr.Status),
 		Annotations:   []string{},
 	}
@@ -320,15 +354,6 @@ type digestContentComment struct {
 	Text   string `json:"text"`
 	Points *int   `json:"points"`
 	URL    string `json:"url"`
-}
-
-// digestSummary returns the digest's summary field, tolerating malformed JSON.
-func digestSummary(contentJSON string) string {
-	var c digestContentJSON
-	if err := json.Unmarshal([]byte(contentJSON), &c); err != nil {
-		return ""
-	}
-	return c.Summary
 }
 
 // renderDigestHTML renders a digest result's content JSON as HTML. All

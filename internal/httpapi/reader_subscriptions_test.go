@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -68,6 +69,7 @@ func TestReaderSubscriptionList(t *testing.T) {
 			ID         string `json:"id"`
 			Title      string `json:"title"`
 			URL        string `json:"url"`
+			HTMLURL    string `json:"htmlUrl"`
 			Categories []struct {
 				ID    string `json:"id"`
 				Label string `json:"label"`
@@ -85,6 +87,7 @@ func TestReaderSubscriptionList(t *testing.T) {
 		ID         string `json:"id"`
 		Title      string `json:"title"`
 		URL        string `json:"url"`
+		HTMLURL    string `json:"htmlUrl"`
 		Categories []struct {
 			ID    string `json:"id"`
 			Label string `json:"label"`
@@ -94,6 +97,7 @@ func TestReaderSubscriptionList(t *testing.T) {
 		ID         string `json:"id"`
 		Title      string `json:"title"`
 		URL        string `json:"url"`
+		HTMLURL    string `json:"htmlUrl"`
 		Categories []struct {
 			ID    string `json:"id"`
 			Label string `json:"label"`
@@ -117,6 +121,9 @@ func TestReaderSubscriptionList(t *testing.T) {
 	if hn.URL != "https://hn.example.com" {
 		t.Fatalf("expected HN feed url %q, got %q", "https://hn.example.com", hn.URL)
 	}
+	if !strings.HasSuffix(hn.HTMLURL, fmt.Sprintf("/feeds/%d", hnFeed.ID)) {
+		t.Fatalf("expected HN feed htmlUrl to end with /feeds/%d, got %q", hnFeed.ID, hn.HTMLURL)
+	}
 	if len(hn.Categories) != 1 || hn.Categories[0].Label != "Tech" || hn.Categories[0].ID != "user/-/label/Tech" {
 		t.Fatalf("expected HN feed in Tech category, got %v", hn.Categories)
 	}
@@ -129,6 +136,9 @@ func TestReaderSubscriptionList(t *testing.T) {
 	}
 	if daily.URL != "" {
 		t.Fatalf("expected digest config to have no url, got %q", daily.URL)
+	}
+	if !strings.HasSuffix(daily.HTMLURL, fmt.Sprintf("/digests/%d", dailyConfig.ID)) {
+		t.Fatalf("expected digest config htmlUrl to end with /digests/%d, got %q", dailyConfig.ID, daily.HTMLURL)
 	}
 	if len(daily.Categories) != 0 {
 		t.Fatalf("expected digest config to have no categories, got %v", daily.Categories)
