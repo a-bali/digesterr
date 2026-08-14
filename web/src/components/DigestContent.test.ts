@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import DigestContent from './DigestContent.vue'
 import { useDigestStore } from '../stores/digest'
+import { absoluteTime } from '../lib/format'
 import type { DigestResult } from '../types/api'
 
 const content = JSON.stringify({
@@ -103,7 +104,13 @@ describe('DigestContent', () => {
     expect(h1.text()).toBe('Go Time')
   })
 
-  it('falls back to the created time when the digest has no title', () => {
+  it('shows the full date and time next to the counts when the digest has a title', () => {
+    const expected = absoluteTime('2026-08-13T08:00:00Z')
+    expect(wrapper.text()).toContain(expected)
+    expect(wrapper.find('h1').text()).toBe('Go Time')
+  })
+
+  it('falls back to the full date and time when the digest has no title', () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const noTitle = JSON.parse(content)
@@ -115,7 +122,7 @@ describe('DigestContent', () => {
       routes: [{ path: '/', component: { template: '<div />' } }],
     })
     const w = mount(DigestContent, { global: { plugins: [pinia, router] } })
-    const expected = new Date('2026-08-13T08:00:00Z').toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    const expected = absoluteTime('2026-08-13T08:00:00Z')
     expect(w.find('h1').text()).toBe(expected)
   })
 

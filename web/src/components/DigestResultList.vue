@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { useDigestStore } from '../stores/digest'
 import FilterBar from './FilterBar.vue'
 import { Circle, CircleDot, CircleCheck, Layers } from 'lucide-vue-next'
+import { absoluteTime } from '../lib/format'
 import type { DigestResult } from '../types/api'
 
 const emit = defineEmits<{ (e: 'select', result: DigestResult): void }>()
@@ -65,9 +66,8 @@ function onScroll(e: Event) {
         <div class="flex items-start gap-1 min-w-0">
           <CircleDot v-if="result.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
           <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
-          <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ new Date(result.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}</p>
+          <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ absoluteTime(result.created_at) }}</p>
         </div>
-        <p class="text-xs text-muted-foreground/70 mt-0.5 min-w-0">{{ new Date(result.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }}</p>
         <span class="absolute right-2 bottom-2 text-[10px] text-accent font-medium">{{ itemCount(result) }} items</span>
       </button>
     </div>
