@@ -138,3 +138,43 @@ func TestSetupLoggerExplicitCategory(t *testing.T) {
 		t.Errorf("expected category=item, got %q", text)
 	}
 }
+
+// TestSetupLoggerEnvTogglesDebug verifies the LOG_LEVEL env var reaches the
+// logger chain: with LOG_LEVEL=debug, debug lines are emitted; with
+// LOG_LEVEL=warn they are dropped again. This is the integration-level check
+// for the "LOG_LEVEL override works" rule — it fails if setupLogger stops
+// honoring resolveLogLevel's result.
+func TestSetupLoggerEnvTogglesDebug(t *testing.T) {
+	t.Run("LOG_LEVEL=debug shows debug", func(t *testing.T) {
+		t.Setenv("LOG_LEVEL", "debug")
+		t.Setenv("DIGESTERR_LOG_LEVEL", "")
+
+		var out bytes.Buffer
+		setupLogger(resolveLogLevel(""), 10, &out)
+
+		slog.Debug("debug visible via env")
+		text := out.String()
+		if !strings.Contains(text, "debug visible via env") {
+			t.Errorf("debug line not emitted with LOG_LEVEL=debug, got %q", text)
+		}
+	})
+
+	t.Run("flag overrides LOG_LEVEL=debug", func(t *testing.T) {
+		t.Setenv("LOG_LEVEL", "debug")
+		t.Setenv("DIGESTERR_LOG_LEVEL", "")
+
+		var out bytes.Buffer
+		setupLogger(resolveLogLevel("warn"), 10, &out)
+
+		slog.Debug("debug hidden by flag")
+		slog.Warn("warn visible via flag")
+		text := out.String()
+		if strings.Contains(text, "debug hidden by flag") {
+			t.Errorf("debug line emitted with -log-level=warn, got %q", text)
+		}
+		if !strings.Contains(text, "warn visible via flag") {
+			t.Errorf("warn line missing with -log-level=warn, got %q", text)
+		}
+	})
+}
+

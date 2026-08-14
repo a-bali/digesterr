@@ -15,7 +15,9 @@ import (
 	"github.com/yuin/goldmark"
 )
 
-const jinaReaderURL = "https://r.jina.ai"
+// jinaReaderURL is a var (not a const) so tests can point the Jina fallback
+// at an httptest server instead of the real service.
+var jinaReaderURL = "https://r.jina.ai"
 
 func ExtractWithJina(ctx context.Context, pageURL string, client *http.Client, logger *slog.Logger) (string, error) {
 	target := jinaReaderURL + "/" + url.QueryEscape(pageURL)
