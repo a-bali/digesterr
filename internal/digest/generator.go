@@ -96,6 +96,7 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*stor
 
 	if len(feedLimits) == 0 {
 		genLogger.Warn("digest config matched no feeds", "user_id", cfg.UserID)
+		return nil, fmt.Errorf("digest config %d matches no feeds", cfg.ID)
 	}
 	maxItems := dcfg.MaxItems
 	if maxItems <= 0 {
