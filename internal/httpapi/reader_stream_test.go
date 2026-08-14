@@ -30,7 +30,6 @@ func setupStreamTestServer(t *testing.T) (*Server, *store.Queries, *sql.DB) {
 // streamSeed holds the rows created for a stream test, so tests can assert
 // against stable IDs.
 type streamSeed struct {
-	cat           store.Category
 	feedA         store.Feed
 	feedB         store.Feed
 	cfg           store.DigestConfig
@@ -93,18 +92,14 @@ func seedReaderStream(t *testing.T, queries *store.Queries, db *sql.DB, userID i
 	var seed streamSeed
 
 	var err error
-	seed.cat, err = queries.CreateCategory(t.Context(), store.CreateCategoryParams{UserID: userID, Name: "Tech"})
-	if err != nil {
-		t.Fatalf("failed to create category: %v", err)
-	}
 
 	seed.feedA, err = queries.CreateFeed(t.Context(), store.CreateFeedParams{
-		UserID:     userID,
-		CategoryID: sql.NullInt64{Int64: seed.cat.ID, Valid: true},
-		Type:       "rss",
-		Name:       "Feed A",
-		Url:        "https://a.example.com/feed",
-		Status:     "active",
+		UserID:   userID,
+		Category: "Tech",
+		Type:     "rss",
+		Name:     "Feed A",
+		Url:      "https://a.example.com/feed",
+		Status:   "active",
 	})
 	if err != nil {
 		t.Fatalf("failed to create feed A: %v", err)

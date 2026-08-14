@@ -17,7 +17,7 @@ func TestHTTPRequestDebugLog(t *testing.T) {
 	server, _ := setupTestServer(t)
 	capture := testutil.CaptureSlog(t, slog.LevelDebug)
 
-	w := makeRequest(server, http.MethodGet, "/api/categories", nil, "")
+	w := makeRequest(server, http.MethodGet, "/api/feeds", nil, "")
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", w.Code)
 	}
@@ -38,8 +38,8 @@ func TestHTTPRequestDebugLog(t *testing.T) {
 	if attrs["method"] != "GET" {
 		t.Errorf("method = %q, want GET", attrs["method"])
 	}
-	if attrs["path"] != "/api/categories" {
-		t.Errorf("path = %q, want /api/categories", attrs["path"])
+	if attrs["path"] != "/api/feeds" {
+		t.Errorf("path = %q, want /api/feeds", attrs["path"])
 	}
 	if attrs["status"] != "401" {
 		t.Errorf("status = %q, want 401", attrs["status"])
@@ -59,7 +59,7 @@ func TestHTTPRequestLogHiddenAtInfo(t *testing.T) {
 	server, _ := setupTestServer(t)
 	capture := testutil.CaptureSlog(t, slog.LevelInfo)
 
-	makeRequest(server, http.MethodGet, "/api/categories", nil, "")
+	makeRequest(server, http.MethodGet, "/api/feeds", nil, "")
 
 	if _, ok := capture.Find("request"); ok {
 		t.Error("debug 'request' record emitted at info level")

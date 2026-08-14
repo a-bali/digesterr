@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { toast } from 'vue-sonner'
-import { useCategoryStore } from '../stores/category'
 import { useFeedStore } from '../stores/feed'
 import { useDigestStore } from '../stores/digest'
 import { feedApi } from '../services/api'
@@ -21,7 +20,6 @@ const emit = defineEmits<{
 }>()
 
 const feedStore = useFeedStore()
-const categoryStore = useCategoryStore()
 const digestStore = useDigestStore()
 const route = useRoute()
 
@@ -61,17 +59,10 @@ async function markFeedRead(id: number) {
   }
 }
 
-// Resolve category name -> category_id (or new category_name) and build final URL.
+// Resolve category name -> payload field and build final URL.
 function buildFeedPayload(form: { type: string; name: string; url: string; category: string; extract_content: number }): any {
   const data: any = { extract_content: form.extract_content, type: form.type, name: form.name }
-  const catName = form.category.trim()
-  if (catName) {
-    const existing = categoryStore.categories.find(c => c.name === catName)
-    if (existing) data.category_id = existing.id
-    else data.category_name = catName
-  } else {
-    data.category_id = 0
-  }
+  data.category = form.category.trim()
   if (form.type === 'reddit') data.url = 'https://www.reddit.com/r/' + form.url.replace(/\.rss$/, '') + '.rss'
   else if (form.type === 'hn') data.url = 'https://news.ycombinator.com/rss'
   else if (form.type === 'lobsters') data.url = 'https://lobste.rs/rss'
@@ -82,7 +73,6 @@ function buildFeedPayload(form: { type: string; name: string; url: string; categ
 async function addFeed(form: { type: string; name: string; url: string; category: string; extract_content: number }) {
   await feedApi.create(buildFeedPayload(form))
   await feedStore.fetchFeeds()
-  await categoryStore.fetchCategories()
   showAddFeed.value = false
 }
 
@@ -91,7 +81,6 @@ async function saveEditFeed(form: { type: string; name: string; url: string; cat
   await feedApi.update(editingFeed.value.id, buildFeedPayload(form))
   showEditFeed.value = false; editingFeed.value = null
   await feedStore.fetchFeeds()
-  await categoryStore.fetchCategories()
 }
 
 async function deleteFeed(id: number) {
@@ -136,16 +125,21 @@ onMounted(() => {
   digestStore.fetchUnreadCounts()
 })
 
-const collapsedCategories = reactive(new Set<number>())
-const uncategorizedFeeds = computed(() => feedStore.feeds.filter(f => !f.category_id))
-const sortedCategoryIds = computed(() => {
-  const cats = [...categoryStore.categories].filter(c => feedStore.feeds.some(f => f.category_id === c.id))
-  return cats.map(c => c.id)
+const collapsedCategories = reactive(new Set<string>())
+// Categories are derived from feeds: only names still in use, sorted
+// alphabetically. Feeds without a category are listed under "Feeds".
+const uncategorizedFeeds = computed(() => feedStore.feeds.filter(f => !f.category))
+const sortedCategoryNames = computed(() => {
+  const names = new Set<string>()
+  for (const f of feedStore.feeds) {
+    if (f.category) names.add(f.category)
+  }
+  return [...names].sort((a, b) => a.localeCompare(b))
 })
 
-function toggleCategory(catId: number) {
-  if (collapsedCategories.has(catId)) collapsedCategories.delete(catId)
-  else collapsedCategories.add(catId)
+function toggleCategory(name: string) {
+  if (collapsedCategories.has(name)) collapsedCategories.delete(name)
+  else collapsedCategories.add(name)
 }
 </script>
 
@@ -206,16 +200,16 @@ function toggleCategory(catId: number) {
       />
     </div>
 
-    <div v-for="catId in sortedCategoryIds" :key="catId" class="mb-3">
-      <button class="flex w-full items-center justify-between text-xs font-semibold text-muted-foreground uppercase mb-1 hover:text-foreground transition-colors px-2" @click="toggleCategory(catId)">
-        <span>{{ categoryStore.categories.find(c => c.id === catId)?.name || '' }}</span>
+    <div v-for="catName in sortedCategoryNames" :key="catName" class="mb-3">
+      <button class="flex w-full items-center justify-between text-xs font-semibold text-muted-foreground uppercase mb-1 hover:text-foreground transition-colors px-2" @click="toggleCategory(catName)">
+        <span>{{ catName }}</span>
         <span class="inline-flex items-center justify-end h-9 w-9 shrink-0">
-          <ChevronDown class="size-4 transition-transform" :class="collapsedCategories.has(catId) ? '-rotate-90' : ''" />
+          <ChevronDown class="size-4 transition-transform" :class="collapsedCategories.has(catName) ? '-rotate-90' : ''" />
         </span>
       </button>
-      <template v-if="!collapsedCategories.has(catId)">
+      <template v-if="!collapsedCategories.has(catName)">
         <FeedRow
-          v-for="feed in feedStore.feeds.filter(f => f.category_id === catId)" :key="feed.id"
+          v-for="feed in feedStore.feeds.filter(f => f.category === catName)" :key="feed.id"
           :feed="feed" :refreshing="refreshingFeeds.has(feed.id)"
           @select="emit('selectFeed', $event)"
           @edit="editingFeed = $event; showEditFeed = true"

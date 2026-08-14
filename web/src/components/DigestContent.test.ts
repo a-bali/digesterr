@@ -152,3 +152,140 @@ describe('DigestContent', () => {
     expect(empty.find('svg').exists()).toBe(true)
   })
 })
+
+describe('DigestContent with sections', () => {
+  const sectionContent = JSON.stringify({
+    summary: 'Sectioned summary',
+    sections: [
+      {
+        name: 'Tech',
+        kind: 'category',
+        sections: [
+          {
+            name: 'HN',
+            kind: 'feed',
+            feed_id: 42,
+            highlights: [
+              {
+                item_id: 11,
+                feed_id: 42,
+                feed_name: 'HN',
+                title: 'Tech Highlight',
+                url: 'https://example.com/11',
+                points: 90,
+                comments_count: 20,
+                published_at: '2026-08-13T07:00:00Z',
+                llm_summary: 'Tech highlight summary.',
+              },
+            ],
+            items: [
+              {
+                item_id: 12,
+                feed_id: 42,
+                feed_name: 'HN',
+                title: 'Tech Item',
+                url: 'https://example.com/12',
+                points: 4,
+                comments_count: 1,
+                published_at: '2026-08-13T06:00:00Z',
+              },
+            ],
+          },
+        ],
+      },
+      {
+        name: 'Solo Feed',
+        kind: 'feed',
+        feed_id: 7,
+        highlights: [],
+        items: [
+          {
+            item_id: 13,
+            feed_id: 7,
+            feed_name: 'Solo Feed',
+            title: 'Solo Item',
+            url: 'https://example.com/13',
+            points: 1,
+            comments_count: 0,
+            published_at: '2026-08-13T05:00:00Z',
+          },
+        ],
+      },
+    ],
+    highlights: [
+      {
+        item_id: 11,
+        feed_id: 42,
+        feed_name: 'HN',
+        title: 'Tech Highlight',
+        url: 'https://example.com/11',
+        points: 90,
+        comments_count: 20,
+        published_at: '2026-08-13T07:00:00Z',
+        llm_summary: 'Tech highlight summary.',
+      },
+    ],
+    items: [
+      {
+        item_id: 12,
+        feed_id: 42,
+        feed_name: 'HN',
+        title: 'Tech Item',
+        url: 'https://example.com/12',
+        points: 4,
+        comments_count: 1,
+        published_at: '2026-08-13T06:00:00Z',
+      },
+      {
+        item_id: 13,
+        feed_id: 7,
+        feed_name: 'Solo Feed',
+        title: 'Solo Item',
+        url: 'https://example.com/13',
+        points: 1,
+        comments_count: 0,
+        published_at: '2026-08-13T05:00:00Z',
+      },
+    ],
+  })
+
+  function mountSectioned() {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useDigestStore().selectedResult = { ...makeResult(), content: sectionContent }
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: { template: '<div />' } },
+        { path: '/feeds/:feedId(\\d+)/:itemId(\\d+)?', component: { template: '<div />' } },
+      ],
+    })
+
+    return mount(DigestContent, { global: { plugins: [pinia, router] } })
+  }
+
+  it('renders category sections wrapping their feed subsections', () => {
+    const wrapper = mountSectioned()
+
+    const categoryHeaders = wrapper.findAll('[data-category-section]')
+    expect(categoryHeaders.length).toBe(1)
+    expect(categoryHeaders[0].text()).toContain('Tech')
+
+    // Category section contains its nested feed section (HN) with both
+    // highlight and all-items content.
+    const hn = categoryHeaders[0].find('[data-feed-section]')
+    expect(hn.exists()).toBe(true)
+    expect(hn!.text()).toContain('Tech Highlight')
+    expect(hn!.text()).toContain('Tech Item')
+    expect(hn!.text().indexOf('Tech Highlight')).toBeLessThan(hn!.text().indexOf('Tech Item'))
+
+    // Standalone feed section for the ungrouped feed.
+    const sections = wrapper.findAll('[data-feed-section]')
+    expect(sections.length).toBe(2)
+    const solo = sections.find(s => s.text().includes('Solo Feed'))
+    expect(solo).toBeDefined()
+    expect(solo!.text()).toContain('Solo Item')
+    expect(solo!.find('a').attributes('href')).toBe('/feeds/7')
+  })
+})

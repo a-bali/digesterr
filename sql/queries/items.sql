@@ -93,5 +93,5 @@ ORDER BY i.published_at DESC, i.created_at DESC;
 -- name: ListItemsByCategory :many
 SELECT i.* FROM items i
 JOIN feeds f ON f.id = i.feed_id
-WHERE f.category_id = ?
+WHERE f.category = ? AND f.user_id = ?
 ORDER BY i.published_at DESC, i.created_at DESC;

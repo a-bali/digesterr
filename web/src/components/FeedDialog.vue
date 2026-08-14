@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
-import { useCategoryStore } from '../stores/category'
+import { reactive, computed, watch } from 'vue'
+import { useFeedStore } from '../stores/feed'
 import Dialog from './ui/Dialog.vue'
 import Input from './ui/Input.vue'
 import Select from './ui/Select.vue'
@@ -14,7 +14,16 @@ const emit = defineEmits<{
   (e: 'delete', id: number): void
 }>()
 
-const categoryStore = useCategoryStore()
+const feedStore = useFeedStore()
+
+// Category suggestions come from the categories currently in use.
+const categoryNames = computed(() => {
+  const names = new Set<string>()
+  for (const f of feedStore.feeds) {
+    if (f.category) names.add(f.category)
+  }
+  return [...names].sort((a, b) => a.localeCompare(b))
+})
 
 const form = reactive({ type: 'rss', name: '', url: '', category: '', extract_content: 0 })
 const typeLabel = (t: string) => ({ rss: 'RSS / Atom', hn: 'Hacker News', lobsters: 'Lobste.rs', reddit: 'Reddit' }[t] || t)
@@ -33,7 +42,7 @@ watch(
       form.type = feed.type
       form.name = feed.name
       form.url = feed.type === 'reddit' ? feed.url.replace('https://www.reddit.com/r/', '').replace('.rss', '') : feed.url
-      form.category = feed.category_id ? (categoryStore.categories.find(c => c.id === feed.category_id)?.name || '') : ''
+      form.category = feed.category || ''
       form.extract_content = feed.extract_content
     } else {
       form.type = 'rss'
@@ -64,7 +73,7 @@ const dialogId = Math.random().toString(36).slice(2)
           placeholder="Select existing or type new name…"
         />
         <datalist :id="`${dialogId}-cats`">
-          <option v-for="cat in categoryStore.categories" :key="cat.id" :value="cat.name" />
+          <option v-for="name in categoryNames" :key="name" :value="name" />
         </datalist>
       </div>
       <div class="space-y-1">

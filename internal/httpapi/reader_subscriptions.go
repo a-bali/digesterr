@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"digesterr/internal/store"
@@ -51,16 +52,6 @@ func (s *Server) handleReaderSubscriptionList(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	categories, err := s.queries.ListCategories(r.Context(), userID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list categories")
-		return
-	}
-	catNames := make(map[int64]string, len(categories))
-	for _, c := range categories {
-		catNames[c.ID] = c.Name
-	}
-
 	feeds, err := s.queries.ListFeeds(r.Context(), userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list feeds")
@@ -82,10 +73,8 @@ func (s *Server) handleReaderSubscriptionList(w http.ResponseWriter, r *http.Req
 			SortID:        readerSortID,
 			FirstItemMsec: "0",
 		}
-		if f.CategoryID.Valid {
-			if name, ok := catNames[f.CategoryID.Int64]; ok {
-				sub.Categories = []readerCategory{{ID: readerLabelID(name), Label: name}}
-			}
+		if f.Category != "" {
+			sub.Categories = []readerCategory{{ID: readerLabelID(f.Category), Label: f.Category}}
 		}
 		subs = append(subs, sub)
 	}
@@ -118,7 +107,7 @@ type readerTagList struct {
 }
 
 // handleReaderTagList returns the standard Google Reader state tags plus one
-// label tag per category.
+// label tag per category (derived from feeds that carry that category).
 func (s *Server) handleReaderTagList(w http.ResponseWriter, r *http.Request) {
 	userID, ok := userIDFromContext(r.Context())
 	if !ok {
@@ -137,8 +126,8 @@ func (s *Server) handleReaderTagList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list categories")
 		return
 	}
-	for _, c := range categories {
-		tags = append(tags, readerTag{ID: readerLabelID(c.Name), SortID: readerSortID, Type: "tag"})
+	for _, name := range categories {
+		tags = append(tags, readerTag{ID: readerLabelID(name), SortID: readerSortID, Type: "tag"})
 	}
 
 	writeJSON(w, http.StatusOK, readerTagList{Tags: tags})
@@ -169,16 +158,6 @@ func (s *Server) handleReaderSubscriptionExport(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	categories, err := s.queries.ListCategories(r.Context(), userID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list categories")
-		return
-	}
-	catNames := make(map[int64]string, len(categories))
-	for _, c := range categories {
-		catNames[c.ID] = c.Name
-	}
-
 	feeds, err := s.queries.ListFeeds(r.Context(), userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list feeds")
@@ -191,14 +170,12 @@ func (s *Server) handleReaderSubscriptionExport(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	grouped := make(map[int64][]store.Feed)
+	grouped := make(map[string][]store.Feed)
 	var topLevel []store.Feed
 	for _, f := range feeds {
-		if f.CategoryID.Valid {
-			if _, ok := catNames[f.CategoryID.Int64]; ok {
-				grouped[f.CategoryID.Int64] = append(grouped[f.CategoryID.Int64], f)
-				continue
-			}
+		if f.Category != "" {
+			grouped[f.Category] = append(grouped[f.Category], f)
+			continue
 		}
 		topLevel = append(topLevel, f)
 	}
@@ -211,13 +188,18 @@ func (s *Server) handleReaderSubscriptionExport(w http.ResponseWriter, r *http.R
 		writeOPMLOutline(&b, f.Name, f.Url)
 	}
 
-	for _, c := range categories {
-		fs := grouped[c.ID]
+	catNames := make([]string, 0, len(grouped))
+	for name := range grouped {
+		catNames = append(catNames, name)
+	}
+	sort.Strings(catNames)
+	for _, name := range catNames {
+		fs := grouped[name]
 		if len(fs) == 0 {
 			continue
 		}
-		name := escapeXMLAttr(c.Name)
-		fmt.Fprintf(&b, `<outline text="%s" title="%s">`, name, name)
+		escaped := escapeXMLAttr(name)
+		fmt.Fprintf(&b, `<outline text="%s" title="%s">`, escaped, escaped)
 		for _, f := range fs {
 			writeOPMLOutline(&b, f.Name, f.Url)
 		}

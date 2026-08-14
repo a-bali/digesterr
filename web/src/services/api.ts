@@ -1,4 +1,4 @@
-import type { AuthResponse, Category, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, Item, LogsResponse } from '../types/api'
+import type { AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, Item, LogsResponse } from '../types/api'
 
 const TOKEN_KEY = 'digesterr-token'
 
@@ -101,16 +101,9 @@ export const authApi = {
   rotateApiKey: () => api<{ api_key: string }>('/auth/api-key/rotate', { method: 'POST' }),
 }
 
-export const categoryApi = {
-  list: () => api<Category[]>('/categories'),
-  create: (name: string) => api<Category>('/categories', { method: 'POST', body: JSON.stringify({ name }) }),
-  update: (id: number, name: string) => api<Category>(`/categories/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
-  delete: (id: number) => api<void>(`/categories/${id}`, { method: 'DELETE' }),
-}
-
 export const feedApi = {
   list: () => api<Feed[]>('/feeds'),
-  create: (data: { category_id?: number; category_name?: string; type: string; name: string; url: string; extract_content?: number }) =>
+  create: (data: { category?: string; type: string; name: string; url: string; extract_content?: number }) =>
     api<Feed>('/feeds', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: number, data: Partial<Feed>) =>
     api<Feed>(`/feeds/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),

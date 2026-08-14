@@ -137,31 +137,9 @@ func TestSigninWrongPassword(t *testing.T) {
 
 func TestUnauthenticatedAccess(t *testing.T) {
 	server, _ := setupTestServer(t)
-	w := makeRequest(server, http.MethodGet, "/api/categories", nil, "")
+	w := makeRequest(server, http.MethodGet, "/api/feeds", nil, "")
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status 401, got %d", w.Code)
-	}
-}
-
-func TestCategoryCRUD(t *testing.T) {
-	server, queries := setupTestServer(t)
-	user := createTestUser(t, queries, "cat@example.com", "password123")
-	token := getTestToken(t, server.auth, &user)
-
-	w := makeRequest(server, http.MethodPost, "/api/categories", map[string]string{"name": "Tech"}, token)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-
-	w = makeRequest(server, http.MethodGet, "/api/categories", nil, token)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	var categories []store.Category
-	json.NewDecoder(w.Body).Decode(&categories)
-	if len(categories) != 1 || categories[0].Name != "Tech" {
-		t.Fatalf("expected 1 category named Tech, got %v", categories)
 	}
 }
 
@@ -170,45 +148,42 @@ func TestFeedCRUD(t *testing.T) {
 	user := createTestUser(t, queries, "feed@example.com", "password123")
 	token := getTestToken(t, server.auth, &user)
 
-	cat, _ := queries.CreateCategory(t.Context(), store.CreateCategoryParams{
-		UserID: user.ID,
-		Name:   "Tech",
-	})
-
 	body := map[string]interface{}{
-		"category_id": cat.ID,
-		"type":        "rss",
-		"name":        "Test Feed",
-		"url":         "https://example.com/feed.xml",
+		"category": "Tech",
+		"type":     "rss",
+		"name":     "Test Feed",
+		"url":      "https://example.com/feed.xml",
 	}
 	w := makeRequest(server, http.MethodPost, "/api/feeds", body, token)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created store.Feed
+	json.NewDecoder(w.Body).Decode(&created)
+	if created.Category != "Tech" {
+		t.Fatalf("expected category 'Tech', got %q", created.Category)
 	}
 
 	w = makeRequest(server, http.MethodGet, "/api/feeds", nil, token)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
-}
+	var feeds []store.Feed
+	json.NewDecoder(w.Body).Decode(&feeds)
+	if len(feeds) != 1 || feeds[0].Name != "Test Feed" {
+		t.Fatalf("expected 1 feed named Test Feed, got %v", feeds)
+	}
 
-func TestDeleteCategory(t *testing.T) {
-	server, queries := setupTestServer(t)
-	user := createTestUser(t, queries, "delcat@example.com", "password123")
-	token := getTestToken(t, server.auth, &user)
-
-	_, _ = queries.CreateCategory(t.Context(), store.CreateCategoryParams{
-		UserID: user.ID,
-		Name:   "ToDelete",
-	})
-
-	w := makeRequest(server, http.MethodGet, "/api/categories", nil, token)
-	var categories []store.Category
-	json.NewDecoder(w.Body).Decode(&categories)
-	catID := categories[0].ID
-
-	w = makeRequest(server, http.MethodDelete, "/api/categories/"+itoa(catID), nil, token)
+	// Updating with an empty category removes it.
+	w = makeRequest(server, http.MethodPatch, "/api/feeds/"+itoa(created.ID), map[string]interface{}{
+		"category": "",
+	}, token)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated store.Feed
+	json.NewDecoder(w.Body).Decode(&updated)
+	if updated.Category != "" {
+		t.Fatalf("expected empty category after clearing, got %q", updated.Category)
 	}
 }

@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
-import { useCategoryStore } from '../stores/category'
+import { ref, reactive, computed, watch } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import Dialog from './ui/Dialog.vue'
 import Input from './ui/Input.vue'
 import Button from './ui/Button.vue'
-import TagInput from './TagInput.vue'
+import TagInput, { type TagValue } from './TagInput.vue'
 import type { DigestConfig } from '../types/api'
 
 const props = defineProps<{ config: DigestConfig | null }>()
@@ -15,16 +14,25 @@ const emit = defineEmits<{
   (e: 'delete', id: number): void
 }>()
 
-const categoryStore = useCategoryStore()
 const feedStore = useFeedStore()
 
 const DEFAULT_PROMPT = 'You are a research assistant digesting news articles. For each article provided below, produce a 2-3 sentence highlight giving the concrete takeaway and why it matters — skip introductory phrases like "The article discusses" or "The author explains". Use the comments and extracted content to enrich your analysis.'
+
+// Category options are derived from feeds and selectable by name; feeds are
+// selectable by id but displayed with their readable names.
+const categoryItems = computed(() => {
+  const names = new Set<string>()
+  for (const f of feedStore.feeds) {
+    if (f.category) names.add(f.category)
+  }
+  return [...names].sort((a, b) => a.localeCompare(b)).map(name => ({ label: name, value: name }))
+})
 
 const sourceMode = ref<'categories' | 'feeds'>('categories')
 const form = reactive({
   name: '',
   schedule: '0 8 * * *',
-  sourceIds: [] as number[],
+  sourceIds: [] as TagValue[],
   highlights: 5,
   comments: 10,
   maxItems: 100,
@@ -35,7 +43,7 @@ watch(
   () => props.config,
   (cfg) => {
     if (cfg) {
-      let ids: number[] = []
+      let ids: TagValue[] = []
       let highlights = 5, comments = 10, maxItems = 100, prompt = DEFAULT_PROMPT
       let mode: 'categories' | 'feeds' = 'categories'
       try {
@@ -45,7 +53,7 @@ watch(
         if (parsed.max_items) maxItems = parsed.max_items
         if (parsed.prompt) prompt = parsed.prompt
         if (Array.isArray(parsed.categories) && parsed.categories.length) {
-          mode = 'categories'; ids = parsed.categories.map((c: any) => c.id)
+          mode = 'categories'; ids = parsed.categories.map((c: any) => c.name ?? c.id)
         } else if (Array.isArray(parsed.feeds) && parsed.feeds.length) {
           mode = 'feeds'; ids = parsed.feeds.map((f: any) => f.id)
         }
@@ -80,7 +88,7 @@ function buildConfig(): string {
     prompt: form.prompt || undefined,
   }
   if (sourceMode.value === 'categories') {
-    c.categories = form.sourceIds.map(id => ({ id, highlights: form.highlights, comments: form.comments }))
+    c.categories = form.sourceIds.map(name => ({ name, highlights: form.highlights, comments: form.comments }))
   } else {
     c.feeds = form.sourceIds.map(id => ({ id, highlights: form.highlights, comments: form.comments }))
   }
@@ -113,7 +121,7 @@ function submit() {
         <div class="mt-1">
           <TagInput
             v-if="sourceMode === 'categories'"
-            :items="categoryStore.categories.map(c => ({ label: c.name, value: c.id }))"
+            :items="categoryItems"
             v-model="form.sourceIds"
             placeholder="Search categories…"
           />

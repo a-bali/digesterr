@@ -1,8 +1,6 @@
 package httpapi
 
 import (
-	"context"
-	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -12,36 +10,12 @@ import (
 )
 
 type createFeedRequest struct {
-	CategoryID     *int64 `json:"category_id"`
-	CategoryName   string `json:"category_name"`
+	Category       string `json:"category"`
 	Type           string `json:"type"`
 	Name           string `json:"name"`
 	URL            string `json:"url"`
 	Config         string `json:"config"`
 	ExtractContent int64  `json:"extract_content"`
-}
-
-func (s *Server) resolveCategory(ctx context.Context, userID int64, req createFeedRequest) sql.NullInt64 {
-	if req.CategoryID != nil && *req.CategoryID > 0 {
-		return sql.NullInt64{Int64: *req.CategoryID, Valid: true}
-	}
-	if req.CategoryName != "" {
-		cat, err := s.queries.GetCategoryByName(ctx, store.GetCategoryByNameParams{
-			UserID: userID,
-			Name:   req.CategoryName,
-		})
-		if err == nil {
-			return sql.NullInt64{Int64: cat.ID, Valid: true}
-		}
-		cat, err = s.queries.CreateCategory(ctx, store.CreateCategoryParams{
-			UserID: userID,
-			Name:   req.CategoryName,
-		})
-		if err == nil {
-			return sql.NullInt64{Int64: cat.ID, Valid: true}
-		}
-	}
-	return sql.NullInt64{Valid: false}
 }
 
 func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +38,7 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	feed, err := s.queries.CreateFeed(r.Context(), store.CreateFeedParams{
 		UserID:         userID,
-		CategoryID:     s.resolveCategory(r.Context(), userID, req),
+		Category:       req.Category,
 		Type:           req.Type,
 		Name:           req.Name,
 		Url:            req.URL,
@@ -123,8 +97,7 @@ type updateFeedRequest struct {
 	Name           *string `json:"name"`
 	URL            *string `json:"url"`
 	Config         *string `json:"config"`
-	CategoryID     *int64  `json:"category_id"`
-	CategoryName   string  `json:"category_name"`
+	Category       *string `json:"category"`
 	Status         *string `json:"status"`
 	ExtractContent *int64  `json:"extract_content"`
 }
@@ -165,27 +138,9 @@ func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
 	if req.Config != nil {
 		config = *req.Config
 	}
-	categoryID := existing.CategoryID
-	if req.CategoryID != nil && *req.CategoryID == 0 {
-		categoryID = sql.NullInt64{Valid: false}
-	} else if req.CategoryID != nil {
-		categoryID = sql.NullInt64{Int64: *req.CategoryID, Valid: true}
-	} else if req.CategoryName != "" {
-		cat, err := s.queries.GetCategoryByName(r.Context(), store.GetCategoryByNameParams{
-			UserID: userID,
-			Name:   req.CategoryName,
-		})
-		if err == nil {
-			categoryID = sql.NullInt64{Int64: cat.ID, Valid: true}
-		} else {
-			cat, err = s.queries.CreateCategory(r.Context(), store.CreateCategoryParams{
-				UserID: userID,
-				Name:   req.CategoryName,
-			})
-			if err == nil {
-				categoryID = sql.NullInt64{Int64: cat.ID, Valid: true}
-			}
-		}
+	category := existing.Category
+	if req.Category != nil {
+		category = *req.Category
 	}
 	status := existing.Status
 	if req.Status != nil {
@@ -201,23 +156,13 @@ func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
 		Name:           name,
 		Url:            url,
 		Config:         config,
-		CategoryID:     categoryID,
+		Category:       category,
 		Status:         status,
 		ExtractContent: extractContent,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update feed")
 		return
-	}
-
-	if existing.CategoryID.Valid && categoryID.Int64 != existing.CategoryID.Int64 {
-		cnt, cerr := s.queries.CountFeedsInCategory(r.Context(), existing.CategoryID)
-		if cerr == nil && cnt == 0 {
-			s.queries.DeleteCategory(r.Context(), store.DeleteCategoryParams{
-				ID:     existing.CategoryID.Int64,
-				UserID: userID,
-			})
-		}
 	}
 
 	writeJSON(w, http.StatusOK, feed)
@@ -235,12 +180,6 @@ func (s *Server) handleDeleteFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	feed, err := s.queries.GetFeedByID(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "feed not found")
-		return
-	}
-
 	deleted, err := s.queries.DeleteFeed(r.Context(), store.DeleteFeedParams{
 		ID:     id,
 		UserID: userID,
@@ -248,16 +187,6 @@ func (s *Server) handleDeleteFeed(w http.ResponseWriter, r *http.Request) {
 	if err != nil || deleted == 0 {
 		writeError(w, http.StatusNotFound, "feed not found")
 		return
-	}
-
-	if feed.CategoryID.Valid {
-		cnt, cerr := s.queries.CountFeedsInCategory(r.Context(), feed.CategoryID)
-		if cerr == nil && cnt == 0 {
-			s.queries.DeleteCategory(r.Context(), store.DeleteCategoryParams{
-				ID:     feed.CategoryID.Int64,
-				UserID: userID,
-			})
-		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})

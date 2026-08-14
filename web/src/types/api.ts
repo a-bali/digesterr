@@ -5,18 +5,10 @@ export interface User {
   updated_at: string
 }
 
-export interface Category {
-  id: number
-  user_id: number
-  name: string
-  created_at: string
-  updated_at: string
-}
-
 export interface Feed {
   id: number
   user_id: number
-  category_id: number | null
+  category: string
   type: string
   name: string
   url: string
@@ -101,8 +93,18 @@ export interface DigestResultItemWithData {
 
 export interface DigestContent {
   summary: string
+  sections?: DigestSection[]
   highlights: DigestContentItem[]
   items: DigestContentItem[]
+}
+
+export interface DigestSection {
+  name: string
+  kind: 'category' | 'feed'
+  feed_id?: number
+  sections?: DigestSection[]
+  highlights?: DigestContentItem[]
+  items?: DigestContentItem[]
 }
 
 export interface DigestContentItem {

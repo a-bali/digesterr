@@ -238,12 +238,17 @@ func (q *Queries) GetUnreadCounts(ctx context.Context, userID int64) ([]GetUnrea
 const listItemsByCategory = `-- name: ListItemsByCategory :many
 SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
 JOIN feeds f ON f.id = i.feed_id
-WHERE f.category_id = ?
+WHERE f.category = ? AND f.user_id = ?
 ORDER BY i.published_at DESC, i.created_at DESC
 `
 
-func (q *Queries) ListItemsByCategory(ctx context.Context, categoryID sql.NullInt64) ([]Item, error) {
-	rows, err := q.db.QueryContext(ctx, listItemsByCategory, categoryID)
+type ListItemsByCategoryParams struct {
+	Category string `json:"category"`
+	UserID   int64  `json:"user_id"`
+}
+
+func (q *Queries) ListItemsByCategory(ctx context.Context, arg ListItemsByCategoryParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByCategory, arg.Category, arg.UserID)
 	if err != nil {
 		return nil, err
 	}

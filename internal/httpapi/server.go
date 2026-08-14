@@ -49,12 +49,6 @@ func NewServer(queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffe
 	mux.HandleFunc("GET /api/auth/api-key", s.requireAuth(s.handleGetAPIKey))
 	mux.HandleFunc("POST /api/auth/api-key/rotate", s.requireAuth(s.handleRotateAPIKey))
 
-	mux.HandleFunc("GET /api/categories", s.requireAuth(s.handleListCategories))
-	mux.HandleFunc("POST /api/categories", s.requireAuth(s.handleCreateCategory))
-	mux.HandleFunc("GET /api/categories/{id}", s.requireAuth(s.handleGetCategory))
-	mux.HandleFunc("PATCH /api/categories/{id}", s.requireAuth(s.handleUpdateCategory))
-	mux.HandleFunc("DELETE /api/categories/{id}", s.requireAuth(s.handleDeleteCategory))
-
 	mux.HandleFunc("GET /api/feeds", s.requireAuth(s.handleListFeeds))
 	mux.HandleFunc("POST /api/feeds", s.requireAuth(s.handleCreateFeed))
 	mux.HandleFunc("GET /api/feeds/{id}", s.requireAuth(s.handleGetFeed))

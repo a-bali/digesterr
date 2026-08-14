@@ -193,20 +193,93 @@ ALTER TABLE feeds_new RENAME TO feeds;
 PRAGMA foreign_keys=ON;
 `,
 		},
+		{
+			"convert feeds.category_id to feeds.category text",
+			// Categories become an optional string attribute on the feed. Recreate
+			// feeds with a category TEXT column, carry over category names from the
+			// categories table, then drop the now-unused categories table.
+			`
+PRAGMA foreign_keys=OFF;
+CREATE TABLE feeds_new (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL,
+    category        TEXT    NOT NULL DEFAULT '',
+    type            TEXT    NOT NULL,
+    name            TEXT    NOT NULL,
+    url             TEXT    NOT NULL DEFAULT '',
+    config          TEXT    NOT NULL DEFAULT '{}',
+    last_fetched_at DATETIME,
+    status          TEXT    NOT NULL DEFAULT 'active',
+    extract_content INTEGER NOT NULL DEFAULT 0,
+    created_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    updated_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+INSERT INTO feeds_new (id, user_id, category, type, name, url, config, last_fetched_at, status, extract_content, created_at, updated_at)
+SELECT f.id, f.user_id, COALESCE(c.name, ''), f.type, f.name, f.url, f.config, f.last_fetched_at, f.status, f.extract_content, f.created_at, f.updated_at
+FROM feeds f LEFT JOIN categories c ON c.id = f.category_id;
+DROP TABLE feeds;
+ALTER TABLE feeds_new RENAME TO feeds;
+DROP TABLE IF EXISTS categories;
+DROP INDEX IF EXISTS idx_feeds_category_id;
+CREATE INDEX IF NOT EXISTS idx_feeds_category ON feeds(category);
+PRAGMA foreign_keys=ON;
+`,
+		},
 	}
 	for _, m := range migrations {
+		if skip, err := migrationSkipped(db, m.name); err != nil {
+			slog.Debug("schema migration guard failed", "name", m.name, "error", err)
+		} else if skip {
+			slog.Debug("schema migration skipped (already migrated)", "name", m.name)
+			continue
+		}
 		if _, err := db.Exec(m.sql); err != nil {
 			slog.Debug("schema migration (may already exist)", "name", m.name, "error", err)
 		} else {
 			slog.Info("schema migration applied", "name", m.name)
 		}
 	}
+	// Migrations toggle PRAGMA foreign_keys; make sure enforcement is on even
+	// if a migration failed partway.
+	db.Exec("PRAGMA foreign_keys=ON")
 	// Copy existing guid data into hash and create new unique index.
 	db.Exec("UPDATE items SET hash = guid WHERE hash = '' AND guid != ''")
 	db.Exec("DROP INDEX IF EXISTS idx_items_feed_guid")
 	db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_feed_hash ON items(feed_id, hash) WHERE hash != ''")
 	slog.Info("hash migration complete")
 	return nil
+}
+
+func hasColumn(db *sql.DB, table, column string) (bool, error) {
+	var n int
+	// pragma_table_info's table argument is a constant here; the column name
+	// is the only user-adjacent value and is bound.
+	err := db.QueryRow("SELECT count(*) FROM pragma_table_info('"+table+"') WHERE name = ?", column).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// migrationSkipped reports whether a known table-recreating migration must
+// not run because the database already reflects its end state. Migrations
+// re-run on every startup, so without these guards a second startup would
+// recreate the legacy table shape and corrupt already-converted data.
+// Unknown migrations never skip.
+func migrationSkipped(db *sql.DB, name string) (bool, error) {
+	switch name {
+	case "make feeds.category_id nullable", "convert feeds.category_id to feeds.category text":
+		// Both migrations only apply to the legacy category_id layout. Once
+		// feeds carries the category text column, they are no-ops and must
+		// not recreate the table.
+		hasID, err := hasColumn(db, "feeds", "category_id")
+		if err != nil {
+			return false, err
+		}
+		return !hasID, nil
+	}
+	return false, nil
 }
 
 func envOr(key, fallback string) string {

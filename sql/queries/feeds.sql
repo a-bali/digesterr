@@ -1,5 +1,5 @@
 -- name: CreateFeed :one
-INSERT INTO feeds (user_id, category_id, type, name, url, config, status, extract_content)
+INSERT INTO feeds (user_id, category, type, name, url, config, status, extract_content)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
@@ -13,11 +13,14 @@ SELECT * FROM feeds WHERE id = ?;
 SELECT * FROM feeds WHERE user_id = ? ORDER BY name;
 
 -- name: ListFeedsByCategory :many
-SELECT * FROM feeds WHERE category_id = ? AND user_id = ? ORDER BY name;
+SELECT * FROM feeds WHERE category = ? AND user_id = ? ORDER BY name;
+
+-- name: ListCategories :many
+SELECT DISTINCT category FROM feeds WHERE user_id = ? AND category != '' ORDER BY category;
 
 -- name: UpdateFeed :one
 UPDATE feeds
-SET name = ?, url = ?, config = ?, category_id = ?, status = ?, extract_content = ?, updated_at = DATETIME('now')
+SET name = ?, url = ?, config = ?, category = ?, status = ?, extract_content = ?, updated_at = DATETIME('now')
 WHERE id = ? AND user_id = ?
 RETURNING *;
 

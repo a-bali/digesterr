@@ -2,7 +2,6 @@ package digest
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"os"
 	"strconv"
@@ -155,35 +154,27 @@ func TestGeneratorBuildFeedLimits(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 
-	cat, err := queries.CreateCategory(ctx, store.CreateCategoryParams{
-		UserID: user.ID,
-		Name:   "Tech",
-	})
-	if err != nil {
-		t.Fatalf("create category: %v", err)
-	}
-
 	f1, err := queries.CreateFeed(ctx, store.CreateFeedParams{
-		UserID:     user.ID,
-		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
-		Type:       "rss",
-		Name:       "Feed 1",
-		Url:        "https://example.com/feed1",
-		Config:     "{}",
-		Status:     "active",
+		UserID:   user.ID,
+		Category: "Tech",
+		Type:     "rss",
+		Name:     "Feed 1",
+		Url:      "https://example.com/feed1",
+		Config:   "{}",
+		Status:   "active",
 	})
 	if err != nil {
 		t.Fatalf("create feed 1: %v", err)
 	}
 
 	_, err = queries.CreateFeed(ctx, store.CreateFeedParams{
-		UserID:     user.ID,
-		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
-		Type:       "rss",
-		Name:       "Feed 2",
-		Url:        "https://example.com/feed2",
-		Config:     "{}",
-		Status:     "active",
+		UserID:   user.ID,
+		Category: "Tech",
+		Type:     "rss",
+		Name:     "Feed 2",
+		Url:      "https://example.com/feed2",
+		Config:   "{}",
+		Status:   "active",
 	})
 	if err != nil {
 		t.Fatalf("create feed 2: %v", err)
@@ -193,11 +184,7 @@ func TestGeneratorBuildFeedLimits(t *testing.T) {
 
 	t.Run("individual feeds", func(t *testing.T) {
 		dcfg := digestConfigJSON{
-			Feeds: []struct {
-				ID         int `json:"id"`
-				Highlights int `json:"highlights"`
-				Comments   int `json:"comments"`
-			}{
+			Feeds: []digestFeedSelection{
 				{ID: int(f1.ID), Highlights: 3, Comments: 5},
 			},
 		}
@@ -219,12 +206,8 @@ func TestGeneratorBuildFeedLimits(t *testing.T) {
 
 	t.Run("category expands feeds", func(t *testing.T) {
 		dcfg := digestConfigJSON{
-			Categories: []struct {
-				ID         int `json:"id"`
-				Highlights int `json:"highlights"`
-				Comments   int `json:"comments"`
-			}{
-				{ID: int(cat.ID), Highlights: 5, Comments: 10},
+			Categories: []digestCategorySelection{
+				{Name: "Tech", Highlights: 5, Comments: 10},
 			},
 		}
 		limits := g.buildFeedLimits(ctx, user.ID, dcfg)
@@ -246,18 +229,10 @@ func TestGeneratorBuildFeedLimits(t *testing.T) {
 
 	t.Run("individual feed overrides category", func(t *testing.T) {
 		dcfg := digestConfigJSON{
-			Categories: []struct {
-				ID         int `json:"id"`
-				Highlights int `json:"highlights"`
-				Comments   int `json:"comments"`
-			}{
-				{ID: int(cat.ID), Highlights: 5, Comments: 10},
+			Categories: []digestCategorySelection{
+				{Name: "Tech", Highlights: 5, Comments: 10},
 			},
-			Feeds: []struct {
-				ID         int `json:"id"`
-				Highlights int `json:"highlights"`
-				Comments   int `json:"comments"`
-			}{
+			Feeds: []digestFeedSelection{
 				{ID: int(f1.ID), Highlights: 7, Comments: 12},
 			},
 		}
@@ -272,9 +247,128 @@ func TestGeneratorBuildFeedLimits(t *testing.T) {
 	})
 }
 
+func TestGeneratorBuildSections(t *testing.T) {
+	g := &Generator{}
+	feedInfos := map[int64]feedInfo{
+		1: {name: "Feed A", category: "Tech"},
+		2: {name: "Feed B", category: "Tech"},
+		3: {name: "Feed C", category: "News"},
+		4: {name: "Solo Feed", category: ""},
+	}
+	highlight := func(feedID int64, title string) digestItemRef {
+		return digestItemRef{ItemID: feedID*100 + 1, FeedID: feedID, FeedName: feedInfos[feedID].name, Title: title}
+	}
+	item := func(feedID int64, title string) digestItemRef {
+		return digestItemRef{ItemID: feedID*100 + 2, FeedID: feedID, FeedName: feedInfos[feedID].name, Title: title}
+	}
+
+	highlights := []digestItemRef{highlight(3, "News HL"), highlight(2, "B HL"), highlight(1, "A HL")}
+	items := []digestItemRef{item(4, "Solo item"), item(2, "B item")}
+
+	t.Run("categories produce one section per selected category with nested feeds", func(t *testing.T) {
+		dcfg := digestConfigJSON{
+			Categories: []digestCategorySelection{
+				{Name: "News"},
+				{Name: "Tech"},
+			},
+		}
+		sections := g.buildSections(dcfg, highlights, items, feedInfos)
+
+		if len(sections) != 3 {
+			t.Fatalf("expected 3 sections (News, Tech, uncategorized Solo Feed), got %d", len(sections))
+		}
+		// Config order preserved: News first, then Tech.
+		if sections[0].Name != "News" || sections[0].Kind != "category" {
+			t.Errorf("section 0 = %+v, want News category", sections[0])
+		}
+		if len(sections[0].Sections) != 1 || sections[0].Sections[0].Name != "Feed C" {
+			t.Errorf("News section should contain Feed C, got %+v", sections[0].Sections)
+		}
+		if sections[1].Name != "Tech" {
+			t.Errorf("section 1 = %+v, want Tech", sections[1])
+		}
+		// Feeds inside a category are sorted by name: Feed A then Feed B.
+		if len(sections[1].Sections) != 2 ||
+			sections[1].Sections[0].Name != "Feed A" ||
+			sections[1].Sections[1].Name != "Feed B" {
+			t.Errorf("Tech section feeds = %+v, want Feed A, Feed B", sections[1].Sections)
+		}
+		// Feed sections carry their items.
+		if len(sections[1].Sections[0].Highlights) != 1 || len(sections[1].Sections[0].Items) != 0 {
+			t.Errorf("Feed A section = %+v, want 1 highlight", sections[1].Sections[0])
+		}
+		if len(sections[1].Sections[1].Highlights) != 1 || len(sections[1].Sections[1].Items) != 1 {
+			t.Errorf("Feed B section = %+v, want 1 highlight and 1 item", sections[1].Sections[1])
+		}
+		// The uncategorized Solo Feed is emitted as a top-level feed section.
+		if len(sections) != 3 {
+			t.Fatalf("expected a third section for the uncategorized feed, got %d", len(sections))
+		}
+		if sections[2].Name != "Solo Feed" || sections[2].Kind != "feed" {
+			t.Errorf("section 2 = %+v, want Solo Feed feed section", sections[2])
+		}
+		if len(sections[2].Items) != 1 {
+			t.Errorf("Solo Feed section items = %+v, want 1", sections[2].Items)
+		}
+	})
+
+	t.Run("selected category with no feeds is omitted", func(t *testing.T) {
+		dcfg := digestConfigJSON{
+			Categories: []digestCategorySelection{
+				{Name: "Nonexistent"},
+				{Name: "Tech"},
+			},
+		}
+		sections := g.buildSections(dcfg, highlights, items, feedInfos)
+		// Nonexistent is skipped; Tech comes first (config order), then News
+		// (items from Feed C are still in the digest), then the uncategorized
+		// Solo Feed.
+		if len(sections) != 3 {
+			t.Fatalf("expected 3 sections (Tech, News, Solo Feed), got %d", len(sections))
+		}
+		if sections[0].Name != "Tech" {
+			t.Errorf("section 0 = %+v, want Tech", sections[0])
+		}
+		if sections[1].Name != "News" || sections[2].Name != "Solo Feed" {
+			t.Errorf("sections = %+v, want News then Solo Feed", sections)
+		}
+	})
+
+	t.Run("feed selection produces feed-level sections", func(t *testing.T) {
+		dcfg := digestConfigJSON{
+			Feeds: []digestFeedSelection{{ID: 4}, {ID: 1}},
+		}
+		sections := g.buildSections(dcfg, highlights, items, feedInfos)
+		if len(sections) != 4 {
+			t.Fatalf("expected 4 feed sections (one per feed with items), got %d", len(sections))
+		}
+		if sections[0].Name != "Feed A" || sections[0].FeedID != 1 || sections[0].Kind != "feed" {
+			t.Errorf("section 0 = %+v, want feed section for Feed A", sections[0])
+		}
+		if sections[3].Name != "Solo Feed" {
+			t.Errorf("sections = %+v, want name-ordered feed sections", sections)
+		}
+	})
+
+	t.Run("no selection produces one feed section per feed", func(t *testing.T) {
+		dcfg := digestConfigJSON{}
+		sections := g.buildSections(dcfg, highlights, items, feedInfos)
+		if len(sections) != 4 {
+			t.Fatalf("expected 4 feed sections, got %d", len(sections))
+		}
+		for _, s := range sections {
+			if s.Kind != "feed" {
+				t.Errorf("section %+v should be a feed section", s)
+			}
+		}
+		if sections[0].Name != "Feed A" || sections[3].Name != "Solo Feed" {
+			t.Errorf("sections = %+v, want alphabetical feed order", sections)
+		}
+	})
+}
+
 func TestGeneratorSelectHighlights(t *testing.T) {
 	g := &Generator{}
-
 	items := []digestItem{
 		{Item: store.Item{ID: 1, FeedID: 1, Points: 100}, Highlights: 2, Comments: 5},
 		{Item: store.Item{ID: 2, FeedID: 1, Points: 80}, Highlights: 2, Comments: 5},
@@ -332,18 +426,10 @@ func TestCronFieldMatches(t *testing.T) {
 
 func TestGeneratorDigestConfigJSON(t *testing.T) {
 	cfg := digestConfigJSON{
-		Categories: []struct {
-			ID         int `json:"id"`
-			Highlights int `json:"highlights"`
-			Comments   int `json:"comments"`
-		}{
-			{ID: 1, Highlights: 5, Comments: 10},
+		Categories: []digestCategorySelection{
+			{Name: "Tech", Highlights: 5, Comments: 10},
 		},
-		Feeds: []struct {
-			ID         int `json:"id"`
-			Highlights int `json:"highlights"`
-			Comments   int `json:"comments"`
-		}{
+		Feeds: []digestFeedSelection{
 			{ID: 2, Highlights: 3, Comments: 7},
 		},
 		DefaultHighlights: 5,
@@ -363,7 +449,7 @@ func TestGeneratorDigestConfigJSON(t *testing.T) {
 	if parsed.Prompt != "Custom prompt" {
 		t.Errorf("prompt = %q, want Custom prompt", parsed.Prompt)
 	}
-	if len(parsed.Categories) != 1 || parsed.Categories[0].Highlights != 5 {
+	if len(parsed.Categories) != 1 || parsed.Categories[0].Highlights != 5 || parsed.Categories[0].Name != "Tech" {
 		t.Error("categories not parsed correctly")
 	}
 	if len(parsed.Feeds) != 1 || parsed.Feeds[0].Highlights != 3 {
@@ -396,22 +482,14 @@ func TestGeneratorFullPipeline(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 
-	cat, err := queries.CreateCategory(ctx, store.CreateCategoryParams{
-		UserID: user.ID,
-		Name:   "Tech",
-	})
-	if err != nil {
-		t.Fatalf("create category: %v", err)
-	}
-
 	feedObj, err := queries.CreateFeed(ctx, store.CreateFeedParams{
-		UserID:     user.ID,
-		CategoryID: sql.NullInt64{Int64: cat.ID, Valid: true},
-		Type:       "rss",
-		Name:       "Test Feed",
-		Url:        "https://example.com/feed",
-		Config:     "{}",
-		Status:     "active",
+		UserID:   user.ID,
+		Category: "Tech",
+		Type:     "rss",
+		Name:     "Test Feed",
+		Url:      "https://example.com/feed",
+		Config:   "{}",
+		Status:   "active",
 	})
 	if err != nil {
 		t.Fatalf("create feed: %v", err)
