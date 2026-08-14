@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"digesterr/internal/feed"
+	"digesterr/internal/logging"
 	"digesterr/internal/store"
 )
 
@@ -126,7 +127,9 @@ func (s *Server) handleExtractItem(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) doExtractItem(itemID int64, url string) {
 	ctx := context.Background()
-	logger := slog.With("item_id", itemID, "url", url)
+	// Item-level records override the source-derived category (http) with
+	// the "item" category.
+	logger := slog.With(logging.CategoryAttr(logging.CategoryItem), "item_id", itemID, "url", url)
 
 	content, err := feed.ExtractContent(ctx, url, &http.Client{Timeout: 30 * time.Second}, logger)
 	if err != nil {
@@ -151,7 +154,7 @@ func (s *Server) failExtraction(itemID int64, errorLine string) {
 	ctx := context.Background()
 	item, err := s.queries.GetItem(ctx, itemID)
 	if err != nil {
-		slog.Error("failed to fetch item for extraction failure", "item_id", itemID, "error", err)
+		slog.Error("failed to fetch item for extraction failure", logging.CategoryAttr(logging.CategoryItem), "item_id", itemID, "error", err)
 		return
 	}
 	newContent := strings.TrimSpace(item.ExtractContent)
@@ -167,6 +170,6 @@ func (s *Server) failExtraction(itemID int64, errorLine string) {
 		ExtractRetries: item.ExtractRetries + 1,
 	})
 	if err != nil {
-		slog.Error("failed to update extraction failure", "item_id", itemID, "error", err)
+		slog.Error("failed to update extraction failure", logging.CategoryAttr(logging.CategoryItem), "item_id", itemID, "error", err)
 	}
 }

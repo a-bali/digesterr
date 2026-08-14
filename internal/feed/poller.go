@@ -125,12 +125,13 @@ func (p *Poller) PollFeed(ctx context.Context, feed store.Feed) error {
 }
 
 func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher) error {
-	logger := slog.With("feed_id", feed.ID, "feed_url", feed.Url)
+	start := time.Now()
+	logger := slog.With("feed_id", feed.ID, "feed_name", feed.Name, "feed_url", feed.Url)
 	logger.Debug("polling feed")
 
 	items, err := fetcher.Fetch(ctx, feed.Url)
 	if err != nil {
-		logger.Error("failed to fetch feed", "error", err)
+		logger.Warn("failed to fetch feed", "error", err)
 		if _, ue := p.queries.UpdateFeedStatus(ctx, store.UpdateFeedStatusParams{
 			ID:     feed.ID,
 			Status: "error",
@@ -206,7 +207,7 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 		p.extractFeedContent(ctx, feed, logger)
 	}
 
-	logger.Info("feed polled", "total_items", len(items), "new_items", newCount)
+	logger.Info("feed polled", "total_items", len(items), "new_items", newCount, "duration", time.Since(start))
 	return nil
 }
 
@@ -232,7 +233,6 @@ func (p *Poller) extractFeedContent(ctx context.Context, feed store.Feed, logger
 		return
 	}
 	logger.Info("extracting content", "count", len(items))
-
 	client := &http.Client{Timeout: 30 * time.Second}
 	for _, item := range items {
 		if item.Url == "" {
@@ -244,6 +244,7 @@ func (p *Poller) extractFeedContent(ctx context.Context, feed store.Feed, logger
 
 func (p *Poller) extractSingleItem(ctx context.Context, client *http.Client, item store.Item, logger *slog.Logger) {
 	logger = logger.With("item_id", item.ID, "url", item.Url)
+	start := time.Now()
 
 	content, err := ExtractContent(ctx, item.Url, client, logger)
 	if err != nil {
@@ -262,6 +263,7 @@ func (p *Poller) extractSingleItem(ctx context.Context, client *http.Client, ite
 		logger.Debug("failed to save extracted content", "error", err)
 		return
 	}
+	logger.Info("content extracted", "bytes", len(content), "duration", time.Since(start))
 }
 
 func (p *Poller) extractDone(ctx context.Context, item store.Item, content string) {
@@ -311,7 +313,7 @@ func itemHash(guid, title, url, content string) string {
 }
 
 func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher Enricher) {
-	logger := slog.With("feed_id", feed.ID)
+	logger := slog.With("feed_id", feed.ID, "feed_name", feed.Name)
 	cutoff := time.Now().Add(-24 * time.Hour)
 	recent := time.Now().Add(-1 * time.Hour)
 

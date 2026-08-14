@@ -50,6 +50,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 		if !cronMatches(cfg.Schedule, now) {
 			continue
 		}
+		cfgLogger := slog.With("config_id", cfg.ID, "config_name", cfg.Name)
 
 		recently, err := s.queries.GetLatestDigestResult(ctx, store.GetLatestDigestResultParams{
 			ConfigID: cfg.ID,
@@ -57,15 +58,15 @@ func (s *Scheduler) tick(ctx context.Context) {
 		})
 		if err == nil && recently.ID > 0 {
 			if now.Sub(recently.CreatedAt) < 30*time.Minute {
-				slog.Debug("skipping digest, recently generated", "config_id", cfg.ID)
+				cfgLogger.Debug("skipping digest, recently generated")
 				continue
 			}
 		}
 
-		slog.Info("scheduled digest generation", "config_id", cfg.ID)
+		cfgLogger.Info("scheduled digest generation")
 		_, err = s.generator.Generate(ctx, cfg)
 		if err != nil {
-			slog.Error("scheduled digest generation failed", "config_id", cfg.ID, "error", err)
+			cfgLogger.Error("scheduled digest generation failed", "error", err)
 		}
 	}
 }

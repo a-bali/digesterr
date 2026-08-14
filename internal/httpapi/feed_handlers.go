@@ -87,7 +87,7 @@ func (s *Server) handleListFeeds(w http.ResponseWriter, r *http.Request) {
 	}
 	feeds, err := s.queries.ListFeeds(r.Context(), userID)
 	if err != nil {
-		slog.Error("failed to list feeds", "error", err)
+		slog.Error("failed to list feeds", "user_id", userID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list feeds")
 		return
 	}

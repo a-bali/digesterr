@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"digesterr/internal/auth"
+	"digesterr/internal/logging"
 	"digesterr/internal/store"
 )
 
@@ -175,18 +176,18 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	s.auth.DeleteRefreshToken(r.Context(), cookie.Value)
 	accessToken, err := s.auth.GenerateAccessToken(&user)
 	if err != nil {
-		slog.Error("refresh token: failed to generate access token", "error", err, "user_id", user.ID)
+		slog.Error("refresh token: failed to generate access token", logging.CategoryAttr(logging.CategoryAuth), "error", err, "user_id", user.ID)
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
 	newRefresh, err := s.auth.CreateRefreshToken(r.Context(), user.ID)
 	if err != nil {
-		slog.Error("refresh token: failed to create refresh token", "error", err, "user_id", user.ID)
+		slog.Error("refresh token: failed to create refresh token", logging.CategoryAttr(logging.CategoryAuth), "error", err, "user_id", user.ID)
 		writeError(w, http.StatusInternalServerError, "failed to create refresh token")
 		return
 	}
 
-	slog.Debug("token refreshed", "user_id", user.ID, "access_token", accessToken[:8]+"...")
+	slog.Debug("token refreshed", logging.CategoryAttr(logging.CategoryAuth), "user_id", user.ID, "access_token", accessToken[:8]+"...")
 
 	http.SetCookie(w, refreshCookie(r, newRefresh, int(auth.RefreshTokenDuration.Seconds())))
 

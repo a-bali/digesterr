@@ -16,8 +16,22 @@ var levelRank = map[string]int{
 	"ERROR": 3,
 }
 
+// categoryOf returns the effective category for an entry. An explicit
+// "category" attribute (set by the logging package, e.g. "item" for
+// item-level records logged from the http layer) wins over the
+// source-derived type. Entries without a category attribute fall back to
+// their type, preserving pre-category behavior.
+func categoryOf(e logbuf.Entry) string {
+	if c, ok := e.Attrs["category"]; ok && c != "" {
+		return c
+	}
+	return e.Type
+}
+
 // handleListLogs returns the most recent captured log entries, optionally
-// filtered by minimum severity (level=info) and exact type (type=digest).
+// filtered by minimum severity (level=info) and exact category (type=digest).
+// The category filter matches the entry's effective category: an explicit
+// "category" attribute when present, otherwise its source-derived type.
 // Pagination is offset-based over the filtered stream (newest first);
 // has_more reports whether older entries exist beyond this page.
 func (s *Server) handleListLogs(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +64,7 @@ func (s *Server) handleListLogs(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		if typ != "" && e.Type != typ {
+		if typ != "" && categoryOf(e) != typ {
 			continue
 		}
 		filtered = append(filtered, e)

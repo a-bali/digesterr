@@ -502,3 +502,31 @@ func TestGeneratorFullPipeline(t *testing.T) {
 		t.Errorf("expected 3 digested items, got %d", digestedCount)
 	}
 }
+
+func TestGenerateNoFeedsReturnsError(t *testing.T) {
+	queries, cleanup := setupDigestTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	user, err := queries.CreateUser(ctx, store.CreateUserParams{
+		Email:        "nofeeds@test.com",
+		PasswordHash: "hash",
+		ApiKey:       "nofeeds-key",
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	g := NewGenerator(queries, nil, feed.NewPoller(queries))
+	cfg := store.DigestConfig{
+		ID:     42,
+		Name:   "empty",
+		UserID: user.ID,
+		Config: `{"feeds":[],"categories":[],"default_highlights":5,"default_comments":10,"max_items":100}`,
+	}
+	_, err = g.Generate(ctx, cfg)
+	if err == nil {
+		t.Fatal("expected error for digest config matching no feeds, got nil")
+	}
+}

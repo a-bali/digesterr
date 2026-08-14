@@ -74,6 +74,18 @@ Use `nix develop --no-pure-eval --accept-flake-config` or `devenv shell` to ente
 - `internal/schema/schema.sql` — also used by sqlc for code generation (`sqlc.yaml` points here)
 - `sql/queries/` — sqlc query definitions
 
+## Logging
+
+- Levels: `debug`, `info` (default), `warn`, `error`
+- Configure via `LOG_LEVEL` env var or `-log-level` flag (flag wins over env)
+- Backend logging infrastructure lives in `internal/logging/` (stdlib `log/slog`)
+- Every emitted record carries a `category` key: `http`, `feed`, `item`,
+  `digest`, `app` (plus `auth`). Categories are derived from the caller's
+  source package; override with
+  `slog.With(logging.CategoryAttr(logging.CategoryItem))`
+- Records are also captured into an in-memory ring buffer served at
+  `GET /api/logs` (size via `LOG_BUFFER_SIZE`)
+
 ## Google Reader API
 
 Digesterr exposes a Google Reader–compatible API (mimicking Miniflux) under
