@@ -274,6 +274,14 @@ func (s *Server) digestContentObject(r *http.Request, userID int64, dr store.Dig
 	// digest once and put it in both fields (matching the item content path).
 	rendered := renderDigestHTML(dr.Content, s.webBaseURL(r))
 
+	// Prefer the generated digest title; fall back to "Digest: <config name>"
+	// for older results that predate titles.
+	itemTitle := "Digest: " + configName
+	var content digestContentJSON
+	if err := json.Unmarshal([]byte(dr.Content), &content); err == nil && content.Title != "" {
+		itemTitle = content.Title
+	}
+
 	digestURL := s.digestResultWebURL(r, dr.ConfigID, dr.ID)
 	created := dr.CreatedAt
 
@@ -283,7 +291,7 @@ func (s *Server) digestContentObject(r *http.Request, userID int64, dr store.Dig
 		TimestampUsec: strconv.FormatInt(created.UnixMicro(), 10),
 		Published:     created.Unix(),
 		Updated:       created.Unix(),
-		Title:         "Digest: " + configName,
+		Title:         itemTitle,
 		Canonical:     []readerCanonical{{Href: digestURL}},
 		Alternate:     []readerAlternate{{Href: digestURL, Type: "text/html"}},
 		Summary:       readerContentBody{Content: rendered},
@@ -318,6 +326,7 @@ func digestCategories(status string) []string {
 // digestContentJSON is the shape of a digest result's stored Content JSON. It
 // mirrors internal/digest.digestResultContent (snake_case field names).
 type digestContentJSON struct {
+	Title      string              `json:"title,omitempty"`
 	Summary    string              `json:"summary"`
 	Sections   []digestSectionJSON `json:"sections,omitempty"`
 	Highlights []digestContentRef  `json:"highlights"`
@@ -368,6 +377,10 @@ func renderDigestHTML(contentJSON, feedBaseURL string) string {
 	}
 
 	var b strings.Builder
+
+	if c.Title != "" {
+		fmt.Fprintf(&b, `<h1 class="digest-title">%s</h1>`+"\n", html.EscapeString(c.Title))
+	}
 
 	if c.Summary != "" {
 		fmt.Fprintf(&b, `<div class="digest-summary">%s</div>`+"\n", html.EscapeString(c.Summary))

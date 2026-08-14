@@ -11,9 +11,9 @@ import (
 )
 
 // testDigestContent is a handcrafted digest result content JSON used by the
-// contents tests. It carries a summary, one highlight (with llm_summary and a
-// top comment), and one entry in the all-items list.
-const testDigestContent = `{"summary":"Today's top stories","highlights":[{"item_id":1,"feed_id":1,"feed_name":"Feed A","title":"Top HN story","url":"https://news.ycombinator.com/item?id=1","comment_url":"https://news.ycombinator.com/item?id=1","points":100,"comments_count":50,"published_at":"2024-01-01T00:00:00Z","llm_summary":"A key insight about the story.","top_comments":[{"author":"alice","text":"Great point","points":10,"url":"https://news.ycombinator.com/item?id=2"}]}],"items":[{"item_id":2,"feed_id":1,"feed_name":"Feed A","title":"Other story","url":"https://example.com/other","comment_url":"","points":0,"comments_count":0,"published_at":"2024-01-01T00:00:00Z"}]}`
+// contents tests. It carries a title, a summary, one highlight (with
+// llm_summary and a top comment), and one entry in the all-items list.
+const testDigestContent = `{"title":"Go Time","summary":"Today's top stories","highlights":[{"item_id":1,"feed_id":1,"feed_name":"Feed A","title":"Top HN story","url":"https://news.ycombinator.com/item?id=1","comment_url":"https://news.ycombinator.com/item?id=1","points":100,"comments_count":50,"published_at":"2024-01-01T00:00:00Z","llm_summary":"A key insight about the story.","top_comments":[{"author":"alice","text":"Great point","points":10,"url":"https://news.ycombinator.com/item?id=2"}]}],"items":[{"item_id":2,"feed_id":1,"feed_name":"Feed A","title":"Other story","url":"https://example.com/other","comment_url":"","points":0,"comments_count":0,"published_at":"2024-01-01T00:00:00Z"}]}`
 
 func setDigestContent(t *testing.T, db *sql.DB, id int64, content string) {
 	t.Helper()
@@ -110,13 +110,16 @@ func TestReaderStreamItemsContents(t *testing.T) {
 		t.Fatalf("digested item should not be in reading-list, got %v", digestedItem.Categories)
 	}
 
-	// Digest item: rendered HTML content + origin.
+	// Digest item: generated title + rendered HTML content + origin.
 	digestItem := resp.Items[2]
 	if digestItem.Origin.StreamID != digestStreamID(seed.cfg.ID) {
 		t.Fatalf("expected digest origin streamId %q, got %q", digestStreamID(seed.cfg.ID), digestItem.Origin.StreamID)
 	}
-	if digestItem.Title != "Digest: Daily" {
-		t.Fatalf("expected digest title %q, got %q", "Digest: Daily", digestItem.Title)
+	if digestItem.Title != "Go Time" {
+		t.Fatalf("expected digest title %q, got %q", "Go Time", digestItem.Title)
+	}
+	if !strings.Contains(digestItem.Content.Content, `class="digest-title">Go Time</h1>`) {
+		t.Fatalf("expected digest content to render the title heading, got: %s", digestItem.Content.Content)
 	}
 	if !strings.Contains(digestItem.Content.Content, "Top HN story") {
 		t.Fatalf("expected digest content to contain highlight title, got: %s", digestItem.Content.Content)
@@ -144,6 +147,26 @@ func TestReaderStreamItemsContents(t *testing.T) {
 	wantConfigPath := fmt.Sprintf("/digests/%d", seed.cfg.ID)
 	if !strings.HasSuffix(digestItem.Origin.HTMLURL, wantConfigPath) {
 		t.Fatalf("expected digest origin htmlUrl to end with %q, got %q", wantConfigPath, digestItem.Origin.HTMLURL)
+	}
+}
+
+// TestReaderDigestTitleFallback verifies digest results without a generated
+// title (older content) keep the historical "Digest: <config name>" item title.
+func TestReaderDigestTitleFallback(t *testing.T) {
+	server, queries, db := setupStreamTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedReaderStream(t, queries, db, user.ID)
+	setDigestContent(t, db, seed.drNew.ID, `{"summary":"no title here"}`)
+
+	resp := getContents(t, server, "/reader/api/0/stream/items/contents?i="+digestItemStreamID(seed.drNew.ID)+"&output=json")
+	if len(resp.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(resp.Items))
+	}
+	if resp.Items[0].Title != "Digest: Daily" {
+		t.Fatalf("expected fallback digest title %q, got %q", "Digest: Daily", resp.Items[0].Title)
+	}
+	if strings.Contains(resp.Items[0].Content.Content, "digest-title") {
+		t.Fatalf("content without title should not render a title heading, got: %s", resp.Items[0].Content.Content)
 	}
 }
 

@@ -92,6 +92,7 @@ export interface DigestResultItemWithData {
 }
 
 export interface DigestContent {
+  title?: string
   summary: string
   sections?: DigestSection[]
   highlights: DigestContentItem[]

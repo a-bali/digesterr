@@ -57,7 +57,7 @@ func TestLLMClientJSONOutput(t *testing.T) {
 	defer cancel()
 
 	response, err := client.Chat(ctx,
-		`You are a news summarizer. Return your response as valid JSON with keys "summary" (string) and "highlights" (array of {title, summary}). Keep answers brief.`,
+		`You are a news summarizer. Return your response as valid JSON with keys "title" (string, max 8-10 words), "summary" (string) and "highlights" (array of {title, summary}). Keep answers brief.`,
 		`Summarize these articles:
 
 Article 1 (HIGHLIGHT):
@@ -76,6 +76,7 @@ Return JSON.`)
 	}
 
 	var result struct {
+		Title      string `json:"title"`
 		Summary    string `json:"summary"`
 		Highlights []struct {
 			Title   string `json:"title"`
@@ -94,6 +95,7 @@ Return JSON.`)
 	if len(result.Highlights) == 0 {
 		t.Error("expected at least one highlight")
 	}
+	t.Logf("Title: %s", result.Title)
 	t.Logf("Summary: %s", result.Summary)
 	for i, h := range result.Highlights {
 		t.Logf("Highlight %d: %s - %s", i+1, h.Title, h.Summary)
@@ -384,7 +386,7 @@ func TestBuildContentAssignsLLMSummaryToSections(t *testing.T) {
 
 	g := &Generator{
 		queries: queries,
-		llm: fakeLLM{resp: `{"summary":"overall","highlights":[{"title":"A","summary":"hl A summary"}]}`},
+		llm: fakeLLM{resp: `{"title":"Reading Rainbow","summary":"overall","highlights":[{"title":"A","summary":"hl A summary"}]}`},
 	}
 
 	highlights := []digestItem{{
@@ -394,6 +396,9 @@ func TestBuildContentAssignsLLMSummaryToSections(t *testing.T) {
 	content, err := g.buildContent(ctx, digestConfigJSON{}, highlights, nil, slog.Default())
 	if err != nil {
 		t.Fatalf("buildContent: %v", err)
+	}
+	if content.Title != "Reading Rainbow" {
+		t.Errorf("expected content Title %q, got %q", "Reading Rainbow", content.Title)
 	}
 	if len(content.Sections) == 0 {
 		t.Fatalf("expected at least one section, got none")

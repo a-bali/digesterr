@@ -74,7 +74,7 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
     </div>
     <template v-else>
       <h1 class="text-xl font-semibold mb-2">
-        {{ new Date(store.selectedResult.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}
+        {{ digestContent?.title || new Date(store.selectedResult.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}
       </h1>
 
       <div class="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mb-4">

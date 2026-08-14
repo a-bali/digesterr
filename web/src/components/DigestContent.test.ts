@@ -7,6 +7,7 @@ import { useDigestStore } from '../stores/digest'
 import type { DigestResult } from '../types/api'
 
 const content = JSON.stringify({
+  title: 'Go Time',
   summary: 'Test summary',
   highlights: [
     {
@@ -94,6 +95,28 @@ describe('DigestContent', () => {
     expect(wrapper.text()).toContain('Test summary')
     expect(wrapper.text()).toContain('1 highlights')
     expect(wrapper.text()).toContain('3 items')
+  })
+
+  it('renders the generated title as the heading', () => {
+    const h1 = wrapper.find('h1')
+    expect(h1.exists()).toBe(true)
+    expect(h1.text()).toBe('Go Time')
+  })
+
+  it('falls back to the created time when the digest has no title', () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const noTitle = JSON.parse(content)
+    delete noTitle.title
+    useDigestStore().selectedResult = { ...makeResult(), content: JSON.stringify(noTitle) }
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', component: { template: '<div />' } }],
+    })
+    const w = mount(DigestContent, { global: { plugins: [pinia, router] } })
+    const expected = new Date('2026-08-13T08:00:00Z').toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    expect(w.find('h1').text()).toBe(expected)
   })
 
   it('links highlight titles with accent hover, not underline', () => {

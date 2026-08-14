@@ -61,6 +61,7 @@ type digestItem struct {
 }
 
 type digestResultContent struct {
+	Title      string          `json:"title,omitempty"`
 	Summary    string          `json:"summary"`
 	Sections   []digestSection `json:"sections,omitempty"`
 	Highlights []digestItemRef `json:"highlights"`
@@ -392,7 +393,7 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 
 	prompt := dcfg.Prompt
 	if prompt == "" {
-		prompt = "For each article, provide a 2-3 sentence highlight with the key insight and why it matters. Format response as JSON: {\"highlights\": [{\"title\": ..., \"summary\": ...}]}"
+		prompt = "For each article, provide a 2-3 sentence highlight with the key insight and why it matters. Also give the whole digest a short title of at most 8-10 words, catchy, optionally with a light pun. Format response as JSON: {\"title\": ..., \"highlights\": [{\"title\": ..., \"summary\": ...}]}"
 	}
 
 	systemPrompt := prompt
@@ -432,7 +433,7 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 		userPrompt += "\n"
 	}
 
-	userPrompt += "For each HIGHLIGHT article, provide a 2-3 sentence highlight capturing the key insight and why it matters — skip introductory phrases like \"The article discusses\" or \"The author explains\". Format your response as JSON with keys \"summary\" (string of overall digest summary) and \"highlights\" (array of {title, summary})."
+	userPrompt += "For each HIGHLIGHT article, provide a 2-3 sentence highlight capturing the key insight and why it matters — skip introductory phrases like \"The article discusses\" or \"The author explains\". Format your response as JSON with keys \"title\" (string, a short title for the whole digest, at most 8-10 words, catchy and derived from the digest contents; a light pun is welcome but not required), \"summary\" (string of overall digest summary) and \"highlights\" (array of {title, summary})."
 
 	llmStart := time.Now()
 	genLogger.Info("calling LLM for digest", "input_bytes", len(systemPrompt)+len(userPrompt))
@@ -443,6 +444,7 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 	genLogger.Info("LLM digest response received", "output_bytes", len(llmResponse), "duration", time.Since(llmStart))
 
 	type llmOutput struct {
+		Title      string `json:"title"`
 		Summary    string `json:"summary"`
 		Highlights []struct {
 			Title   string `json:"title"`
@@ -463,6 +465,7 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 		genLogger.Error("failed to parse LLM response", "error", err, "output_bytes", len(llmResponse))
 		return nil, fmt.Errorf("parsing LLM response: %w", err)
 	}
+	content.Title = output.Title
 	content.Summary = output.Summary
 
 	for _, h := range highlights {
