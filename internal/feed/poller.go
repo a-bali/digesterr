@@ -298,11 +298,16 @@ func (p *Poller) failItemExtraction(item store.Item, errorLine string) {
 
 var stripRe = regexp.MustCompile(`<[^>]*>`)
 
+// itemHash fingerprints an item for duplicate detection. The hash is anchored
+// on the most stable identity available: the feed's GUID when present (a title
+// edit must not change the identity — HN stories, for example, routinely get
+// their titles rewritten, and including the title here caused the same story
+// to be inserted twice), then the URL, then the title + stripped content.
 func itemHash(guid, title, url, content string) string {
 	s := sha256.New()
 	switch {
 	case guid != "":
-		s.Write([]byte(guid + title))
+		s.Write([]byte(guid))
 	case url != "":
 		s.Write([]byte(url))
 	default:
