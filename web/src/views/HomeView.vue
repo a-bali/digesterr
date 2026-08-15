@@ -218,9 +218,6 @@ function onSelectDigestResult(result: { id: number }) {
         <SplitterGroup direction="horizontal" auto-save-id="digesterr" class="flex-1">
           <SplitterPanel :default-size="18" :min-size="14" :max-size="28">
             <aside class="h-full border-r bg-sidebar overflow-y-auto p-3">
-              <div class="flex items-center justify-between mb-2">
-                <span class="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Feeds</span>
-              </div>
               <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
             </aside>
           </SplitterPanel>
