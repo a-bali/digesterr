@@ -2,7 +2,7 @@
 
 Task: t_ed1a32ec (parent of the implementation tasks: feed config min score, digest config min score, feed item view filter/sort UI, digest view filter/sort UI).
 
-Status: **awaiting user approval** — no production code changed.
+Status: **design APPROVED (Variant A) with revisions on 2026-08-15 — mockups regenerated, awaiting final confirmation. No production code changed.**
 
 ---
 
@@ -33,71 +33,101 @@ Status: **awaiting user approval** — no production code changed.
 4. Digest view: filter/sort icons limited to **status filtering** and **date sorting** — no score options at all.
 5. No production code changes in this planning task.
 
-## 4. Design variants
+## 4. Approved design — Variant A "Slim toolbar" (revised per user feedback 2026-08-15)
 
-Three alternatives were mocked up (attached as screenshots; interactive HTML in `sketches/score-filter-sort/`). All three keep the two-icon requirement and differ in placement/density.
+Variants B ("pane header") and C ("state chips") were offered in the first review round and **declined**; their mockups remain in `sketches/score-filter-sort/{variant-b-pane-header,variant-c-state-chips}/` for reference.
 
-### Variant A — "Slim toolbar" ⭐ recommended
+### 4.1 Toolbar — two icons only
 
-- The existing filter row keeps its footprint (`p-2 border-b`): two ghost icon buttons (**Filter**, **Sort**), plus a compact state label ("Unread · Newest") and a reset affordance when a non-default combination is active.
-- Icons turn accent-colored and show a small dot when their menu differs from the default.
-- **Filter dropdown** (reka-ui `DropdownMenu`, anchored right):
-  - Status section: All / Unread / Read / Digested / Saved (check on active).
-  - Divider.
-  - Score section: Any score / ≥ 10 / ≥ 50 / ≥ 100 / ≥ 250. When unsupported: items disabled + greyed (50% opacity), caption "Scores not available for this feed".
-- **Sort dropdown**:
-  - Date: Newest first (default) / Oldest first.
-  - Divider.
-  - Score: Highest first / Lowest first (disabled + greyed when unsupported).
-- **Config dialogs:** plain number input (min 0, default 0 = keep all) with one-line helper text. Feed dialog: below the Auto-extract toggle. Digest dialog: its own row above the prompt.
-- Pros: zero layout change, smallest footprint, works at today's narrow pane widths (no collapse logic needed — icons never overflow), dropdown pattern already in the app (`ui/DropdownMenu.vue` supports disabled items), state label gives feedback without extra chrome.
-- Cons: icon-only controls are less self-explanatory to first-time users; the state label carries the discoverability burden.
+The existing filter row keeps its footprint (`p-2 border-b`). It contains **exactly two ghost icon buttons**:
 
-### Variant B — "Pane header"
+- **Filter** (funnel icon) — opens the filter dropdown.
+- **Sort** (sort glyph) — opens the sort dropdown.
 
-- The list pane grows a proper header row (`h-10`): **feed name + unread count on the left**, filter + sort icons on the right, dropdowns anchored under the icons.
-- Same dropdown contents as Variant A.
-- **Config dialogs:** the min-score field lives under a "Filtering" section header with a divider, visually grouping threshold settings.
-- Pros: strongest context (feed name visible in the pane, currently only in the sidebar), most discoverable placement, room to grow more controls.
-- Cons: consumes ~40 px of vertical space in every pane, adds chrome to a currently chrome-free list, header needs to adapt when no feed is selected (Saved view).
+Removed from the bar: the segmented feed tabs, the state label (e.g. "Newest first"), and the reset element. All state is encoded in the icons (below). The previous `FilterBar.vue` collapse logic is no longer needed — two 24 px icons always fit any pane width the app supports.
 
-### Variant C — "State chips"
+### 4.2 Filter icon state indicators
 
-- Toolbar row with two labeled chips: **"Filter: Unread ▾"** and **"Sort: Newest ▾"** — the current value is always visible; clicking a chip opens its dropdown. A small "Reset" text button appears when non-default.
-- **Config dialogs:** stepper number input (− / + buttons).
-- Pros: most explicit; state is readable at a glance without opening anything.
-- Cons: widest controls — truncates or wraps on narrow panes (the very problem the current `FilterBar` collapse logic exists for); three controls (2 chips + reset) compete for attention; more code than the alternatives.
+- **Active status filter:** a small **status glyph** is rendered right after the funnel icon: `Layers` (All), `CircleDot` (Unread), `CircleCheck` (Read), `Sparkles` (Digested), `Bookmark` (Saved) — the same glyphs already used by the app's status icons. The glyph is accent-colored when the status filter is non-default (anything other than All).
+- **Active score filter:** the funnel icon itself turns **accent-colored and shows a small dot** at its top-right corner whenever a min-score threshold is set.
 
-## 5. Ergonomics comparison
+### 4.3 Filter dropdown (reka-ui `DropdownMenu`, anchored right)
 
-| Dimension | A — Slim toolbar | B — Pane header | C — State chips |
+- **Status section:** All / Unread / Read / Digested / Saved — check on the active item.
+- Divider.
+- **Score section — numeric min-score input (not preset tiers):**
+  - A small number input (`min=0`, empty/0 = any score) with a **Clear** affordance ("Clear" appears when a threshold is set; otherwise a muted "Any" label).
+  - Helper line: "Items below N points are hidden. Leave 0 for any score."
+- **Unsupported contexts** (feed type without scores, or the Saved view): the input is **disabled + greyed** and the note "Scores not available for this feed." / "…for saved items (feeds are mixed)." is shown. Score options are **greyed, not hidden** — the section remains visible so users understand why it is unavailable.
+
+### 4.4 Sort dropdown
+
+- **Date:** Newest first (date ↓, default) / Oldest first (date ↑).
+- Divider.
+- **Score:** Highest first (score ↓) / Lowest first (score ↑) — explicit ascending/descending for both dimensions.
+- Unsupported contexts: the Score section items are **disabled + greyed** with the same note as the filter menu. The digest view has **no score section at all** (status filter + date sort only).
+
+### 4.5 Sort icon state indicator
+
+The sort button's glyph reflects the active sort, and is accent-colored whenever the sort is non-default:
+
+| Active sort | Glyph |
+|---|---|
+| Date · Newest first (default) | ArrowUpDown (grey/neutral) |
+| Date · Oldest first | ArrowUp (accent) |
+| Score · Highest first | Gauge + down-arrow badge (accent) |
+| Score · Lowest first | Gauge + up-arrow badge (accent) |
+
+### 4.6 Config dialogs — minimum score field
+
+- **Feed dialog** (`FeedDialog.vue`): a "Minimum score" number input (min 0, default 0 = keep all) below the Auto-extract toggle, inside a lightly highlighted group. Helper: "Items with score below N are not inserted. Scores refresh and recheck on every fetch."
+- **Digest dialog** (`DigestDialog.vue`): a "Minimum score" number input (min 0, default 0 = include all) above the Prompt field. Helper: "Items with score below N are excluded from the digest. Items without score data (plain RSS) are always included."
+- **Disabled states (greyed, not hidden):**
+  - Feed dialog with a non-score feed type (RSS/Atom): field disabled + greyed, hint "Scores not available for RSS/Atom feeds. Switch to Hacker News, Lobste.rs, or Reddit to enable it."
+  - Digest dialog whose selected sources contain no score-capable feed: field disabled + greyed, hint "Scores not available for the selected sources. Add a Hacker News, Lobste.rs, or Reddit source to enable this field."
+
+### 4.7 Defaults
+
+- Default sort: **Newest first (date desc)** — unchanged.
+- Default filter: **All** statuses, no score threshold.
+- Both icons return to neutral (grey, no dot) when their state equals the default.
+
+## 5. Ergonomics rationale (why Variant A)
+
+| Dimension | A — Slim toolbar (approved) | B — Pane header (declined) | C — State chips (declined) |
 |---|---|---|---|
 | Footprint / density | Best (reuses existing row) | Medium (new 40 px header) | Worst (widest controls) |
-| State visibility | Good (icon dot + label) | Good (icon dot) | Best (text always visible) |
-| Discoverability | Medium (label helps) | High (header context) | High |
+| State visibility | Good (glyphs + dot encode state) | Good (icon dot) | Best (text always visible) |
 | Narrow-pane behavior | Excellent (2 icons always fit) | Good | Poor (chips truncate) |
-| Consistency with app | High (matches current density) | Medium (new header pattern) | Medium (chips are new) |
-| Implementation effort | Low (DropdownMenu exists) | Low–medium | Medium |
+| Consistency with app | High (matches current density; reuses existing status glyphs) | Medium (new header pattern) | Medium (chips are new) |
+| Implementation effort | Low (DropdownMenu exists; disabled styling already at 50% opacity) | Low–medium | Medium |
 
-**Recommendation: Variant A.** It delivers the required behavior with the smallest change to the current layout, fits every pane width the app already supports, and reuses the existing `DropdownMenu` primitive (which already renders disabled items at 50% opacity — exactly the greyed-out state requested). Variant B is a strong runner-up if the user wants the feed name visible in the pane; Variant C is the most explicit but fights the app's density.
+Variant A delivers the required behavior with the smallest change to the current layout, fits every pane width the app already supports, and reuses the existing `DropdownMenu` primitive. The icon-encoded state (status glyph, score dot, sort glyph) keeps the bar at two controls while preserving discoverability through tooltips and ARIA labels.
 
-## 6. Score filter presets (default proposal)
+## 6. Deliverables
 
-Fixed tiers keep a dropdown ergonomic: **Any score / ≥ 10 / ≥ 50 / ≥ 100 / ≥ 250** (HN-scale). Alternative: a custom minimum-score input inside the dropdown (more flexible, heavier). Open question for the user (Q2 below).
+- This plan: `docs/ux/score-filter-sort.md`
+- Interactive mockup (approved design): `sketches/score-filter-sort/variant-a-toolbar/index.html`
+- Screenshots (attached to ticket t_ed1a32ec):
+  - `variant-a-supported.png` — HN feed, filter dropdown open (numeric input 50 + Clear), enabled config fields, digest sort open
+  - `variant-a-unsupported.png` — RSS feed, sort dropdown open (score options greyed), disabled config fields, digest filter open
+  - `variant-a-supported-sort.png` — HN feed, sort dropdown open (date + score, explicit asc/desc), score-desc sort glyph
+  - `variant-a-unsupported-filter.png` — RSS feed, filter dropdown open (disabled numeric input + note), disabled config fields
+- Historical (declined) alternatives: `sketches/score-filter-sort/{variant-b-pane-header,variant-c-state-chips}/`
 
-## 7. Open decisions — user must choose before implementation
-
-1. **Which variant?** A (recommended) / B / C / hybrid.
-2. **Score filter style:** fixed tiers (recommended) or custom threshold input in the dropdown.
-3. **Saved items view:** grey out score options (recommended, consistent) or hide them entirely.
-4. **Default sort:** keep "Newest first" (date desc) as the default — confirm.
-5. **RSS feed dialog:** show the min-score field disabled with a hint (recommended) or hide it for non-score feed types.
-6. **Digest min-score label/placement** as mocked — confirm.
-
-## 8. Implementation notes for the child tasks
+## 7. Implementation notes for the child tasks
 
 - **Server-side support is a prerequisite for the feed item view:** items are paginated (50/page), so status/score filtering and date/score sorting must be query params on `GET /feeds/:id/items` (e.g. `min_score`, `sort=date_desc|date_asc|score_desc|score_asc`), mirrored in `sql/queries/items.sql` and `web/src/services/api.ts`. Currently only `status`, `limit`, `offset` exist. The digest results list can sort client-side (small pages) or via a param — decide in t_0c5a1134.
 - **`supportsScore` derivation:** from `feed.type` (hn/lobsters/reddit); expose as a computed in the feed store. Saved view: always unsupported.
-- **Component replacement:** `FilterBar.vue` is replaced by a two-icon control (new `FilterSortBar` or two components). `ui/DropdownMenu.vue` already provides ARIA keyboard navigation and `disabled` styling — reuse it, add `aria-label`s on the icon buttons.
+- **Component replacement:** `FilterBar.vue` is replaced by a two-icon control (new `FilterSortBar` or two components). `ui/DropdownMenu.vue` already provides ARIA keyboard navigation and `disabled` styling — reuse it; add `aria-label`s on the icon buttons and tooltips (`ui/Tooltip.vue` exists) explaining the glyph state.
 - **Config fields:** add `min_score` to the feed/digest config payloads (backend tasks t_90b8be54 / t_d5441e8a cover schema + API; the dialog field is part of those tasks' UI scope).
-- **Threshold semantics to implement:** `min_score = 0` means "no threshold". Items without score data always pass. Re-evaluate scores on every fetch/generation.
+- **Threshold semantics to implement:** `min_score = 0` (or empty) means "no threshold". Items without score data always pass. Re-evaluate scores on every fetch/generation.
+- **Sort icon glyph mapping** must live next to the sort state (single source of truth): default → ArrowUpDown, date asc → ArrowUp, score desc/asc → Gauge + down/up badge.
+
+## 8. Confirmation checklist (this ticket re-blocks on these)
+
+The design above is what the regenerated mockups show. Final confirmation requested before implementation tasks (t_0c5a1134, t_2f5e89a6, t_6cdeb0e3, t_90b8be54, t_d5441e8a) start:
+
+1. Approve the revised Variant A as rendered (icons-only bar, status glyph, score dot, numeric threshold with Clear, sort glyphs, greyed-out states everywhere).
+2. Default sort "Newest first" (date desc) — confirmed.
+3. Anything else to adjust — say so now; after confirmation this ticket closes and implementation proceeds.
