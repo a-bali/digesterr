@@ -160,7 +160,7 @@ function toggleCategory(name: string) {
         <Plus class="size-3.5" />
       </button>
     </div>
-    <div class="space-y-0.5 mb-3">
+    <div class="space-y-0.5 mb-3 pl-3">
       <div
         v-for="cfg in digestStore.configs" :key="cfg.id"
         class="group flex items-center w-full rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors cursor-pointer"
@@ -194,7 +194,7 @@ function toggleCategory(name: string) {
       </button>
     </div>
 
-    <div v-if="uncategorizedFeeds.length" class="mb-3">
+    <div v-if="uncategorizedFeeds.length" class="mb-3 pl-3">
       <FeedRow
         v-for="feed in uncategorizedFeeds" :key="feed.id"
         :feed="feed" :refreshing="refreshingFeeds.has(feed.id)"
@@ -205,10 +205,10 @@ function toggleCategory(name: string) {
       />
     </div>
 
-    <div v-for="catName in sortedCategoryNames" :key="catName" class="mb-3">
-      <button class="flex w-full items-center justify-between text-[11px] font-semibold text-muted-foreground uppercase mb-1 hover:text-foreground transition-colors px-2" @click="toggleCategory(catName)">
+    <div v-for="catName in sortedCategoryNames" :key="catName" class="mb-3 pl-3">
+      <button class="flex w-full items-center justify-between text-[10px] font-semibold text-muted-foreground uppercase mb-1 hover:text-foreground transition-colors px-2" @click="toggleCategory(catName)">
         <span>{{ catName }}</span>
-        <span class="inline-flex items-center justify-end h-9 w-9 shrink-0">
+        <span class="inline-flex items-center justify-end h-4 w-4 shrink-0">
           <ChevronDown class="size-4 transition-transform" :class="collapsedCategories.has(catName) ? '-rotate-90' : ''" />
         </span>
       </button>
