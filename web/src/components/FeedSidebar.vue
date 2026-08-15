@@ -6,7 +6,7 @@ import { useDigestStore } from '../stores/digest'
 import { feedApi } from '../services/api'
 import type { DigestConfig, Feed } from '../types/api'
 import { useRoute } from 'vue-router'
-import { BookmarkCheck, Plus, MessageSquare, Settings, Sparkles, ChevronDown } from 'lucide-vue-next'
+import { BookmarkCheck, Plus, MessageSquare, Rss, Settings, Sparkles, ChevronDown } from 'lucide-vue-next'
 import FeedRow from './FeedRow.vue'
 import FeedDialog from './FeedDialog.vue'
 import DigestDialog from './DigestDialog.vue'
@@ -147,12 +147,15 @@ function toggleCategory(name: string) {
   <div>
     <!-- Saved -->
     <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': route.path === '/saved' }" @click="emit('showSaved')">
-      <BookmarkCheck class="size-3.5 shrink-0 text-accent" /> <span class="truncate">Saved</span>
+      <BookmarkCheck class="size-3.5 shrink-0 text-accent" /> <span class="truncate">Saved items</span>
     </button>
 
     <!-- Digests -->
     <div class="flex items-center justify-between mb-2 px-2">
-      <span class="text-xs font-semibold text-muted-foreground uppercase">Digests</span>
+      <span class="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase">
+        <MessageSquare class="size-3.5 shrink-0 text-accent" />
+        Digests
+      </span>
       <button class="p-1 rounded hover:bg-accent/20" title="Create digest config" @click="showAddDigest = true">
         <Plus class="size-3.5" />
       </button>
@@ -178,12 +181,14 @@ function toggleCategory(name: string) {
           </button>
         </div>
       </div>
-      <div v-if="digestStore.configs.length === 0" class="text-xs text-muted-foreground px-2 py-1">No digests yet.</div>
     </div>
 
     <!-- Feeds -->
     <div class="flex items-center justify-between mb-2 px-2">
-      <span class="text-xs font-semibold text-muted-foreground uppercase">Feeds</span>
+      <span class="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase">
+        <Rss class="size-3.5 shrink-0 text-accent" />
+        Feeds
+      </span>
       <button class="p-1 rounded hover:bg-accent/20" title="Add feed" @click="showAddFeed = true">
         <Plus class="size-3.5" />
       </button>
@@ -201,21 +206,23 @@ function toggleCategory(name: string) {
     </div>
 
     <div v-for="catName in sortedCategoryNames" :key="catName" class="mb-3">
-      <button class="flex w-full items-center justify-between text-xs font-semibold text-muted-foreground uppercase mb-1 hover:text-foreground transition-colors px-2" @click="toggleCategory(catName)">
+      <button class="flex w-full items-center justify-between text-[11px] font-semibold text-muted-foreground uppercase mb-1 hover:text-foreground transition-colors px-2" @click="toggleCategory(catName)">
         <span>{{ catName }}</span>
         <span class="inline-flex items-center justify-end h-9 w-9 shrink-0">
           <ChevronDown class="size-4 transition-transform" :class="collapsedCategories.has(catName) ? '-rotate-90' : ''" />
         </span>
       </button>
       <template v-if="!collapsedCategories.has(catName)">
-        <FeedRow
-          v-for="feed in feedStore.feeds.filter(f => f.category === catName)" :key="feed.id"
-          :feed="feed" :refreshing="refreshingFeeds.has(feed.id)"
-          @select="emit('selectFeed', $event)"
-          @edit="editingFeed = $event; showEditFeed = true"
-          @mark-read="markFeedRead"
-          @refresh="refreshFeed"
-        />
+        <div class="pl-3">
+          <FeedRow
+            v-for="feed in feedStore.feeds.filter(f => f.category === catName)" :key="feed.id"
+            :feed="feed" :refreshing="refreshingFeeds.has(feed.id)"
+            @select="emit('selectFeed', $event)"
+            @edit="editingFeed = $event; showEditFeed = true"
+            @mark-read="markFeedRead"
+            @refresh="refreshFeed"
+          />
+        </div>
       </template>
     </div>
 
