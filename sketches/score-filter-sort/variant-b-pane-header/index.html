@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Digesterr — Score filter/sort · Variant B: Pane header</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --accent: #2563eb; --accent-fg: #fff;
+    --bg: #ffffff; --fg: #1e293b;
+    --muted: #f1f5f9; --muted-fg: #64748b;
+    --border: #e2e8f0; --destructive: #dc2626;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #eef2f7; color: var(--fg); padding: 8px 10px 10px; -webkit-font-smoothing: antialiased;
+  }
+  svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; display: block; }
+  ::-webkit-scrollbar { display: none; }
+
+  .page-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .badge { font-size: 9px; font-weight: 800; padding: 2px 7px; border-radius: 999px; background: #7c3aed; color: #fff; align-self: center; }
+  .page-title { font-size: 13px; font-weight: 700; }
+  .page-sub { font-size: 10px; color: var(--muted-fg); }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px; height: calc(100vh - 40px); }
+  .panel { background: var(--bg); border: 1px solid var(--border); border-radius: 9px; box-shadow: 0 1px 3px rgba(15,23,42,.08); overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+  .panel-bar { display: flex; align-items: center; gap: 5px; padding: 4px 8px; background: #f8fafc; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #cbd5e1; }
+  .panel-title { font-size: 10px; font-weight: 600; color: #475569; margin-left: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .panel-tabs { margin-left: auto; display: flex; gap: 4px; flex-shrink: 0; }
+  .tab { font-size: 9px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted-fg); cursor: pointer; background: var(--bg); }
+  .tab.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .panel-body { flex: 1; position: relative; background: var(--bg); min-height: 0; overflow: hidden; }
+
+  .new { display: inline-flex; align-items: center; font-size: 7px; font-weight: 800; letter-spacing: .05em; color: #fff; background: #16a34a; border-radius: 999px; padding: 1px 5px; margin-left: 6px; vertical-align: middle; }
+
+  .overlay { position: absolute; inset: 0; background: rgba(15,23,42,.35); display: flex; align-items: center; justify-content: center; padding: 8px; }
+  .dialog { width: 100%; max-width: 380px; background: var(--bg); border-radius: 9px; box-shadow: 0 16px 40px rgba(15,23,42,.2); overflow: hidden; }
+  .dialog-head { display: flex; align-items: center; justify-content: space-between; padding: 9px 12px 0; font-size: 12px; font-weight: 700; }
+  .dialog-x { color: var(--muted-fg); cursor: pointer; font-size: 10px; }
+  .dialog-body { padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .field label { display: block; font-size: 10px; font-weight: 600; margin-bottom: 2px; }
+  .input { width: 100%; height: 24px; border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; font-size: 11px; color: var(--fg); background: var(--bg); }
+  .input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .select { width: 100%; height: 24px; border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; font-size: 11px; background: var(--bg); color: var(--fg); }
+  .hint { font-size: 9px; color: var(--muted-fg); margin-top: 2px; line-height: 1.35; }
+  .toggle-row { display: flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer; }
+  .toggle { width: 24px; height: 14px; border-radius: 999px; background: var(--accent); position: relative; flex-shrink: 0; }
+  .toggle::after { content: ""; position: absolute; top: 2px; right: 2px; width: 10px; height: 10px; border-radius: 50%; background: #fff; }
+  .num-input { width: 56px; height: 24px; border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; font-size: 11px; background: var(--bg); }
+  .score-field { border: 1px dashed #16a34a; border-radius: 8px; padding: 6px 8px; background: #f0fdf4; }
+  .seg { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; width: fit-content; font-size: 9px; }
+  .seg span { padding: 3px 8px; }
+  .seg span.on { background: var(--accent); color: #fff; }
+  .seg span.off { color: var(--muted-fg); }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip { font-size: 9px; background: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 2px 7px; display: flex; align-items: center; gap: 3px; }
+  .btn-row { display: flex; gap: 8px; padding-top: 2px; }
+  .btn { font-size: 11px; font-weight: 600; padding: 4px 11px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn.outline { background: var(--bg); border-color: var(--border); color: var(--destructive); }
+
+  .toolbar { display: flex; align-items: center; gap: 2px; padding: 4px 8px; border-bottom: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
+  .icon-btn { width: 24px; height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: var(--muted-fg); position: relative; cursor: pointer; }
+  .icon-btn:hover { background: var(--muted); color: var(--fg); }
+  .icon-btn.active { color: var(--accent); }
+  .icon-btn .dot { position: absolute; top: 2px; right: 2px; width: 5px; height: 5px; background: var(--accent); }
+  .state-label { margin-left: auto; font-size: 9px; color: var(--muted-fg); display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .state-label .reset { text-decoration: underline; cursor: pointer; }
+  .state-pill { background: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 6px; font-size: 9px; color: #475569; }
+
+  .item { position: relative; padding: 5px 9px 4px; border-bottom: 1px solid var(--border); cursor: pointer; height: 58px; }
+  .item:hover { background: rgba(37,99,235,.06); }
+  .item-top { display: flex; align-items: flex-start; gap: 5px; }
+  .item-title { font-size: 11px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item-time { font-size: 8px; color: var(--muted-fg); white-space: nowrap; margin-top: 1px; }
+  .item-sub { font-size: 9px; color: var(--muted-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+  .item-meta { position: absolute; right: 9px; bottom: 4px; display: flex; gap: 7px; font-size: 8px; }
+  .score { color: var(--accent); display: flex; align-items: center; gap: 2px; font-weight: 600; }
+  .status-icon { width: 11px; height: 11px; margin-top: 1px; flex-shrink: 0; }
+
+  .menu { position: absolute; z-index: 60; min-width: 190px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 30px rgba(15,23,42,.14); padding: 3px; }
+  .menu-item { display: flex; align-items: center; gap: 6px; padding: 3px 7px; border-radius: 6px; font-size: 11px; cursor: pointer; }
+  .menu-item:hover { background: var(--muted); }
+  .menu-item.active { color: var(--accent); font-weight: 600; }
+  .menu-item.disabled { color: var(--muted-fg); opacity: .45; pointer-events: none; }
+  .menu-item .check { margin-left: auto; color: var(--accent); }
+  .menu-caption { font-size: 8px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-fg); padding: 4px 7px 1px; }
+  .menu-sep { height: 1px; background: var(--border); margin: 3px 5px; }
+  .menu-note { font-size: 9px; color: var(--muted-fg); padding: 1px 7px 4px; line-height: 1.35; }
+
+  [data-state] { display: none; }
+  [data-state].show { display: block; }
+  .d-row { display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: 700; }
+  .d-sub { font-size: 9px; color: var(--muted-fg); }
+
+  /* ---- Pane header (variant B) ---- */
+  .pane-head { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--border); background: var(--bg); height: 32px; flex-shrink: 0; }
+  .pane-title { font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pane-title svg { color: var(--accent); }
+  .unread-chip { font-size: 9px; font-weight: 600; color: var(--accent); background: rgba(37,99,235,.1); border-radius: 999px; padding: 0 6px; white-space: nowrap; }
+  .pane-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+  .section-title { display: flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-fg); padding-top: 4px; border-top: 1px solid var(--border); }
+
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <span class="badge">VARIANT B</span>
+  <span class="page-title">Pane header</span>
+  <span class="page-sub">Dedicated list-pane header: feed name + unread count left, filter/sort icons right · config fields grouped under "Filtering"</span>
+</div>
+
+<div class="grid">
+
+  <!-- ============ PANEL 1: Feed config ============ -->
+  <div class="panel">
+    <div class="panel-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="panel-title">1 · Feed config editor — minimum score field</span></div>
+    <div class="panel-body">
+      <div class="overlay">
+        <div class="dialog">
+          <div class="dialog-head">Edit Feed <span class="dialog-x">✕</span></div>
+          <div class="dialog-body">
+            <div class="field"><label>Category</label><input class="input" value="Dev"></div>
+            <div class="field"><label>Type</label>
+              <select class="select"><option>RSS / Atom</option><option>Hacker News</option><option selected>Lobste.rs</option><option>Reddit</option></select>
+            </div>
+            <div class="field"><label>Name</label><input class="input" value="Lobsters"></div>
+            <div class="field"><label>URL</label><input class="input" value="https://lobste.rs/rss"></div>
+            <label class="toggle-row"><span class="toggle"></span>Auto-extract full article content</label>
+            <div class="section-title">Filtering</div>
+            <div class="score-field">
+              <div class="d-row">Minimum score <span class="new">NEW</span></div>
+              <div style="display:flex; align-items:center; gap:8px; margin-top:5px;">
+                <input class="num-input" type="number" min="0" value="50">
+                <span class="d-sub">0 = keep all</span>
+              </div>
+              <div class="hint">Items with a score below 50 are not inserted. Scores are refreshed and rechecked on every fetch. Feeds without scores (plain RSS) are never blocked.</div>
+            </div>
+            <div class="btn-row"><button class="btn primary">Save</button><button class="btn outline">Delete</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PANEL 2: Digest config ============ -->
+  <div class="panel">
+    <div class="panel-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="panel-title">2 · Digest config editor — minimum score field</span></div>
+    <div class="panel-body">
+      <div class="overlay">
+        <div class="dialog">
+          <div class="dialog-head">Edit Digest Config <span class="dialog-x">✕</span></div>
+          <div class="dialog-body">
+            <div class="field"><label>Name</label><input class="input" value="Daily Tech"></div>
+            <div class="field"><label>Schedule (cron syntax)</label><input class="input" value="0 8 * * *"></div>
+            <div class="field">
+              <label>Source</label>
+              <div class="seg"><span class="on">Categories</span><span class="off">Feeds</span></div>
+              <div class="chips" style="margin-top:5px;"><span class="chip">Dev ✕</span><span class="chip">AI ✕</span></div>
+            </div>
+            <div class="grid3">
+              <div class="field"><label>Max highlights</label><input class="input" type="number" value="5"></div>
+              <div class="field"><label>Max comments</label><input class="input" type="number" value="10"></div>
+              <div class="field"><label>Max items</label><input class="input" type="number" value="100"></div>
+            </div>
+            <div class="section-title">Filtering</div>
+            <div class="score-field">
+              <div class="d-row">Minimum score <span class="new">NEW</span></div>
+              <div style="display:flex; align-items:center; gap:8px; margin-top:5px;">
+                <input class="num-input" type="number" min="0" value="25">
+                <span class="d-sub">0 = include all</span>
+              </div>
+              <div class="hint">Items with a score below 25 are excluded from the digest. Scores are refreshed at generation time. Items without score data (plain RSS) are always included.</div>
+            </div>
+            <div class="field"><label>Prompt (optional)</label><input class="input" value="You are a research assistant digesting…"></div>
+            <div class="btn-row"><button class="btn primary">Save</button><button class="btn outline">Delete</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PANEL 3: Feed item view ============ -->
+  <div class="panel">
+    <div class="panel-bar">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="panel-title">3 · Feed item view — filter + sort icons in pane header</span>
+      <div class="panel-tabs">
+        <span class="tab on" data-tab="hn">HN (scores)</span>
+        <span class="tab" data-tab="rss">RSS (no scores)</span>
+      </div>
+    </div>
+    <div class="panel-body">
+      <div class="pane-head">
+        <span class="pane-title"><i data-icon="rss"></i>Lobste.rs <span class="unread-chip">3 unread</span></span>
+        <span class="pane-actions">
+          <span class="icon-btn active" title="Filter"><i data-icon="filter"></i><span class="dot"></span></span>
+          <span class="icon-btn" title="Sort"><i data-icon="updown"></i></span>
+        </span>
+      </div>
+
+      <div class="menu" data-state="hn" style="top:36px; right:8px;">
+        <div class="menu-item active"><i data-icon="layers"></i>All<span class="check"><i data-icon="check"></i></span></div>
+        <div class="menu-item"><i data-icon="circledot"></i>Unread</div>
+        <div class="menu-item"><i data-icon="circlecheck"></i>Read</div>
+        <div class="menu-item"><i data-icon="sparkles"></i>Digested</div>
+        <div class="menu-item"><i data-icon="bookmark"></i>Saved</div>
+        <div class="menu-sep"></div>
+        <div class="menu-caption">Score</div>
+        <div class="menu-item active"><i data-icon="gauge"></i>Any score<span class="check"><i data-icon="check"></i></span></div>
+        <div class="menu-item"><i data-icon="gauge"></i>≥ 10</div>
+        <div class="menu-item"><i data-icon="gauge"></i>≥ 50</div>
+        <div class="menu-item"><i data-icon="gauge"></i>≥ 100</div>
+        <div class="menu-item"><i data-icon="gauge"></i>≥ 250</div>
+      </div>
+
+      <div class="menu" data-state="rss" style="top:36px; right:8px;">
+        <div class="menu-item active"><i data-icon="layers"></i>All<span class="check"><i data-icon="check"></i></span></div>
+        <div class="menu-item"><i data-icon="circledot"></i>Unread</div>
+        <div class="menu-item"><i data-icon="circlecheck"></i>Read</div>
+        <div class="menu-item"><i data-icon="sparkles"></i>Digested</div>
+        <div class="menu-item"><i data-icon="bookmark"></i>Saved</div>
+        <div class="menu-sep"></div>
+        <div class="menu-caption">Score</div>
+        <div class="menu-item disabled"><i data-icon="gauge"></i>Any score</div>
+        <div class="menu-item disabled"><i data-icon="gauge"></i>≥ 10</div>
+        <div class="menu-item disabled"><i data-icon="gauge"></i>≥ 50</div>
+        <div class="menu-item disabled"><i data-icon="gauge"></i>≥ 100</div>
+        <div class="menu-item disabled"><i data-icon="gauge"></i>≥ 250</div>
+        <div class="menu-note">Scores not available for this feed.</div>
+      </div>
+
+      <div data-state="hn">
+        <div class="item">
+          <div class="item-top"><span class="status-icon" style="color:var(--accent)"><i data-icon="circledot"></i></span><span class="item-title">Show HN: A tiny vector database in 400 lines of Rust</span><span class="item-time">4h</span></div>
+          <div class="item-sub">A minimal HNSW implementation with zero dependencies — benchmarks included…</div>
+          <div class="item-meta"><span class="score"><i data-icon="arrowup"></i>214</span><span style="color:var(--muted-fg)"><i data-icon="msg"></i>89</span></div>
+        </div>
+        <div class="item">
+          <div class="item-top"><span class="status-icon" style="color:var(--accent)"><i data-icon="circledot"></i></span><span class="item-title">Ask HN: What are you using for local AI search?</span><span class="item-time">6h</span></div>
+          <div class="item-sub">Thread with 40+ recommendations, from sqlite-vec to hybrid BM25 + embeddings…</div>
+          <div class="item-meta"><span class="score"><i data-icon="arrowup"></i>87</span><span style="color:var(--muted-fg)"><i data-icon="msg"></i>64</span></div>
+        </div>
+        <div class="item">
+          <div class="item-top"><span class="status-icon" style="color:var(--muted-fg);opacity:.4"><i data-icon="circle"></i></span><span class="item-title" style="font-weight:500;color:#64748b">Postgres 18 performance deep dive</span><span class="item-time">9h</span></div>
+          <div class="item-sub">What changed in the executor, vacuum, and the new incremental sort planner…</div>
+          <div class="item-meta"><span class="score"><i data-icon="arrowup"></i>512</span><span style="color:var(--muted-fg)"><i data-icon="msg"></i>203</span></div>
+        </div>
+      </div>
+
+      <div data-state="rss">
+        <div class="item">
+          <div class="item-top"><span class="status-icon" style="color:var(--accent)"><i data-icon="circledot"></i></span><span class="item-title">The case for boring architecture</span><span class="item-time">3h</span></div>
+          <div class="item-sub">Why the most successful systems at scale are the least interesting ones…</div>
+        </div>
+        <div class="item">
+          <div class="item-top"><span class="status-icon" style="color:var(--accent)"><i data-icon="circledot"></i></span><span class="item-title">SQLite is a compile-time dependency now</span><span class="item-time">7h</span></div>
+          <div class="item-sub">Shipping a static binary with the database engine baked in…</div>
+        </div>
+        <div class="item">
+          <div class="item-top"><span class="status-icon" style="color:var(--muted-fg);opacity:.4"><i data-icon="circle"></i></span><span class="item-title" style="font-weight:500;color:#64748b">A field guide to Postgres indexes</span><span class="item-time">11h</span></div>
+          <div class="item-sub">B-tree, GIN, BRIN — when each one wins and what it costs…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PANEL 4: Digest view ============ -->
+  <div class="panel">
+    <div class="panel-bar">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="panel-title">4 · Digest view — status filter + date sort only</span>
+      <div class="panel-tabs">
+        <span class="tab on" data-tab="filter">Filter open</span>
+        <span class="tab" data-tab="sort">Sort open</span>
+      </div>
+    </div>
+    <div class="panel-body">
+      <div class="pane-head">
+        <span class="pane-title"><i data-icon="msg2"></i>Daily Tech <span class="unread-chip">2 unread</span></span>
+        <span class="pane-actions">
+          <span class="icon-btn active" title="Filter"><i data-icon="filter"></i><span class="dot"></span></span>
+          <span class="icon-btn" title="Sort"><i data-icon="updown"></i></span>
+        </span>
+      </div>
+
+      <div class="menu" data-state="filter" style="top:36px; right:8px;">
+        <div class="menu-item active"><i data-icon="layers"></i>All<span class="check"><i data-icon="check"></i></span></div>
+        <div class="menu-item"><i data-icon="circledot"></i>Unread</div>
+        <div class="menu-item"><i data-icon="circlecheck"></i>Read</div>
+      </div>
+
+      <div class="menu" data-state="sort" style="top:36px; right:8px;">
+        <div class="menu-caption">Date</div>
+        <div class="menu-item active"><i data-icon="calendar"></i>Newest first<span class="check"><i data-icon="check"></i></span></div>
+        <div class="menu-item"><i data-icon="calendar"></i>Oldest first</div>
+      </div>
+
+      <div data-state="filter">
+        <div class="item">
+          <div class="item-top"><span class="status-icon" style="color:var(--accent)"><i data-icon="circledot"></i></span><span class="item-title">Daily Tech — Aug 15, 2026, 8:00 AM</span><span class="item-time">2h</span></div>
+          <div class="item-sub">5 highlights · 12 items · 4 sources</div>
+        </div>
+        <div class="item">
+          <div class="item-top"><span class="status-icon" style="color:var(--muted-fg);opacity:.4"><i data-icon="circle"></i></span><span class="item-title" style="font-weight:500;color:#64748b">AI Weekly — Aug 14, 2026, 8:00 AM</span><span class="item-time">1d</span></div>
+          <div class="item-sub">3 highlights · 8 items · 2 sources</div>
+        </div>
+        <div class="item">
+          <div class="item-top"><span class="status-icon" style="color:var(--muted-fg);opacity:.4"><i data-icon="circle"></i></span><span class="item-title" style="font-weight:500;color:#64748b">Hacker Reads — Aug 13, 2026, 8:00 AM</span><span class="item-time">2d</span></div>
+          <div class="item-sub">4 highlights · 9 items · 3 sources</div>
+        </div>
+      </div>
+
+      <div data-state="sort">
+        <div class="item">
+          <div class="item-top"><span class="status-icon" style="color:var(--accent)"><i data-icon="circledot"></i></span><span class="item-title">Hacker Reads — Aug 13, 2026, 8:00 AM</span><span class="item-time">2d</span></div>
+          <div class="item-sub">4 highlights · 9 items · 3 sources</div>
+        </div>
+        <div class="item">
+          <div class="item-top"><span class="status-icon" style="color:var(--muted-fg);opacity:.4"><i data-icon="circle"></i></span><span class="item-title" style="font-weight:500;color:#64748b">AI Weekly — Aug 14, 2026, 8:00 AM</span><span class="item-time">1d</span></div>
+          <div class="item-sub">3 highlights · 8 items · 2 sources</div>
+        </div>
+        <div class="item">
+          <div class="item-top"><span class="status-icon" style="color:var(--muted-fg);opacity:.4"><i data-icon="circle"></i></span><span class="item-title" style="font-weight:500;color:#64748b">Daily Tech — Aug 15, 2026, 8:00 AM</span><span class="item-time">2h</span></div>
+          <div class="item-sub">5 highlights · 12 items · 4 sources</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const ICONS = {
+    filter: '<path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/>',
+    updown: '<path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/>',
+    layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+    circledot: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>',
+    circlecheck: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',
+    circle: '<circle cx="12" cy="12" r="10"/>',
+    sparkles: '<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z"/>',
+    bookmark: '<path d="m19 21-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
+    check: '<polyline points="20 6 9 17 4 12"/>',
+    gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+    arrowup: '<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>',
+    msg: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    msg2: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/>',
+    calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+    msg2: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/>',
+    rss: '<path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/>',
+    rss: '<path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/>',
+  };
+  document.querySelectorAll('[data-icon]').forEach(el => {
+    const name = el.getAttribute('data-icon');
+    if (ICONS[name]) el.innerHTML = '<svg viewBox="0 0 24 24">' + ICONS[name] + '</svg>';
+  });
+
+  document.querySelectorAll('.panel-bar').forEach(bar => {
+    const panel = bar.parentElement;
+    bar.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        bar.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t === tab));
+        const group = tab.getAttribute('data-tab');
+        panel.querySelectorAll('[data-state]').forEach(el => {
+          el.classList.toggle('show', el.getAttribute('data-state') === group);
+        });
+      });
+    });
+  });
+
+  document.querySelectorAll('[data-state]').forEach(el => {
+    const g = el.getAttribute('data-state');
+    if (g === 'hn' || g === 'filter') el.classList.add('show');
+  });
+</script>
+</body>
+</html>
