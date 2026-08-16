@@ -58,7 +58,10 @@ Use `nix develop --no-pure-eval --accept-flake-config` or `devenv shell` to ente
 - **Feeds** are pluggable components — each feed type implements a common interface
 - Item statuses: `unread`, `read`, `digested`, `saved`
 - When a digest result is marked `read`, all its linked items transition from `digested` → `read`
-- Digest configs store schedule + settings; digest results store the frozen config snapshot + generated content JSON
+- Digest configs store schedule + settings (including `min_score`: a
+  generation-time score threshold; items below it are excluded, items from
+  non-scored feeds like plain RSS/Atom always pass); digest results store the
+  frozen config snapshot + generated content JSON
 - `digest_result_items` join table links items to digest results with `is_highlight` flag
 - LLM integration uses any OpenAI-compatible API (user supplies endpoint, key, model)
 - DB schema is auto-applied on startup (embedded via `internal/schema/`). No migration tool — delete the DB file to reset.
