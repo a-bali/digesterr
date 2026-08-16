@@ -69,4 +69,46 @@ describe('feed store', () => {
     expect(store.items[0].status).toBe('read')
     expect(store.selectedItem?.status).toBe('read')
   })
+
+  it('passes min_score and sort to getItems and refetches on change', async () => {
+    const { feedApi } = await import('../services/api')
+    ;(feedApi.list as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 1 }])
+    const getItems = feedApi.getItems as ReturnType<typeof vi.fn>
+    getItems.mockResolvedValue({ items: [], has_more: false })
+
+    const store = useFeedStore()
+    await store.fetchFeeds()
+    await store.setActiveFeed(1)
+
+    expect(getItems).toHaveBeenLastCalledWith(1, expect.objectContaining({ sort: 'date_desc', min_score: undefined }))
+
+    store.changeSort('score_desc')
+    expect(getItems).toHaveBeenLastCalledWith(1, expect.objectContaining({ sort: 'score_desc' }))
+
+    store.changeMinScore(50)
+    expect(getItems).toHaveBeenLastCalledWith(1, expect.objectContaining({ min_score: 50 }))
+  })
+
+  it('supportsScore is true only for score-capable feed types', async () => {
+    const { feedApi } = await import('../services/api')
+    ;(feedApi.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 1, type: 'hn' },
+      { id: 2, type: 'lobsters' },
+      { id: 3, type: 'reddit' },
+      { id: 4, type: 'rss' },
+    ])
+    const store = useFeedStore()
+    await store.fetchFeeds()
+
+    store.activeFeedId = 1
+    expect(store.supportsScore).toBe(true)
+    store.activeFeedId = 2
+    expect(store.supportsScore).toBe(true)
+    store.activeFeedId = 3
+    expect(store.supportsScore).toBe(true)
+    store.activeFeedId = 4
+    expect(store.supportsScore).toBe(false)
+    store.activeFeedId = null
+    expect(store.supportsScore).toBe(false)
+  })
 })

@@ -60,8 +60,8 @@ async function markFeedRead(id: number) {
 }
 
 // Resolve category name -> payload field and build final URL.
-function buildFeedPayload(form: { type: string; name: string; url: string; category: string; extract_content: number }): any {
-  const data: any = { extract_content: form.extract_content, type: form.type, name: form.name }
+function buildFeedPayload(form: { type: string; name: string; url: string; category: string; extract_content: number; min_score: number }): any {
+  const data: any = { extract_content: form.extract_content, min_score: form.min_score, type: form.type, name: form.name }
   data.category = form.category.trim()
   if (form.type === 'reddit') data.url = 'https://www.reddit.com/r/' + form.url.replace(/\.rss$/, '') + '.rss'
   else if (form.type === 'hn') data.url = 'https://news.ycombinator.com/rss'
@@ -70,13 +70,13 @@ function buildFeedPayload(form: { type: string; name: string; url: string; categ
   return data
 }
 
-async function addFeed(form: { type: string; name: string; url: string; category: string; extract_content: number }) {
+async function addFeed(form: { type: string; name: string; url: string; category: string; extract_content: number; min_score: number }) {
   await feedApi.create(buildFeedPayload(form))
   await feedStore.fetchFeeds()
   showAddFeed.value = false
 }
 
-async function saveEditFeed(form: { type: string; name: string; url: string; category: string; extract_content: number }) {
+async function saveEditFeed(form: { type: string; name: string; url: string; category: string; extract_content: number; min_score: number }) {
   if (!editingFeed.value) return
   await feedApi.update(editingFeed.value.id, buildFeedPayload(form))
   showEditFeed.value = false; editingFeed.value = null

@@ -1,6 +1,6 @@
 -- name: CreateFeed :one
-INSERT INTO feeds (user_id, category, type, name, url, config, status, extract_content)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO feeds (user_id, category, type, name, url, config, min_score, status, extract_content)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetFeed :one
@@ -20,7 +20,7 @@ SELECT DISTINCT category FROM feeds WHERE user_id = ? AND category != '' ORDER B
 
 -- name: UpdateFeed :one
 UPDATE feeds
-SET name = ?, url = ?, config = ?, category = ?, status = ?, extract_content = ?, updated_at = DATETIME('now')
+SET name = ?, url = ?, config = ?, category = ?, status = ?, extract_content = ?, min_score = ?, updated_at = DATETIME('now')
 WHERE id = ? AND user_id = ?
 RETURNING *;
 

@@ -46,6 +46,7 @@ type Feed struct {
 	Name           string       `json:"name"`
 	Url            string       `json:"url"`
 	Config         string       `json:"config"`
+	MinScore       int64        `json:"min_score"`
 	LastFetchedAt  sql.NullTime `json:"last_fetched_at"`
 	Status         string       `json:"status"`
 	ExtractContent int64        `json:"extract_content"`

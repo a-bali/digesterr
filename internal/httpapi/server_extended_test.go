@@ -363,7 +363,7 @@ func TestDigestConfigCRUD(t *testing.T) {
 
 	w := makeRequest(server, http.MethodPost, "/api/digest-configs", map[string]string{
 		"schedule": "0 5 * * *",
-		"config":   `{"feeds": ["*"]}`,
+		"config":   `{"feeds": [{"id": 1}]}`,
 	}, token)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())

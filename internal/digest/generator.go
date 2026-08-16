@@ -32,7 +32,12 @@ type digestConfigJSON struct {
 	DefaultHighlights int                       `json:"default_highlights"`
 	DefaultComments   int                       `json:"default_comments"`
 	MaxItems          int                       `json:"max_items"`
-	Prompt            string                    `json:"prompt"`
+	// MinScore is the minimum points/score an item must have (using the
+	// freshest score available at generation time) to be included in the
+	// digest. Zero means no threshold. Items from feeds that do not produce
+	// scores (e.g. plain RSS/Atom) have no score data and always pass.
+	MinScore int    `json:"min_score"`
+	Prompt   string `json:"prompt"`
 }
 
 type Generator struct {
@@ -163,6 +168,11 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*stor
 	}
 
 	g.enrichAndExtractItems(ctx, filtered, genLogger)
+
+	// Apply the min-score threshold on top of the freshly enriched scores
+	// (enrichAndExtractItems re-fetches points at generation time). Items
+	// below the threshold are excluded from the digest entirely.
+	filtered = g.filterByMinScore(ctx, filtered, dcfg.MinScore, genLogger)
 
 	highlights, rest := g.selectHighlights(filtered)
 
@@ -350,6 +360,53 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 			item.ExtractStatus = refreshed.ExtractStatus
 		}
 	}
+}
+
+// filterByMinScore drops items whose generation-time score is below the
+// configured threshold. minScore <= 0 disables filtering. Items whose feed
+// does not produce scores (plain RSS/Atom — no enricher or a NoopEnricher)
+// have no score data and always pass. Scores are compared after
+// enrichAndExtractItems refreshed them, so the threshold applies to the
+// freshest score available at generation time.
+func (g *Generator) filterByMinScore(ctx context.Context, items []digestItem, minScore int, genLogger *slog.Logger) []digestItem {
+	if minScore <= 0 || len(items) == 0 {
+		return items
+	}
+	scoreCapable := make(map[int64]bool)
+	feedHasScores := func(feedID int64) bool {
+		if v, ok := scoreCapable[feedID]; ok {
+			return v
+		}
+		feedObj, err := g.queries.GetFeedByID(ctx, feedID)
+		has := err == nil && feedObj.ID != 0 && g.feedTypeProducesScores(feedObj.Type)
+		scoreCapable[feedID] = has
+		return has
+	}
+
+	kept := make([]digestItem, 0, len(items))
+	excluded := 0
+	for _, item := range items {
+		if !feedHasScores(item.FeedID) || item.Points >= int64(minScore) {
+			kept = append(kept, item)
+			continue
+		}
+		excluded++
+	}
+	if excluded > 0 {
+		genLogger.Info("digest min_score filter excluded items", "min_score", minScore, "excluded", excluded, "kept", len(kept))
+	}
+	return kept
+}
+
+// feedTypeProducesScores reports whether items from a feed type carry a real
+// score. Plain RSS/Atom feeds use the NoopEnricher and never get points.
+func (g *Generator) feedTypeProducesScores(feedType string) bool {
+	e, ok := g.enrichers[feedType]
+	if !ok {
+		return false
+	}
+	_, noop := e.(*feed.NoopEnricher)
+	return !noop
 }
 
 func (g *Generator) selectHighlights(items []digestItem) ([]digestItem, []digestItem) {

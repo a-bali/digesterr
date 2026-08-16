@@ -13,6 +13,7 @@ export interface Feed {
   name: string
   url: string
   config: string
+  min_score: number
   last_fetched_at: string | null
   status: string
   extract_content: number

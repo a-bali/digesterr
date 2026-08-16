@@ -103,13 +103,13 @@ export const authApi = {
 
 export const feedApi = {
   list: () => api<Feed[]>('/feeds'),
-  create: (data: { category?: string; type: string; name: string; url: string; extract_content?: number }) =>
+  create: (data: { category?: string; type: string; name: string; url: string; extract_content?: number; min_score?: number }) =>
     api<Feed>('/feeds', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: number, data: Partial<Feed>) =>
     api<Feed>(`/feeds/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   delete: (id: number) => api<void>(`/feeds/${id}`, { method: 'DELETE' }),
-  getItems: (id: number, opts?: { status?: string; limit?: number; offset?: number }) =>
-    api<FeedItemsResponse>(`/feeds/${id}/items${qs({ status: opts?.status, limit: opts?.limit, offset: opts?.offset })}`),
+  getItems: (id: number, opts?: { status?: string; limit?: number; offset?: number; min_score?: number; sort?: string }) =>
+    api<FeedItemsResponse>(`/feeds/${id}/items${qs({ status: opts?.status, limit: opts?.limit, offset: opts?.offset, min_score: opts?.min_score, sort: opts?.sort })}`),
   fetch: (id: number) => api<{ message: string }>(`/feeds/${id}/fetch`, { method: 'POST' }),
   markRead: (id: number) => api<{ message: string }>(`/feeds/${id}/mark-read`, { method: 'POST' }),
   unreadCounts: () => api<Record<number, number>>('/unread-counts'),

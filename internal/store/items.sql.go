@@ -521,6 +521,274 @@ func (q *Queries) ListItemsByFeedPaginated(ctx context.Context, arg ListItemsByF
 	return items, nil
 }
 
+const listItemsByFeedSortedDateAsc = `-- name: ListItemsByFeedSortedDateAsc :many
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items
+WHERE feed_id = ?1
+  AND (status = ?2 OR ?2 IS NULL)
+  AND (points >= ?3 OR ?3 = 0)
+ORDER BY published_at ASC, created_at ASC
+LIMIT ?5 OFFSET ?4
+`
+
+type ListItemsByFeedSortedDateAscParams struct {
+	FeedID   int64          `json:"feed_id"`
+	Status   sql.NullString `json:"status"`
+	MinScore int64          `json:"min_score"`
+	Offset   int64          `json:"offset"`
+	Limit    int64          `json:"limit"`
+}
+
+func (q *Queries) ListItemsByFeedSortedDateAsc(ctx context.Context, arg ListItemsByFeedSortedDateAscParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByFeedSortedDateAsc,
+		arg.FeedID,
+		arg.Status,
+		arg.MinScore,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listItemsByFeedSortedDateDesc = `-- name: ListItemsByFeedSortedDateDesc :many
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items
+WHERE feed_id = ?1
+  AND (status = ?2 OR ?2 IS NULL)
+  AND (points >= ?3 OR ?3 = 0)
+ORDER BY published_at DESC, created_at DESC
+LIMIT ?5 OFFSET ?4
+`
+
+type ListItemsByFeedSortedDateDescParams struct {
+	FeedID   int64          `json:"feed_id"`
+	Status   sql.NullString `json:"status"`
+	MinScore int64          `json:"min_score"`
+	Offset   int64          `json:"offset"`
+	Limit    int64          `json:"limit"`
+}
+
+func (q *Queries) ListItemsByFeedSortedDateDesc(ctx context.Context, arg ListItemsByFeedSortedDateDescParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByFeedSortedDateDesc,
+		arg.FeedID,
+		arg.Status,
+		arg.MinScore,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listItemsByFeedSortedScoreAsc = `-- name: ListItemsByFeedSortedScoreAsc :many
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items
+WHERE feed_id = ?1
+  AND (status = ?2 OR ?2 IS NULL)
+  AND (points >= ?3 OR ?3 = 0)
+ORDER BY points ASC, published_at DESC, created_at DESC
+LIMIT ?5 OFFSET ?4
+`
+
+type ListItemsByFeedSortedScoreAscParams struct {
+	FeedID   int64          `json:"feed_id"`
+	Status   sql.NullString `json:"status"`
+	MinScore int64          `json:"min_score"`
+	Offset   int64          `json:"offset"`
+	Limit    int64          `json:"limit"`
+}
+
+func (q *Queries) ListItemsByFeedSortedScoreAsc(ctx context.Context, arg ListItemsByFeedSortedScoreAscParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByFeedSortedScoreAsc,
+		arg.FeedID,
+		arg.Status,
+		arg.MinScore,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listItemsByFeedSortedScoreDesc = `-- name: ListItemsByFeedSortedScoreDesc :many
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items
+WHERE feed_id = ?1
+  AND (status = ?2 OR ?2 IS NULL)
+  AND (points >= ?3 OR ?3 = 0)
+ORDER BY points DESC, published_at DESC, created_at DESC
+LIMIT ?5 OFFSET ?4
+`
+
+type ListItemsByFeedSortedScoreDescParams struct {
+	FeedID   int64          `json:"feed_id"`
+	Status   sql.NullString `json:"status"`
+	MinScore int64          `json:"min_score"`
+	Offset   int64          `json:"offset"`
+	Limit    int64          `json:"limit"`
+}
+
+func (q *Queries) ListItemsByFeedSortedScoreDesc(ctx context.Context, arg ListItemsByFeedSortedScoreDescParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByFeedSortedScoreDesc,
+		arg.FeedID,
+		arg.Status,
+		arg.MinScore,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listItemsByUserRead = `-- name: ListItemsByUserRead :many
 SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
 JOIN feeds f ON f.id = i.feed_id

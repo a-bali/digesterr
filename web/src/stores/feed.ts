@@ -7,6 +7,11 @@ import type { Feed, Item } from '../types/api'
 const PAGE_SIZE = 50
 const FILTER_KEY = 'digesterr-filter'
 
+export type FeedSort = 'date_desc' | 'date_asc' | 'score_desc' | 'score_asc'
+export type FeedStatusFilter = 'all' | 'unread' | 'read' | 'digested' | 'saved'
+
+const SCORE_FEED_TYPES = new Set(['hn', 'lobsters', 'reddit'])
+
 function loadFilter(): 'all' | 'unread' | 'read' | 'digested' | 'saved' {
   try {
     const saved = localStorage.getItem(FILTER_KEY)
@@ -25,11 +30,21 @@ export const useFeedStore = defineStore('feed', () => {
   const items = ref<Item[]>([])
   const selectedItem = ref<Item | null>(null)
   const filter = ref<'all' | 'unread' | 'read' | 'digested' | 'saved'>(loadFilter())
+  const minScore = ref<number | null>(null)
+  const sort = ref<FeedSort>('date_desc')
   const loading = ref(false)
   const loadingMore = ref(false)
   const hasMore = ref(false)
 
   const activeFeed = computed(() => feeds.value.find(f => f.id === activeFeedId.value) || null)
+
+  // Score filter/sort are only meaningful for feeds whose items carry score
+  // data (HN, Lobste.rs, Reddit). The Saved view mixes feed types, so the
+  // component treats it as unsupported regardless of this computed.
+  const supportsScore = computed(() => {
+    const type = activeFeed.value?.type
+    return type != null && SCORE_FEED_TYPES.has(type)
+  })
 
   const unreadCounts = ref<Record<number, number>>({})
 
@@ -53,6 +68,8 @@ export const useFeedStore = defineStore('feed', () => {
     try {
       const resp = await feedApi.getItems(feedId, {
         status: filter.value === 'all' ? undefined : filter.value,
+        min_score: minScore.value || undefined,
+        sort: sort.value,
         limit: PAGE_SIZE,
         offset: replace ? 0 : items.value.length,
       })
@@ -105,6 +122,22 @@ export const useFeedStore = defineStore('feed', () => {
     }
   }
 
+  function changeSort(s: FeedSort) {
+    if (s === sort.value) return
+    sort.value = s
+    if (activeFeedId.value) {
+      fetchFirstPage()
+    }
+  }
+
+  // minScore: null (or 0) means "any score"; only positive values filter.
+  function changeMinScore(n: number | null) {
+    minScore.value = n
+    if (activeFeedId.value) {
+      fetchFirstPage()
+    }
+  }
+
   async function updateItemStatus(item: Item, status: string) {
     try {
       const updated = await itemApi.updateStatus(item.id, status)
@@ -126,9 +159,9 @@ export const useFeedStore = defineStore('feed', () => {
   }
 
   return {
-    feeds, activeFeedId, items, selectedItem, filter, loading, loadingMore, hasMore,
-    activeFeed, unreadCounts,
+    feeds, activeFeedId, items, selectedItem, filter, minScore, sort, loading, loadingMore, hasMore,
+    activeFeed, supportsScore, unreadCounts,
     fetchFeeds, setActiveFeed, fetchFirstPage, fetchMoreItems,
-    selectItem, updateItemStatus, changeFilter, fetchUnreadCounts,
+    selectItem, updateItemStatus, changeFilter, changeSort, changeMinScore, fetchUnreadCounts,
   }
 })

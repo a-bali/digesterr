@@ -10,11 +10,15 @@ import type { Feed } from '../types/api'
 const props = defineProps<{ feed: Feed | null }>()
 const emit = defineEmits<{
   (e: 'update:open', open: boolean): void
-  (e: 'save', data: { type: string; name: string; url: string; category: string; extract_content: number }): void
+  (e: 'save', data: { type: string; name: string; url: string; category: string; extract_content: number; min_score: number }): void
   (e: 'delete', id: number): void
 }>()
 
 const feedStore = useFeedStore()
+
+// Feeds whose items carry a score (points) that can be filtered on.
+const SCORE_FEED_TYPES = ['hn', 'lobsters', 'reddit']
+const isScoreType = computed(() => SCORE_FEED_TYPES.includes(form.type))
 
 // Category suggestions come from the categories currently in use.
 const categoryNames = computed(() => {
@@ -25,12 +29,15 @@ const categoryNames = computed(() => {
   return [...names].sort((a, b) => a.localeCompare(b))
 })
 
-const form = reactive({ type: 'rss', name: '', url: '', category: '', extract_content: 0 })
+const form = reactive({ type: 'rss', name: '', url: '', category: '', extract_content: 0, min_score: 0 })
 const typeLabel = (t: string) => ({ rss: 'RSS / Atom', hn: 'Hacker News', lobsters: 'Lobste.rs', reddit: 'Reddit' }[t] || t)
 
 function onTypeChange(type: string) {
   form.type = type
   form.url = ''
+  // The minimum-score field is disabled for non-score feed types, so the
+  // value is reset when switching away from a score-capable type.
+  if (!SCORE_FEED_TYPES.includes(type)) form.min_score = 0
   if (type === 'hn') form.url = 'https://news.ycombinator.com/rss'
   else if (type === 'lobsters') form.url = 'https://lobste.rs/rss'
 }
@@ -44,12 +51,14 @@ watch(
       form.url = feed.type === 'reddit' ? feed.url.replace('https://www.reddit.com/r/', '').replace('.rss', '') : feed.url
       form.category = feed.category || ''
       form.extract_content = feed.extract_content
+      form.min_score = feed.min_score
     } else {
       form.type = 'rss'
       form.name = ''
       form.url = ''
       form.category = ''
       form.extract_content = 0
+      form.min_score = 0
     }
   },
   { immediate: true },
@@ -106,6 +115,22 @@ const dialogId = Math.random().toString(36).slice(2)
         <input type="checkbox" v-model.number="form.extract_content" :true-value="1" :false-value="0" class="toggle" />
         Auto-extract full article content
       </label>
+      <div class="space-y-1">
+        <label class="text-sm font-medium" :class="{ 'text-muted-foreground': !isScoreType }">Minimum score</label>
+        <Input
+          v-model.number="form.min_score"
+          type="number"
+          min="0"
+          :disabled="!isScoreType"
+          :class="{ 'opacity-50': !isScoreType }"
+        />
+        <p v-if="isScoreType" class="text-xs text-muted-foreground">
+          Only items with at least this many points are kept. Set 0 to keep all items.
+        </p>
+        <p v-else class="text-xs text-muted-foreground">
+          Scores are only available for Hacker News, Lobste.rs and Reddit feeds.
+        </p>
+      </div>
       <div class="flex gap-2">
         <Button type="submit">{{ feed ? 'Save' : 'Add' }}</Button>
         <Button v-if="feed" variant="outline" class="text-destructive" @click="emit('delete', feed.id)">Delete</Button>
