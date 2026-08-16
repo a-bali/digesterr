@@ -486,10 +486,32 @@ func renderDigestFlatHTML(b *strings.Builder, highlights, items []digestContentR
 		for _, it := range items {
 			title := html.EscapeString(it.Title)
 			if it.URL != "" {
-				fmt.Fprintf(b, `<li><a href="%s">%s</a></li>`, html.EscapeString(it.URL), title)
+				fmt.Fprintf(b, `<li><a href="%s">%s</a>`, html.EscapeString(it.URL), title)
 			} else {
-				fmt.Fprintf(b, `<li>%s</li>`, title)
+				fmt.Fprintf(b, `<li>%s`, title)
 			}
+
+			// Meta line with date, score and comments, mirroring the
+			// highlight layout (see the highlight block above).
+			var parts []string
+			if it.PublishedAt != "" {
+				parts = append(parts, html.EscapeString(it.PublishedAt))
+			}
+			if it.Points > 0 {
+				parts = append(parts, fmt.Sprintf("%d points", it.Points))
+			}
+			if it.CommentsCount > 0 {
+				commentsLabel := fmt.Sprintf("%d comments", it.CommentsCount)
+				if it.CommentURL != "" {
+					parts = append(parts, fmt.Sprintf(`<a href="%s">%s</a>`, html.EscapeString(it.CommentURL), commentsLabel))
+				} else {
+					parts = append(parts, commentsLabel)
+				}
+			}
+			if len(parts) > 0 {
+				fmt.Fprintf(b, ` <span class="digest-meta">%s</span>`, strings.Join(parts, " · "))
+			}
+			b.WriteString(`</li>` + "\n")
 		}
 		b.WriteString(`</ul>` + "\n")
 	}

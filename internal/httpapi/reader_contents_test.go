@@ -13,7 +13,7 @@ import (
 // testDigestContent is a handcrafted digest result content JSON used by the
 // contents tests. It carries a title, a summary, one highlight (with
 // llm_summary and a top comment), and one entry in the all-items list.
-const testDigestContent = `{"title":"Go Time","summary":"Today's top stories","highlights":[{"item_id":1,"feed_id":1,"feed_name":"Feed A","title":"Top HN story","url":"https://news.ycombinator.com/item?id=1","comment_url":"https://news.ycombinator.com/item?id=1","points":100,"comments_count":50,"published_at":"2024-01-01T00:00:00Z","llm_summary":"A key insight about the story.","top_comments":[{"author":"alice","text":"Great point","points":10,"url":"https://news.ycombinator.com/item?id=2"}]}],"items":[{"item_id":2,"feed_id":1,"feed_name":"Feed A","title":"Other story","url":"https://example.com/other","comment_url":"","points":0,"comments_count":0,"published_at":"2024-01-01T00:00:00Z"}]}`
+const testDigestContent = `{"title":"Go Time","summary":"Today's top stories","highlights":[{"item_id":1,"feed_id":1,"feed_name":"Feed A","title":"Top HN story","url":"https://news.ycombinator.com/item?id=1","comment_url":"https://news.ycombinator.com/item?id=1","points":100,"comments_count":50,"published_at":"2024-01-01T00:00:00Z","llm_summary":"A key insight about the story.","top_comments":[{"author":"alice","text":"Great point","points":10,"url":"https://news.ycombinator.com/item?id=2"}]}],"items":[{"item_id":2,"feed_id":1,"feed_name":"Feed A","title":"Other story","url":"https://example.com/other","comment_url":"https://example.com/other#comments","points":120,"comments_count":7,"published_at":"2024-01-01T00:00:00Z"}]}`
 
 func setDigestContent(t *testing.T, db *sql.DB, id int64, content string) {
 	t.Helper()
@@ -134,6 +134,17 @@ func TestReaderStreamItemsContents(t *testing.T) {
 	}
 	if !strings.Contains(digestItem.Content.Content, "Other story") {
 		t.Fatalf("expected digest content to contain all-items entry, got: %s", digestItem.Content.Content)
+	}
+	// Non-highlighted items carry score and comments too, mirroring the
+	// highlight meta line.
+	if !strings.Contains(digestItem.Content.Content, "120 points") {
+		t.Fatalf("expected digest content to show all-item score, got: %s", digestItem.Content.Content)
+	}
+	if !strings.Contains(digestItem.Content.Content, "7 comments") {
+		t.Fatalf("expected digest content to show all-item comment count, got: %s", digestItem.Content.Content)
+	}
+	if !strings.Contains(digestItem.Content.Content, `href="https://example.com/other#comments"`) {
+		t.Fatalf("expected digest content to link all-item comments, got: %s", digestItem.Content.Content)
 	}
 	// The digest title links to the digest result in digesterr, and the feed
 	// link to the digest config.
