@@ -3,8 +3,8 @@
 Task: t_ed1a32ec (parent of the implementation tasks: feed config min score,
 digest config min score, feed item view filter/sort UI, digest view filter/sort UI).
 
-Status: **draft v3 — five fresh alternatives rendered, awaiting user choice.
-No production code changed.**
+Status: **approved — user chose Variant 1 (state-label buttons) with two
+tweaks, 2026-08-15. Implementation started.**
 
 > History: v1 (3 variants, Variant A recommended) was approved with 8 revisions,
 > then the whole approach was rejected on 2026-08-15 with instruction to start
@@ -71,13 +71,13 @@ interactive `index.html` + 7 screenshots in `sketches/score-filter-sort/`.
   whose label text IS the applied state: `Filter: Unread · ≥50` /
   `Sort: Newest first`.
 - Filter menu: status items (All/Unread/Read/Digested/Saved, check on active) +
-  divider + **numeric min-score input** (0/empty = any) with **Clear/Any** and
-  helper "Items below N points are hidden. 0 = any score."
+  divider + **numeric min-score input** (0/empty = any) with **Clear/Any**.
+  **No helper sentence at the bottom** (user request: keep the dropdown terse).
 - Sort menu: **Date: Newest first (default) / Oldest first**; divider; **Score:
   Highest first / Lowest first** — explicit asc/desc for both dimensions.
-- Unsupported (RSS feed, Saved view): score input disabled + greyed, score sort
-  items disabled + greyed, note "Scores not available for this feed." / "…for
-  saved items (mixed feeds)." — greyed, never hidden.
+- Unsupported (RSS feed, Saved view): score input disabled + greyed; score sort
+  items disabled + greyed **without any reasoning note** (user request: just
+  grey them out, no explanation text). Greyed, never hidden.
 - Digest view: menu shows status + date sort only; the score section is not present.
 
 ### 4.2 Variant 2 — Unified menu
@@ -179,6 +179,13 @@ space; Variant 5 is the most "app-like" but encodes state in icons.
 Reply to the ticket with your choices; implementation tasks
 (t_0c5a1134, t_2f5e89a6, t_6cdeb0e3, t_90b8be54, t_d5441e8a) start after this
 ticket closes.
+
+**User decision (2026-08-15):** 1 → **Variant 1 (state-label buttons)**;
+2 → numeric min-score input; 3 → grey out (never hide); 4 → default sort
+"Newest first" (date desc); 5 → show the min-score field disabled with a hint
+for non-score feed types. **Tweaks:** (a) filter dropdown drops the helper
+sentence at the bottom; (b) sort dropdown greys out score sort when unavailable
+without any reasoning note.
 
 ## 9. Implementation notes for the child tasks
 
