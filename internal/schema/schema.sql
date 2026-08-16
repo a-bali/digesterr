@@ -15,6 +15,7 @@ CREATE TABLE feeds (
     name            TEXT    NOT NULL,
     url             TEXT    NOT NULL DEFAULT '',
     config          TEXT    NOT NULL DEFAULT '{}',
+    min_score       INTEGER NOT NULL DEFAULT 0,
     last_fetched_at DATETIME,
     status          TEXT    NOT NULL DEFAULT 'active',
     extract_content INTEGER NOT NULL DEFAULT 0,

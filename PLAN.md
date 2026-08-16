@@ -76,6 +76,30 @@ For starters, the app will support 4 kinds of feeds:
 
 Each feed should be assigned to a category (e.g. tech, lifestyle etc.).
 
+#### Minimum score (min_score)
+
+Score-capable feeds (Hacker News, Lobste.rs, Reddit) can be configured with a
+minimum score threshold (`min_score`, default 0 = no threshold). On every
+fetch, each candidate item's score is refreshed before insertion; items whose
+score is below `min_score` are not stored. Because scores are re-evaluated on
+every fetch, an item skipped on one poll is picked up automatically on a later
+poll once its score rises above the threshold.
+
+Threshold semantics:
+
+- `min_score` 0 or unset: no threshold, all items are kept (default).
+- Items without score data always pass the threshold — a missing or failed
+  score lookup never hides items.
+- The threshold applies to score-capable feed types (`hn`, `lobsters`,
+  `reddit`). For other feed types the field is disabled in the UI and all
+  items pass, since those feeds carry no scores.
+
+`GET /feeds/:id/items` accepts two extra query parameters:
+
+- `min_score` — return only items with `points >= min_score`.
+- `sort` — one of `date_desc` (default), `date_asc`, `score_desc`,
+  `score_asc`.
+
 ### Feed polling
 
 Feeds are polled globally on a schedule. Default polling interval is every hour.

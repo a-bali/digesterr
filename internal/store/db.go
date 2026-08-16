@@ -24,16 +24,6 @@ type Queries struct {
 	db DBTX
 }
 
-// DB returns the underlying database handle as *sql.DB, used by the health
-// endpoint to check connectivity. The Queries type is always constructed with
-// a *sql.DB in main; the assertion cannot fail in practice.
-func (q *Queries) DB() *sql.DB {
-	if db, ok := q.db.(*sql.DB); ok {
-		return db
-	}
-	return nil
-}
-
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
 		db: tx,

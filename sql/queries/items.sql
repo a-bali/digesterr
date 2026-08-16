@@ -72,6 +72,38 @@ SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DES
 -- name: ListItemsByFeedAndStatusPaginated :many
 SELECT * FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?;
 
+-- name: ListItemsByFeedSortedDateDesc :many
+SELECT * FROM items
+WHERE feed_id = sqlc.arg(feed_id)
+  AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+  AND (points >= sqlc.arg(min_score) OR sqlc.arg(min_score) = 0)
+ORDER BY published_at DESC, created_at DESC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
+-- name: ListItemsByFeedSortedDateAsc :many
+SELECT * FROM items
+WHERE feed_id = sqlc.arg(feed_id)
+  AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+  AND (points >= sqlc.arg(min_score) OR sqlc.arg(min_score) = 0)
+ORDER BY published_at ASC, created_at ASC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
+-- name: ListItemsByFeedSortedScoreDesc :many
+SELECT * FROM items
+WHERE feed_id = sqlc.arg(feed_id)
+  AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+  AND (points >= sqlc.arg(min_score) OR sqlc.arg(min_score) = 0)
+ORDER BY points DESC, published_at DESC, created_at DESC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
+-- name: ListItemsByFeedSortedScoreAsc :many
+SELECT * FROM items
+WHERE feed_id = sqlc.arg(feed_id)
+  AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+  AND (points >= sqlc.arg(min_score) OR sqlc.arg(min_score) = 0)
+ORDER BY points ASC, published_at DESC, created_at DESC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
 -- name: ListItemsNeedingExtraction :many
 SELECT * FROM items WHERE feed_id = ? AND url != '' AND extract_status IN ('pending', 'failed') AND extract_retries < 3 ORDER BY extract_retries ASC, published_at DESC;
 
