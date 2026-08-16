@@ -103,6 +103,8 @@ The user shall be able to configure digests with the following parameters:
 - Timing: cron-style schedule (e.g. daily at 5am, every 4 hours)
 - Categories/feeds to include
 - Number of highlights to show
+- Minimum score (`min_score`, default 0 = no threshold): only include items
+  whose score is at least this value
 
 The application should prepare these digests as specified, including all new
 items from the configured sources. For the highlights, summarize the content
@@ -110,6 +112,10 @@ and the top 5-10 comments with LLM, for the rest, just list them with title,
 link to content, link to comments.
 
 For the digest, always fetch fresh points/upvotes and list of comments.
+Scores are refreshed at generation time and the `min_score` threshold is
+applied to those fresh scores: items below the threshold are excluded from
+the digest entirely (they stay unread). Items from feeds that do not produce
+scores (plain RSS/Atom) have no score data and always pass the threshold.
 
 Prepared digests should be saved in the database.
 

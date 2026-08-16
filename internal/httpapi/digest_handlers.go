@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"digesterr/internal/digest"
 	"digesterr/internal/store"
 )
 
@@ -49,6 +50,10 @@ func (s *Server) handleCreateDigestConfig(w http.ResponseWriter, r *http.Request
 	}
 	if req.Config == "" {
 		req.Config = "{}"
+	}
+	if err := digest.ValidateConfig(req.Config); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	cfg, err := s.queries.CreateDigestConfig(r.Context(), store.CreateDigestConfigParams{
 		UserID:   userID,
@@ -99,6 +104,13 @@ func (s *Server) handleUpdateDigestConfig(w http.ResponseWriter, r *http.Request
 	var req createDigestConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Config == "" {
+		req.Config = "{}"
+	}
+	if err := digest.ValidateConfig(req.Config); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	cfg, err := s.queries.UpdateDigestConfig(r.Context(), store.UpdateDigestConfigParams{
