@@ -29,6 +29,13 @@ type Poller struct {
 	expireDigests time.Duration
 }
 
+// fetchedCandidate pairs a freshly fetched item with its duplicate-detection
+// fingerprint, so scores can be refreshed before the insert decision.
+type fetchedCandidate struct {
+	item Item
+	hash string
+}
+
 func NewPoller(queries *store.Queries) *Poller {
 	rssFetcher := NewRSSFetcher()
 	hnEnricher := NewHNEnricher()
@@ -203,8 +210,10 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	}
 
 	newCount := 0
+	// Normalize GUID/comment URL for feed types that need it, and fingerprint
+	// every fetched item up front so scores can be refreshed before insert.
+	candidates := make([]fetchedCandidate, 0, len(items))
 	for _, item := range items {
-		// Normalize GUID/comment URL for feed types that need it.
 		if feed.Type == "hn" {
 			if hnID := extractHNID(item.CommentURL, item.URL); hnID != 0 {
 				item.GUID = fmt.Sprintf("hn:%d", hnID)
@@ -216,7 +225,38 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 				item.CommentURL = item.GUID
 			}
 		}
-		h := itemHash(item.GUID, item.Title, item.URL, item.Content)
+		candidates = append(candidates, fetchedCandidate{
+			item: item,
+			hash: itemHash(item.GUID, item.Title, item.URL, item.Content),
+		})
+	}
+
+	// When a minimum score is configured, refresh each item's score before
+	// insertion and skip items that fall below the threshold. Scores are
+	// re-evaluated on every fetch: an item skipped on one poll may rise above
+	// the threshold and be inserted on a later one.
+	var scored map[string]*store.Item
+	if feed.MinScore > 0 {
+		scored = p.scoreFetchedItems(ctx, feed, candidates, logger)
+	}
+
+	for _, c := range candidates {
+		item := c.item
+		if si, ok := scored[c.hash]; ok {
+			// Apply the refreshed score (when available) at insert time.
+			item.Points = int(si.Points)
+			item.CommentsCnt = int(si.CommentsCount)
+			if si.CommentUrl != "" {
+				item.CommentURL = si.CommentUrl
+			}
+			// Items without score data (Points == 0) always pass: the
+			// threshold only applies when a real score is known.
+			if si.Points > 0 && si.Points < feed.MinScore {
+				logger.Debug("item below min_score, skipping insert", "title", item.Title, "points", si.Points, "min_score", feed.MinScore)
+				continue
+			}
+		}
+		h := c.hash
 		pubAt := sql.NullTime{}
 		if !item.PublishedAt.IsZero() {
 			pubAt = sql.NullTime{Time: item.PublishedAt, Valid: true}
@@ -270,6 +310,55 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 
 	logger.Info("feed polled", "total_items", len(items), "new_items", newCount, "duration", time.Since(start))
 	return nil
+}
+
+// scoreFetchedItems refreshes scores for freshly fetched items before they
+// are inserted, so the min_score threshold can be applied at insert time.
+// Items the enricher cannot score keep Points == 0 ("no score data") and are
+// treated as passing the threshold. Returns a map keyed by item hash, or nil
+// when scoring is not possible (unknown or non-score feed types).
+func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candidates []fetchedCandidate, logger *slog.Logger) map[string]*store.Item {
+	enricher, ok := p.enrichers[feed.Type]
+	if !ok {
+		return nil
+	}
+	if _, ok := enricher.(*NoopEnricher); ok {
+		return nil
+	}
+
+	scored := make(map[string]*store.Item, len(candidates))
+	ptrs := make([]*store.Item, 0, len(candidates))
+	for _, c := range candidates {
+		si := &store.Item{
+			Hash:          c.hash,
+			Title:         c.item.Title,
+			Url:           c.item.URL,
+			Content:       c.item.Content,
+			CommentUrl:    c.item.CommentURL,
+			Author:        c.item.Author,
+			Points:        int64(c.item.Points),
+			CommentsCount: int64(c.item.CommentsCnt),
+		}
+		if !c.item.PublishedAt.IsZero() {
+			si.PublishedAt = sql.NullTime{Time: c.item.PublishedAt, Valid: true}
+		}
+		scored[c.hash] = si
+		ptrs = append(ptrs, si)
+	}
+
+	logger.Debug("refreshing scores before insert", "count", len(ptrs), "min_score", feed.MinScore)
+	if b, ok := enricher.(BulkEnricher); ok {
+		if err := b.BulkEnrich(ctx, ptrs); err != nil {
+			logger.Debug("pre-insert score refresh failed; items without scores will pass", "error", err)
+		}
+	} else {
+		for _, si := range ptrs {
+			if err := enricher.Enrich(ctx, si); err != nil {
+				logger.Debug("pre-insert score refresh failed for item", "title", si.Title, "error", err)
+			}
+		}
+	}
+	return scored
 }
 
 func (p *Poller) setItemExtractionPending(ctx context.Context, itemID int64, logger *slog.Logger) {

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ type createFeedRequest struct {
 	URL            string `json:"url"`
 	Config         string `json:"config"`
 	ExtractContent int64  `json:"extract_content"`
+	MinScore       int64  `json:"min_score"`
 }
 
 func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
@@ -33,6 +35,10 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and type are required")
 		return
 	}
+	if req.MinScore < 0 {
+		writeError(w, http.StatusBadRequest, "min_score must be zero or a positive integer")
+		return
+	}
 	if req.Config == "" {
 		req.Config = "{}"
 	}
@@ -45,6 +51,7 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 		Config:         req.Config,
 		Status:         "active",
 		ExtractContent: req.ExtractContent,
+		MinScore:       req.MinScore,
 	})
 	if err != nil {
 		writeServerError(w, "failed to create feed", err)
@@ -100,6 +107,7 @@ type updateFeedRequest struct {
 	Category       *string `json:"category"`
 	Status         *string `json:"status"`
 	ExtractContent *int64  `json:"extract_content"`
+	MinScore       *int64  `json:"min_score"`
 }
 
 func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +158,14 @@ func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
 	if req.ExtractContent != nil {
 		extractContent = *req.ExtractContent
 	}
+	minScore := existing.MinScore
+	if req.MinScore != nil {
+		if *req.MinScore < 0 {
+			writeError(w, http.StatusBadRequest, "min_score must be zero or a positive integer")
+			return
+		}
+		minScore = *req.MinScore
+	}
 	feed, err := s.queries.UpdateFeed(r.Context(), store.UpdateFeedParams{
 		ID:             id,
 		UserID:         userID,
@@ -159,6 +175,7 @@ func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
 		Category:       category,
 		Status:         status,
 		ExtractContent: extractContent,
+		MinScore:       minScore,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update feed")
@@ -211,71 +228,105 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "feed not found")
 		return
 	}
+
 	status := r.URL.Query().Get("status")
-	limitStr := r.URL.Query().Get("limit")
-	var items []store.Item
-	if limitStr != "" {
-		limit, err := strconv.Atoi(limitStr)
-		if err != nil || limit <= 0 {
-			limit = 50
-		}
-		if limit > 100 {
-			limit = 100
-		}
-		offset := 0
-		if o := r.URL.Query().Get("offset"); o != "" {
-			if v, err := strconv.Atoi(o); err == nil && v >= 0 {
-				offset = v
-			}
-		}
-		queryLimit := limit + 1
-		if status != "" {
-			items, err = s.queries.ListItemsByFeedAndStatusPaginated(r.Context(), store.ListItemsByFeedAndStatusPaginatedParams{
-				FeedID: id,
-				Status: status,
-				Limit:  int64(queryLimit),
-				Offset: int64(offset),
-			})
-		} else {
-			items, err = s.queries.ListItemsByFeedPaginated(r.Context(), store.ListItemsByFeedPaginatedParams{
-				FeedID: id,
-				Limit:  int64(queryLimit),
-				Offset: int64(offset),
-			})
-		}
-		if err != nil {
-			writeServerError(w, "failed to list items", err)
+
+	// min_score filters out items below the given score. A zero or absent
+	// value disables the filter (mirrors the feed-level min_score semantics).
+	minScore := int64(0)
+	if ms := r.URL.Query().Get("min_score"); ms != "" {
+		v, err := strconv.ParseInt(ms, 10, 64)
+		if err != nil || v < 0 {
+			writeError(w, http.StatusBadRequest, "invalid min_score; must be a non-negative integer")
 			return
 		}
-		hasMore := len(items) > limit
+		minScore = v
+	}
+
+	// sort selects the ordering; date_desc is the default and matches the
+	// historical ordering (published_at DESC, created_at DESC).
+	sort := r.URL.Query().Get("sort")
+	if sort == "" {
+		sort = "date_desc"
+	}
+	switch sort {
+	case "date_desc", "date_asc", "score_desc", "score_asc":
+	default:
+		writeError(w, http.StatusBadRequest, "invalid sort; must be date_desc, date_asc, score_desc, or score_asc")
+		return
+	}
+
+	var statusArg sql.NullString
+	if status != "" {
+		statusArg = sql.NullString{String: status, Valid: true}
+	}
+
+	// A limit selects the paginated response shape (items + has_more);
+	// without one the query returns every matching item (LIMIT -1 = none).
+	paginated := false
+	limit := int64(0)
+	offset := int64(0)
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		paginated = true
+		l, err := strconv.Atoi(limitStr)
+		if err != nil || l <= 0 {
+			l = 50
+		}
+		if l > 100 {
+			l = 100
+		}
+		if o := r.URL.Query().Get("offset"); o != "" {
+			if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+				offset = int64(v)
+			}
+		}
+		// Fetch one extra row to detect whether more items exist.
+		limit = int64(l + 1)
+	} else {
+		limit = -1
+	}
+
+	var items []store.Item
+	switch sort {
+	case "date_asc":
+		items, err = s.queries.ListItemsByFeedSortedDateAsc(r.Context(), store.ListItemsByFeedSortedDateAscParams{
+			FeedID: id, Status: statusArg, MinScore: minScore, Limit: limit, Offset: offset,
+		})
+	case "score_desc":
+		items, err = s.queries.ListItemsByFeedSortedScoreDesc(r.Context(), store.ListItemsByFeedSortedScoreDescParams{
+			FeedID: id, Status: statusArg, MinScore: minScore, Limit: limit, Offset: offset,
+		})
+	case "score_asc":
+		items, err = s.queries.ListItemsByFeedSortedScoreAsc(r.Context(), store.ListItemsByFeedSortedScoreAscParams{
+			FeedID: id, Status: statusArg, MinScore: minScore, Limit: limit, Offset: offset,
+		})
+	default:
+		items, err = s.queries.ListItemsByFeedSortedDateDesc(r.Context(), store.ListItemsByFeedSortedDateDescParams{
+			FeedID: id, Status: statusArg, MinScore: minScore, Limit: limit, Offset: offset,
+		})
+	}
+	if err != nil {
+		writeServerError(w, "failed to list items", err)
+		return
+	}
+	hasMore := false
+	if paginated {
+		hasMore = len(items) > int(limit-1)
 		if hasMore {
-			items = items[:limit]
+			items = items[:int(limit-1)]
 		}
-		if items == nil {
-			items = []store.Item{}
-		}
+	}
+	if items == nil {
+		items = []store.Item{}
+	}
+
+	if paginated {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"items":    items,
 			"has_more": hasMore,
 		})
 		return
 	}
-	if status != "" {
-		items, err = s.queries.ListItemsByFeedAndStatus(r.Context(), store.ListItemsByFeedAndStatusParams{
-			FeedID: id,
-			Status: status,
-		})
-	} else {
-		items, err = s.queries.ListItemsByFeed(r.Context(), id)
-	}
-	if err != nil {
-		writeServerError(w, "failed to list items", err)
-		return
-	}
-	if items == nil {
-		items = []store.Item{}
-	}
-
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"items": items,
 	})
