@@ -1,12 +1,13 @@
-import { describe, it, expect, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import DigestResultList from './DigestResultList.vue'
 import { useDigestStore } from '../stores/digest'
 import { absoluteTime } from '../lib/format'
 import type { DigestResult } from '../types/api'
 
-// jsdom lacks ResizeObserver; FilterBar uses it to collapse to a dropdown.
+// reka-ui's dropdown content measures itself with ResizeObserver, which jsdom
+// does not provide.
 class ResizeObserverStub {
   observe() {}
   unobserve() {}
@@ -35,12 +36,41 @@ function mountList() {
   store.loading = false
   store.results = [
     makeResult(),
-    makeResult({ id: 2, created_at: '2026-08-12T09:30:00Z' }),
+    makeResult({ id: 2, created_at: '2026-08-12T09:30:00Z', status: 'read' }),
   ]
   return mount(DigestResultList, { global: { plugins: [pinia] } })
 }
 
+// The dropdown content renders inside a reka-ui portal (teleported to
+// document.body), so read the live DOM, not the wrapper.
+function menuItems(): HTMLElement[] {
+  return Array.from(document.body.querySelectorAll('[role="menuitem"]')) as HTMLElement[]
+}
+
+// The list rows are the only buttons with the w-full row class; the filter and
+// sort triggers are compact ghost buttons.
+function resultRows(wrapper: ReturnType<typeof mount>) {
+  return wrapper.findAll('button').filter(b => b.classes().includes('w-full'))
+}
+
+async function openMenu(wrapper: ReturnType<typeof mount>, index: 0 | 1) {
+  await wrapper.findAll('button')[index].trigger('click')
+  await flushPromises()
+}
+
+async function clickItem(label: string) {
+  const item = menuItems().find(i => i.textContent?.includes(label))
+  if (!item) throw new Error(`menu item not found: ${label}`)
+  item.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await flushPromises()
+}
+
 describe('DigestResultList', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    setActivePinia(createPinia())
+  })
+
   it('shows the full date and time for each digest', () => {
     const wrapper = mountList()
     const text = wrapper.text()
@@ -51,5 +81,73 @@ describe('DigestResultList', () => {
   it('counts items from the digest content', () => {
     const wrapper = mountList()
     expect(wrapper.text()).toContain('1 items')
+  })
+
+  it('renders state-label filter and sort buttons with defaults', () => {
+    const wrapper = mountList()
+    expect(wrapper.text()).toContain('Filter: All')
+    expect(wrapper.text()).toContain('Sort: Newest first')
+  })
+
+  it('filter dropdown lists only the three digest statuses and checks the active one', async () => {
+    const wrapper = mountList()
+    await openMenu(wrapper, 0)
+
+    const labels = menuItems().map(i => i.textContent?.trim())
+    expect(labels).toEqual(['All', 'Unread', 'Read'])
+    // Default filter is All, so it is the only item carrying the check icon.
+    const checked = menuItems().filter(i => i.querySelector('svg'))
+    expect(checked.map(i => i.textContent?.trim())).toEqual(['All'])
+    // No score options in the digest filter dropdown.
+    expect(document.body.textContent).not.toMatch(/score/i)
+  })
+
+  it('filters the list when a status is selected', async () => {
+    const wrapper = mountList()
+    expect(resultRows(wrapper)).toHaveLength(2)
+
+    await openMenu(wrapper, 0)
+    await clickItem('Unread')
+    expect(resultRows(wrapper)).toHaveLength(1)
+    expect(resultRows(wrapper)[0].text()).toContain(absoluteTime('2026-08-13T08:00:00Z'))
+    expect(wrapper.text()).toContain('Filter: Unread')
+
+    await openMenu(wrapper, 0)
+    await clickItem('Read')
+    expect(resultRows(wrapper)).toHaveLength(1)
+    expect(resultRows(wrapper)[0].text()).toContain(absoluteTime('2026-08-12T09:30:00Z'))
+
+    await openMenu(wrapper, 0)
+    await clickItem('All')
+    expect(resultRows(wrapper)).toHaveLength(2)
+    expect(wrapper.text()).toContain('Filter: All')
+  })
+
+  it('sort dropdown offers date options only, with the active one checked', async () => {
+    const wrapper = mountList()
+    await openMenu(wrapper, 1)
+
+    const labels = menuItems().map(i => i.textContent?.trim())
+    expect(labels).toEqual(['Newest first', 'Oldest first'])
+    // Default sort is Newest first.
+    const checked = menuItems().filter(i => i.querySelector('svg'))
+    expect(checked.map(i => i.textContent?.trim())).toEqual(['Newest first'])
+    // No score sort options in the digest view.
+    expect(document.body.textContent).not.toMatch(/score|points/i)
+  })
+
+  it('sorts by date ascending when Oldest first is selected', async () => {
+    const wrapper = mountList()
+
+    // Default (newest first): the Aug 13 digest renders before Aug 12.
+    expect(resultRows(wrapper)[0].text()).toContain(absoluteTime('2026-08-13T08:00:00Z'))
+
+    await openMenu(wrapper, 1)
+    await clickItem('Oldest first')
+
+    const rows = resultRows(wrapper).map(r => r.text())
+    expect(rows[0]).toContain(absoluteTime('2026-08-12T09:30:00Z'))
+    expect(rows[1]).toContain(absoluteTime('2026-08-13T08:00:00Z'))
+    expect(wrapper.text()).toContain('Sort: Oldest first')
   })
 })
