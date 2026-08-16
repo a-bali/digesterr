@@ -10,6 +10,8 @@ import { BookmarkCheck, Plus, MessageSquare, Rss, Settings, Sparkles, ChevronDow
 import FeedRow from './FeedRow.vue'
 import FeedDialog from './FeedDialog.vue'
 import DigestDialog from './DigestDialog.vue'
+import Dialog from './ui/Dialog.vue'
+import Button from './ui/Button.vue'
 
 withDefaults(defineProps<{ showingSaved?: boolean }>(), { showingSaved: false })
 
@@ -57,6 +59,24 @@ async function markFeedRead(id: number) {
   } catch (e: any) {
     toast.error('Failed to mark feed read', { description: e.message })
   }
+}
+
+// Marking a feed read marks ALL of its items read — confirm first.
+const feedToMarkRead = ref<Feed | null>(null)
+
+function requestMarkFeedRead(id: number) {
+  const feed = feedStore.feeds.find(f => f.id === id)
+  if (feed) feedToMarkRead.value = feed
+}
+
+function closeMarkReadDialog() {
+  feedToMarkRead.value = null
+}
+
+async function confirmMarkFeedRead() {
+  const feed = feedToMarkRead.value
+  feedToMarkRead.value = null
+  if (feed) await markFeedRead(feed.id)
 }
 
 // Resolve category name -> payload field and build final URL.
@@ -172,7 +192,7 @@ function toggleCategory(name: string) {
           <span class="truncate">{{ cfg.name || cfg.schedule }}</span>
           <span v-if="(digestStore.unreadCounts[cfg.id] ?? 0) > 0" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-auto">{{ digestStore.unreadCounts[cfg.id] }}</span>
         </div>
-        <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity">
           <button class="p-1 rounded hover:bg-accent/20" title="Settings" @click.stop="editingDigest = cfg; showEditDigest = true">
             <Settings class="size-3" />
           </button>
@@ -200,7 +220,7 @@ function toggleCategory(name: string) {
         :feed="feed" :refreshing="refreshingFeeds.has(feed.id)"
         @select="emit('selectFeed', $event)"
         @edit="editingFeed = $event; showEditFeed = true"
-        @mark-read="markFeedRead"
+        @mark-read="requestMarkFeedRead"
         @refresh="refreshFeed"
       />
     </div>
@@ -219,7 +239,7 @@ function toggleCategory(name: string) {
             :feed="feed" :refreshing="refreshingFeeds.has(feed.id)"
             @select="emit('selectFeed', $event)"
             @edit="editingFeed = $event; showEditFeed = true"
-            @mark-read="markFeedRead"
+            @mark-read="requestMarkFeedRead"
             @refresh="refreshFeed"
           />
         </div>
@@ -230,5 +250,17 @@ function toggleCategory(name: string) {
     <FeedDialog v-if="showEditFeed && editingFeed" :feed="editingFeed" @update:open="showEditFeed = $event" @save="saveEditFeed" @delete="deleteFeed" />
     <DigestDialog v-if="showAddDigest" :config="null" @update:open="showAddDigest = $event" @save="addDigest" />
     <DigestDialog v-if="showEditDigest" :config="editingDigest" @update:open="showEditDigest = $event" @save="saveEditDigest" @delete="deleteDigest" />
+    <Dialog
+      v-if="feedToMarkRead"
+      :open="true"
+      title="Mark all as read?"
+      :description="`Mark all items in “${feedToMarkRead.name}” as read? This cannot be undone.`"
+      @update:open="v => { if (!v) closeMarkReadDialog() }"
+    >
+      <div class="flex justify-end gap-2">
+        <Button variant="outline" @click="closeMarkReadDialog">Cancel</Button>
+        <Button data-mark-all-read-confirm @click="confirmMarkFeedRead">Mark read</Button>
+      </div>
+    </Dialog>
   </div>
 </template>
