@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Digesterr — Score filter/sort · Variant 4: Direct manipulation</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --accent: #2563eb; --accent-fg: #fff;
+    --bg: #ffffff; --fg: #1e293b;
+    --muted: #f1f5f9; --muted-fg: #64748b;
+    --border: #e2e8f0; --destructive: #dc2626;
+  }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #dbe2ea; color: var(--fg); -webkit-font-smoothing: antialiased;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; display: block; }
+  svg.xs { width: 11px; height: 11px; }
+
+  /* ---------- mockup chrome (NOT part of the design) ---------- */
+  .chrome { background: #0f172a; color: #cbd5e1; padding: 6px 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex-shrink: 0; }
+  .chrome .c-title { font-size: 12px; font-weight: 700; color: #fff; }
+  .chrome .c-sub { font-size: 10px; color: #94a3b8; }
+  .chrome .c-group { display: flex; align-items: center; gap: 4px; font-size: 10px; }
+  .chrome label { color: #94a3b8; }
+  .chrome select, .chrome input[type=number] { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 5px; font-size: 10px; padding: 2px 5px; }
+  .chrome input[type=number] { width: 48px; }
+  .chrome .tab { font-size: 10px; padding: 2px 9px; border-radius: 999px; border: 1px solid #334155; color: #cbd5e1; cursor: pointer; background: transparent; }
+  .chrome .tab.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .chrome .btn { font-size: 10px; padding: 2px 8px; border-radius: 5px; border: 1px solid #334155; color: #e2e8f0; cursor: pointer; background: #1e293b; }
+  .chrome .btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  /* ---------- app shell ---------- */
+  .app { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .apphead { height: 44px; background: var(--bg); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; padding: 0 14px; flex-shrink: 0; }
+  .apphead .logo { color: var(--accent); display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; }
+  .apphead .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .iconbtn { width: 26px; height: 26px; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: var(--muted-fg); background: transparent; border: none; cursor: pointer; }
+  .iconbtn:hover { background: var(--muted); }
+
+  .body { flex: 1; display: flex; min-height: 0; }
+  .sidebar { width: 188px; background: var(--muted); border-right: 1px solid var(--border); padding: 8px; overflow-y: auto; flex-shrink: 0; }
+  .sb-block { margin-bottom: 10px; }
+  .sb-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-fg); padding: 2px 6px 4px; display: flex; align-items: center; gap: 4px; }
+  .sb-item { font-size: 11px; padding: 3px 6px; border-radius: 6px; color: var(--fg); cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  .sb-item.on { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+  .sb-item:not(.on):hover { background: #e2e8f0; }
+  .sb-item .u { margin-left: auto; font-size: 9px; color: var(--muted-fg); }
+  .sb-item.on .u { color: rgba(255,255,255,.85); }
+
+  .mid { flex: 1.15; display: flex; flex-direction: column; min-width: 0; background: var(--bg); border-right: 1px solid var(--border); }
+  .content { flex: 1.6; background: var(--bg); min-width: 0; display: flex; flex-direction: column; }
+
+  /* ---------- VARIANT 1 DESIGN ---------- */
+  /* Control row: two labeled state buttons (existing FilterBar slot) */
+  .bar { padding: 8px 10px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; background: var(--bg); }
+  .ctl { position: relative; }
+  .ctl-btn {
+    display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px;
+    border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg); color: var(--muted-fg);
+    transition: background .12s, border-color .12s;
+  }
+  .ctl-btn:hover { background: var(--muted); border-color: #cbd5e1; }
+  .ctl-btn .caret { width: 9px; height: 9px; opacity: .7; }
+  .ctl-btn.active { border-color: var(--accent); color: var(--accent); }
+  .ctl-btn.active .caret { color: var(--accent); }
+  /* The current-state label lives in the button text; score part appended when set */
+
+  .menu {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 60;
+    min-width: 218px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 12px 32px rgba(15,23,42,.16); padding: 5px;
+  }
+  .menu[hidden] { display: none; }
+  .m-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted-fg); padding: 5px 7px 2px; }
+  .m-item { display: flex; align-items: center; gap: 7px; width: 100%; padding: 5px 7px; border-radius: 5px; font-size: 11.5px; cursor: pointer; border: none; background: none; text-align: left; color: var(--fg); }
+  .m-item:hover { background: var(--muted); }
+  .m-item.on { font-weight: 600; color: var(--accent); }
+  .m-item .check { margin-left: auto; color: var(--accent); width: 12px; height: 12px; }
+  .m-sep { height: 1px; background: var(--border); margin: 4px 3px; }
+  .m-score { padding: 3px 7px 6px; }
+  .m-score .row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+  .m-score input {
+    width: 64px; height: 24px; border: 1px solid var(--border); border-radius: 6px; padding: 0 7px;
+    font-size: 11px; color: var(--fg); background: var(--bg);
+  }
+  .m-score input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .m-score input:disabled { background: var(--muted); color: var(--muted-fg); cursor: not-allowed; }
+  .m-score .clear { font-size: 10px; color: var(--accent); cursor: pointer; border: none; background: none; font-weight: 600; }
+  .m-score .clear:disabled { color: var(--muted-fg); cursor: not-allowed; }
+  .m-note { font-size: 9.5px; color: var(--muted-fg); margin-top: 4px; line-height: 1.4; }
+  .m-note.warn { color: #b45309; }
+
+  /* list rows (same as current app) */
+  .rows { flex: 1; overflow-y: auto; }
+  .row { display: block; width: 100%; text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); cursor: pointer; position: relative; overflow: hidden; }
+  .row:hover { background: rgba(37,99,235,.05); }
+  .row.sel { background: rgba(37,99,235,.08); }
+  .row .t1 { display: flex; align-items: flex-start; gap: 5px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid #cbd5e1; flex-shrink: 0; margin-top: 1px; }
+  .dot.unread { border-color: var(--accent); background: var(--accent); }
+  .row .title { font-size: 12.5px; font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .time { font-size: 9.5px; color: var(--muted-fg); flex-shrink: 0; margin-top: 1px; }
+  .row .ex { font-size: 11px; color: var(--muted-fg); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 16px; }
+  .row .meta { position: absolute; right: 10px; bottom: 6px; display: flex; gap: 8px; font-size: 9.5px; align-items: center; }
+  .row .meta .pts { color: var(--accent); display: flex; align-items: center; gap: 2px; font-weight: 600; }
+  .row .meta .cmt { color: var(--muted-fg); display: flex; align-items: center; gap: 2px; }
+  .empty { padding: 26px 10px; text-align: center; font-size: 11.5px; color: var(--muted-fg); }
+
+  /* content pane preview */
+  .c-pad { padding: 14px 18px; overflow-y: auto; }
+  .c-title { font-size: 15px; font-weight: 700; line-height: 1.35; }
+  .c-meta { font-size: 10.5px; color: var(--muted-fg); margin: 6px 0 10px; display: flex; gap: 10px; align-items: center; }
+  .c-body p { font-size: 12px; line-height: 1.55; color: #334155; margin-bottom: 8px; }
+  .digest-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--bg); }
+  .digest-card .h { font-size: 11px; font-weight: 700; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; }
+  .digest-card .h .tag { font-size: 8px; background: var(--muted); color: var(--muted-fg); border-radius: 999px; padding: 1px 6px; font-weight: 600; }
+  .digest-card .t { font-size: 11px; color: #475569; line-height: 1.5; }
+
+  /* dialog overlay */
+  .overlay { position: absolute; inset: 0; background: rgba(15,23,42,.4); display: flex; align-items: center; justify-content: center; z-index: 80; }
+  .dialog { width: 380px; background: var(--bg); border-radius: 10px; box-shadow: 0 18px 44px rgba(15,23,42,.24); overflow: hidden; }
+  .d-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 4px; font-size: 13px; font-weight: 700; }
+  .d-body { padding: 8px 14px 14px; display: flex; flex-direction: column; gap: 9px; }
+  .field label { display: block; font-size: 10.5px; font-weight: 600; margin-bottom: 3px; }
+  .field .inp { width: 100%; height: 26px; border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; font-size: 11.5px; background: var(--bg); color: var(--fg); }
+  .field .inp:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .field .inp:disabled { background: var(--muted); color: var(--muted-fg); cursor: not-allowed; }
+  .hint { font-size: 9.5px; color: var(--muted-fg); margin-top: 2px; line-height: 1.4; }
+  .hint.warn { color: #b45309; }
+  .d-btns { display: flex; gap: 8px; padding-top: 2px; }
+  .btn-p { background: var(--accent); color: #fff; border: none; border-radius: 6px; font-size: 11px; font-weight: 600; padding: 5px 12px; cursor: pointer; }
+  .btn-o { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; font-size: 11px; font-weight: 600; padding: 5px 12px; cursor: pointer; }
+  .btn-o.red { color: var(--destructive); }
+  .chk-row { display: flex; align-items: center; gap: 7px; font-size: 11px; }
+  .chk { width: 26px; height: 15px; border-radius: 999px; background: var(--accent); position: relative; flex-shrink: 0; }
+  .chk::after { content: ""; position: absolute; top: 2px; right: 2px; width: 11px; height: 11px; border-radius: 50%; background: #fff; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .toggle-row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+
+  /* shared extras for variants 2-5 */
+  .menu.right { left: auto; right: 0; }
+  .icon-ctl {
+    width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--muted-fg); cursor: pointer; position: relative;
+    display: inline-flex; align-items: center; justify-content: center; transition: background .12s, border-color .12s;
+  }
+  .icon-ctl:hover { background: var(--muted); }
+  .icon-ctl.active { border-color: var(--accent); color: var(--accent); }
+  .dot-badge { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .native-sel {
+    height: 26px; border: 1px solid var(--border); border-radius: 6px; padding: 0 6px;
+    font-size: 11px; font-weight: 600; color: var(--fg); background: var(--bg); cursor: pointer;
+  }
+  .native-sel:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .native-sel:disabled { color: var(--muted-fg); background: var(--muted); cursor: not-allowed; }
+  .score-inline { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--muted-fg); }
+  .score-inline input {
+    width: 52px; height: 24px; border: 1px solid var(--border); border-radius: 6px; padding: 0 6px;
+    font-size: 11px; color: var(--fg); background: var(--bg);
+  }
+  .score-inline input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .score-inline input:disabled { background: var(--muted); color: var(--muted-fg); cursor: not-allowed; }
+  .score-inline .clear { font-size: 10px; color: var(--accent); cursor: pointer; border: none; background: none; font-weight: 600; padding: 0; }
+  .score-inline .clear:disabled { color: var(--muted-fg); cursor: not-allowed; }
+  .seg { display: inline-flex; align-items: center; gap: 2px; background: var(--muted); border-radius: 7px; padding: 2px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border-radius: 5px;
+    font-size: 10.5px; font-weight: 600; color: var(--muted-fg); border: none; background: transparent; cursor: pointer;
+  }
+  .pill:hover { color: var(--fg); }
+  .pill.on { background: var(--bg); color: var(--accent); box-shadow: 0 1px 2px rgba(15,23,42,.12); }
+  .pill:disabled { opacity: .5; cursor: not-allowed; }
+  .sortseg { display: inline-flex; align-items: center; gap: 2px; }
+  .sbtn {
+    width: 26px; height: 24px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg);
+    color: var(--muted-fg); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background .12s, border-color .12s;
+  }
+  .sbtn:hover { background: var(--muted); }
+  .sbtn.on { border-color: var(--accent); color: var(--accent); background: rgba(37,99,235,.06); }
+  .sbtn:disabled { opacity: .45; cursor: not-allowed; }
+  .phead { display: flex; align-items: center; gap: 6px; }
+  .phead .pname { font-size: 11.5px; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .phead .pcount { font-size: 10px; color: var(--muted-fg); flex-shrink: 0; }
+  .phead .spacer { margin-left: auto; }
+  .u-row { display: flex; align-items: center; gap: 4px; }
+  .u-row .u-label { font-size: 9.5px; color: var(--muted-fg); font-weight: 600; }
+
+</style>
+</head>
+<body>
+
+<!-- MOCKUP CHROME -->
+<div class="chrome">
+  <div class="c-title">Variant 4 — Direct manipulation</div>
+  <div class="c-sub">status pills + score input + sort toggles — everything visible, 0-1 clicks</div>
+  <div class="c-group" style="margin-left:6px">
+    <span class="tab on" data-scene="hn">HN feed</span>
+    <span class="tab" data-scene="rss">RSS feed</span>
+    <span class="tab" data-scene="saved">Saved</span>
+    <span class="tab" data-scene="digest">Digest</span>
+    <span class="tab" data-scene="feeddlg">Feed dialog</span>
+    <span class="tab" data-scene="digestdlg">Digest dialog</span>
+  </div>
+  <div class="c-group">
+    <label>Status</label>
+    <select id="ctrlStatus">
+      <option>All</option><option selected>Unread</option><option>Read</option><option>Digested</option><option>Saved</option>
+    </select>
+    <label>≥</label>
+    <input type="number" id="ctrlScore" value="50" min="0">
+    <label>Sort</label>
+    <select id="ctrlSort">
+      <option selected>Newest first</option><option>Oldest first</option><option>Score: highest</option><option>Score: lowest</option>
+    </select>
+    <button class="btn" id="ctrlOpenFilter">Open filter ▾</button>
+    <button class="btn" id="ctrlOpenSort">Open sort ▾</button>
+    <label>Dialog type</label>
+    <select id="ctrlDlgType">
+      <option value="hn">Score sources (HN…)</option>
+      <option value="rss">RSS-only</option>
+    </select>
+  </div>
+</div>
+
+<div class="app">
+  <div class="apphead">
+    <span class="logo"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg>Digesterr</span>
+    <div class="right">
+      <span class="iconbtn"><svg viewBox="0 0 24 24"><path d="M3 6h18M6 12h12M10 18h4"/></svg></span>
+      <span class="iconbtn"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></svg></span>
+    </div>
+  </div>
+  <div class="body" id="stage">
+    <div class="sidebar" id="sidebar">
+      <div class="sb-block">
+        <div class="sb-title">Saved items</div>
+        <div class="sb-item"><svg class="xs" viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>Saved items</div>
+      </div>
+      <div class="sb-block">
+        <div class="sb-title">Digests</div>
+        <div class="sb-item"><svg class="xs" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Daily Tech</div>
+      </div>
+      <div class="sb-block">
+        <div class="sb-title">Feeds</div>
+        <div class="sb-item on" id="sbHN"><svg class="xs" viewBox="0 0 24 24"><path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>Hacker News<span class="u">12</span></div>
+        <div class="sb-item" id="sbRSS"><svg class="xs" viewBox="0 0 24 24"><path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>The Verge<span class="u">7</span></div>
+        <div class="sb-item"><svg class="xs" viewBox="0 0 24 24"><path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>Lobste.rs<span class="u">3</span></div>
+        <div class="sb-item"><svg class="xs" viewBox="0 0 24 24"><path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>r/programming<span class="u">5</span></div>
+      </div>
+    </div>
+
+    <div class="mid">
+      <!-- VARIANT 1: the control row -->
+      <div class="bar">
+        <div class="seg" id="segStatus" title="Filter by status">
+          <button class="pill" data-status="All">All</button>
+          <button class="pill" data-status="Unread">Unread</button>
+          <button class="pill" data-status="Read">Read</button>
+          <button class="pill" data-status="Digested">Digested</button>
+          <button class="pill" data-status="Saved">Saved</button>
+        </div>
+        <span class="score-inline" id="scoreBlock">
+          <label for="scoreInput">Min score ≥</label>
+          <input type="number" id="scoreInput" value="50" min="0">
+          <button class="clear" id="scoreClear">Clear</button><span class="m-note" id="scoreNote4" hidden></span>
+        </span>
+        <span class="sortseg" id="segSort" title="Sort order">
+          <button class="sbtn" data-sort="Newest first" title="Date: newest first"><svg class="xs" viewBox="0 0 24 24"><path d="M12 5v14M5 12l7-7 7 7"/></svg></button>
+          <button class="sbtn" data-sort="Oldest first" title="Date: oldest first"><svg class="xs" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7 7 7-7"/></svg></button>
+          <button class="sbtn" data-sort="Score: highest" title="Score: highest first"><svg class="xs" viewBox="0 0 24 24"><path d="M4 6h16M6 12h12M9 18h6"/></svg></button>
+          <button class="sbtn" data-sort="Score: lowest" title="Score: lowest first"><svg class="xs" viewBox="0 0 24 24"><path d="M4 6h16M6 12h12M9 18h6"/></svg></button>
+        </span>
+      </div>
+
+      <div class="rows" id="rows"></div>
+    </div>
+
+    <div class="content" id="content"></div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay" hidden></div>
+<script>
+// ===== SHARED CORE (data, state, shell rendering) =====
+const HN = [
+  { t: "Apple's M5 Pro benchmarks leak — 40% faster than M4 Pro", ex: "First real-world numbers show huge gains in Geekbench and Cinebench multi-core.", p: 1284, c: 342, unread: 1, time: "3h" },
+  { t: "Show HN: I built a feed reader that summarizes with local LLMs", ex: "All processing on-device, no cloud. Full source on GitHub.", p: 857, c: 210, unread: 1, time: "5h" },
+  { t: "SQLite is 35 years old — still the most deployed database", ex: "A look at how SQLite stayed dependency-free for three decades.", p: 641, c: 118, unread: 0, time: "7h" },
+  { t: "The case against microservices at small scale", ex: "One process, one database, one deploy target. Most teams never outgrow it.", p: 512, c: 264, unread: 1, time: "9h" },
+  { t: "Rust in the Linux kernel: one year later", ex: "What worked, what didn't, and where the C programmers pushed back.", p: 387, c: 151, unread: 0, time: "11h" },
+  { t: "Building a search engine for my own notes", ex: "BM25, a trigram index, and 40k markdown files.", p: 214, c: 47, unread: 1, time: "14h" },
+  { t: "The quiet death of the personal blog", ex: "Traffic is down 70% since 2019. What happened?", p: 156, c: 89, unread: 0, time: "16h" },
+];
+const RSS = [
+  { t: "The Verge launches a new AI newsletter", ex: "Every Thursday: the five AI stories that actually matter.", p: 0, c: 0, unread: 1, time: "2h" },
+  { t: "Review: the 2026 iPad Pro is thinner and faster", ex: "M5 brings real gains, but iPadOS still holds it back.", p: 0, c: 0, unread: 1, time: "4h" },
+  { t: "Why every streaming service looks the same now", ex: "The algorithm's homogenizing effect on television.", p: 0, c: 0, unread: 0, time: "6h" },
+  { t: "Hands-on with the new Framework 16", ex: "The modular laptop gets a bigger battery and better GPU.", p: 0, c: 0, unread: 1, time: "9h" },
+  { t: "The great password-manager consolidation", ex: "Bitwarden, 1Password, and the race to own your logins.", p: 0, c: 0, unread: 0, time: "12h" },
+];
+const DIGEST = [
+  { t: "Daily Tech — Aug 15, 2026, 8:00 AM", n: 12, unread: 1, time: "8:00 AM" },
+  { t: "Daily Tech — Aug 14, 2026, 8:00 AM", n: 9, unread: 1, time: "Aug 14" },
+  { t: "Daily Tech — Aug 13, 2026, 8:00 AM", n: 14, unread: 0, time: "Aug 13" },
+  { t: "Daily Tech — Aug 12, 2026, 8:00 AM", n: 10, unread: 0, time: "Aug 12" },
+];
+
+const state = {
+  scene: 'hn', status: 'Unread', score: 50, sort: 'Newest first',
+  open: null, // 'filter' | 'sort' | null (ignored by variants without menus)
+  dlgFeed: 'hn', // 'hn' (scores) | 'rss' (no scores) for the dialog scenes
+};
+const scoreSupported = () => (state.scene === 'hn');
+const isDigest = () => (state.scene === 'digest');
+
+// URL state — lets screenshot tooling capture any state without clicks
+// (?scene=hn|rss|saved|digest|feeddlg|digestdlg&status=...&score=...&sort=...&open=filter|sort&dlg=hn|rss)
+(function applyQuery() {
+  const qp = new URLSearchParams(location.search);
+  if (qp.get('scene')) state.scene = qp.get('scene');
+  if (qp.get('status')) state.status = qp.get('status');
+  if (qp.get('score') !== null) state.score = parseInt(qp.get('score'), 10) || 0;
+  if (qp.get('sort')) state.sort = qp.get('sort');
+  if (qp.get('open')) state.open = qp.get('open');
+  if (qp.get('dlg')) state.dlgFeed = qp.get('dlg');
+})();
+
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+
+function sceneMeta() {
+  switch (state.scene) {
+    case 'hn': return { feed: 'Hacker News', unread: '12 unread', list: HN };
+    case 'rss': return { feed: 'The Verge', unread: '7 unread', list: RSS };
+    case 'saved': return { feed: 'Saved items', unread: 'mixed feeds', list: HN };
+    case 'digest': return { feed: 'Daily Tech', unread: 'digest results', list: DIGEST };
+    // dialog scenes: page behind the overlay still shows a feed list
+    case 'feeddlg':
+    case 'digestdlg': return { feed: 'Hacker News', unread: '12 unread', list: HN };
+  }
+}
+
+function render() {
+  $$('.chrome .tab').forEach(t => t.classList.toggle('on', t.dataset.scene === state.scene));
+  $('#sbHN').classList.toggle('on', state.scene === 'hn');
+  $('#sbRSS').classList.toggle('on', state.scene === 'rss');
+  const dlg = isDigest();
+  const meta = sceneMeta();
+  let c = '';
+  if (dlg) {
+    c = `<div class="c-pad">
+      <div class="c-title">Daily Tech — Aug 15, 2026</div>
+      <div class="c-meta">12 items · 5 highlights · generated 8:00 AM</div>
+      <div class="digest-card"><div class="h">Apple's M5 Pro benchmarks leak <span class="tag">#1 highlight</span></div><div class="t">First real-world numbers show 40% multi-core gains over M4 Pro; thermals improved significantly in the 16-inch chassis.</div></div>
+      <div class="digest-card"><div class="h">SQLite at 35 <span class="tag">#2 highlight</span></div><div class="t">Still the most deployed database on Earth — a dependency-free C library that refuses to die.</div></div>
+      <div class="digest-card"><div class="h">Show HN: local-LLM feed reader <span class="tag">#3 highlight</span></div><div class="t">On-device summarization with zero cloud calls; author claims 8 hours of battery for 200 articles.</div></div>
+    </div>`;
+  } else {
+    const it = meta.list[0];
+    c = `<div class="c-pad">
+      <div class="c-title">${esc(it.t)}</div>
+      <div class="c-meta"><span>${esc(meta.feed)}</span>${it.p ? `<span class="pts" style="color:var(--accent);display:flex;gap:2px;align-items:center"><svg class="xs" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>${it.p}</span><span>${it.c} comments</span>` : ''}<span>${it.time} ago</span></div>
+      <div class="c-body"><p>${esc(it.ex)}</p><p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p><p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident.</p></div>
+    </div>`;
+  }
+  $('#content').innerHTML = c;
+
+  const rows = $('#rows');
+  rows.innerHTML = meta.list.map((it, i) => {
+    if (dlg) {
+      return `<div class="row ${i === 0 ? 'sel' : ''}">
+        <div class="t1"><span class="dot ${it.unread ? 'unread' : ''}"></span>
+        <span class="title">${esc(it.t)}</span><span class="time">${esc(it.time)}</span></div>
+        <span style="position:absolute;right:10px;bottom:6px;font-size:9.5px;color:var(--accent);font-weight:600">${it.n} items</span>
+      </div>`;
+    }
+    return `<div class="row ${i === 0 ? 'sel' : ''}">
+      <div class="t1"><span class="dot ${it.unread ? 'unread' : ''}"></span>
+      <span class="title">${esc(it.t)}</span><span class="time">${it.time} ago</span></div>
+      <div class="ex">${esc(it.ex)}</div>
+      ${it.p ? `<div class="meta"><span class="pts"><svg class="xs" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>${it.p}</span><span class="cmt"><svg class="xs" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>${it.c}</span></div>` : ''}
+    </div>`;
+  }).join('');
+
+  renderControls();
+  renderDialog();
+}
+
+function renderDialog() {
+  const ov = $('#overlay');
+  if (state.scene === 'feeddlg' || state.scene === 'digestdlg') {
+    ov.hidden = false;
+    ov.innerHTML = state.scene === 'feeddlg' ? feedDialog() : digestDialog();
+  } else ov.hidden = true;
+}
+function feedDialog() {
+  const sup = state.dlgFeed === 'hn';
+  const typeLabel = { hn: 'Hacker News', rss: 'RSS / Atom' }[state.dlgFeed];
+  return `<div class="dialog">
+    <div class="d-head">Edit Feed <span style="color:var(--muted-fg);font-size:10px;cursor:pointer">✕</span></div>
+    <div class="d-body">
+      <div class="field"><label>Category</label><input class="inp" value="Tech"></div>
+      <div class="field"><label>Type</label><input class="inp" value="${typeLabel}" disabled style="opacity:.6"></div>
+      <div class="field"><label>Name</label><input class="inp" value="${sup ? 'Hacker News' : 'The Verge'}"></div>
+      <div class="field"><label>URL</label><input class="inp" value="${sup ? 'https://news.ycombinator.com/rss' : 'https://www.theverge.com/rss/index.xml'}" disabled style="opacity:.6"></div>
+      <label class="chk-row"><span class="chk"></span>Auto-extract full article content</label>
+      <div class="field">
+        <label>Minimum score</label>
+        <input class="inp" type="number" value="50" min="0" ${sup ? '' : 'disabled'}>
+        <div class="hint ${sup ? '' : 'warn'}">${sup
+          ? 'Items with fewer than 50 points are not inserted. Scores refresh on every fetch.'
+          : 'Scores not available for RSS / Atom feeds. Switch to Hacker News, Lobste.rs, or Reddit to enable this field.'}</div>
+      </div>
+      <div class="d-btns"><button class="btn-p">Save</button><button class="btn-o red">Delete</button></div>
+    </div>
+  </div>`;
+}
+function digestDialog() {
+  const sup = state.dlgFeed === 'hn';
+  return `<div class="dialog">
+    <div class="d-head">Edit Digest Config <span style="color:var(--muted-fg);font-size:10px;cursor:pointer">✕</span></div>
+    <div class="d-body">
+      <div class="field"><label>Name</label><input class="inp" value="Daily Tech"></div>
+      <div class="field"><label>Schedule (cron syntax)</label><input class="inp" value="0 8 * * *"></div>
+      <div class="field"><label>Source</label><input class="inp" value="${sup ? 'Hacker News · Lobste.rs · r/programming' : 'The Verge · Ars Technica · TechCrunch'}"></div>
+      <div class="grid3">
+        <div class="field"><label>Max highlights</label><input class="inp" type="number" value="5"></div>
+        <div class="field"><label>Max comments</label><input class="inp" type="number" value="10"></div>
+        <div class="field"><label>Max items</label><input class="inp" type="number" value="100"></div>
+      </div>
+      <div class="field">
+        <label>Minimum score</label>
+        <input class="inp" type="number" value="50" min="0" ${sup ? '' : 'disabled'}>
+        <div class="hint ${sup ? '' : 'warn'}">${sup
+          ? 'Items with fewer than 50 points are excluded from the digest. Items without score data (plain RSS) are always included.'
+          : 'Scores not available for the selected sources. Add a Hacker News, Lobste.rs, or Reddit source to enable this field.'}</div>
+      </div>
+      <div class="d-btns"><button class="btn-p">Save</button><button class="btn-o red">Delete</button></div>
+    </div>
+  </div>`;
+}
+
+// ===== chrome listeners =====
+$$('.chrome .tab').forEach(t => t.addEventListener('click', () => {
+  state.scene = t.dataset.scene; state.open = null; render();
+}));
+$('#ctrlStatus').addEventListener('change', e => { state.status = e.target.value; state.open = null; render(); });
+$('#ctrlScore').addEventListener('input', e => { state.score = Math.max(0, parseInt(e.target.value || '0', 10) || 0); render(); });
+$('#ctrlSort').addEventListener('change', e => { state.sort = e.target.value; state.open = null; render(); });
+$('#ctrlOpenFilter').addEventListener('click', () => { state.open = state.open === 'filter' ? null : 'filter'; render(); });
+$('#ctrlOpenSort').addEventListener('click', () => { state.open = state.open === 'sort' ? null : 'sort'; render(); });
+$('#ctrlDlgType').addEventListener('change', e => { state.dlgFeed = e.target.value; render(); });
+document.addEventListener('click', e => {
+  if (!e.target.closest('.ctl') && !e.target.closest('.chrome')) state.open = null;
+  render();
+});
+
+render();
+// ===== VARIANT 4: direct manipulation — renderControls + events =====
+function renderControls() {
+  const sup = scoreSupported();
+  const dlg = isDigest();
+  $('#segStatus').querySelectorAll('.pill').forEach(b => {
+    b.classList.toggle('on', b.dataset.status === state.status);
+    b.disabled = dlg && ['Digested','Saved'].includes(b.dataset.status);
+  });
+  $('#segSort').querySelectorAll('.sbtn').forEach(b => {
+    const scoreBtn = b.dataset.sort.startsWith('Score');
+    b.classList.toggle('on', b.dataset.sort === state.sort);
+    b.disabled = dlg ? scoreBtn : !sup && scoreBtn;
+    b.style.opacity = b.disabled ? .45 : 1;
+    b.style.display = (dlg && scoreBtn) ? 'none' : '';
+  });
+  const block = $('#scoreBlock');
+  block.style.display = dlg ? 'none' : '';
+  const inp = $('#scoreInput');
+  inp.disabled = !sup;
+  inp.value = state.score;
+  inp.style.opacity = sup ? 1 : .5;
+  $('#scoreClear').disabled = !sup || state.score <= 0;
+  $('#scoreClear').textContent = state.score > 0 ? 'Clear' : 'Any';
+  const note = $('#scoreNote4');
+  if (note) {
+    note.textContent = !sup
+      ? (state.scene === 'saved' ? 'Scores not available for saved items (mixed feeds).' : 'Scores not available for this feed.')
+      : '';
+    note.hidden = sup;
+  }
+}
+
+$('#segStatus').addEventListener('click', e => {
+  const b = e.target.closest('.pill'); if (b && !b.disabled) { state.status = b.dataset.status; render(); }
+});
+$('#segSort').addEventListener('click', e => {
+  const b = e.target.closest('.sbtn'); if (b && !b.disabled) { state.sort = b.dataset.sort; render(); }
+});
+$('#scoreInput').addEventListener('input', e => { state.score = Math.max(0, parseInt(e.target.value || '0', 10) || 0); render(); });
+$('#scoreClear').addEventListener('click', () => { if (!$('#scoreClear').disabled) { state.score = 0; render(); } });
+</script>
+</body>
+</html>
