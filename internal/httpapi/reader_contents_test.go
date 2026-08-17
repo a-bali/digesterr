@@ -206,6 +206,77 @@ func TestReaderStreamItemsContentsExtractedSummary(t *testing.T) {
 	}
 }
 
+// TestReaderStreamItemsContentsPointsCommentsMeta verifies that feed items
+// carrying points/comments get a meta line prepended to their body (in both
+// summary and content, since NetNewsWire reads summary), with the comments
+// label linked to the item's comment URL.
+func TestReaderStreamItemsContentsPointsCommentsMeta(t *testing.T) {
+	server, queries, db := setupStreamTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedReaderStream(t, queries, db, user.ID)
+
+	if _, err := db.Exec("UPDATE items SET points = 42, comments_count = 7, comment_url = 'https://news.ycombinator.com/item?id=123' WHERE id = ?", seed.aUnreadNewest.ID); err != nil {
+		t.Fatalf("failed to set item points/comments: %v", err)
+	}
+
+	resp := getContents(t, server, "/reader/api/0/stream/items/contents?i="+itemStreamID(seed.aUnreadNewest.ID)+"&output=json")
+	if len(resp.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(resp.Items))
+	}
+	it := resp.Items[0]
+	wantMeta := `<p class="digest-meta">42 points · <a href="https://news.ycombinator.com/item?id=123">7 comments</a></p>`
+	if !strings.HasPrefix(it.Content.Content, wantMeta) {
+		t.Fatalf("expected meta prepended to content, got: %s", it.Content.Content)
+	}
+	if !strings.Contains(it.Summary.Content, wantMeta) {
+		t.Fatalf("expected summary to contain meta %q, got: %s", wantMeta, it.Summary.Content)
+	}
+}
+
+// TestReaderStreamItemsContentsCommentsLinkOnly covers RSS-style items that
+// carry a comments link but no score or comment count: the meta line links to
+// the comments without a number.
+func TestReaderStreamItemsContentsCommentsLinkOnly(t *testing.T) {
+	server, queries, db := setupStreamTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedReaderStream(t, queries, db, user.ID)
+
+	if _, err := db.Exec("UPDATE items SET comment_url = 'https://example.com/story#comments' WHERE id = ?", seed.aUnreadNewest.ID); err != nil {
+		t.Fatalf("failed to set item comment url: %v", err)
+	}
+
+	resp := getContents(t, server, "/reader/api/0/stream/items/contents?i="+itemStreamID(seed.aUnreadNewest.ID)+"&output=json")
+	if len(resp.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(resp.Items))
+	}
+	it := resp.Items[0]
+	wantMeta := `<p class="digest-meta"><a href="https://example.com/story#comments">Comments</a></p>`
+	if !strings.Contains(it.Content.Content, wantMeta) {
+		t.Fatalf("expected content to contain meta %q, got: %s", wantMeta, it.Content.Content)
+	}
+}
+
+// TestReaderStreamItemsContentsNoMeta verifies items without points, comments,
+// or a comments link are served with their body unchanged.
+func TestReaderStreamItemsContentsNoMeta(t *testing.T) {
+	server, queries, db := setupStreamTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedReaderStream(t, queries, db, user.ID)
+
+	if _, err := db.Exec("UPDATE items SET content = '<p>plain body</p>' WHERE id = ?", seed.aUnreadNewest.ID); err != nil {
+		t.Fatalf("failed to set item content: %v", err)
+	}
+
+	resp := getContents(t, server, "/reader/api/0/stream/items/contents?i="+itemStreamID(seed.aUnreadNewest.ID)+"&output=json")
+	if len(resp.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(resp.Items))
+	}
+	it := resp.Items[0]
+	if it.Content.Content != "<p>plain body</p>" {
+		t.Fatalf("expected content unchanged without meta, got: %q", it.Content.Content)
+	}
+}
+
 func TestReaderStreamItemsContentsSavedAndUnknown(t *testing.T) {
 	server, queries, db := setupStreamTestServer(t)
 	user := createReaderUser(t, queries, "testkey123")
@@ -282,7 +353,7 @@ func TestParseReaderItemRef(t *testing.T) {
 		ok   bool
 	}{
 		{"tag:google.com,2005:reader/item/0000000000001744", 5956, true}, // NetNewsWire, padded hex
-		{"tag:google.com,2005:reader/item/1744", 5956, true},            // unpadded hex
+		{"tag:google.com,2005:reader/item/1744", 5956, true},             // unpadded hex
 		{"0000000000001744", 5956, true},                                 // Reeder bare hex
 		{"5956", 5956, true},                                             // Liferea decimal
 		{"item/5956", 0, false},                                          // legacy custom form

@@ -238,6 +238,11 @@ func (s *Server) itemContentObject(r *http.Request, item store.Item) readerConte
 		body = item.ExtractContent
 	}
 
+	// Prepend the points/comments meta line when the item carries them.
+	if meta := readerItemMetaHTML(item); meta != "" {
+		body = meta + body
+	}
+
 	ts := itemTimestamp(item)
 
 	return readerContentStreamItem{
@@ -251,13 +256,38 @@ func (s *Server) itemContentObject(r *http.Request, item store.Item) readerConte
 		Alternate:     []readerAlternate{{Href: item.Url, Type: "text/html"}},
 		// NetNewsWire reads only `summary` as the article body, so both fields
 		// carry the full body (extracted when available), matching Miniflux.
-		Summary:       readerContentBody{Content: body},
-		Content:       readerContentBody{Content: body},
-		Author:        item.Author,
-		Origin:        readerOrigin{StreamID: feedStreamID(item.FeedID), Title: feedName, HTMLURL: s.feedWebURL(r, item.FeedID)},
-		Categories:    itemCategories(item.Status),
-		Annotations:   []string{},
+		Summary:     readerContentBody{Content: body},
+		Content:     readerContentBody{Content: body},
+		Author:      item.Author,
+		Origin:      readerOrigin{StreamID: feedStreamID(item.FeedID), Title: feedName, HTMLURL: s.feedWebURL(r, item.FeedID)},
+		Categories:  itemCategories(item.Status),
+		Annotations: []string{},
 	}
+}
+
+// readerItemMetaHTML builds the points/comments meta line prepended to a feed
+// item's body, mirroring the digest renderer: "N points · N comments" with the
+// comments label linked to the item's comment URL when present. Items without
+// points, comments, or a comments link get no meta line (returns "").
+func readerItemMetaHTML(item store.Item) string {
+	var parts []string
+	if item.Points > 0 {
+		parts = append(parts, fmt.Sprintf("%d points", item.Points))
+	}
+	if item.CommentsCount > 0 || item.CommentUrl != "" {
+		commentsLabel := fmt.Sprintf("%d comments", item.CommentsCount)
+		if item.CommentsCount == 0 {
+			commentsLabel = "Comments"
+		}
+		if item.CommentUrl != "" {
+			commentsLabel = fmt.Sprintf(`<a href="%s">%s</a>`, html.EscapeString(item.CommentUrl), commentsLabel)
+		}
+		parts = append(parts, commentsLabel)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return `<p class="digest-meta">` + strings.Join(parts, " · ") + `</p>` + "\n"
 }
 
 // digestContentObject builds a content object for a digest result.
