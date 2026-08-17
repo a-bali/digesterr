@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
+import { ref, watch, onMounted, onUnmounted, computed, type Ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 import Button from '../components/ui/Button.vue'
@@ -19,6 +19,7 @@ import { feedApi } from '../services/api'
 import type { Item } from '../types/api'
 import { useBreakpoints } from '../composables/useMediaQuery'
 import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts'
+import { useSwipeGesture } from '../composables/useSwipeGesture'
 import { Rss, Menu, ArrowLeft } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -31,6 +32,11 @@ const { isDesktop, isTablet } = useBreakpoints()
 const savedItems = ref<Item[]>([])
 const showingSaved = ref(false)
 const sidebarOpen = ref(false)
+
+// Swipe from left edge opens the sidebar on mobile/tablet.
+const canSwipe = computed(() => !isDesktop.value) as unknown as Ref<boolean>
+useSwipeGesture(canSwipe, () => { sidebarOpen.value = true })
+
 const pendingItemId = ref<number | null>(null)
 const showChangePassword = ref(false)
 const readerApiOpen = ref(false)
@@ -81,7 +87,7 @@ onUnmounted(() => {
 function onVisibilityChange() {
   if (document.visibilityState !== 'visible') return
   if (showingSaved.value) fetchSavedItems()
-  else if (feedStore.activeFeedId != null) feedStore.fetchFirstPage()
+  else if (feedStore.activeFeedId != null) feedStore.refreshItems()
 }
 
 // ---- URL → state sync ----
