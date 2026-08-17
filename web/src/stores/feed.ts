@@ -105,6 +105,28 @@ export const useFeedStore = defineStore('feed', () => {
     await loadPage(activeFeedId.value, true)
   }
 
+  async function refreshItems() {
+    if (!activeFeedId.value) return
+    const rid = ++fetchReq
+    try {
+      const resp = await feedApi.getItems(activeFeedId.value, {
+        status: filter.value === 'all' ? undefined : filter.value,
+        min_score: minScore.value || undefined,
+        sort: sort.value,
+        limit: PAGE_SIZE,
+        offset: 0,
+      })
+      if (rid !== fetchReq) return
+      // Replace in-place: avoid clearing the array first so the scroll
+      // position is preserved when this is called from the visibility-change
+      // handler on tab refocus.
+      items.value = resp.items
+      hasMore.value = resp.has_more
+    } catch (e) {
+      toastError('Failed to load items', e)
+    }
+  }
+
   async function fetchMoreItems() {
     if (!activeFeedId.value || !hasMore.value || loadingMore.value || loading.value) return
     await loadPage(activeFeedId.value, false)
@@ -161,7 +183,7 @@ export const useFeedStore = defineStore('feed', () => {
   return {
     feeds, activeFeedId, items, selectedItem, filter, minScore, sort, loading, loadingMore, hasMore,
     activeFeed, supportsScore, unreadCounts,
-    fetchFeeds, setActiveFeed, fetchFirstPage, fetchMoreItems,
+    fetchFeeds, setActiveFeed, fetchFirstPage, refreshItems, fetchMoreItems,
     selectItem, updateItemStatus, changeFilter, changeSort, changeMinScore, fetchUnreadCounts,
   }
 })

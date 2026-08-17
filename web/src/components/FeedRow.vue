@@ -26,7 +26,7 @@ const feedStore = useFeedStore()
       <Rss v-else class="size-3.5 shrink-0 text-accent" />
       <Tooltip>
         <template #trigger>
-          <span class="truncate cursor-help">{{ feed.name }}</span>
+          <span class="truncate">{{ feed.name }}</span>
         </template>
         <p>Last fetched: {{ absoluteTime(feed.last_fetched_at) || 'never' }}</p>
         <p v-if="feed.status === 'error'" class="text-destructive">Failed</p>
