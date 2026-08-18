@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch, type Component } from 'vue'
+import { ref, computed } from 'vue'
 import { useFeedStore, type FeedSort, type FeedStatusFilter } from '../stores/feed'
+import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
-import DropdownMenu from './ui/DropdownMenu.vue'
-import Button from './ui/Button.vue'
-import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, ChevronDown } from 'lucide-vue-next'
+import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare } from 'lucide-vue-next'
 import { stripContent } from '../lib/utils'
 import { relativeTime, absoluteTime } from '../lib/format'
 
@@ -22,9 +21,9 @@ const feedStore = useFeedStore()
 
 const scrollEl = ref<HTMLElement | null>(null)
 
-// ---- Filter / sort controls (approved UX: state-label buttons) ----
+// ---- Filter / sort controls (delegated to FilterBar) ----
 
-const STATUS_OPTIONS: { value: FeedStatusFilter; label: string }[] = [
+const STATUS_OPTIONS: { value: FilterStatus; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'unread', label: 'Unread' },
   { value: 'read', label: 'Read' },
@@ -32,95 +31,15 @@ const STATUS_OPTIONS: { value: FeedStatusFilter; label: string }[] = [
   { value: 'saved', label: 'Saved' },
 ]
 
-const SORT_SHORT_LABELS: Record<FeedSort, string> = {
-  date_desc: 'Newest first',
-  date_asc: 'Oldest first',
-  score_desc: 'Score: high → low',
-  score_asc: 'Score: low → high',
-}
+// Map between FilterBar types and feed store types.
+const SCORE_MAP: Record<string, FeedSort> = { newest: 'date_desc', oldest: 'date_asc', highest: 'score_desc', lowest: 'score_asc' }
+const SCORE_MAP_REV: Record<string, FilterSort> = { date_desc: 'newest', date_asc: 'oldest', score_desc: 'highest', score_asc: 'lowest' }
 
-type MenuItem = { label: string; icon?: Component; disabled?: boolean; separator?: boolean; onClick?: () => void }
-
-// Score filter/sort are available only for score-capable feed types. The Saved
-// view mixes feed types, so it is always unsupported: options are greyed out,
-// never hidden.
 const scoreSupported = computed(() => !props.showingSaved && feedStore.supportsScore)
 
-// Button label text IS the applied state. The score part only appears when a
-// positive threshold is active AND scores are supported (approved mockup).
-const filterLabel = computed(() => {
-  const status = STATUS_OPTIONS.find(o => o.value === feedStore.filter)?.label ?? 'All'
-  const min = feedStore.minScore
-  return min != null && min > 0 && scoreSupported.value ? `${status} · ≥${min}` : status
-})
-
-const sortLabel = computed(() => SORT_SHORT_LABELS[feedStore.sort])
-
-const filterItems = computed<MenuItem[]>(() =>
-  STATUS_OPTIONS.map(opt => ({
-    label: opt.label,
-    icon: feedStore.filter === opt.value ? Check : undefined,
-    onClick: () => {
-      if (opt.value !== feedStore.filter) feedStore.changeFilter(opt.value)
-    },
-  })),
-)
-
-const sortItems = computed<MenuItem[]>(() => [
-  {
-    label: 'Newest first',
-    icon: feedStore.sort === 'date_desc' ? Check : undefined,
-    onClick: () => feedStore.changeSort('date_desc'),
-  },
-  {
-    label: 'Oldest first',
-    icon: feedStore.sort === 'date_asc' ? Check : undefined,
-    onClick: () => feedStore.changeSort('date_asc'),
-  },
-  {
-    label: 'Highest first',
-    separator: true,
-    disabled: !scoreSupported.value,
-    icon: feedStore.sort === 'score_desc' ? Check : undefined,
-    onClick: () => feedStore.changeSort('score_desc'),
-  },
-  {
-    label: 'Lowest first',
-    disabled: !scoreSupported.value,
-    icon: feedStore.sort === 'score_asc' ? Check : undefined,
-    onClick: () => feedStore.changeSort('score_asc'),
-  },
-])
-
-// Numeric min-score input: 0 / empty means "any". Applied on change (blur or
-// Enter) rather than per keystroke to avoid spamming the server.
-const minScoreDraft = ref('')
-watch(
-  () => feedStore.minScore,
-  v => {
-    minScoreDraft.value = v != null && v > 0 ? String(v) : ''
-  },
-  { immediate: true },
-)
-
-const minScoreSet = computed(() => feedStore.minScore != null && feedStore.minScore > 0)
-
-function applyMinScore(raw: string) {
-  const trimmed = raw.trim()
-  const n = trimmed === '' ? null : Number(trimmed)
-  const next = n != null && Number.isFinite(n) && n > 0 ? Math.floor(n) : null
-  minScoreDraft.value = next != null ? String(next) : ''
-  if (next !== feedStore.minScore) feedStore.changeMinScore(next)
-}
-
-function onMinScoreChange(e: Event) {
-  applyMinScore((e.target as HTMLInputElement).value)
-}
-
-function clearMinScore() {
-  minScoreDraft.value = ''
-  if (feedStore.minScore != null) feedStore.changeMinScore(null)
-}
+function onFilterStatus(v: FilterStatus) { feedStore.changeFilter(v as FeedStatusFilter) }
+function onSortValue(v: FilterSort) { feedStore.changeSort(SCORE_MAP[v] ?? 'date_desc') }
+function onMinScore(v: number | null) { feedStore.changeMinScore(v) }
 
 // ---- List ----
 
@@ -210,49 +129,17 @@ function onScroll() {
 
 <template>
   <div class="h-full overflow-y-auto" ref="scrollEl" @scroll="onScroll">
-    <div class="p-2 border-b flex items-center gap-1">
-      <DropdownMenu :items="filterItems">
-        <template #trigger>
-          <Button variant="ghost" size="sm" aria-label="Filter items">
-            <span>Filter: {{ filterLabel }}</span>
-            <ChevronDown class="size-4" />
-          </Button>
-        </template>
-        <template #separator>
-          <div class="px-2 py-1.5">
-            <p class="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Minimum score</p>
-            <div class="flex items-center gap-2">
-              <input
-                type="number"
-                min="0"
-                :value="minScoreDraft"
-                :disabled="!scoreSupported"
-                placeholder="Any"
-                aria-label="Minimum score"
-                class="h-7 w-20 rounded-md border border-border bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                @change="onMinScoreChange"
-              />
-              <button
-                type="button"
-                class="text-xs font-semibold text-accent disabled:cursor-not-allowed disabled:text-muted-foreground"
-                :disabled="!scoreSupported || !minScoreSet"
-                @click="clearMinScore"
-              >
-                {{ minScoreSet ? 'Clear' : 'Any' }}
-              </button>
-            </div>
-          </div>
-        </template>
-      </DropdownMenu>
-      <DropdownMenu :items="sortItems">
-        <template #trigger>
-          <Button variant="ghost" size="sm" aria-label="Sort items">
-            <span>Sort: {{ sortLabel }}</span>
-            <ChevronDown class="size-4" />
-          </Button>
-        </template>
-      </DropdownMenu>
-    </div>
+    <FilterBar
+      :status-filter="(feedStore.filter as FilterStatus)"
+      :sort-value="(SCORE_MAP_REV[feedStore.sort] ?? 'newest') as FilterSort"
+      :min-score="feedStore.minScore"
+      :score-supported="scoreSupported"
+      :item-count="displayItems.length"
+      :status-options="STATUS_OPTIONS"
+      @update:status-filter="onFilterStatus"
+      @update:sort-value="onSortValue"
+      @update:min-score="onMinScore"
+    />
     <Skeleton v-if="feedStore.loading" class="m-3 h-12" />
     <div v-else-if="!feedStore.activeFeedId && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
     <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
