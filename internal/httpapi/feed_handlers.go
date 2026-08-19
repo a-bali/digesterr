@@ -310,10 +310,20 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hasMore := false
+	var total int64
 	if paginated {
 		hasMore = len(items) > int(limit-1)
 		if hasMore {
 			items = items[:int(limit-1)]
+		}
+		// Count total matching items (without LIMIT/OFFSET) so the client
+		// can display the full item count, not just the loaded subset.
+		total, err = s.queries.CountItemsByFeed(r.Context(), store.CountItemsByFeedParams{
+			FeedID: id, Status: statusArg, MinScore: minScore,
+		})
+		if err != nil {
+			writeServerError(w, "failed to count items", err)
+			return
 		}
 	}
 	if items == nil {
@@ -324,6 +334,7 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"items":    items,
 			"has_more": hasMore,
+			"total":    total,
 		})
 		return
 	}

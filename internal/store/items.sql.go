@@ -11,6 +11,26 @@ import (
 	"time"
 )
 
+const countItemsByFeed = `-- name: CountItemsByFeed :one
+SELECT CAST(COUNT(*) AS INTEGER) AS count FROM items
+WHERE feed_id = ?1
+  AND (status = ?2 OR ?2 IS NULL)
+  AND (points >= ?3 OR ?3 = 0)
+`
+
+type CountItemsByFeedParams struct {
+	FeedID   int64          `json:"feed_id"`
+	Status   sql.NullString `json:"status"`
+	MinScore int64          `json:"min_score"`
+}
+
+func (q *Queries) CountItemsByFeed(ctx context.Context, arg CountItemsByFeedParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countItemsByFeed, arg.FeedID, arg.Status, arg.MinScore)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countStarredItems = `-- name: CountStarredItems :one
 SELECT CAST(COUNT(*) AS INTEGER) AS count FROM items i
 JOIN feeds f ON f.id = i.feed_id

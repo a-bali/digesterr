@@ -153,4 +153,5 @@ export interface AuthResponse {
 export interface FeedItemsResponse {
   items: Item[]
   has_more: boolean
+  total: number
 }

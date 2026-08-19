@@ -35,6 +35,7 @@ export const useFeedStore = defineStore('feed', () => {
   const loading = ref(false)
   const loadingMore = ref(false)
   const hasMore = ref(false)
+  const totalItems = ref(0)
 
   const activeFeed = computed(() => feeds.value.find(f => f.id === activeFeedId.value) || null)
 
@@ -74,8 +75,12 @@ export const useFeedStore = defineStore('feed', () => {
         offset: replace ? 0 : items.value.length,
       })
       if (rid !== fetchReq) return
-      if (replace) items.value = resp.items
-      else items.value.push(...resp.items)
+      if (replace) {
+        items.value = resp.items
+        totalItems.value = resp.total ?? 0
+      } else {
+        items.value.push(...resp.items)
+      }
       hasMore.value = resp.has_more
     } catch (e) {
       toastError('Failed to load items', e)
@@ -122,6 +127,7 @@ export const useFeedStore = defineStore('feed', () => {
       // handler on tab refocus.
       items.value = resp.items
       hasMore.value = resp.has_more
+      totalItems.value = resp.total ?? 0
     } catch (e) {
       toastError('Failed to load items', e)
     }
@@ -181,7 +187,7 @@ export const useFeedStore = defineStore('feed', () => {
   }
 
   return {
-    feeds, activeFeedId, items, selectedItem, filter, minScore, sort, loading, loadingMore, hasMore,
+    feeds, activeFeedId, items, selectedItem, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
     activeFeed, supportsScore, unreadCounts,
     fetchFeeds, setActiveFeed, fetchFirstPage, refreshItems, fetchMoreItems,
     selectItem, updateItemStatus, changeFilter, changeSort, changeMinScore, fetchUnreadCounts,
