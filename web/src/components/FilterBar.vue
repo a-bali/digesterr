@@ -98,7 +98,7 @@ function resetScore() {
     <!-- Filter button -->
     <DropdownMenu :items="filterItems">
       <template #trigger>
-        <Button variant="ghost" size="sm" aria-label="Filter items">
+        <Button variant="ghost" size="sm" class="relative" aria-label="Filter items">
           <Filter class="size-4" />
           <span class="text-xs hidden lg:inline">{{ filterLabel }}</span>
           <span v-if="!isFilterDefault" class="absolute top-1 right-1 size-1.5 rounded-full bg-current opacity-60 lg:hidden" />
@@ -154,7 +154,7 @@ function resetScore() {
     <!-- Sort button -->
     <DropdownMenu :items="sortItems">
       <template #trigger>
-        <Button variant="ghost" size="sm" aria-label="Sort items">
+        <Button variant="ghost" size="sm" class="relative" aria-label="Sort items">
           <ArrowUpDown class="size-4" />
           <span class="text-xs hidden lg:inline">{{ sortLabel }}</span>
           <span v-if="!isSortDefault" class="absolute top-1 right-1 size-1.5 rounded-full bg-current opacity-60 lg:hidden" />

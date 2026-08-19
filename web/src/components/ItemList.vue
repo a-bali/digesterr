@@ -135,6 +135,7 @@ function onScroll() {
       :min-score="feedStore.minScore"
       :score-supported="scoreSupported"
       :item-count="showingSaved ? displayItems.length : feedStore.totalItems"
+      :feed-name="showingSaved ? null : feedStore.activeFeed?.name ?? null"
       :status-options="STATUS_OPTIONS"
       @update:status-filter="onFilterStatus"
       @update:sort-value="onSortValue"
