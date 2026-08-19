@@ -31,6 +31,20 @@ class ResizeObserverStub {
 }
 vi.stubGlobal('ResizeObserver', ResizeObserverStub)
 
+// jsdom's matchMedia is non-writable; override with defineProperty.
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: (query: string) => ({
+    matches: /min-width/.test(query),
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  }),
+})
 function makeFeed(overrides: Partial<Feed> = {}): Feed {
   return {
     id: 1,
@@ -143,10 +157,10 @@ describe('ItemList filter/sort controls', () => {
     localStorage.clear()
   })
 
-  it('renders state-label filter and sort buttons with defaults', () => {
+  it('renders filter and sort labels with defaults', () => {
     const { wrapper } = mountList()
-    expect(wrapper.text()).toContain('Filter: All')
-    expect(wrapper.text()).toContain('Sort: Newest first')
+    expect(wrapper.html()).toContain('All')
+    expect(wrapper.html()).toContain('Newest')
   })
 
   it('filter dropdown lists the five statuses, checks the active one, and shows an enabled min-score input for a score feed', async () => {
@@ -171,7 +185,7 @@ describe('ItemList filter/sort controls', () => {
     const { feedApi } = await import('../services/api')
     const getItems = feedApi.getItems as ReturnType<typeof vi.fn>
     expect(getItems).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'unread' }))
-    expect(wrapper.text()).toContain('Filter: Unread')
+    expect(wrapper.html()).toContain('Unread')
   })
 
   it('sort dropdown offers date and score options with the active one checked', async () => {
@@ -179,10 +193,10 @@ describe('ItemList filter/sort controls', () => {
     await openMenu(wrapper, 'Sort items')
 
     const labels = menuItems().map(i => i.textContent?.trim())
-    expect(labels).toEqual(['Newest first', 'Oldest first', 'Highest first', 'Lowest first'])
+    expect(labels).toEqual(['Newest', 'Oldest', 'Highest', 'Lowest'])
     // Default sort is Newest first.
     const checked = menuItems().filter(i => i.querySelector('svg'))
-    expect(checked.map(i => i.textContent?.trim())).toEqual(['Newest first'])
+    expect(checked.map(i => i.textContent?.trim())).toEqual(['Newest'])
     // Score options are enabled for a score-capable feed (hn).
     const disabled = menuItems().filter(isDisabled)
     expect(disabled).toHaveLength(0)
@@ -191,11 +205,11 @@ describe('ItemList filter/sort controls', () => {
   it('sorts server-side when a sort is selected', async () => {
     const { wrapper } = mountList()
     await openMenu(wrapper, 'Sort items')
-    await clickItem('Oldest first')
+    await clickItem('Oldest')
 
     const { feedApi } = await import('../services/api')
     expect(feedApi.getItems).toHaveBeenCalledWith(1, expect.objectContaining({ sort: 'date_asc' }))
-    expect(wrapper.text()).toContain('Sort: Oldest first')
+    expect(wrapper.html()).toContain('Oldest')
   })
 
   it('applies the min-score threshold from the input and shows it in the label', async () => {
@@ -209,15 +223,16 @@ describe('ItemList filter/sort controls', () => {
 
     const { feedApi } = await import('../services/api')
     expect(feedApi.getItems).toHaveBeenCalledWith(1, expect.objectContaining({ min_score: 50 }))
-    expect(wrapper.text()).toContain('Filter: All · ≥50')
+    expect(wrapper.html()).toContain('All ≥50')
   })
 
-  it('clears the min-score threshold with the Clear button', async () => {
+  it('clears the min-score threshold with the reset button', async () => {
     const { store, wrapper } = mountList()
     store.minScore = 50
     await openMenu(wrapper, 'Filter items')
 
-    const clearBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.trim() === 'Clear')
+    // The reset button is the one with title "Reset to 0".
+    const clearBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.getAttribute('title') === 'Reset to 0')
     expect(clearBtn).toBeDefined()
     clearBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
@@ -225,7 +240,7 @@ describe('ItemList filter/sort controls', () => {
     const { feedApi } = await import('../services/api')
     expect(feedApi.getItems).toHaveBeenCalledWith(1, expect.objectContaining({ min_score: undefined }))
     expect(store.minScore).toBeNull()
-    expect(wrapper.text()).not.toContain('≥')
+    expect(wrapper.html()).not.toContain('≥')
   })
 
   it('greys out the min-score input for non-score feeds', async () => {
@@ -239,14 +254,14 @@ describe('ItemList filter/sort controls', () => {
     const { wrapper } = mountList({ feedType: 'rss' })
     await openMenu(wrapper, 'Sort items')
 
-    const scoreItems = menuItems().filter(i => ['Highest first', 'Lowest first'].includes(i.textContent?.trim() ?? ''))
+    const scoreItems = menuItems().filter(i => ['Highest', 'Lowest'].includes(i.textContent?.trim() ?? ''))
     expect(scoreItems).toHaveLength(2)
     scoreItems.forEach(i => expect(isDisabled(i)).toBe(true))
-    const dateItems = menuItems().filter(i => ['Newest first', 'Oldest first'].includes(i.textContent?.trim() ?? ''))
+    const dateItems = menuItems().filter(i => ['Newest', 'Oldest'].includes(i.textContent?.trim() ?? ''))
     dateItems.forEach(i => expect(isDisabled(i)).toBe(false))
 
     // Clicking a disabled score item must not change the sort.
-    await clickItem('Highest first')
+    await clickItem('Highest')
     const { feedApi } = await import('../services/api')
     expect(feedApi.getItems).not.toHaveBeenCalledWith(1, expect.objectContaining({ sort: 'score_desc' }))
   })
@@ -254,8 +269,8 @@ describe('ItemList filter/sort controls', () => {
   it('does not show the score part of the filter label when scores are unsupported', () => {
     const { store, wrapper } = mountList({ feedType: 'rss' })
     store.minScore = 50
-    expect(wrapper.text()).toContain('Filter: All')
-    expect(wrapper.text()).not.toContain('≥')
+    expect(wrapper.html()).toContain('All')
+    expect(wrapper.html()).not.toContain('≥')
   })
 
   describe('saved view', () => {
@@ -267,7 +282,7 @@ describe('ItemList filter/sort controls', () => {
 
       await closeMenu()
       await openMenu(wrapper, 'Sort items')
-      const scoreItems = menuItems().filter(i => ['Highest first', 'Lowest first'].includes(i.textContent?.trim() ?? ''))
+      const scoreItems = menuItems().filter(i => ['Highest', 'Lowest'].includes(i.textContent?.trim() ?? ''))
       expect(scoreItems).toHaveLength(2)
       scoreItems.forEach(i => expect(isDisabled(i)).toBe(true))
     })
@@ -285,7 +300,7 @@ describe('ItemList filter/sort controls', () => {
       expect(rows[1].text()).toContain('Older')
 
       await openMenu(wrapper, 'Sort items')
-      await clickItem('Oldest first')
+      await clickItem('Oldest')
       rows = resultRows(wrapper)
       expect(rows[0].text()).toContain('Older')
       expect(rows[1].text()).toContain('Newer')

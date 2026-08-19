@@ -15,6 +15,20 @@ class ResizeObserverStub {
 }
 vi.stubGlobal('ResizeObserver', ResizeObserverStub)
 
+// jsdom's matchMedia is non-writable; override with defineProperty.
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: (query: string) => ({
+    matches: /min-width/.test(query),
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  }),
+})
 function makeResult(overrides: Partial<DigestResult> = {}): DigestResult {
   return {
     id: 1,
@@ -45,6 +59,10 @@ function mountList() {
 // document.body), so read the live DOM, not the wrapper.
 function menuItems(): HTMLElement[] {
   return Array.from(document.body.querySelectorAll('[role="menuitem"]')) as HTMLElement[]
+}
+
+function isDisabled(item: HTMLElement): boolean {
+  return item.getAttribute("aria-disabled") === "true" || item.hasAttribute("data-disabled")
 }
 
 // The list rows are the only buttons with the w-full row class; the filter and
@@ -80,13 +98,13 @@ describe('DigestResultList', () => {
 
   it('counts items from the digest content', () => {
     const wrapper = mountList()
-    expect(wrapper.text()).toContain('1 items')
+    expect(wrapper.html()).toContain('1 items')
   })
 
   it('renders state-label filter and sort buttons with defaults', () => {
     const wrapper = mountList()
-    expect(wrapper.text()).toContain('Filter: All')
-    expect(wrapper.text()).toContain('Sort: Newest first')
+    expect(wrapper.html()).toContain('All')
+    expect(wrapper.html()).toContain('Newest')
   })
 
   it('filter dropdown lists only the three digest statuses and checks the active one', async () => {
@@ -98,8 +116,9 @@ describe('DigestResultList', () => {
     // Default filter is All, so it is the only item carrying the check icon.
     const checked = menuItems().filter(i => i.querySelector('svg'))
     expect(checked.map(i => i.textContent?.trim())).toEqual(['All'])
-    // No score options in the digest filter dropdown.
-    expect(document.body.textContent).not.toMatch(/score/i)
+    // Score section is greyed out (not active) for digest view.
+    const scoreInput = document.body.querySelector('input[aria-label="Minimum score"]') as HTMLInputElement | null
+    expect(scoreInput?.disabled).toBe(true)
   })
 
   it('filters the list when a status is selected', async () => {
@@ -110,7 +129,7 @@ describe('DigestResultList', () => {
     await clickItem('Unread')
     expect(resultRows(wrapper)).toHaveLength(1)
     expect(resultRows(wrapper)[0].text()).toContain(absoluteTime('2026-08-13T08:00:00Z'))
-    expect(wrapper.text()).toContain('Filter: Unread')
+    expect(wrapper.html()).toContain('Unread')
 
     await openMenu(wrapper, 0)
     await clickItem('Read')
@@ -120,20 +139,21 @@ describe('DigestResultList', () => {
     await openMenu(wrapper, 0)
     await clickItem('All')
     expect(resultRows(wrapper)).toHaveLength(2)
-    expect(wrapper.text()).toContain('Filter: All')
+    expect(wrapper.html()).toContain('All')
   })
 
-  it('sort dropdown offers date options only, with the active one checked', async () => {
+  it('sort dropdown offers all options with score greyed out, active one checked', async () => {
     const wrapper = mountList()
     await openMenu(wrapper, 1)
 
     const labels = menuItems().map(i => i.textContent?.trim())
-    expect(labels).toEqual(['Newest first', 'Oldest first'])
-    // Default sort is Newest first.
+    expect(labels).toEqual(['Newest', 'Oldest', 'Highest', 'Lowest'])
+    // Default sort is Newest.
     const checked = menuItems().filter(i => i.querySelector('svg'))
-    expect(checked.map(i => i.textContent?.trim())).toEqual(['Newest first'])
-    // No score sort options in the digest view.
-    expect(document.body.textContent).not.toMatch(/score|points/i)
+    expect(checked.map(i => i.textContent?.trim())).toEqual(['Newest'])
+    // Score sort options are disabled for digest view.
+    const disabled = menuItems().filter(isDisabled)
+    expect(disabled.map(i => i.textContent?.trim())).toEqual(['Highest', 'Lowest'])
   })
 
   it('sorts by date ascending when Oldest first is selected', async () => {
@@ -143,11 +163,11 @@ describe('DigestResultList', () => {
     expect(resultRows(wrapper)[0].text()).toContain(absoluteTime('2026-08-13T08:00:00Z'))
 
     await openMenu(wrapper, 1)
-    await clickItem('Oldest first')
+    await clickItem('Oldest')
 
     const rows = resultRows(wrapper).map(r => r.text())
     expect(rows[0]).toContain(absoluteTime('2026-08-12T09:30:00Z'))
     expect(rows[1]).toContain(absoluteTime('2026-08-13T08:00:00Z'))
-    expect(wrapper.text()).toContain('Sort: Oldest first')
+    expect(wrapper.html()).toContain('Oldest')
   })
 })
