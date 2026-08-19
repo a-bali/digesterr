@@ -193,7 +193,7 @@ describe('ItemList filter/sort controls', () => {
     await openMenu(wrapper, 'Sort items')
 
     const labels = menuItems().map(i => i.textContent?.trim())
-    expect(labels).toEqual(['Newest', 'Oldest', 'Highest', 'Lowest'])
+    expect(labels).toEqual(['Newest', 'Oldest', 'Highest score', 'Lowest score'])
     // Default sort is Newest first.
     const checked = menuItems().filter(i => i.querySelector('svg'))
     expect(checked.map(i => i.textContent?.trim())).toEqual(['Newest'])
@@ -254,14 +254,14 @@ describe('ItemList filter/sort controls', () => {
     const { wrapper } = mountList({ feedType: 'rss' })
     await openMenu(wrapper, 'Sort items')
 
-    const scoreItems = menuItems().filter(i => ['Highest', 'Lowest'].includes(i.textContent?.trim() ?? ''))
+    const scoreItems = menuItems().filter(i => ['Highest score', 'Lowest score'].includes(i.textContent?.trim() ?? ''))
     expect(scoreItems).toHaveLength(2)
     scoreItems.forEach(i => expect(isDisabled(i)).toBe(true))
     const dateItems = menuItems().filter(i => ['Newest', 'Oldest'].includes(i.textContent?.trim() ?? ''))
     dateItems.forEach(i => expect(isDisabled(i)).toBe(false))
 
     // Clicking a disabled score item must not change the sort.
-    await clickItem('Highest')
+    await clickItem('Highest score')
     const { feedApi } = await import('../services/api')
     expect(feedApi.getItems).not.toHaveBeenCalledWith(1, expect.objectContaining({ sort: 'score_desc' }))
   })
@@ -282,7 +282,7 @@ describe('ItemList filter/sort controls', () => {
 
       await closeMenu()
       await openMenu(wrapper, 'Sort items')
-      const scoreItems = menuItems().filter(i => ['Highest', 'Lowest'].includes(i.textContent?.trim() ?? ''))
+      const scoreItems = menuItems().filter(i => ['Highest score', 'Lowest score'].includes(i.textContent?.trim() ?? ''))
       expect(scoreItems).toHaveLength(2)
       scoreItems.forEach(i => expect(isDisabled(i)).toBe(true))
     })

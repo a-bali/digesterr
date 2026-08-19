@@ -147,13 +147,13 @@ describe('DigestResultList', () => {
     await openMenu(wrapper, 1)
 
     const labels = menuItems().map(i => i.textContent?.trim())
-    expect(labels).toEqual(['Newest', 'Oldest', 'Highest', 'Lowest'])
+    expect(labels).toEqual(['Newest', 'Oldest', 'Highest score', 'Lowest score'])
     // Default sort is Newest.
     const checked = menuItems().filter(i => i.querySelector('svg'))
     expect(checked.map(i => i.textContent?.trim())).toEqual(['Newest'])
     // Score sort options are disabled for digest view.
     const disabled = menuItems().filter(isDisabled)
-    expect(disabled.map(i => i.textContent?.trim())).toEqual(['Highest', 'Lowest'])
+    expect(disabled.map(i => i.textContent?.trim())).toEqual(['Highest score', 'Lowest score'])
   })
 
   it('sorts by date ascending when Oldest first is selected', async () => {

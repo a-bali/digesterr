@@ -26,8 +26,8 @@ const emit = defineEmits<{
 const SORT_OPTIONS: { value: FilterSort; label: string }[] = [
   { value: 'newest', label: 'Newest' },
   { value: 'oldest', label: 'Oldest' },
-  { value: 'highest', label: 'Highest' },
-  { value: 'lowest', label: 'Lowest' },
+  { value: 'highest', label: 'Highest score' },
+  { value: 'lowest', label: 'Lowest score' },
 ]
 
 const SORT_SHORT: Record<FilterSort, string> = {
