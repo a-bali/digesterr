@@ -134,7 +134,7 @@ function onScroll() {
       :sort-value="(SCORE_MAP_REV[feedStore.sort] ?? 'newest') as FilterSort"
       :min-score="feedStore.minScore"
       :score-supported="scoreSupported"
-      :item-count="displayItems.length"
+      :item-count="showingSaved ? displayItems.length : feedStore.totalItems"
       :status-options="STATUS_OPTIONS"
       @update:status-filter="onFilterStatus"
       @update:sort-value="onSortValue"

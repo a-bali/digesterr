@@ -104,6 +104,12 @@ WHERE feed_id = sqlc.arg(feed_id)
 ORDER BY points ASC, published_at DESC, created_at DESC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
+-- name: CountItemsByFeed :one
+SELECT CAST(COUNT(*) AS INTEGER) AS count FROM items
+WHERE feed_id = sqlc.arg(feed_id)
+  AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+  AND (points >= sqlc.arg(min_score) OR sqlc.arg(min_score) = 0);
+
 -- name: ListItemsNeedingExtraction :many
 SELECT * FROM items WHERE feed_id = ? AND url != '' AND extract_status IN ('pending', 'failed') AND extract_retries < 3 ORDER BY extract_retries ASC, published_at DESC;
 

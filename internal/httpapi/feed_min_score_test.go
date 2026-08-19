@@ -223,7 +223,7 @@ func TestListFeedItemsMinScoreAndSort(t *testing.T) {
 		}
 	})
 
-	t.Run("paginated response includes has_more", func(t *testing.T) {
+	t.Run("paginated response includes has_more and total", func(t *testing.T) {
 		w := makeRequest(server, http.MethodGet, path+"?limit=2", nil, token)
 		if w.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", w.Code)
@@ -231,10 +231,14 @@ func TestListFeedItemsMinScoreAndSort(t *testing.T) {
 		var resp struct {
 			Items   []store.Item `json:"items"`
 			HasMore bool         `json:"has_more"`
+			Total   int64        `json:"total"`
 		}
 		json.NewDecoder(w.Body).Decode(&resp)
 		if len(resp.Items) != 2 || !resp.HasMore {
 			t.Fatalf("paginated response = %d items, has_more=%v; want 2, true", len(resp.Items), resp.HasMore)
+		}
+		if resp.Total != 4 {
+			t.Fatalf("paginated total = %d; want 4", resp.Total)
 		}
 	})
 
