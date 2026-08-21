@@ -38,7 +38,18 @@ const sidebarOpen = ref(false)
 
 // Swipe from left edge opens the sidebar on mobile/tablet.
 const canSwipe = computed(() => !isDesktop.value) as unknown as Ref<boolean>
-useSwipeGesture(canSwipe, () => { sidebarOpen.value = true })
+// Left-edge swipe opens the sidebar. Right-edge leftward swipe goes back one
+// pane: content -> list (per task t_dc7e0368). Only active when the content
+// pane is showing, otherwise the right edge stays free. The callbacks
+// reference computeds declared below — fine, because they only run on
+// touch events long after setup completes.
+useSwipeGesture(canSwipe, () => { sidebarOpen.value = true }, {
+  onBackSwipe: () => {
+    if (!showContentPane.value) return
+    if (digestMode.value) digestStore.selectedResult = null
+    else feedStore.selectedItem = null
+  },
+})
 
 const pendingItemId = ref<number | null>(null)
 const showChangePassword = ref(false)
