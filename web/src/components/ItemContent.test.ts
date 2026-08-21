@@ -149,6 +149,24 @@ describe('ItemContent collapsible blocks', () => {
     expect(plain.text()).toContain('Original body')
     expect(toggleButtons(plain).length).toBe(0)
   })
+
+  it('constrains the pane width and uses reduced mobile padding', () => {
+    const root = wrapper.find('[data-item-content]')
+    expect(root.classes()).toContain('overflow-x-hidden')
+    expect(root.classes()).toContain('min-w-0')
+    expect(root.classes()).toContain('px-3')
+    expect(root.classes()).toContain('py-3')
+    expect(root.classes()).toContain('sm:p-6')
+  })
+
+  it('resets vertical scroll when a different item is opened', async () => {
+    const root = wrapper.find('[data-item-content]')
+    Object.defineProperty(root.element, 'scrollTop', { value: 500, writable: true })
+    useFeedStore().selectedItem = makeItem({ id: 2, title: 'Another item' })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect((root.element as HTMLElement).scrollTop).toBe(0)
+  })
 })
 
 describe('ItemContent feed link', () => {

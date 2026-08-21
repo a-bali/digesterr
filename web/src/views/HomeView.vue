@@ -261,9 +261,11 @@ function onSelectDigestResult(result: { id: number }) {
           <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" />
         </div>
 
-        <!-- Content pane (tablet: side-by-side; mobile: replaces list) -->
+        <!-- Content pane (tablet: side-by-side; mobile: replaces list).
+             overflow-x-hidden: never allow a horizontal scroll container on
+             narrow screens (phantom overflow / snap-back). -->
         <div
-          class="border-l flex-1 min-w-0"
+          class="border-l flex-1 min-w-0 overflow-x-hidden"
           :class="isTablet ? '' : (showContentPane ? '' : 'hidden')"
         >
           <DigestContent v-if="digestMode" />
