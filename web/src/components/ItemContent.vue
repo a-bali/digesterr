@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import { itemApi } from '../services/api'
 import Button from './ui/Button.vue'
@@ -26,6 +26,16 @@ const selectedFeed = computed(() =>
 const extracting = ref(false)
 const extractedCollapsed = ref(false)
 const originalCollapsed = ref(false)
+
+// Reset vertical scroll when a different item is opened — the scroller is a
+// persistent DOM element, so the previous item's position would carry over.
+const scroller = ref<HTMLElement | null>(null)
+watch(
+  () => feedStore.selectedItem?.id,
+  () => {
+    if (scroller.value) scroller.value.scrollTop = 0
+  },
+)
 let extractPoll: ReturnType<typeof setInterval> | null = null
 
 async function doExtract() {
@@ -63,7 +73,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto p-6" data-item-content>
+  <div ref="scroller" class="h-full overflow-y-auto overflow-x-hidden min-w-0 px-3 py-3 sm:p-6" data-item-content>
     <div v-if="!feedStore.selectedItem" class="flex h-full items-center justify-center text-muted-foreground">
       <BookOpen class="size-8 mr-2" /> <span>Select an item</span>
     </div>

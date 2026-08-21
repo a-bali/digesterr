@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useDigestStore } from '../stores/digest'
 import { useFeedStore } from '../stores/feed'
@@ -10,6 +10,17 @@ import { absoluteTime, feedIcon } from '../lib/format'
 
 const store = useDigestStore()
 const feedStore = useFeedStore()
+
+// Reset vertical scroll when a different digest result is opened. The
+// scroller is a single persistent DOM element, so without this the previous
+// result's scroll position carries over.
+const scroller = ref<HTMLElement | null>(null)
+watch(
+  () => store.selectedResult?.id,
+  () => {
+    if (scroller.value) scroller.value.scrollTop = 0
+  },
+)
 
 const digestContent = computed<DigestContent | null>(() => {
   if (!store.selectedResult) return null
@@ -44,6 +55,10 @@ const displaySections = computed<DigestSection[]>(() => {
 const highlightCount = computed(() => digestContent.value?.highlights?.length || 0)
 const itemCount = computed(() => (digestContent.value?.items?.length || 0) + highlightCount.value)
 
+// Long unbreakable strings (bare URLs in titles/comments) must wrap instead
+// of widening the pane on mobile.
+const wrapClass = 'min-w-0 break-words [&_a]:break-all'
+
 async function deleteResult() {
   if (!store.selectedResult) return
   await store.deleteResult(store.selectedResult.id)
@@ -68,7 +83,11 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto p-6" data-digest-content>
+  <!-- overflow-x-hidden + min-w-0: the digest pane must never be a horizontal
+       scroll container on mobile — phantom overflow (scrollWidth a few px
+       wider than clientWidth from children's intrinsic min-widths) made the
+       pane draggable with snap-back even when content fit. -->
+  <div ref="scroller" class="h-full overflow-y-auto overflow-x-hidden min-w-0 px-3 py-3 sm:p-6" data-digest-content>
     <div v-if="!store.selectedResult" class="flex h-full items-center justify-center text-muted-foreground">
       <BookOpen class="size-8 mr-2" /> <span>Select an item</span>
     </div>
@@ -93,7 +112,7 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
       </div>
 
       <!-- Summary -->
-      <div v-if="digestContent?.summary" class="mb-6 p-4 rounded-lg border bg-muted/30">
+      <div v-if="digestContent?.summary" class="mb-6 p-4 rounded-lg border bg-muted/30 min-w-0" :class="wrapClass">
         <h3 class="text-sm font-semibold mb-2">Summary</h3>
         <p class="text-sm leading-relaxed text-foreground/85">{{ digestContent.summary }}</p>
       </div>
@@ -114,7 +133,8 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
           <div
             v-for="section in feedSectionsOf(block)"
             :key="section.name"
-            class="mb-6"
+            class="mb-6 min-w-0"
+            :class="wrapClass"
             data-feed-section
           >
             <h3 class="text-sm font-semibold mb-3 flex items-center gap-1 text-accent">

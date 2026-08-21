@@ -181,6 +181,29 @@ describe('DigestContent', () => {
     expect(empty.text()).toContain('Select an item')
     expect(empty.find('svg').exists()).toBe(true)
   })
+
+  it('constrains the pane width: no horizontal scroll container on mobile', () => {
+    const root = wrapper.find('[data-digest-content]')
+    expect(root.classes()).toContain('overflow-x-hidden')
+    expect(root.classes()).toContain('min-w-0')
+  })
+
+  it('uses reduced padding on mobile, full padding from sm up', () => {
+    const root = wrapper.find('[data-digest-content]')
+    expect(root.classes()).toContain('px-3')
+    expect(root.classes()).toContain('py-3')
+    expect(root.classes()).toContain('sm:p-6')
+  })
+
+  it('resets vertical scroll when a different digest result is opened', async () => {
+    const root = wrapper.find('[data-digest-content]')
+    Object.defineProperty(root.element, 'scrollTop', { value: 500, writable: true })
+    // Open a different result.
+    useDigestStore().selectedResult = { ...makeResult(), id: 2 }
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect((root.element as HTMLElement).scrollTop).toBe(0)
+  })
 })
 
 describe('DigestContent with sections', () => {
