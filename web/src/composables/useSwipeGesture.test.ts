@@ -25,10 +25,14 @@ function mountSwipe(opts?: { enabled?: boolean; onSwipe?: (d: number) => void; e
 }
 
 function touchStart(x: number, y: number) {
-  document.dispatchEvent(new TouchEvent('touchstart', {
+  const e = new TouchEvent('touchstart', {
     touches: [new Touch({ identifier: 0, target: document.body, clientX: x, clientY: y })],
     bubbles: true,
-  }))
+    cancelable: true,
+  })
+  vi.spyOn(e, 'preventDefault')
+  document.dispatchEvent(e)
+  return e
 }
 
 function touchMove(x: number, y: number) {
@@ -101,6 +105,9 @@ describe('useSwipeGesture', () => {
   })
 
   it('respects custom edgeWidth and threshold', async () => {
+    // Unmount the beforeEach instance first, otherwise its still-attached
+    // enabled listener leaks into this and later tests.
+    current.app.unmount()
     const onSwipe = vi.fn()
     current = mountSwipe({ edgeWidth: 40, threshold: 100, onSwipe })
     touchStart(35, 100)
@@ -108,5 +115,25 @@ describe('useSwipeGesture', () => {
     await nextTick()
     expect(onSwipe).toHaveBeenCalledOnce()
     expect(onSwipe).toHaveBeenCalledWith(110)
+  })
+
+  it('preventDefaults touchstart in the edge zone to suppress browser back-swipe', async () => {
+    const e = touchStart(5, 100)
+    expect(e.preventDefault).toHaveBeenCalled()
+  })
+
+  it('does not preventDefault touchstart outside the edge zone', async () => {
+    const e = touchStart(50, 100)
+    expect(e.preventDefault).not.toHaveBeenCalled()
+  })
+
+  it('does not preventDefault when disabled', async () => {
+    // Remount fresh so no still-mounted enabled listener from a prior test
+    // also receives this event.
+    current.app.unmount()
+    current = mountSwipe({ enabled: false })
+    await nextTick()
+    const e = touchStart(5, 100)
+    expect(e.preventDefault).not.toHaveBeenCalled()
   })
 })

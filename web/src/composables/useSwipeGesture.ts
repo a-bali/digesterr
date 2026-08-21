@@ -11,6 +11,14 @@ import { onMounted, onUnmounted, type Ref } from 'vue'
  *
  * When all constraints are met, `onSwipe` fires once per gesture.
  * The callback receives the gesture's horizontal travel in px.
+ *
+ * Browser back-gesture suppression: listeners are registered as
+ * non-passive, and when a touch starts inside the edge zone we call
+ * `preventDefault()` on touchstart/touchmove. This stops mobile browsers
+ * (Android Chrome/Firefox) from running their native history-back swipe in
+ * parallel with the app gesture. iOS Safari's system edge swipe cannot be
+ * suppressed; there the system gesture wins and the sidebar remains
+ * reachable via its menu button.
  */
 export function useSwipeGesture(
   enabled: Ref<boolean>,
@@ -37,6 +45,8 @@ export function useSwipeGesture(
     if (!enabled.value) return
     const touch = e.touches[0]
     if (touch.clientX > edgeWidth) return
+    // Suppress the browser's native back-swipe for touches in our zone.
+    e.preventDefault()
     startX = touch.clientX
     startY = touch.clientY
     startTime = Date.now()
@@ -51,7 +61,10 @@ export function useSwipeGesture(
     // Cancel if the gesture goes left or scrolls vertically more than horizontally.
     if (dx < 0 || dy > dx) {
       active = false
+      return
     }
+    // Keep suppressing the browser gesture while ours is still live.
+    e.preventDefault()
   }
 
   function onTouchEnd(e: TouchEvent) {
@@ -65,8 +78,8 @@ export function useSwipeGesture(
   }
 
   onMounted(() => {
-    document.addEventListener('touchstart', onTouchStart, { passive: true })
-    document.addEventListener('touchmove', onTouchMove, { passive: true })
+    document.addEventListener('touchstart', onTouchStart, { passive: false })
+    document.addEventListener('touchmove', onTouchMove, { passive: false })
     document.addEventListener('touchend', onTouchEnd, { passive: true })
   })
 
