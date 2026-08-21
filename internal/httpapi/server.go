@@ -30,6 +30,9 @@ type Server struct {
 	publicBaseURL string
 	// schedulerTimezone is the IANA timezone name for digest cron schedules.
 	schedulerTimezone string
+	// agentMailConfigured reports whether AgentMail email delivery is set up,
+	// surfaced via the authenticated /api/health payload.
+	agentMailConfigured bool
 }
 
 func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffer, cfg config.Config) *Server {
@@ -46,6 +49,13 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 
 	llmClient := digest.NewLLMClient(cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model)
 	s.generator = digest.NewGenerator(db, queries, llmClient, s.poller)
+
+	// Email delivery is only wired when AgentMail credentials are present;
+	// otherwise send_email configs skip delivery (and the UI hides it).
+	if cfg.AgentMail.Token != "" && cfg.AgentMail.InboxID != "" {
+		s.agentMailConfigured = true
+		s.generator.SetEmailSender(digest.NewAgentMailSender(cfg.AgentMail.Token, cfg.AgentMail.InboxID))
+	}
 
 	// Data retention and provider credentials come from the merged config
 	// (defaults < config file < env < CLI flags). The expiry age is shared by

@@ -63,3 +63,10 @@ reddit:
   # error when a reddit feed needs them and they are missing.
   client_id: ""            # [REDDIT_CLIENT_ID]
   client_secret: ""        # [REDDIT_CLIENT_SECRET]
+
+agentmail:
+  # agentmail.to API credentials enabling optional email delivery of
+  # generated digests. Email delivery is offered in the digest config UI only
+  # when both values are set.
+  token: ""                # [AGENTMAIL_TOKEN]
+  inbox_id: ""             # [AGENTMAIL_INBOX_ID]
