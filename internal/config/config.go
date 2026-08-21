@@ -81,13 +81,14 @@ func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 
 // Config is the complete application configuration.
 type Config struct {
-	Server  ServerConfig  `yaml:"server"`
-	DB      DBConfig      `yaml:"db"`
-	Logging LoggingConfig `yaml:"logging"`
-	LLM     LLMConfig     `yaml:"llm"`
-	Feed    FeedConfig    `yaml:"feed"`
-	Reddit  RedditConfig  `yaml:"reddit"`
-	Digest  DigestConfig  `yaml:"digest"`
+	Server    ServerConfig    `yaml:"server"`
+	DB        DBConfig        `yaml:"db"`
+	Logging   LoggingConfig   `yaml:"logging"`
+	LLM       LLMConfig       `yaml:"llm"`
+	Feed      FeedConfig      `yaml:"feed"`
+	Reddit    RedditConfig    `yaml:"reddit"`
+	Digest    DigestConfig    `yaml:"digest"`
+	AgentMail AgentMailConfig `yaml:"agentmail"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -138,6 +139,13 @@ type DigestConfig struct {
 type RedditConfig struct {
 	ClientID     string `yaml:"client_id"`
 	ClientSecret string `yaml:"client_secret"`
+}
+
+// AgentMailConfig holds agentmail.to API credentials used for optional email
+// delivery of generated digests.
+type AgentMailConfig struct {
+	Token   string `yaml:"token"`
+	InboxID string `yaml:"inbox_id"`
 }
 
 // Default returns the built-in configuration, used when neither the config
@@ -298,4 +306,6 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 	setString(&cfg.Reddit.ClientSecret, "REDDIT_CLIENT_SECRET", "")
 
 	setString(&cfg.Digest.SchedulerTimezone, "DIGEST_SCHEDULER_TIMEZONE", "")
+	setString(&cfg.AgentMail.Token, "AGENTMAIL_TOKEN", "")
+	setString(&cfg.AgentMail.InboxID, "AGENTMAIL_INBOX_ID", "")
 }
