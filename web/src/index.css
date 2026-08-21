@@ -99,3 +99,35 @@ body {
 *::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--muted-foreground) / 0.8);
 }
+
+/* Pane slide transitions (mobile/tablet pane navigation).
+   List slides in from the left, content slides in from the right,
+   matching the direction of the left-edge swipe gesture. */
+.slide-from-left-enter-active,
+.slide-from-left-leave-active,
+.slide-from-right-enter-active,
+.slide-from-right-leave-active {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.slide-from-left-enter-from {
+  transform: translateX(-24px);
+  opacity: 0;
+}
+
+.slide-from-right-enter-from {
+  transform: translateX(24px);
+  opacity: 0;
+}
+
+/* Leave instantly: the entering pane should not wait for the old one. */
+.slide-from-left-leave-to,
+.slide-from-right-leave-to {
+  opacity: 0;
+}
+.slide-from-left-leave-active,
+.slide-from-right-leave-active {
+  position: absolute;
+  inset: 0;
+  transition: opacity 0.1s ease;
+}

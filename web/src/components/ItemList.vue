@@ -142,7 +142,10 @@ function commentsTitle(val: number): string {
       @update:sort-value="onSortValue"
       @update:min-score="onMinScore"
     />
-    <Skeleton v-if="feedStore.loading && displayItems.length === 0" class="m-3 h-12" />
+    <!-- Empty + in flight: skeleton rows matching item-row height. -->
+    <div v-if="feedStore.loading && displayItems.length === 0" class="space-y-1" data-loading-skeleton>
+      <Skeleton v-for="i in 5" :key="i" class="h-20 w-full" />
+    </div>
     <div v-else-if="!feedStore.activeFeedId && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
     <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
     <template v-else>

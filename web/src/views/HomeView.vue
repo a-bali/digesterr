@@ -290,8 +290,12 @@ function requestMarkFeedRead(id: number) {
           class="flex-1 min-w-0"
           :class="[isTablet ? '' : (showContentPane ? 'hidden' : ''), 'flex flex-col']"
         >
-          <DigestResultList v-if="digestMode" class="flex-1 min-h-0" @select="onSelectDigestResult" />
-          <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" />
+          <Transition name="slide-from-left" appear>
+            <div :key="showContentPane ? 'behind' : 'list'" class="flex-1 min-h-0 flex flex-col">
+              <DigestResultList v-if="digestMode" class="flex-1 min-h-0" @select="onSelectDigestResult" />
+              <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" />
+            </div>
+          </Transition>
         </div>
 
         <!-- Content pane (tablet: side-by-side; mobile: replaces list).
@@ -301,8 +305,12 @@ function requestMarkFeedRead(id: number) {
           class="border-l flex-1 min-w-0 overflow-x-hidden"
           :class="isTablet ? '' : (showContentPane ? '' : 'hidden')"
         >
-          <DigestContent v-if="digestMode" />
-          <ItemContent v-else :unsave-item="unsaveItem" />
+          <Transition name="slide-from-right" appear>
+            <div :key="(digestMode ? 'd' : 'i') + (showContentPane ? '-c' : '-l')" class="h-full">
+              <DigestContent v-if="digestMode" />
+              <ItemContent v-else :unsave-item="unsaveItem" />
+            </div>
+          </Transition>
         </div>
       </template>
     </div>

@@ -98,6 +98,10 @@ export const useFeedStore = defineStore('feed', () => {
   async function setActiveFeed(id: number) {
     activeFeedId.value = id
     selectedItem.value = null
+    // Feed switch: empty the list immediately so the loading skeleton shows
+    // instead of the previous feed's rows.
+    items.value = []
+    totalItems.value = 0
     await loadPage(id, true)
   }
 
