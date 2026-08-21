@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useDigestStore } from '../stores/digest'
 import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
-import { Circle, CircleDot } from 'lucide-vue-next'
+import { Circle, CircleDot, LoaderCircle } from 'lucide-vue-next'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { absoluteTime } from '../lib/format'
 import type { DigestResult } from '../types/api'
@@ -73,10 +73,9 @@ function onSelect(result: DigestResult) {
       @update:status-filter="digestFilter = $event"
       @update:sort-value="sortOrder = $event"
     />
-    <!-- Results load async; skeleton rows only when the list is empty, dim
-         the existing rows during a refresh so the pane never flashes. -->
-    <div v-if="digestStore.loading && visibleResults.length === 0" class="space-y-1 p-3" data-loading-skeleton>
-      <Skeleton v-for="i in 5" :key="i" class="h-20 w-full" />
+    <!-- Results load async; centered spinner while the list is empty. -->
+    <div v-if="digestStore.loading && visibleResults.length === 0" class="flex justify-center py-10" data-loading-spinner>
+      <LoaderCircle class="size-6 animate-spin text-muted-foreground" />
     </div>
     <div v-else class="space-y-1 p-3">
       <button v-for="result in visibleResults" :key="result.id"
