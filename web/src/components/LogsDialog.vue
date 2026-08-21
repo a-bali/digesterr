@@ -2,7 +2,10 @@
 import { ref, onUnmounted, computed } from 'vue'
 import Dialog from './ui/Dialog.vue'
 import Button from './ui/Button.vue'
+import Select from './ui/Select.vue'
+import Skeleton from './ui/Skeleton.vue'
 import { logsApi } from '../services/api'
+import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import type { LogEntry } from '../types/api'
 import { ChevronRight, RefreshCw, ScrollText } from 'lucide-vue-next'
 
@@ -41,11 +44,16 @@ const categories = computed(() => {
 
 let timer: ReturnType<typeof setInterval> | null = null
 
+// Semantic warning/error tokens (see ItemContent.vue) instead of raw colors.
 const levelClass: Record<string, string> = {
   DEBUG: 'bg-muted text-muted-foreground',
   INFO: 'bg-muted text-foreground',
-  WARN: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
-  ERROR: 'bg-red-500/15 text-red-600 dark:text-red-400',
+  WARN: 'bg-warning/15 text-warning-foreground dark:text-warning',
+  ERROR: 'bg-destructive/15 text-destructive-foreground dark:text-destructive',
+}
+const levelRowClass: Record<string, string> = {
+  WARN: 'bg-warning/5',
+  ERROR: 'bg-destructive/5',
 }
 
 function entryKey(e: LogEntry): string {
@@ -140,10 +148,14 @@ function onFilterChange() {
   if (open.value) load()
 }
 
-function onScroll(e: Event) {
-  const el = e.target as HTMLElement
-  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) loadOlder()
-}
+// Infinite scroll: load older entries as the list nears its bottom.
+const { onScroll } = useInfiniteScroll({
+  hasMore: () => hasMore.value,
+  loading: () => loading.value,
+  loadingMore: () => loadingMore.value,
+  loadMore: () => loadOlder(),
+  threshold: 120,
+})
 
 function fmtTime(t: string): string {
   const d = new Date(t)
@@ -172,25 +184,17 @@ onUnmounted(() => {
 
     <div class="flex flex-col gap-3" data-logs-dialog>
       <div class="flex items-center gap-2">
-        <select
-          v-model="levelFilter"
-          class="h-8 rounded-md border border-border bg-background px-2 text-xs"
-          @change="onFilterChange"
-        >
+        <Select v-model="levelFilter" class="h-8 text-xs" @change="onFilterChange">
           <option value="">All levels</option>
           <option value="debug">DEBUG</option>
           <option value="info">INFO</option>
           <option value="warn">WARN</option>
           <option value="error">ERROR</option>
-        </select>
-        <select
-          v-model="categoryFilter"
-          class="h-8 rounded-md border border-border bg-background px-2 text-xs"
-          @change="onFilterChange"
-        >
+        </Select>
+        <Select v-model="categoryFilter" class="h-8 text-xs" @change="onFilterChange">
           <option value="">All categories</option>
           <option v-for="c in categories" :key="c" :value="c">{{ c }}</option>
-        </select>
+        </Select>
         <span v-if="hasMore" class="text-xs text-muted-foreground">showing {{ entries.length }} of {{ total }}</span>
         <Button variant="outline" size="sm" class="ml-auto" :disabled="loading" @click="load">
           <RefreshCw class="size-3" :class="loading ? 'animate-spin' : ''" />
@@ -198,13 +202,13 @@ onUnmounted(() => {
         </Button>
       </div>
 
-      <p v-if="error" class="text-xs text-red-500">{{ error }}</p>
+      <p v-if="error" class="text-xs text-destructive">{{ error }}</p>
 
       <div class="max-h-[60vh] overflow-y-auto rounded-md border bg-muted/20" @scroll="onScroll">
         <template v-for="(e, i) in entries" :key="i">
           <div
             class="flex cursor-pointer items-start gap-2 border-b border-border/50 px-2 py-1 font-mono text-xs leading-relaxed last:border-b-0 hover:bg-muted/40"
-            :class="e.level === 'ERROR' ? 'bg-red-500/5' : e.level === 'WARN' ? 'bg-amber-500/5' : ''"
+            :class="levelRowClass[e.level] || ''"
             :data-expandable="expandable(e)"
             @click="toggleExpanded(e)"
           >
@@ -246,7 +250,7 @@ onUnmounted(() => {
         <div v-if="!entries.length && !loading" class="px-3 py-6 text-center text-xs text-muted-foreground">
           No log entries match the current filters.
         </div>
-        <div v-if="loading" class="px-3 py-6 text-center text-xs text-muted-foreground">Loading…</div>
+        <div v-if="loading" class="px-3 py-6"><Skeleton class="mx-auto h-12 max-w-md" /></div>
       </div>
     </div>
   </Dialog>

@@ -323,13 +323,13 @@ func TestEnrichmentInfoLogs(t *testing.T) {
 	}
 
 	_, err = queries.CreateItem(t.Context(), store.CreateItemParams{
-		FeedID:    feedObj.ID,
-		Hash:      "hash-1",
-		Title:     "Enrichable Item",
-		Url:       "https://news.ycombinator.com/item?id=1",
-		Content:   "body",
-		Status:    "unread",
-		Points:    0,
+		FeedID:        feedObj.ID,
+		Hash:          "hash-1",
+		Title:         "Enrichable Item",
+		Url:           "https://news.ycombinator.com/item?id=1",
+		Content:       "body",
+		Status:        "unread",
+		Points:        0,
 		CommentsCount: 0,
 	})
 	if err != nil {

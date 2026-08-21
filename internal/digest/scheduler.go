@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"digesterr/internal/store"
@@ -13,17 +14,23 @@ import (
 type Scheduler struct {
 	queries   *store.Queries
 	generator *Generator
+	// loc evaluates cron schedules. Nil means server-local time.
+	loc *time.Location
 }
 
-func NewScheduler(queries *store.Queries, generator *Generator) *Scheduler {
+func NewScheduler(queries *store.Queries, generator *Generator, loc *time.Location) *Scheduler {
+	if loc == nil {
+		loc = time.Local
+	}
 	return &Scheduler{
 		queries:   queries,
 		generator: generator,
+		loc:       loc,
 	}
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
-	slog.Info("starting digest scheduler")
+	slog.Info("starting digest scheduler", "timezone", s.loc.String())
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
@@ -45,7 +52,8 @@ func (s *Scheduler) tick(ctx context.Context) {
 		return
 	}
 
-	now := time.Now()
+	now := time.Now().In(s.loc)
+	var wg sync.WaitGroup
 	for _, cfg := range configs {
 		if !cronMatches(cfg.Schedule, now) {
 			continue
@@ -63,39 +71,71 @@ func (s *Scheduler) tick(ctx context.Context) {
 			}
 		}
 
-		cfgLogger.Info("scheduled digest generation")
-		_, err = s.generator.Generate(ctx, cfg)
-		if err != nil {
-			cfgLogger.Error("scheduled digest generation failed", "error", err)
-		}
+		// Run each generation in its own goroutine so one slow LLM call
+		// cannot delay (and skip the minute window of) other configs.
+		wg.Add(1)
+		go func(cfg store.DigestConfig, cfgLogger *slog.Logger) {
+			defer wg.Done()
+			cfgLogger.Info("scheduled digest generation")
+			if _, err := s.generator.Generate(ctx, cfg); err != nil {
+				cfgLogger.Error("scheduled digest generation failed", "error", err)
+			}
+		}(cfg, cfgLogger)
 	}
+	wg.Wait()
 }
 
+// cronMatches reports whether a 5-field cron expression matches time t.
+// Weekday follows cron convention: 0 and 7 both mean Sunday.
 func cronMatches(schedule string, t time.Time) bool {
 	parts := strings.Fields(schedule)
 	if len(parts) != 5 {
 		return false
 	}
-	return cronFieldMatches(parts[0], t.Minute()) &&
-		cronFieldMatches(parts[1], t.Hour()) &&
-		cronFieldMatches(parts[2], t.Day()) &&
-		cronFieldMatches(parts[3], int(t.Month())) &&
-		cronFieldMatches(parts[4], int(t.Weekday()))
+	return cronFieldMatches(parts[0], t.Minute(), 0) &&
+		cronFieldMatches(parts[1], t.Hour(), 1) &&
+		cronFieldMatches(parts[2], t.Day(), 2) &&
+		cronFieldMatches(parts[3], int(t.Month()), 3) &&
+		cronFieldMatches(parts[4], cronWeekday(int(t.Weekday())), 4)
 }
 
-func cronFieldMatches(field string, value int) bool {
+// cronWeekday maps Go's Weekday (Sunday=0..Saturday=6) to cron's field
+// where both 0 and 7 denote Sunday. Returns the Go value unchanged except
+// for a special-case check in cronPartMatches via fieldIdx 4.
+func cronWeekday(w int) int {
+	return w
+}
+
+// fieldBounds returns the valid [min, max] for a cron field index:
+// minute, hour, day-of-month, month, day-of-week.
+func fieldBounds(fieldIdx int) (lo, hi int) {
+	switch fieldIdx {
+	case 0:
+		return 0, 59
+	case 1:
+		return 0, 23
+	case 2:
+		return 1, 31
+	case 3:
+		return 1, 12
+	default: // day of week
+		return 0, 7
+	}
+}
+
+func cronFieldMatches(field string, value int, fieldIdx int) bool {
 	if field == "*" {
 		return true
 	}
 	for _, part := range strings.Split(field, ",") {
-		if cronPartMatches(strings.TrimSpace(part), value) {
+		if cronPartMatches(strings.TrimSpace(part), value, fieldIdx) {
 			return true
 		}
 	}
 	return false
 }
 
-func cronPartMatches(part string, value int) bool {
+func cronPartMatches(part string, value int, fieldIdx int) bool {
 	if part == "*" {
 		return true
 	}
@@ -103,16 +143,15 @@ func cronPartMatches(part string, value int) bool {
 	step := 1
 	if idx := strings.Index(part, "/"); idx >= 0 {
 		s, err := strconv.Atoi(part[idx+1:])
-		if err != nil {
+		if err != nil || s < 1 {
 			return false
 		}
 		step = s
 		part = part[:idx]
 	}
 
-	lo := 0
-	hi := 59
-	if part != "*" {
+	lo, hi := fieldBounds(fieldIdx)
+	if part != "" && part != "*" {
 		if idx := strings.Index(part, "-"); idx >= 0 {
 			l, err := strconv.Atoi(part[:idx])
 			if err != nil {
@@ -129,8 +168,18 @@ func cronPartMatches(part string, value int) bool {
 			if err != nil {
 				return false
 			}
+			// Cron weekday: both 0 and 7 mean Sunday.
+			if fieldIdx == 4 && v == 7 {
+				v = 0
+			}
 			return value == v
 		}
+	}
+
+	// Reject out-of-range values instead of silently accepting e.g. 1-100.
+	minLo, maxHi := fieldBounds(fieldIdx)
+	if lo < minLo || hi > maxHi || lo > hi {
+		return false
 	}
 
 	if value < lo || value > hi {

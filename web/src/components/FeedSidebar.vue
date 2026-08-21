@@ -4,6 +4,8 @@ import { toast } from 'vue-sonner'
 import { useFeedStore } from '../stores/feed'
 import { useDigestStore } from '../stores/digest'
 import { feedApi } from '../services/api'
+import { feedUrlFor } from '../lib/feeds'
+import { toastError } from '../lib/toast'
 import type { DigestConfig, Feed } from '../types/api'
 import { useRoute } from 'vue-router'
 import { BookmarkCheck, Plus, MessageSquare, Rss, Settings, Sparkles, ChevronDown } from 'lucide-vue-next'
@@ -57,7 +59,7 @@ async function markFeedRead(id: number) {
     if (feedStore.activeFeedId === id) await feedStore.fetchFirstPage()
     toast.success('Feed marked read')
   } catch (e: any) {
-    toast.error('Failed to mark feed read', { description: e.message })
+    toastError(e, 'Failed to mark feed read')
   }
 }
 
@@ -85,10 +87,12 @@ async function confirmMarkFeedRead() {
 function buildFeedPayload(form: { type: string; name: string; url: string; category: string; extract_content: number; min_score: number }): any {
   const data: any = { extract_content: form.extract_content, min_score: form.min_score, type: form.type, name: form.name }
   data.category = form.category.trim()
-  if (form.type === 'reddit') data.url = 'https://www.reddit.com/r/' + form.url.replace(/\.rss$/, '') + '.rss'
-  else if (form.type === 'hn') data.url = 'https://news.ycombinator.com/rss'
-  else if (form.type === 'lobsters') data.url = 'https://lobste.rs/rss'
-  else data.url = form.url
+  if (form.type === 'reddit') {
+    // Reddit form field holds just the subreddit name.
+    data.url = feedUrlFor('reddit', form.url)
+  } else if (form.type === 'hn' || form.type === 'lobsters') {
+    data.url = feedUrlFor(form.type, '')
+  } else data.url = form.url
   return data
 }
 

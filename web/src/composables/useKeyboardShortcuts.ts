@@ -88,9 +88,15 @@ export function useKeyboardShortcuts(ctx: {
 
       // --- Item actions ---
       case 'm':
-      case ' ':
         e.preventDefault()
         if (item) ctx.toggleRead(item)
+        break
+      case ' ':
+        // Space only toggles read when an item is selected; otherwise let the
+        // browser handle it (page scroll).
+        if (!item) break
+        e.preventDefault()
+        ctx.toggleRead(item)
         break
       case 's':
       case 'S':

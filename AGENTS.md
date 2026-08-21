@@ -7,7 +7,7 @@ Digesterr — feed reader with AI-generated digests. See `PLAN.md` for full spec
 ## Tech stack
 
 - **Backend:** Go (net/http router, sqlc for DB)
-- **Frontend:** Vite + Vue + Tailwind (PWA) — not yet implemented
+- **Frontend:** Vite + Vue + Tailwind (SPA; PWA not implemented)
 - **Database:** SQLite — must use standard SQL only, no SQLite-specific syntax
 - **Auth:** JWT (golang-jwt/jwt/v5) + bcrypt, access tokens + refresh tokens
 - **Dev environment:** devenv — run `devenv shell` to get Go, sqlc, nodejs, pnpm
@@ -64,7 +64,11 @@ Use `nix develop --no-pure-eval --accept-flake-config` or `devenv shell` to ente
   frozen config snapshot + generated content JSON
 - `digest_result_items` join table links items to digest results with `is_highlight` flag
 - LLM integration uses any OpenAI-compatible API (user supplies endpoint, key, model)
-- DB schema is auto-applied on startup (embedded via `internal/schema/`). No migration tool — delete the DB file to reset.
+- DB schema: `internal/schema/schema.sql` is applied on first start (embedded
+  via `internal/schema/`). Existing databases are upgraded at startup by
+  ordered migrations in `cmd/digesterr/main.go` (`migrateSchema`); migration
+  failures are logged at warn. To fully reset during development, delete the
+  DB file (`make clean` removes both the repo-root and `data/` dev DBs).
 
 ## Key files
 
@@ -121,10 +125,10 @@ NetNewsWire, …) can read digesterr.
 
 ## Phased delivery
 
-1. **Phase 1 (current):** Backend skeleton — auth, DB, REST API
-2. **Phase 2:** Feed fetching (RSS/Atom, HN), content extraction
-3. **Phase 3:** Basic UI (3-pane layout, feed browsing)
-4. **Phase 4:** Digest generation, LLM integration, cron scheduling
+All phases delivered: backend (auth, DB, REST API), feed fetching
+(RSS/Atom, HN, Lobsters, Reddit), UI (3-pane layout, mobile), digest
+generation with LLM integration and cron scheduling, content extraction,
+and the Google Reader-compatible API.
 
 ## Running
 

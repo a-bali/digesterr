@@ -27,7 +27,7 @@ func setupTestDB(t *testing.T) (*sql.DB, *store.Queries) {
 func setupTestServer(t *testing.T) (*Server, *store.Queries) {
 	t.Helper()
 	db, queries := setupTestDB(t)
-	authSvc := auth.NewService("test-jwt-secret-for-testing", queries)
+	authSvc := auth.NewService("test-jwt-secret-for-testing", queries, db)
 	server := NewServer(db, queries, authSvc, logbuf.New(100), config.Default())
 	return server, queries
 }

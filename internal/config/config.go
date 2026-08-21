@@ -87,6 +87,7 @@ type Config struct {
 	LLM     LLMConfig     `yaml:"llm"`
 	Feed    FeedConfig    `yaml:"feed"`
 	Reddit  RedditConfig  `yaml:"reddit"`
+	Digest  DigestConfig  `yaml:"digest"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -123,6 +124,14 @@ type FeedConfig struct {
 	ExpireItems Duration `yaml:"expire_items"`
 	// ExpireDigests deletes digest results older than this duration.
 	ExpireDigests Duration `yaml:"expire_digests"`
+}
+
+// DigestConfig holds digest scheduling settings.
+type DigestConfig struct {
+	// SchedulerTimezone is the IANA timezone name (e.g. "Europe/Paris")
+	// used to evaluate digest cron schedules. Empty means the server's
+	// local timezone.
+	SchedulerTimezone string `yaml:"scheduler_timezone"`
 }
 
 // RedditConfig holds Reddit API credentials used for reddit feed enrichment.
@@ -287,4 +296,6 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 
 	setString(&cfg.Reddit.ClientID, "REDDIT_CLIENT_ID", "")
 	setString(&cfg.Reddit.ClientSecret, "REDDIT_CLIENT_SECRET", "")
+
+	setString(&cfg.Digest.SchedulerTimezone, "DIGEST_SCHEDULER_TIMEZONE", "")
 }

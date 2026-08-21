@@ -1,16 +1,15 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { toast } from 'vue-sonner'
-import { feedApi, itemApi, ApiError } from '../services/api'
+import { feedApi, itemApi } from '../services/api'
 import type { Feed, Item } from '../types/api'
+import { toastError } from '../lib/toast'
+import { SCORE_FEED_TYPES } from '../lib/feeds'
 
 const PAGE_SIZE = 50
 const FILTER_KEY = 'digesterr-filter'
 
 export type FeedSort = 'date_desc' | 'date_asc' | 'score_desc' | 'score_asc'
 export type FeedStatusFilter = 'all' | 'unread' | 'read' | 'digested' | 'saved'
-
-const SCORE_FEED_TYPES = new Set(['hn', 'lobsters', 'reddit'])
 
 function loadFilter(): 'all' | 'unread' | 'read' | 'digested' | 'saved' {
   try {
@@ -52,10 +51,6 @@ export const useFeedStore = defineStore('feed', () => {
   // Monotonic request id to drop stale responses (feed switches, filter changes).
   let fetchReq = 0
 
-  function toastError(msg: string, e: unknown) {
-    toast.error(msg, { description: e instanceof ApiError ? e.message : undefined })
-  }
-
   // Loads a single page of items for a feed, replacing or appending to `items`.
   async function loadPage(feedId: number, replace: boolean) {
     const rid = ++fetchReq
@@ -83,7 +78,7 @@ export const useFeedStore = defineStore('feed', () => {
       }
       hasMore.value = resp.has_more
     } catch (e) {
-      toastError('Failed to load items', e)
+      toastError(e, 'Failed to load items')
     } finally {
       if (replace) loading.value = false
       else loadingMore.value = false
@@ -95,7 +90,7 @@ export const useFeedStore = defineStore('feed', () => {
       feeds.value = await feedApi.list()
       unreadCounts.value = await feedApi.unreadCounts()
     } catch (e) {
-      toastError('Failed to load feeds', e)
+      toastError(e, 'Failed to load feeds')
     }
   }
 
@@ -129,7 +124,7 @@ export const useFeedStore = defineStore('feed', () => {
       hasMore.value = resp.has_more
       totalItems.value = resp.total ?? 0
     } catch (e) {
-      toastError('Failed to load items', e)
+      toastError(e, 'Failed to load items')
     }
   }
 
@@ -174,7 +169,7 @@ export const useFeedStore = defineStore('feed', () => {
       if (selectedItem.value?.id === item.id) selectedItem.value = updated
       fetchUnreadCounts()
     } catch (e) {
-      toastError('Failed to update item', e)
+      toastError(e, 'Failed to update item')
     }
   }
 

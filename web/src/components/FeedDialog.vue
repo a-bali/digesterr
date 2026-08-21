@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { reactive, computed, watch } from 'vue'
+import { reactive, computed, ref, watch } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import Dialog from './ui/Dialog.vue'
 import Input from './ui/Input.vue'
 import Select from './ui/Select.vue'
 import Button from './ui/Button.vue'
+import { SCORE_FEED_TYPES, feedUrlFor } from '../lib/feeds'
 import type { Feed } from '../types/api'
 
 const props = defineProps<{ feed: Feed | null }>()
@@ -17,8 +18,11 @@ const emit = defineEmits<{
 const feedStore = useFeedStore()
 
 // Feeds whose items carry a score (points) that can be filtered on.
-const SCORE_FEED_TYPES = ['hn', 'lobsters', 'reddit']
-const isScoreType = computed(() => SCORE_FEED_TYPES.includes(form.type))
+const isScoreType = computed(() => SCORE_FEED_TYPES.has(form.type))
+
+// Deleting a feed removes all its items — confirm first (same pattern as
+// mark-all-read in FeedSidebar).
+const confirmDelete = ref(false)
 
 // Category suggestions come from the categories currently in use.
 const categoryNames = computed(() => {
@@ -37,15 +41,17 @@ function onTypeChange(type: string) {
   form.url = ''
   // The minimum-score field is disabled for non-score feed types, so the
   // value is reset when switching away from a score-capable type.
-  if (!SCORE_FEED_TYPES.includes(type)) form.min_score = 0
-  if (type === 'hn') form.url = 'https://news.ycombinator.com/rss'
-  else if (type === 'lobsters') form.url = 'https://lobste.rs/rss'
+  if (!SCORE_FEED_TYPES.has(type)) form.min_score = 0
+  // Fixed URLs for the built-in score feed types (shared with FeedSidebar).
+  if (type === 'hn' || type === 'lobsters') form.url = feedUrlFor(type, '')
 }
 
 watch(
   () => props.feed,
-  (feed) => {
-    if (feed) {
+  () => {
+    confirmDelete.value = false
+    if (props.feed) {
+      const feed = props.feed
       form.type = feed.type
       form.name = feed.name
       form.url = feed.type === 'reddit' ? feed.url.replace('https://www.reddit.com/r/', '').replace('.rss', '') : feed.url
@@ -133,8 +139,20 @@ const dialogId = Math.random().toString(36).slice(2)
       </div>
       <div class="flex gap-2">
         <Button type="submit">{{ feed ? 'Save' : 'Add' }}</Button>
-        <Button v-if="feed" variant="outline" class="text-destructive" @click="emit('delete', feed.id)">Delete</Button>
+        <Button v-if="feed" variant="outline" class="text-destructive" data-delete-feed @click="confirmDelete = true">Delete</Button>
       </div>
     </form>
+    <Dialog
+      v-if="confirmDelete"
+      :open="true"
+      title="Delete feed?"
+      :description="`Delete feed “${feed?.name}”? All of its items will be removed. This cannot be undone.`"
+      @update:open="v => { if (!v) confirmDelete = false }"
+    >
+      <div class="flex justify-end gap-2">
+        <Button variant="outline" @click="confirmDelete = false">Cancel</Button>
+        <Button variant="outline" class="text-destructive" data-delete-feed-confirm @click="emit('delete', feed!.id)">Delete</Button>
+      </div>
+    </Dialog>
   </Dialog>
 </template>

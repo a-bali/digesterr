@@ -3,12 +3,23 @@ import { ref, computed } from 'vue'
 import { useDigestStore } from '../stores/digest'
 import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import { Circle, CircleDot } from 'lucide-vue-next'
+import Skeleton from './ui/Skeleton.vue'
+import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { absoluteTime } from '../lib/format'
 import type { DigestResult } from '../types/api'
 
 const emit = defineEmits<{ (e: 'select', result: DigestResult): void }>()
 
 const digestStore = useDigestStore()
+
+// Infinite scroll: load more results as the list nears its bottom.
+const { onScroll } = useInfiniteScroll({
+  hasMore: () => !!digestStore.hasMore,
+  loading: () => digestStore.loading,
+  loadingMore: () => digestStore.loadingMore,
+  loadMore: () => digestStore.fetchMoreResults(),
+  threshold: 200,
+})
 
 const digestFilter = ref<FilterStatus>('all')
 const sortOrder = ref<FilterSort>('newest')
@@ -48,13 +59,6 @@ function onSelect(result: DigestResult) {
   emit('select', result)
 }
 
-function onScroll(e: Event) {
-  const el = e.target as HTMLElement
-  if (!el || !digestStore.hasMore || digestStore.loadingMore || digestStore.loading) return
-  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
-    digestStore.fetchMoreResults()
-  }
-}
 </script>
 
 <template>
@@ -69,7 +73,7 @@ function onScroll(e: Event) {
       @update:status-filter="digestFilter = $event"
       @update:sort-value="sortOrder = $event"
     />
-    <div v-if="digestStore.loading" class="text-sm text-muted-foreground p-3">Loading...</div>
+    <Skeleton v-if="digestStore.loading" class="m-3 h-12" />
     <div v-else class="space-y-1 p-3">
       <button v-for="result in visibleResults" :key="result.id"
         class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"

@@ -6,6 +6,7 @@ import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
 import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare } from 'lucide-vue-next'
 import { stripContent } from '../lib/utils'
+import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { relativeTime, absoluteTime } from '../lib/format'
 
 const props = defineProps<{
@@ -18,6 +19,15 @@ const emit = defineEmits<{
 }>()
 
 const feedStore = useFeedStore()
+
+// Infinite scroll: load more items as the list nears its bottom.
+const { onScroll } = useInfiniteScroll({
+  hasMore: () => !!feedStore.hasMore,
+  loading: () => feedStore.loading,
+  loadingMore: () => feedStore.loadingMore,
+  loadMore: () => feedStore.fetchMoreItems(),
+  threshold: 100,
+})
 
 const scrollEl = ref<HTMLElement | null>(null)
 
@@ -114,15 +124,6 @@ function commentsTitle(val: number): string {
   const diff = val - avg
   const sign = diff >= 0 ? '+' : ''
   return `${val} comments (${sign}${diff})`
-}
-
-
-function onScroll() {
-  const el = scrollEl.value
-  if (!el || !feedStore.hasMore || feedStore.loadingMore || feedStore.loading) return
-  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 100) {
-    feedStore.fetchMoreItems()
-  }
 }
 
 </script>

@@ -33,7 +33,7 @@ lint:
 	go vet ./...
 
 clean:
-	rm -f bin/digesterr $(DB_PATH)
+	rm -f bin/digesterr $(DB_PATH) data/digesterr.db data/digesterr.db-shm data/digesterr.db-wal
 	rm -rf cmd/digesterr/static
 	mkdir -p cmd/digesterr/static
 	@echo 'placeholder' > cmd/digesterr/static/.gitkeep

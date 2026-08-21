@@ -3,14 +3,11 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
-	"digesterr/internal/feed"
 	"digesterr/internal/logging"
 	"digesterr/internal/store"
 )
@@ -20,11 +17,7 @@ type updateItemStatusRequest struct {
 }
 
 func (s *Server) handleUpdateItemStatus(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -62,11 +55,7 @@ func (s *Server) handleUpdateItemStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleGetItem(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -84,11 +73,7 @@ func (s *Server) handleGetItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleExtractItem(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -126,50 +111,14 @@ func (s *Server) handleExtractItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) doExtractItem(itemID int64, url string) {
-	ctx := context.Background()
-	// Item-level records override the source-derived category (http) with
-	// the "item" category.
-	logger := slog.With(logging.CategoryAttr(logging.CategoryItem), "item_id", itemID, "url", url)
-
-	content, err := feed.ExtractContent(ctx, url, &http.Client{Timeout: 30 * time.Second}, logger)
-	if err != nil {
-		logger.Error("extraction failed", "error", err)
-		s.failExtraction(itemID, fmt.Sprintf("[%s] %v", time.Now().Format("2006-01-02 15:04"), err))
-		return
-	}
-
-	_, err = s.queries.UpdateItemExtraction(ctx, store.UpdateItemExtractionParams{
-		ID:             itemID,
-		ExtractContent: content,
-		ExtractStatus:  "done",
-		ExtractRetries: 0,
-	})
-	if err != nil {
-		logger.Error("failed to save extracted content", "error", err)
-		return
-	}
-}
-
-func (s *Server) failExtraction(itemID int64, errorLine string) {
+	// Delegate to the poller's extraction implementation — same meta-line
+	// format, retry accounting, and persistence as feed-level extraction.
 	ctx := context.Background()
 	item, err := s.queries.GetItem(ctx, itemID)
 	if err != nil {
-		slog.Error("failed to fetch item for extraction failure", logging.CategoryAttr(logging.CategoryItem), "item_id", itemID, "error", err)
+		slog.Error("failed to fetch item for extraction", logging.CategoryAttr(logging.CategoryItem), "item_id", itemID, "error", err)
 		return
 	}
-	newContent := strings.TrimSpace(item.ExtractContent)
-	if newContent != "" {
-		newContent += "\n"
-	}
-	newContent += errorLine
-
-	_, err = s.queries.UpdateItemExtraction(ctx, store.UpdateItemExtractionParams{
-		ID:             itemID,
-		ExtractContent: newContent,
-		ExtractStatus:  "failed",
-		ExtractRetries: item.ExtractRetries + 1,
-	})
-	if err != nil {
-		slog.Error("failed to update extraction failure", logging.CategoryAttr(logging.CategoryItem), "item_id", itemID, "error", err)
-	}
+	logger := slog.With(logging.CategoryAttr(logging.CategoryItem), "item_id", itemID, "url", url)
+	s.poller.ExtractSingleItem(ctx, &http.Client{Timeout: 30 * time.Second}, item, logger)
 }

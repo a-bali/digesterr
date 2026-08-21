@@ -185,12 +185,12 @@ func TestGenerateMinScoreRefreshesScoresThenFilters(t *testing.T) {
 	var itemIDs []int64
 	for i := 0; i < 4; i++ {
 		it, err := queries.CreateItem(ctx, store.CreateItemParams{
-			FeedID:  feedObj.ID,
-			Hash:    "min-score-" + titles[i],
-			Title:   titles[i],
-			Url:     "https://example.com/" + titles[i],
-			Points:  initial[i],
-			Status:  "unread",
+			FeedID: feedObj.ID,
+			Hash:   "min-score-" + titles[i],
+			Title:  titles[i],
+			Url:    "https://example.com/" + titles[i],
+			Points: initial[i],
+			Status: "unread",
 		})
 		if err != nil {
 			t.Fatalf("create item %d: %v", i, err)
@@ -206,7 +206,7 @@ func TestGenerateMinScoreRefreshesScoresThenFilters(t *testing.T) {
 	cfg, err := queries.CreateDigestConfig(ctx, store.CreateDigestConfigParams{
 		UserID:   user.ID,
 		Schedule: "0 8 * * *",
-		Config: `{"feeds":[{"id":` + strconv.FormatInt(feedObj.ID, 10) + `,"highlights":5,"comments":5}],"min_score":30}`,
+		Config:   `{"feeds":[{"id":` + strconv.FormatInt(feedObj.ID, 10) + `,"highlights":5,"comments":5}],"min_score":30}`,
 	})
 	if err != nil {
 		t.Fatalf("create digest config: %v", err)
@@ -215,7 +215,7 @@ func TestGenerateMinScoreRefreshesScoresThenFilters(t *testing.T) {
 	g := &Generator{
 		db:      db,
 		queries: queries,
-		llm: fakeLLM{resp: `{"title":"Filtered","summary":"s","highlights":[]}`},
+		llm:     fakeLLM{resp: `{"title":"Filtered","summary":"s","highlights":[]}`},
 		enrichers: map[string]feed.Enricher{
 			"hn": &fakeScoreEnricher{scores: scores},
 		},

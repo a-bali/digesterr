@@ -2,6 +2,7 @@
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import { itemApi } from '../services/api'
+import { toastError } from '../lib/toast'
 import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
 import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown } from 'lucide-vue-next'
@@ -38,17 +39,47 @@ watch(
 )
 let extractPoll: ReturnType<typeof setInterval> | null = null
 
+// Token guarding the extraction poll: bumped when the selected item changes
+// or polling is cancelled, so a stale interval can never touch the new item.
+let extractToken = 0
+// Cap poll attempts so a stuck backend can't spin the interval forever.
+const MAX_EXTRACT_POLLS = 60
+
+function stopExtractPoll() {
+  extractToken++
+  if (extractPoll) {
+    clearInterval(extractPoll)
+    extractPoll = null
+  }
+  extracting.value = false
+}
+
 async function doExtract() {
   const item = feedStore.selectedItem
   if (!item || extracting.value) return
   extracting.value = true
+  const token = ++extractToken
   try {
     await itemApi.extract(item.id)
     // Start polling for result
     if (extractPoll) clearInterval(extractPoll)
+    let polls = 0
     extractPoll = setInterval(async () => {
+      if (token !== extractToken) {
+        // Selected item changed while this interval was in flight.
+        if (extractPoll) clearInterval(extractPoll)
+        extractPoll = null
+        return
+      }
+      polls++
+      if (polls > MAX_EXTRACT_POLLS) {
+        toastError(new Error('Extraction did not complete'), 'Extraction timed out')
+        stopExtractPoll()
+        return
+      }
       try {
         const updated = await itemApi.getItem(item.id)
+        if (token !== extractToken) return
         if (updated.extract_status !== 'pending') {
           if (extractPoll) clearInterval(extractPoll)
           extractPoll = null
@@ -62,13 +93,24 @@ async function doExtract() {
         // poll failed, will retry
       }
     }, 2000)
-  } catch {
-    extracting.value = false
+  } catch (e) {
+    if (token === extractToken) {
+      extracting.value = false
+      toastError(e, 'Failed to start extraction')
+    }
   }
 }
 
+// Cancel any in-flight extraction poll when a different item is selected.
+watch(
+  () => feedStore.selectedItem?.id,
+  () => {
+    if (extractPoll || extracting.value) stopExtractPoll()
+  },
+)
+
 onUnmounted(() => {
-  if (extractPoll) clearInterval(extractPoll)
+  stopExtractPoll()
 })
 </script>
 

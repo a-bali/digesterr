@@ -13,11 +13,11 @@ import (
 
 func TestExtractLobstersShortID(t *testing.T) {
 	tests := []struct {
-		name        string
-		commentURL  string
-		itemURL     string
-		guid        string
-		want        string
+		name       string
+		commentURL string
+		itemURL    string
+		guid       string
+		want       string
 	}{
 		{
 			name:       "extract from comment URL with slug",
@@ -30,11 +30,11 @@ func TestExtractLobstersShortID(t *testing.T) {
 			want:       "lvodx4",
 		},
 		{
-			name:    "fallback to guid",
+			name:       "fallback to guid",
 			commentURL: "",
-			itemURL: "https://example.com/story",
-			guid:    "https://lobste.rs/s/1xyby4",
-			want:    "1xyby4",
+			itemURL:    "https://example.com/story",
+			guid:       "https://lobste.rs/s/1xyby4",
+			want:       "1xyby4",
 		},
 		{
 			name:       "prefers comment URL over guid",
@@ -58,11 +58,11 @@ func TestExtractLobstersShortID(t *testing.T) {
 			want:       "",
 		},
 		{
-			name:        "all empty",
-			commentURL:  "",
-			itemURL:     "",
-			guid:        "",
-			want:        "",
+			name:       "all empty",
+			commentURL: "",
+			itemURL:    "",
+			guid:       "",
+			want:       "",
 		},
 	}
 	for _, tt := range tests {

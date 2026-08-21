@@ -17,7 +17,7 @@ import (
 )
 
 type HNEnricher struct {
-	client     *http.Client
+	client      *http.Client
 	firebaseURL string
 	algoliaURL  string
 }
@@ -54,9 +54,9 @@ func (e *HNEnricher) Enrich(ctx context.Context, item *store.Item) error {
 	}
 
 	var hnItem struct {
-		ID          int    `json:"id"`
-		Score       int    `json:"score"`
-		Descendants int    `json:"descendants"`
+		ID          int `json:"id"`
+		Score       int `json:"score"`
+		Descendants int `json:"descendants"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&hnItem); err != nil {
 		return fmt.Errorf("decoding HN API response: %w", err)

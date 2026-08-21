@@ -28,17 +28,20 @@ type Server struct {
 	// build in-app links surfaced to Reader clients (feed home pages, digest
 	// article links). Empty means "derive from the request host".
 	publicBaseURL string
+	// schedulerTimezone is the IANA timezone name for digest cron schedules.
+	schedulerTimezone string
 }
 
 func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffer, cfg config.Config) *Server {
 	s := &Server{
-		mux:           http.NewServeMux(),
-		db:            db,
-		queries:       queries,
-		auth:          authSvc,
-		poller:        feed.NewPoller(queries),
-		logs:          logs,
-		publicBaseURL: strings.TrimRight(cfg.Server.PublicBaseURL, "/"),
+		mux:               http.NewServeMux(),
+		db:                db,
+		queries:           queries,
+		auth:              authSvc,
+		poller:            feed.NewPoller(queries),
+		logs:              logs,
+		publicBaseURL:     strings.TrimRight(cfg.Server.PublicBaseURL, "/"),
+		schedulerTimezone: cfg.Digest.SchedulerTimezone,
 	}
 
 	llmClient := digest.NewLLMClient(cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model)
@@ -125,7 +128,16 @@ func (s *Server) StartPoller(ctx context.Context, interval time.Duration) {
 }
 
 func (s *Server) StartScheduler(ctx context.Context) {
-	scheduler := digest.NewScheduler(s.queries, s.generator)
+	var loc *time.Location
+	if tzName := s.schedulerTimezone; tzName != "" {
+		parsed, err := time.LoadLocation(tzName)
+		if err != nil {
+			slog.Error("invalid scheduler timezone, using server-local time", "timezone", tzName, "error", err)
+		} else {
+			loc = parsed
+		}
+	}
+	scheduler := digest.NewScheduler(s.queries, s.generator, loc)
 	go scheduler.Start(ctx)
 }
 
@@ -152,8 +164,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 type responseRecorder struct {
 	http.ResponseWriter
-	status       int
-	wroteHeader  bool
+	status      int
+	wroteHeader bool
 }
 
 func (rr *responseRecorder) WriteHeader(code int) {

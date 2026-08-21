@@ -47,6 +47,8 @@ type Generator struct {
 	enrichers       map[string]feed.Enricher
 	commentFetchers map[string]feed.CommentFetcher
 	extractor       *feed.Poller
+	// extractFlags caches feeds.extract_content per feed ID for one run.
+	extractFlags map[int64]bool
 }
 
 func NewGenerator(db *sql.DB, queries *store.Queries, llm llmChatter, poller *feed.Poller) *Generator {
@@ -329,12 +331,12 @@ func (g *Generator) buildFeedLimits(ctx context.Context, userID int64, dcfg dige
 
 func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestItem, genLogger *slog.Logger) {
 	byFeedType := make(map[string][]*store.Item)
+	feedTypes := g.resolveFeedTypes(ctx, items)
 	for i := range items {
-		feedObj, err := g.queries.GetFeedByID(ctx, items[i].FeedID)
-		if err != nil || feedObj.ID == 0 {
+		ft := feedTypes[items[i].FeedID]
+		if ft == "" {
 			continue
 		}
-		ft := feedObj.Type
 		byFeedType[ft] = append(byFeedType[ft], &items[i].Item)
 	}
 
@@ -370,8 +372,11 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 		if item.ExtractStatus == "done" || item.ExtractContent != "" {
 			continue
 		}
-		feedObj, err := g.queries.GetFeedByID(ctx, item.FeedID)
-		if err != nil || feedObj.ID == 0 || feedObj.ExtractContent == 0 {
+		if feedTypes[item.FeedID] == "" {
+			continue
+		}
+		extract, err := g.feedExtractsContent(ctx, item.FeedID, feedTypes)
+		if err != nil || !extract {
 			continue
 		}
 		genLogger.Info("extracting content for digest item", "item_id", item.ID, "url", item.Url)
@@ -392,6 +397,42 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 // have no score data and always pass. Scores are compared after
 // enrichAndExtractItems refreshed them, so the threshold applies to the
 // freshest score available at generation time.
+// resolveFeedTypes resolves each distinct feed ID to its type with one query
+// per distinct feed (not per item), caching the result for the generation run.
+func (g *Generator) resolveFeedTypes(ctx context.Context, items []digestItem) map[int64]string {
+	types := make(map[int64]string)
+	for _, it := range items {
+		if _, ok := types[it.FeedID]; ok {
+			continue
+		}
+		feedObj, err := g.queries.GetFeedByID(ctx, it.FeedID)
+		if err != nil || feedObj.ID == 0 {
+			types[it.FeedID] = ""
+			continue
+		}
+		types[it.FeedID] = feedObj.Type
+	}
+	return types
+}
+
+// feedExtractsContent reports whether a feed has content extraction enabled,
+// using the resolved type map plus a cached lookup of the extract flag.
+func (g *Generator) feedExtractsContent(ctx context.Context, feedID int64, feedTypes map[int64]string) (bool, error) {
+	if g.extractFlags == nil {
+		g.extractFlags = make(map[int64]bool)
+	}
+	if v, ok := g.extractFlags[feedID]; ok {
+		return v, nil
+	}
+	feedObj, err := g.queries.GetFeedByID(ctx, feedID)
+	if err != nil {
+		return false, err
+	}
+	v := feedObj.ID != 0 && feedObj.ExtractContent != 0
+	g.extractFlags[feedID] = v
+	return v, nil
+}
+
 func (g *Generator) filterByMinScore(ctx context.Context, items []digestItem, minScore int, genLogger *slog.Logger) []digestItem {
 	if minScore <= 0 || len(items) == 0 {
 		return items

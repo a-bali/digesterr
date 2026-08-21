@@ -239,7 +239,11 @@ func (q *Queries) GetItemWithFeedOwner(ctx context.Context, arg GetItemWithFeedO
 }
 
 const getUnreadCounts = `-- name: GetUnreadCounts :many
-SELECT f.id AS feed_id, CAST(COALESCE((SELECT COUNT(*) FROM items WHERE feed_id = f.id AND status = 'unread'), 0) AS INTEGER) AS unread_count FROM feeds f WHERE f.user_id = ?
+SELECT f.id AS feed_id, CAST(COALESCE(COUNT(i.id), 0) AS INTEGER) AS unread_count
+FROM feeds f
+LEFT JOIN items i ON i.feed_id = f.id AND i.status = 'unread'
+WHERE f.user_id = ?
+GROUP BY f.id
 `
 
 type GetUnreadCountsRow struct {
@@ -247,6 +251,7 @@ type GetUnreadCountsRow struct {
 	UnreadCount int64 `json:"unread_count"`
 }
 
+// Single GROUP BY join instead of a correlated subquery per feed.
 func (q *Queries) GetUnreadCounts(ctx context.Context, userID int64) ([]GetUnreadCountsRow, error) {
 	rows, err := q.db.QueryContext(ctx, getUnreadCounts, userID)
 	if err != nil {
@@ -284,6 +289,71 @@ type ListItemsByCategoryParams struct {
 
 func (q *Queries) ListItemsByCategory(ctx context.Context, arg ListItemsByCategoryParams) ([]Item, error) {
 	rows, err := q.db.QueryContext(ctx, listItemsByCategory, arg.Category, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listItemsByCategoryPaginated = `-- name: ListItemsByCategoryPaginated :many
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.category = ?1 AND f.user_id = ?2
+ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at DESC
+LIMIT ?4 OFFSET ?3
+`
+
+type ListItemsByCategoryPaginatedParams struct {
+	Category string `json:"category"`
+	UserID   int64  `json:"user_id"`
+	Off      int64  `json:"off"`
+	Lim      int64  `json:"lim"`
+}
+
+// Reader-stream page for a label (feed category).
+func (q *Queries) ListItemsByCategoryPaginated(ctx context.Context, arg ListItemsByCategoryPaginatedParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByCategoryPaginated,
+		arg.Category,
+		arg.UserID,
+		arg.Off,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -809,6 +879,64 @@ func (q *Queries) ListItemsByFeedSortedScoreDesc(ctx context.Context, arg ListIt
 	return items, nil
 }
 
+const listItemsByFeedStreamPage = `-- name: ListItemsByFeedStreamPage :many
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ?
+ORDER BY COALESCE(published_at, fetched_at, created_at) DESC, created_at DESC
+LIMIT ? OFFSET ?
+`
+
+type ListItemsByFeedStreamPageParams struct {
+	FeedID int64 `json:"feed_id"`
+	Lim    int64 `json:"lim"`
+	Off    int64 `json:"off"`
+}
+
+// Reader-stream page: newest-first or oldest-first (when oldest_first is 1),
+// offset-based. COALESCE mirrors itemTimestamp's published_at fallback.
+func (q *Queries) ListItemsByFeedStreamPage(ctx context.Context, arg ListItemsByFeedStreamPageParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByFeedStreamPage, arg.FeedID, arg.Lim, arg.Off)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listItemsByUserRead = `-- name: ListItemsByUserRead :many
 SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
 JOIN feeds f ON f.id = i.feed_id
@@ -818,6 +946,65 @@ ORDER BY i.published_at DESC, i.created_at DESC
 
 func (q *Queries) ListItemsByUserRead(ctx context.Context, userID int64) ([]Item, error) {
 	rows, err := q.db.QueryContext(ctx, listItemsByUserRead, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listItemsByUserReadPaginated = `-- name: ListItemsByUserReadPaginated :many
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = ?1 AND i.status IN ('read', 'digested')
+ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at DESC
+LIMIT ?3 OFFSET ?2
+`
+
+type ListItemsByUserReadPaginatedParams struct {
+	UserID int64 `json:"user_id"`
+	Off    int64 `json:"off"`
+	Lim    int64 `json:"lim"`
+}
+
+// Reader-stream page for the 'read' stream (read + digested).
+func (q *Queries) ListItemsByUserReadPaginated(ctx context.Context, arg ListItemsByUserReadPaginatedParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByUserReadPaginated, arg.UserID, arg.Off, arg.Lim)
 	if err != nil {
 		return nil, err
 	}
@@ -874,6 +1061,71 @@ type ListItemsByUserStatusParams struct {
 
 func (q *Queries) ListItemsByUserStatus(ctx context.Context, arg ListItemsByUserStatusParams) ([]Item, error) {
 	rows, err := q.db.QueryContext(ctx, listItemsByUserStatus, arg.UserID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listItemsByUserStatusPaginated = `-- name: ListItemsByUserStatusPaginated :many
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = ?1 AND i.status = ?2
+ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at DESC
+LIMIT ?4 OFFSET ?3
+`
+
+type ListItemsByUserStatusPaginatedParams struct {
+	UserID int64  `json:"user_id"`
+	Status string `json:"status"`
+	Off    int64  `json:"off"`
+	Lim    int64  `json:"lim"`
+}
+
+// Reader-stream page for a user-wide status filter.
+func (q *Queries) ListItemsByUserStatusPaginated(ctx context.Context, arg ListItemsByUserStatusPaginatedParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByUserStatusPaginated,
+		arg.UserID,
+		arg.Status,
+		arg.Off,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -12,6 +12,15 @@ SELECT * FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY create
 -- name: ListDigestResultsByConfigPaginated :many
 SELECT * FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
+-- name: ListDigestResultsByConfigOldestFirstPaginated :many
+SELECT * FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at ASC LIMIT ? OFFSET ?;
+
+-- name: ListDigestResultsByUserStatusPaginated :many
+-- Reader-stream page for a user-wide digest status.
+SELECT * FROM digest_results WHERE user_id = @user_id AND status = @status
+ORDER BY created_at DESC
+LIMIT @lim OFFSET @off;
+
 -- name: UpdateDigestResultStatus :one
 UPDATE digest_results
 SET status = ?, updated_at = DATETIME('now')

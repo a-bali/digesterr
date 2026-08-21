@@ -31,4 +31,7 @@ RUN apk add --no-cache ca-certificates tzdata \
 COPY --from=build /out/digesterr /usr/local/bin/digesterr
 USER app
 EXPOSE 8080
+# /healthz is unauthenticated so cluster probes and this check both work.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
 ENTRYPOINT ["digesterr"]

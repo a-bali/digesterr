@@ -4,12 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"digesterr/internal/store"
+	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -32,14 +33,16 @@ type Claims struct {
 }
 
 type Service struct {
-	secret []byte
+	secret  []byte
 	queries *store.Queries
+	db      *sql.DB
 }
 
-func NewService(secret string, queries *store.Queries) *Service {
+func NewService(secret string, queries *store.Queries, db *sql.DB) *Service {
 	return &Service{
 		secret:  []byte(secret),
 		queries: queries,
+		db:      db,
 	}
 }
 
@@ -119,6 +122,35 @@ func (s *Service) DeleteRefreshToken(ctx context.Context, rawToken string) error
 
 func (s *Service) DeleteAllUserRefreshTokens(ctx context.Context, userID int64) error {
 	return s.queries.DeleteRefreshTokensByUser(ctx, userID)
+}
+
+// RotateRefreshToken atomically replaces an old refresh token with a new one:
+// the replacement is created before the old token is deleted, inside a
+// transaction. If creation fails, the old token survives — the client's
+// session is not destroyed. Returns the new raw token.
+func (s *Service) RotateRefreshToken(ctx context.Context, oldRawToken string, userID int64) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	qtx := s.queries.WithTx(tx)
+
+	raw := generateToken()
+	if _, err := qtx.CreateRefreshToken(ctx, store.CreateRefreshTokenParams{
+		UserID:    userID,
+		TokenHash: hashToken(raw),
+		ExpiresAt: time.Now().Add(RefreshTokenDuration),
+	}); err != nil {
+		return "", err
+	}
+	if err := qtx.DeleteRefreshToken(ctx, hashToken(oldRawToken)); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return raw, nil
 }
 
 func generateToken() string {

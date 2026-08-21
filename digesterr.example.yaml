@@ -53,6 +53,11 @@ feed:
   # Delete digest results older than this.                   [FEED_EXPIRE_DIGESTS]
   expire_digests: 1y
 
+digest:
+  # IANA timezone used to evaluate digest cron schedules (e.g. Europe/Paris).
+  # Empty means the server's local timezone.            [DIGEST_SCHEDULER_TIMEZONE]
+  scheduler_timezone: ""
+
 reddit:
   # Reddit API credentials for reddit feed enrichment. Enrichment logs an
   # error when a reddit feed needs them and they are missing.
