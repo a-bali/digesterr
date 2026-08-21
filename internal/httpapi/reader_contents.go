@@ -137,13 +137,10 @@ func (s *Server) handleReaderStreamContents(w http.ResponseWriter, r *http.Reque
 		n = 100
 	}
 
-	entries, err := s.streamEntries(r, userID, stream, false)
+	entries, _, err := s.streamEntries(r, userID, stream, false, 0, n)
 	if err != nil {
 		writeServerError(w, "failed to load stream", err)
 		return
-	}
-	if len(entries) > n {
-		entries = entries[:n]
 	}
 
 	items := make([]readerContentStreamItem, 0, len(entries))

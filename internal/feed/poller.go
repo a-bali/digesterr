@@ -110,6 +110,14 @@ func (p *Poller) ExpireOldData(ctx context.Context) (itemsDeleted, digestsDelete
 		}
 		digestsDeleted = n
 	}
+	// Expired refresh tokens are dead weight (rotation creates a new row per
+	// refresh); sweep them on the same cadence. A fixed 30-day cutoff matches
+	// the refresh token lifetime with margin.
+	if n, err := p.queries.DeleteExpiredRefreshTokens(ctx, time.Now()); err != nil {
+		slog.Warn("failed to delete expired refresh tokens", "error", err)
+	} else if n > 0 {
+		slog.Debug("deleted expired refresh tokens", "count", n)
+	}
 	return itemsDeleted, digestsDeleted, nil
 }
 
@@ -301,7 +309,12 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	}
 
 	if enricher, ok := p.enrichers[feed.Type]; ok {
-		p.enrichFeedItems(ctx, feed, enricher)
+		// Skip the post-insert enrichment pass for min_score feeds: those
+		// items were just enriched during pre-insert scoring in this same
+		// cycle, so re-enriching would double the provider API traffic.
+		if !(feed.MinScore > 0) {
+			p.enrichFeedItems(ctx, feed, enricher)
+		}
 	}
 
 	if feed.ExtractContent != 0 {
@@ -392,6 +405,13 @@ func (p *Poller) extractFeedContent(ctx context.Context, feed store.Feed, logger
 	}
 }
 
+// ExtractSingleItem extracts content for one item and persists the result
+// (or the failure, with retry accounting). Shared by the feed poll cycle and
+// the per-item extract endpoint.
+func (p *Poller) ExtractSingleItem(ctx context.Context, client *http.Client, item store.Item, logger *slog.Logger) {
+	p.extractSingleItem(ctx, client, item, logger)
+}
+
 func (p *Poller) extractSingleItem(ctx context.Context, client *http.Client, item store.Item, logger *slog.Logger) {
 	logger = logger.With("item_id", item.ID, "url", item.Url)
 	start := time.Now()
@@ -414,18 +434,6 @@ func (p *Poller) extractSingleItem(ctx context.Context, client *http.Client, ite
 		return
 	}
 	logger.Info("content extracted", "bytes", len(content), "duration", time.Since(start))
-}
-
-func (p *Poller) extractDone(ctx context.Context, item store.Item, content string) {
-	_, err := p.queries.UpdateItemExtraction(ctx, store.UpdateItemExtractionParams{
-		ID:             item.ID,
-		ExtractContent: content,
-		ExtractStatus:  "done",
-		ExtractRetries: 0,
-	})
-	if err != nil {
-		slog.Debug("failed to save extraction result", "item_id", item.ID, "error", err)
-	}
 }
 
 func (p *Poller) failItemExtraction(item store.Item, errorLine string) {
@@ -537,8 +545,4 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 		}
 	}
 	logger.Info("enrichment completed", "type", feed.Type, "items", len(items), "success", success, "skipped", skipped, "error", errcount)
-}
-
-func ItemHash(guid, title, url, content string) string {
-	return itemHash(guid, title, url, content)
 }

@@ -136,7 +136,7 @@ func (s *Server) handleReaderStreamItemsIDs(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	entries, err := s.streamEntries(r, userID, stream, oldestFirst)
+	entries, hasMore, err := s.streamEntries(r, userID, stream, oldestFirst, offset, n)
 	if err != nil {
 		writeServerError(w, "failed to load stream", err)
 		return
@@ -144,133 +144,177 @@ func (s *Server) handleReaderStreamItemsIDs(w http.ResponseWriter, r *http.Reque
 
 	refs := make([]readerItemRef, 0, n)
 	continuation := ""
-	if offset < len(entries) {
-		end := offset + n
-		if end > len(entries) {
-			end = len(entries)
-		}
-		for _, e := range entries[offset:end] {
-			refs = append(refs, readerItemRef{
-				ID:              e.id,
-				TimestampUsec:   strconv.FormatInt(e.timestamp.UnixMicro(), 10),
-				DirectStreamIDs: []string{},
-			})
-		}
-		if end < len(entries) {
-			continuation = strconv.Itoa(end)
-		}
+	for _, e := range entries {
+		refs = append(refs, readerItemRef{
+			ID:              e.id,
+			TimestampUsec:   strconv.FormatInt(e.timestamp.UnixMicro(), 10),
+			DirectStreamIDs: []string{},
+		})
+	}
+	if hasMore {
+		continuation = strconv.Itoa(offset + len(entries))
 	}
 
 	writeJSON(w, http.StatusOK, readerItemRefsResponse{ItemRefs: refs, Continuation: continuation})
 }
 
-// streamEntries resolves a stream id to its ordered entries. Unknown or
-// unresolvable stream ids yield an empty slice (not an error), matching Google
-// Reader's behavior of returning an empty stream for unknown ids.
-func (s *Server) streamEntries(r *http.Request, userID int64, stream string, oldestFirst bool) ([]streamEntry, error) {
+// streamEntries resolves a stream id to one ordered page of entries. Unknown
+// or unresolvable stream ids yield an empty slice (not an error), matching
+// Google Reader's behavior of returning an empty stream for unknown ids.
+// Pagination and ordering are pushed into SQL so a full table is never loaded
+// into memory; the returned hasMore reports whether another page exists.
+func (s *Server) streamEntries(r *http.Request, userID int64, stream string, oldestFirst bool, offset, limit int) (entries []streamEntry, hasMore bool, err error) {
 	ctx := r.Context()
+	// Merged streams (items + digest results) need the same leading window
+	// from both sources before sorting; fetching offset+window rows per source
+	// keeps memory bounded while preserving a correct global ordering.
+	window := offset + limit + 1
 
 	switch {
 	case stream == readerStreamReadingList || stream == readerStreamFresh:
 		// Unread items across all the user's feeds, merged with 'new' digest
 		// results (fresh is an alias of reading-list).
-		items, err := s.queries.ListItemsByUserStatus(ctx, store.ListItemsByUserStatusParams{
+		items, err := s.queries.ListItemsByUserStatusPaginated(ctx, store.ListItemsByUserStatusPaginatedParams{
 			UserID: userID,
 			Status: "unread",
+			Lim:    int64(window),
+			Off:    0,
 		})
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		results, err := s.queries.ListDigestResultsByUserStatus(ctx, store.ListDigestResultsByUserStatusParams{
+		results, err := s.queries.ListDigestResultsByUserStatusPaginated(ctx, store.ListDigestResultsByUserStatusPaginatedParams{
 			UserID: userID,
 			Status: "new",
+			Lim:    int64(window),
+			Off:    0,
 		})
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		entries := mergeStreamEntries(items, results)
 		sortStreamEntries(entries, oldestFirst)
-		return entries, nil
+		page, more := truncatePage(entries, offset, limit, window)
+		return page, more, nil
 
 	case stream == readerStreamRead:
 		// Items with status 'read' or 'digested' (digested maps to read),
 		// merged with 'read' digest results.
-		items, err := s.queries.ListItemsByUserRead(ctx, userID)
-		if err != nil {
-			return nil, err
-		}
-		results, err := s.queries.ListDigestResultsByUserStatus(ctx, store.ListDigestResultsByUserStatusParams{
+		items, err := s.queries.ListItemsByUserReadPaginated(ctx, store.ListItemsByUserReadPaginatedParams{
 			UserID: userID,
-			Status: "read",
+			Lim:    int64(window),
+			Off:    0,
 		})
 		if err != nil {
-			return nil, err
+			return nil, false, err
+		}
+		results, err := s.queries.ListDigestResultsByUserStatusPaginated(ctx, store.ListDigestResultsByUserStatusPaginatedParams{
+			UserID: userID,
+			Status: "read",
+			Lim:    int64(window),
+			Off:    0,
+		})
+		if err != nil {
+			return nil, false, err
 		}
 		entries := mergeStreamEntries(items, results)
 		sortStreamEntries(entries, oldestFirst)
-		return entries, nil
+		page, more := truncatePage(entries, offset, limit, window)
+		return page, more, nil
 
 	case stream == readerStreamStarred:
-		items, err := s.queries.ListItemsByUserStatus(ctx, store.ListItemsByUserStatusParams{
+		items, err := s.queries.ListItemsByUserStatusPaginated(ctx, store.ListItemsByUserStatusPaginatedParams{
 			UserID: userID,
 			Status: "saved",
+			Lim:    int64(window),
+			Off:    0,
 		})
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		entries := itemStreamEntries(items)
 		sortStreamEntries(entries, oldestFirst)
-		return entries, nil
+		page, more := truncatePage(entries, offset, limit, window)
+		return page, more, nil
 
 	case strings.HasPrefix(stream, "feed/"):
-		id, err := strconv.ParseInt(strings.TrimPrefix(stream, "feed/"), 10, 64)
-		if err != nil {
-			return nil, nil
+		id, parseErr := strconv.ParseInt(strings.TrimPrefix(stream, "feed/"), 10, 64)
+		if parseErr != nil {
+			return nil, false, nil
 		}
 		// Verify the feed belongs to the authenticated user.
 		if _, err := s.queries.GetFeed(ctx, store.GetFeedParams{ID: id, UserID: userID}); err != nil {
-			return nil, nil
+			return nil, false, nil
 		}
-		items, err := s.queries.ListItemsByFeed(ctx, id)
+		items, err := s.queries.ListItemsByFeedStreamPage(ctx, store.ListItemsByFeedStreamPageParams{
+			FeedID: id,
+			Lim:    int64(window),
+			Off:    0,
+		})
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		entries := itemStreamEntries(items)
 		sortStreamEntries(entries, oldestFirst)
-		return entries, nil
+		page, more := truncatePage(entries, offset, limit, window)
+		return page, more, nil
 
 	case strings.HasPrefix(stream, "digest/"):
-		id, err := strconv.ParseInt(strings.TrimPrefix(stream, "digest/"), 10, 64)
-		if err != nil {
-			return nil, nil
+		id, parseErr := strconv.ParseInt(strings.TrimPrefix(stream, "digest/"), 10, 64)
+		if parseErr != nil {
+			return nil, false, nil
 		}
-		results, err := s.queries.ListDigestResultsByConfig(ctx, store.ListDigestResultsByConfigParams{
+		results, err := s.queries.ListDigestResultsByConfigPaginated(ctx, store.ListDigestResultsByConfigPaginatedParams{
 			ConfigID: id,
 			UserID:   userID,
+			Limit:    int64(window),
+			Offset:   0,
 		})
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		entries := digestStreamEntries(results)
 		sortStreamEntries(entries, oldestFirst)
-		return entries, nil
+		page, more := truncatePage(entries, offset, limit, window)
+		return page, more, nil
 
 	case strings.HasPrefix(stream, "user/-/label/"):
 		name := strings.TrimPrefix(stream, "user/-/label/")
-		items, err := s.queries.ListItemsByCategory(ctx, store.ListItemsByCategoryParams{
+		items, err := s.queries.ListItemsByCategoryPaginated(ctx, store.ListItemsByCategoryPaginatedParams{
 			Category: name,
 			UserID:   userID,
+			Lim:      int64(window),
+			Off:      0,
 		})
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		entries := itemStreamEntries(items)
 		sortStreamEntries(entries, oldestFirst)
-		return entries, nil
+		page, more := truncatePage(entries, offset, limit, window)
+		return page, more, nil
 
 	default:
-		return nil, nil
+		return nil, false, nil
 	}
+}
+
+// truncatePage slices the merged, sorted window to the requested page and
+// reports whether more entries exist beyond it. offset and limit are the
+// caller's pagination parameters; window is offset+limit+1 (the number of
+// rows fetched per source).
+func truncatePage(sorted []streamEntry, offset, limit, window int) ([]streamEntry, bool) {
+	if offset > len(sorted) {
+		offset = len(sorted)
+	}
+	end := offset + limit
+	hasMore := false
+	if end < len(sorted) {
+		hasMore = true
+	} else {
+		end = len(sorted)
+	}
+	return sorted[offset:end], hasMore
 }
 
 // itemTimestamp returns the sort timestamp for an item: published_at when

@@ -109,8 +109,8 @@ func TestReaderUnreadCount(t *testing.T) {
 	var resp struct {
 		Max          string `json:"max"`
 		UnreadCounts []struct {
-			ID                     string `json:"id"`
-			Count                  int64  `json:"count"`
+			ID                      string `json:"id"`
+			Count                   int64  `json:"count"`
 			NewestItemTimestampUsec string `json:"newestItemTimestampUsec"`
 		} `json:"unreadcounts"`
 	}

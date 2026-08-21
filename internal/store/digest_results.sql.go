@@ -346,6 +346,54 @@ func (q *Queries) ListDigestResultsByConfig(ctx context.Context, arg ListDigestR
 	return items, nil
 }
 
+const listDigestResultsByConfigOldestFirstPaginated = `-- name: ListDigestResultsByConfigOldestFirstPaginated :many
+SELECT id, user_id, config_id, config_snapshot, content, status, created_at, updated_at FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at ASC LIMIT ? OFFSET ?
+`
+
+type ListDigestResultsByConfigOldestFirstPaginatedParams struct {
+	ConfigID int64 `json:"config_id"`
+	UserID   int64 `json:"user_id"`
+	Limit    int64 `json:"limit"`
+	Offset   int64 `json:"offset"`
+}
+
+func (q *Queries) ListDigestResultsByConfigOldestFirstPaginated(ctx context.Context, arg ListDigestResultsByConfigOldestFirstPaginatedParams) ([]DigestResult, error) {
+	rows, err := q.db.QueryContext(ctx, listDigestResultsByConfigOldestFirstPaginated,
+		arg.ConfigID,
+		arg.UserID,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DigestResult{}
+	for rows.Next() {
+		var i DigestResult
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ConfigID,
+			&i.ConfigSnapshot,
+			&i.Content,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDigestResultsByConfigPaginated = `-- name: ListDigestResultsByConfigPaginated :many
 SELECT id, user_id, config_id, config_snapshot, content, status, created_at, updated_at FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
@@ -405,6 +453,57 @@ type ListDigestResultsByUserStatusParams struct {
 
 func (q *Queries) ListDigestResultsByUserStatus(ctx context.Context, arg ListDigestResultsByUserStatusParams) ([]DigestResult, error) {
 	rows, err := q.db.QueryContext(ctx, listDigestResultsByUserStatus, arg.UserID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DigestResult{}
+	for rows.Next() {
+		var i DigestResult
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ConfigID,
+			&i.ConfigSnapshot,
+			&i.Content,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDigestResultsByUserStatusPaginated = `-- name: ListDigestResultsByUserStatusPaginated :many
+SELECT id, user_id, config_id, config_snapshot, content, status, created_at, updated_at FROM digest_results WHERE user_id = ?1 AND status = ?2
+ORDER BY created_at DESC
+LIMIT ?4 OFFSET ?3
+`
+
+type ListDigestResultsByUserStatusPaginatedParams struct {
+	UserID int64  `json:"user_id"`
+	Status string `json:"status"`
+	Off    int64  `json:"off"`
+	Lim    int64  `json:"lim"`
+}
+
+// Reader-stream page for a user-wide digest status.
+func (q *Queries) ListDigestResultsByUserStatusPaginated(ctx context.Context, arg ListDigestResultsByUserStatusPaginatedParams) ([]DigestResult, error) {
+	rows, err := q.db.QueryContext(ctx, listDigestResultsByUserStatusPaginated,
+		arg.UserID,
+		arg.Status,
+		arg.Off,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}

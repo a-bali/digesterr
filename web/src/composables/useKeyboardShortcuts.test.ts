@@ -46,7 +46,9 @@ function mountHarness(base: ReturnType<typeof makeCtx>) {
     },
   }))
   const press = (init: Partial<KeyboardEventInit> & { key: string }, target?: EventTarget) => {
-    ;(target ?? window).dispatchEvent(new KeyboardEvent('keydown', init))
+    const ev = new KeyboardEvent('keydown', { cancelable: true, ...init })
+    ;(target ?? window).dispatchEvent(ev)
+    return ev
   }
   return { wrapper, press }
 }
@@ -226,6 +228,40 @@ describe('useKeyboardShortcuts', () => {
     press({ key: 'j' })
     press({ key: 'Home' })
     expect(ctx.selectItem).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('Space with no selected item does not toggle read or preventDefault', () => {
+    const ctx = makeCtx()
+    const { press, wrapper } = mountHarness(ctx)
+    // dispatchEvent returns synchronously, so defaultPrevented is final here.
+    const ev = press({ key: ' ' })
+    expect(ctx.toggleRead).not.toHaveBeenCalled()
+    expect(ev.defaultPrevented).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('Space with a selected item toggles read and preventDefaults', () => {
+    const sel = { id: 1 }
+    const ctx = makeCtx({ selectedItem: () => sel })
+    const { press, wrapper } = mountHarness(ctx)
+    const ev = press({ key: ' ' })
+    expect(ctx.toggleRead).toHaveBeenCalledWith(sel)
+    expect(ev.defaultPrevented).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('skips contentEditable targets', () => {
+    const ctx = makeCtx({ selectedItem: () => ({ id: 1 }) })
+    const { press, wrapper } = mountHarness(ctx)
+    const editable = document.createElement('div')
+    editable.contentEditable = 'true'
+    document.body.appendChild(editable)
+    editable.focus()
+    press({ key: ' ' }, editable)
+    press({ key: 'm' }, editable)
+    expect(ctx.toggleRead).not.toHaveBeenCalled()
+    editable.remove()
     wrapper.unmount()
   })
 })

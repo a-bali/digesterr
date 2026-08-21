@@ -17,11 +17,7 @@ type createDigestConfigRequest struct {
 }
 
 func (s *Server) handleListDigestConfigs(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	configs, err := s.queries.ListDigestConfigs(r.Context(), userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list digest configs")
@@ -34,11 +30,7 @@ func (s *Server) handleListDigestConfigs(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleCreateDigestConfig(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	var req createDigestConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -69,11 +61,7 @@ func (s *Server) handleCreateDigestConfig(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleGetDigestConfig(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -91,11 +79,7 @@ func (s *Server) handleGetDigestConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateDigestConfig(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -128,11 +112,7 @@ func (s *Server) handleUpdateDigestConfig(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleDeleteDigestConfig(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -150,11 +130,7 @@ func (s *Server) handleDeleteDigestConfig(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	configID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -200,11 +176,7 @@ func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleGetDigestResult(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -226,11 +198,7 @@ type updateDigestResultStatusRequest struct {
 }
 
 func (s *Server) handleUpdateDigestResultStatus(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -269,11 +237,7 @@ func (s *Server) handleUpdateDigestResultStatus(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleDeleteDigestResult(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -291,11 +255,7 @@ func (s *Server) handleDeleteDigestResult(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleGenerateDigest(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	configID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -325,11 +285,7 @@ func (s *Server) handleGenerateDigest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListDigestResultItemsWithData(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	resultID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -357,11 +313,7 @@ func (s *Server) handleListDigestResultItemsWithData(w http.ResponseWriter, r *h
 }
 
 func (s *Server) handleDigestUnreadCounts(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	counts, err := s.queries.GetDigestUnreadCounts(r.Context(), userID)
 	if err != nil {
 		writeServerError(w, "failed to get digest unread counts", err)

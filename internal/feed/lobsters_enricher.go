@@ -10,6 +10,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"digesterr/internal/store"
@@ -36,25 +37,50 @@ func (e *LobstersEnricher) Enrich(ctx context.Context, item *store.Item) error {
 }
 
 func (e *LobstersEnricher) BulkEnrich(ctx context.Context, items []*store.Item) error {
-	enriched := 0
-	errors := 0
-	for _, item := range items {
-		shortID := extractLobstersShortID(item.CommentUrl, item.Url, item.Hash)
-		if shortID == "" {
-			continue
-		}
-		select {
-		case <-time.After(time.Second):
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		if err := e.enrichOne(ctx, item, shortID); err != nil {
-			slog.Debug("failed to enrich Lobste.rs item", "item_id", item.ID, "short_id", shortID, "error", err)
-			errors++
-			continue
-		}
-		enriched++
+	// Resolve short IDs first, then enrich concurrently with a bounded
+	// worker pool instead of a serial 1s sleep per item (O(n) seconds).
+	type target struct {
+		item    *store.Item
+		shortID string
 	}
+	var targets []target
+	for _, item := range items {
+		if shortID := extractLobstersShortID(item.CommentUrl, item.Url, item.Hash); shortID != "" {
+			targets = append(targets, target{item: item, shortID: shortID})
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+
+	const workers = 4
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	enriched, errors := 0, 0
+	for _, t := range targets {
+		wg.Add(1)
+		go func(t target) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+			if err := e.enrichOne(ctx, t.item, t.shortID); err != nil {
+				slog.Debug("failed to enrich Lobste.rs item", "item_id", t.item.ID, "short_id", t.shortID, "error", err)
+				mu.Lock()
+				errors++
+				mu.Unlock()
+				return
+			}
+			mu.Lock()
+			enriched++
+			mu.Unlock()
+		}(t)
+	}
+	wg.Wait()
 	slog.Debug("lobste.rs bulk enrichment completed", "success", enriched, "error", errors, "total", len(items))
 	return nil
 }
@@ -67,11 +93,11 @@ type lobstersStory struct {
 }
 
 type lobstersComment struct {
-	ShortID       string            `json:"short_id"`
-	Comment       string            `json:"comment"`
-	Score         int               `json:"score"`
-	CommentingUser string           `json:"commenting_user"`
-	Children      []lobstersComment `json:"children"`
+	ShortID        string            `json:"short_id"`
+	Comment        string            `json:"comment"`
+	Score          int               `json:"score"`
+	CommentingUser string            `json:"commenting_user"`
+	Children       []lobstersComment `json:"children"`
 }
 
 func (e *LobstersEnricher) enrichOne(ctx context.Context, item *store.Item, shortID string) error {

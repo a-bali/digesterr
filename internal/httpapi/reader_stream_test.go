@@ -24,7 +24,7 @@ func setupStreamTestServer(t *testing.T) (*Server, *store.Queries, *sql.DB) {
 	}
 	t.Cleanup(func() { db.Close() })
 	queries := store.New(db)
-	authSvc := auth.NewService("test-jwt-secret-for-testing", queries)
+	authSvc := auth.NewService("test-jwt-secret-for-testing", queries, db)
 	return NewServer(db, queries, authSvc, logbuf.New(100), config.Default()), queries, db
 }
 
@@ -246,9 +246,9 @@ func TestReaderStreamRead(t *testing.T) {
 	resp := getStream(t, server, "/reader/api/0/stream/items/ids?s=user/-/state/com.google/read&output=json")
 
 	want := []string{
-		digestItemStreamID(seed.drRead.ID),  // 2024-01-07
-		itemStreamID(seed.aRead.ID),         // 2024-01-04
-		itemStreamID(seed.aDigested.ID),     // 2024-01-02 (digested maps to read)
+		digestItemStreamID(seed.drRead.ID), // 2024-01-07
+		itemStreamID(seed.aRead.ID),        // 2024-01-04
+		itemStreamID(seed.aDigested.ID),    // 2024-01-02 (digested maps to read)
 	}
 	if got := refIDs(resp.ItemRefs); !equalStrings(got, want) {
 		t.Fatalf("read stream ids mismatch:\n got %v\nwant %v", got, want)
@@ -276,7 +276,7 @@ func TestReaderStreamFeed(t *testing.T) {
 	resp := getStream(t, server, "/reader/api/0/stream/items/ids?s="+feedStreamID(seed.feedA.ID)+"&output=json")
 
 	want := []string{
-		itemStreamID(seed.aSaved.ID),       // 2024-01-06
+		itemStreamID(seed.aSaved.ID),        // 2024-01-06
 		itemStreamID(seed.aUnreadNewest.ID), // 2024-01-05
 		itemStreamID(seed.aRead.ID),         // 2024-01-04
 		itemStreamID(seed.aUnreadOldest.ID), // 2024-01-03

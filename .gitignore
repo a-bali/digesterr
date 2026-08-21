@@ -6,6 +6,7 @@ devenv.local.nix
 bin/
 /digesterr
 *.db*
+data/
 
 # Air
 tmp/

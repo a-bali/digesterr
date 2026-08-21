@@ -1,8 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { toast } from 'vue-sonner'
-import { digestApi, ApiError } from '../services/api'
+import { digestApi } from '../services/api'
 import type { DigestConfig, DigestResult, DigestResultItemWithData } from '../types/api'
+import { toastError } from '../lib/toast'
+
+const PAGE_SIZE = 50
 
 export const useDigestStore = defineStore('digest', () => {
   const configs = ref<DigestConfig[]>([])
@@ -18,6 +21,9 @@ export const useDigestStore = defineStore('digest', () => {
 
   const activeConfig = computed(() => configs.value.find(c => c.id === activeConfigId.value) || null)
 
+  // Monotonic request id to drop stale responses (config switches, refreshes).
+  let resultsReq = 0
+
   function normalize(r: DigestResult): DigestResult {
     if (r.status === 'new') r.status = 'unread'
     return r
@@ -27,7 +33,7 @@ export const useDigestStore = defineStore('digest', () => {
     try {
       configs.value = await digestApi.listConfigs()
     } catch (e) {
-      toast.error('Failed to load digest configs', { description: e instanceof ApiError ? e.message : undefined })
+      toastError(e, 'Failed to load digest configs')
     }
   }
 
@@ -37,7 +43,7 @@ export const useDigestStore = defineStore('digest', () => {
       configs.value.push(cfg)
       return cfg
     } catch (e) {
-      toast.error('Failed to create digest config', { description: e instanceof ApiError ? e.message : undefined })
+      toastError(e, 'Failed to create digest config')
       return null
     }
   }
@@ -48,7 +54,7 @@ export const useDigestStore = defineStore('digest', () => {
       const idx = configs.value.findIndex(c => c.id === id)
       if (idx !== -1) configs.value[idx] = updated
     } catch (e) {
-      toast.error('Failed to update digest config', { description: e instanceof ApiError ? e.message : undefined })
+      toastError(e, 'Failed to update digest config')
     }
   }
 
@@ -57,30 +63,35 @@ export const useDigestStore = defineStore('digest', () => {
       await digestApi.deleteConfig(id)
       configs.value = configs.value.filter(c => c.id !== id)
       if (activeConfigId.value === id) {
+        // Invalidate any in-flight results request for the deleted config.
+        resultsReq++
         activeConfigId.value = null
         results.value = []
         selectedResult.value = null
         resultItems.value = []
       }
     } catch (e) {
-      toast.error('Failed to delete digest config', { description: e instanceof ApiError ? e.message : undefined })
+      toastError(e, 'Failed to delete digest config')
     }
   }
 
   async function setActiveConfig(id: number) {
+    const rid = ++resultsReq
     activeConfigId.value = id
     selectedResult.value = null
     resultItems.value = []
     loading.value = true
     hasMore.value = false
     try {
-      const resp = await digestApi.listResults(id, { limit: 50, offset: 0 })
+      const resp = await digestApi.listResults(id, { limit: PAGE_SIZE, offset: 0 })
+      if (rid !== resultsReq) return
       results.value = resp.results.map(normalize)
       hasMore.value = resp.has_more
     } catch (e) {
-      toast.error('Failed to load digest results', { description: e instanceof ApiError ? e.message : undefined })
+      if (rid !== resultsReq) return
+      toastError(e, 'Failed to load digest results')
     } finally {
-      loading.value = false
+      if (rid === resultsReq) loading.value = false
     }
   }
 
@@ -90,7 +101,7 @@ export const useDigestStore = defineStore('digest', () => {
     try {
       resultItems.value = await digestApi.listResultItems(result.id)
     } catch (e) {
-      toast.error('Failed to load result items', { description: e instanceof ApiError ? e.message : undefined })
+      toastError(e, 'Failed to load result items')
     } finally {
       loading.value = false
     }
@@ -106,7 +117,7 @@ export const useDigestStore = defineStore('digest', () => {
       toast.success('Digest generated')
       return result
     } catch (e) {
-      toast.error('Digest generation failed', { description: e instanceof ApiError ? e.message : undefined })
+      toastError(e, 'Digest generation failed')
       return null
     } finally {
       generating.value = false
@@ -121,7 +132,7 @@ export const useDigestStore = defineStore('digest', () => {
       if (selectedResult.value?.id === resultId) selectedResult.value = updated
       fetchUnreadCounts()
     } catch (e) {
-      toast.error('Failed to mark digest as read', { description: e instanceof ApiError ? e.message : undefined })
+      toastError(e, 'Failed to mark digest as read')
     }
   }
 
@@ -134,20 +145,27 @@ export const useDigestStore = defineStore('digest', () => {
         resultItems.value = []
       }
     } catch (e) {
-      toast.error('Failed to delete digest', { description: e instanceof ApiError ? e.message : undefined })
+      toastError(e, 'Failed to delete digest')
     }
   }
 
   async function fetchMoreResults() {
-    if (!activeConfigId.value || !hasMore.value || loadingMore.value || loading.value) return
+    const cfgId = activeConfigId.value
+    if (!cfgId || !hasMore.value || loadingMore.value || loading.value) return
+    const rid = ++resultsReq
+    // Capture the offset at request time so a newer request can't shift the
+    // list out from under this page append.
+    const offset = results.value.length
     loadingMore.value = true
     try {
-      const resp = await digestApi.listResults(activeConfigId.value, { limit: 50, offset: results.value.length })
+      const resp = await digestApi.listResults(cfgId, { limit: PAGE_SIZE, offset })
+      if (rid !== resultsReq) return
       results.value.push(...resp.results.map(normalize))
       hasMore.value = resp.has_more
     } catch {
       // silent
     } finally {
+      // Only one loadMore can be in flight (guarded above), so always clear.
       loadingMore.value = false
     }
   }
@@ -155,8 +173,11 @@ export const useDigestStore = defineStore('digest', () => {
   async function silentRefresh() {
     try {
       configs.value = await digestApi.listConfigs()
-      if (activeConfigId.value) {
-        const resp = await digestApi.listResults(activeConfigId.value, { limit: 50, offset: 0 })
+      const cfgId = activeConfigId.value
+      if (cfgId) {
+        const rid = ++resultsReq
+        const resp = await digestApi.listResults(cfgId, { limit: PAGE_SIZE, offset: 0 })
+        if (rid !== resultsReq) return
         results.value = resp.results.map(normalize)
         hasMore.value = resp.has_more
       }
@@ -181,7 +202,7 @@ export const useDigestStore = defineStore('digest', () => {
       if (selectedResult.value?.id === resultId) selectedResult.value = updated
       fetchUnreadCounts()
     } catch (e) {
-      toast.error('Failed to update digest status', { description: e instanceof ApiError ? e.message : undefined })
+      toastError(e, 'Failed to update digest status')
     }
   }
 

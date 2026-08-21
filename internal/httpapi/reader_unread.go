@@ -8,8 +8,8 @@ import (
 
 // readerUnreadCountEntry is a single entry in the unread-count response.
 type readerUnreadCountEntry struct {
-	ID                     string `json:"id"`
-	Count                  int64  `json:"count"`
+	ID                      string `json:"id"`
+	Count                   int64  `json:"count"`
 	NewestItemTimestampUsec string `json:"newestItemTimestampUsec"`
 }
 
@@ -67,8 +67,8 @@ func (s *Server) handleReaderUnreadCount(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 		entries = append(entries, readerUnreadCountEntry{
-			ID:                     feedStreamID(fc.FeedID),
-			Count:                  fc.UnreadCount,
+			ID:                      feedStreamID(fc.FeedID),
+			Count:                   fc.UnreadCount,
 			NewestItemTimestampUsec: strconv.FormatInt(newestSec[fc.FeedID]*1_000_000, 10),
 		})
 	}

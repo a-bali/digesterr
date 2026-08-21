@@ -292,19 +292,19 @@ func TestUpdateItemStatus(t *testing.T) {
 	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
 		UserID:   user.ID,
 		Category: "Tech",
-		Type:       "rss",
-		Name:       "Test",
-		Url:        "https://example.com/feed",
-		Config:     "{}",
-		Status:     "active",
+		Type:     "rss",
+		Name:     "Test",
+		Url:      "https://example.com/feed",
+		Config:   "{}",
+		Status:   "active",
 	})
 	item, _ := queries.CreateItem(t.Context(), store.CreateItemParams{
-		FeedID:   feed.ID,
-		Hash:     "item-1",
-		Title:    "Test Item",
-		Url:      "https://example.com/1",
-		Content:  "content",
-		Status:   "unread",
+		FeedID:  feed.ID,
+		Hash:    "item-1",
+		Title:   "Test Item",
+		Url:     "https://example.com/1",
+		Content: "content",
+		Status:  "unread",
 	})
 
 	w := makeRequest(server, http.MethodPatch, "/api/items/"+itoa(item.ID), map[string]string{"status": "read"}, token)
@@ -335,19 +335,19 @@ func TestUpdateItemStatusInvalid(t *testing.T) {
 	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
 		UserID:   user.ID,
 		Category: "Tech",
-		Type:       "rss",
-		Name:       "Test",
-		Url:        "https://example.com/feed",
-		Config:     "{}",
-		Status:     "active",
+		Type:     "rss",
+		Name:     "Test",
+		Url:      "https://example.com/feed",
+		Config:   "{}",
+		Status:   "active",
 	})
 	item, _ := queries.CreateItem(t.Context(), store.CreateItemParams{
-		FeedID:   feed.ID,
-		Hash:     "item-2",
-		Title:    "Test Item",
-		Url:      "https://example.com/1",
-		Content:  "content",
-		Status:   "unread",
+		FeedID:  feed.ID,
+		Hash:    "item-2",
+		Title:   "Test Item",
+		Url:     "https://example.com/1",
+		Content: "content",
+		Status:  "unread",
 	})
 
 	w := makeRequest(server, http.MethodPatch, "/api/items/"+itoa(item.ID), map[string]string{"status": "invalid"}, token)
@@ -409,28 +409,28 @@ func TestDigestResultReadCascade(t *testing.T) {
 	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
 		UserID:   user.ID,
 		Category: "Tech",
-		Type:       "rss",
-		Name:       "Test",
-		Url:        "https://example.com/feed",
-		Config:     "{}",
-		Status:     "active",
+		Type:     "rss",
+		Name:     "Test",
+		Url:      "https://example.com/feed",
+		Config:   "{}",
+		Status:   "active",
 	})
 
 	item1, _ := queries.CreateItem(t.Context(), store.CreateItemParams{
-		FeedID:   feed.ID,
-		Hash:     "cascade-1",
-		Title:    "Item 1",
-		Url:      "https://example.com/1",
-		Content:  "content 1",
-		Status:   "unread",
+		FeedID:  feed.ID,
+		Hash:    "cascade-1",
+		Title:   "Item 1",
+		Url:     "https://example.com/1",
+		Content: "content 1",
+		Status:  "unread",
 	})
 	item2, _ := queries.CreateItem(t.Context(), store.CreateItemParams{
-		FeedID:   feed.ID,
-		Hash:     "cascade-2",
-		Title:    "Item 2",
-		Url:      "https://example.com/2",
-		Content:  "content 2",
-		Status:   "unread",
+		FeedID:  feed.ID,
+		Hash:    "cascade-2",
+		Title:   "Item 2",
+		Url:     "https://example.com/2",
+		Content: "content 2",
+		Status:  "unread",
 	})
 
 	_, _ = queries.UpdateItemStatus(t.Context(), store.UpdateItemStatusParams{
@@ -449,19 +449,19 @@ func TestDigestResultReadCascade(t *testing.T) {
 	})
 	result, _ := queries.CreateDigestResult(t.Context(), store.CreateDigestResultParams{
 		UserID:         user.ID,
-		ConfigID:        cfg.ID,
-		ConfigSnapshot:  "{}",
-		Content:         "{}",
-		Status:          "new",
+		ConfigID:       cfg.ID,
+		ConfigSnapshot: "{}",
+		Content:        "{}",
+		Status:         "new",
 	})
 	queries.CreateDigestResultItem(t.Context(), store.CreateDigestResultItemParams{
-		ResultID:   result.ID,
-		ItemID:     item1.ID,
+		ResultID:    result.ID,
+		ItemID:      item1.ID,
 		IsHighlight: 1,
 	})
 	queries.CreateDigestResultItem(t.Context(), store.CreateDigestResultItemParams{
-		ResultID:   result.ID,
-		ItemID:     item2.ID,
+		ResultID:    result.ID,
+		ItemID:      item2.ID,
 		IsHighlight: 0,
 	})
 
@@ -490,27 +490,27 @@ func TestFeedItemsByStatus(t *testing.T) {
 	feed, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
 		UserID:   user.ID,
 		Category: "Tech",
-		Type:       "rss",
-		Name:       "Test",
-		Url:        "https://example.com/feed",
-		Config:     "{}",
-		Status:     "active",
+		Type:     "rss",
+		Name:     "Test",
+		Url:      "https://example.com/feed",
+		Config:   "{}",
+		Status:   "active",
 	})
 	queries.CreateItem(t.Context(), store.CreateItemParams{
-		FeedID:   feed.ID,
-		Hash:     "feedstatus-1",
-		Title:    "Unread Item",
-		Url:      "https://example.com/1",
-		Content:  "content",
-		Status:   "unread",
+		FeedID:  feed.ID,
+		Hash:    "feedstatus-1",
+		Title:   "Unread Item",
+		Url:     "https://example.com/1",
+		Content: "content",
+		Status:  "unread",
 	})
 	queries.CreateItem(t.Context(), store.CreateItemParams{
-		FeedID:   feed.ID,
-		Hash:     "feedstatus-2",
-		Title:    "Read Item",
-		Url:      "https://example.com/2",
-		Content:  "content",
-		Status:   "read",
+		FeedID:  feed.ID,
+		Hash:    "feedstatus-2",
+		Title:   "Read Item",
+		Url:     "https://example.com/2",
+		Content: "content",
+		Status:  "read",
 	})
 
 	w := makeRequest(server, http.MethodGet, "/api/feeds/"+itoa(feed.ID)+"/items?status=unread", nil, token)

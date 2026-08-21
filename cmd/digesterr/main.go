@@ -15,7 +15,6 @@ import (
 
 	_ "modernc.org/sqlite"
 
-
 	"digesterr/internal/auth"
 	"digesterr/internal/config"
 	"digesterr/internal/httpapi"
@@ -95,6 +94,11 @@ func main() {
 		slog.Error("failed to open database", "path", cfg.DB.Path, "error", err)
 		os.Exit(1)
 	}
+	// SQLite allows only one writer at a time. The poller, scheduler, and
+	// HTTP handlers all write concurrently; a single connection serializes
+	// them and avoids SQLITE_BUSY storms that busy_timeout alone cannot
+	// fully prevent.
+	db.SetMaxOpenConns(1)
 	defer db.Close()
 
 	if err := db.Ping(); err != nil {
@@ -108,7 +112,7 @@ func main() {
 	}
 
 	queries := store.New(db)
-	authSvc := auth.NewService(cfg.Server.JWTSecret, queries)
+	authSvc := auth.NewService(cfg.Server.JWTSecret, queries, db)
 	server := httpapi.NewServer(db, queries, authSvc, logBuf, cfg)
 	server.StartPoller(context.Background(), cfg.Feed.SyncInterval.Duration())
 	server.StartScheduler(context.Background())

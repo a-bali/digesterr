@@ -21,11 +21,7 @@ type createFeedRequest struct {
 }
 
 func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	var req createFeedRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -61,11 +57,7 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListFeeds(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	feeds, err := s.queries.ListFeeds(r.Context(), userID)
 	if err != nil {
 		slog.Error("failed to list feeds", "user_id", userID, "error", err)
@@ -79,11 +71,7 @@ func (s *Server) handleListFeeds(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetFeed(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -111,11 +99,7 @@ type updateFeedRequest struct {
 }
 
 func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -186,11 +170,7 @@ func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteFeed(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -210,11 +190,7 @@ func (s *Server) handleDeleteFeed(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -344,11 +320,7 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFetchFeed(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -371,11 +343,7 @@ func (s *Server) handleFetchFeed(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUnreadCounts(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	counts, err := s.queries.GetUnreadCounts(r.Context(), userID)
 	if err != nil {
 		writeServerError(w, "failed to get unread counts", err)
@@ -392,11 +360,7 @@ func (s *Server) handleUnreadCounts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMarkFeedRead(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")

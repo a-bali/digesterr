@@ -264,13 +264,13 @@ func TestGeneratorFetchCommentsInfoLogs(t *testing.T) {
 	}
 
 	item, err := queries.CreateItem(ctx, store.CreateItemParams{
-		FeedID:    feedObj.ID,
-		Hash:      "h1",
-		Title:     "HN Story",
-		Url:       "https://news.ycombinator.com/item?id=1",
-		Content:   "body",
-		Status:    "unread",
-		Points:    42,
+		FeedID:        feedObj.ID,
+		Hash:          "h1",
+		Title:         "HN Story",
+		Url:           "https://news.ycombinator.com/item?id=1",
+		Content:       "body",
+		Status:        "unread",
+		Points:        42,
 		CommentsCount: 10,
 	})
 	if err != nil {
@@ -345,7 +345,7 @@ func TestSchedulerGenerationFailureLogs(t *testing.T) {
 	}
 
 	capture := testutil.CaptureSlog(t, slog.LevelInfo)
-	s := &Scheduler{queries: queries, generator: &Generator{queries: queries}}
+	s := NewScheduler(queries, &Generator{queries: queries}, nil)
 	s.tick(ctx)
 
 	start, ok := capture.Find("scheduled digest generation")

@@ -2,25 +2,26 @@ package auth
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"digesterr/internal/store"
 	"digesterr/internal/testutil"
 )
 
-func setupAuthTestDB(t *testing.T) *store.Queries {
+func setupAuthTestDB(t *testing.T) (*sql.DB, *store.Queries) {
 	t.Helper()
 	db, err := testutil.OpenTestDB()
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return store.New(db)
+	return db, store.New(db)
 }
 
 func TestCreateAndValidateRefreshToken(t *testing.T) {
-	queries := setupAuthTestDB(t)
-	svc := NewService("test-secret", queries)
+	db, queries := setupAuthTestDB(t)
+	svc := NewService("test-secret", queries, db)
 	user, err := queries.CreateUser(context.Background(), store.CreateUserParams{
 		Email:        "refresh@example.com",
 		PasswordHash: "hash",
@@ -48,8 +49,8 @@ func TestCreateAndValidateRefreshToken(t *testing.T) {
 }
 
 func TestValidateRefreshTokenInvalid(t *testing.T) {
-	queries := setupAuthTestDB(t)
-	svc := NewService("test-secret", queries)
+	db, queries := setupAuthTestDB(t)
+	svc := NewService("test-secret", queries, db)
 	_, err := svc.ValidateRefreshToken(context.Background(), "totally-invalid-token")
 	if err == nil {
 		t.Fatal("expected error for invalid refresh token")
@@ -60,8 +61,8 @@ func TestValidateRefreshTokenInvalid(t *testing.T) {
 }
 
 func TestDeleteRefreshToken(t *testing.T) {
-	queries := setupAuthTestDB(t)
-	svc := NewService("test-secret", queries)
+	db, queries := setupAuthTestDB(t)
+	svc := NewService("test-secret", queries, db)
 	user, err := queries.CreateUser(context.Background(), store.CreateUserParams{
 		Email:        "delete-rt@example.com",
 		PasswordHash: "hash",
@@ -88,8 +89,8 @@ func TestDeleteRefreshToken(t *testing.T) {
 }
 
 func TestDeleteAllUserRefreshTokens(t *testing.T) {
-	queries := setupAuthTestDB(t)
-	svc := NewService("test-secret", queries)
+	db, queries := setupAuthTestDB(t)
+	svc := NewService("test-secret", queries, db)
 	user, err := queries.CreateUser(context.Background(), store.CreateUserParams{
 		Email:        "multi-rt@example.com",
 		PasswordHash: "hash",
@@ -116,8 +117,8 @@ func TestDeleteAllUserRefreshTokens(t *testing.T) {
 }
 
 func TestRefreshTokenRotation(t *testing.T) {
-	queries := setupAuthTestDB(t)
-	svc := NewService("test-secret", queries)
+	db, queries := setupAuthTestDB(t)
+	svc := NewService("test-secret", queries, db)
 	user, err := queries.CreateUser(context.Background(), store.CreateUserParams{
 		Email:        "rotation@example.com",
 		PasswordHash: "hash",

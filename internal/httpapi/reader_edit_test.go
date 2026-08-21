@@ -12,15 +12,15 @@ import (
 // items in various states, feed B holds a single unread item (used to assert
 // per-feed isolation), and cfg holds two digest results (one new, one read).
 type editSeed struct {
-	feedA        store.Feed
-	feedB        store.Feed
-	cfg          store.DigestConfig
-	aUnread      store.Item
-	aRead        store.Item
-	aSaved       store.Item
-	bUnread      store.Item
-	drNew        store.DigestResult
-	drRead       store.DigestResult
+	feedA   store.Feed
+	feedB   store.Feed
+	cfg     store.DigestConfig
+	aUnread store.Item
+	aRead   store.Item
+	aSaved  store.Item
+	bUnread store.Item
+	drNew   store.DigestResult
+	drRead  store.DigestResult
 }
 
 func seedEditState(t *testing.T, queries *store.Queries, userID int64) editSeed {

@@ -46,7 +46,7 @@ type redditPostData struct {
 }
 
 type redditChild struct {
-	Kind string        `json:"kind"`
+	Kind string         `json:"kind"`
 	Data redditPostData `json:"data"`
 }
 

@@ -47,7 +47,7 @@ type CommentFetcher interface {
 
 type NoopEnricher struct{}
 
-func (e *NoopEnricher) Enrich(_ context.Context, _ *store.Item) error  { return nil }
+func (e *NoopEnricher) Enrich(_ context.Context, _ *store.Item) error       { return nil }
 func (e *NoopEnricher) BulkEnrich(_ context.Context, _ []*store.Item) error { return nil }
 func (e *NoopEnricher) FetchComments(_ context.Context, _ store.Item, _ int) ([]Comment, error) {
 	return nil, nil

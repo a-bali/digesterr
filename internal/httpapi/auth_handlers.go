@@ -26,8 +26,8 @@ func generateAPIKey() (string, error) {
 // userResponse is the JSON-safe view of a user. store.User carries the
 // bcrypt hash and Reader API key, which must never be serialized.
 type userResponse struct {
-	ID        int64  `json:"id"`
-	Email     string `json:"email"`
+	ID        int64     `json:"id"`
+	Email     string    `json:"email"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -188,16 +188,15 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.auth.DeleteRefreshToken(r.Context(), cookie.Value)
 	accessToken, err := s.auth.GenerateAccessToken(&user)
 	if err != nil {
 		slog.Error("refresh token: failed to generate access token", logging.CategoryAttr(logging.CategoryAuth), "error", err, "user_id", user.ID)
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
-	newRefresh, err := s.auth.CreateRefreshToken(r.Context(), user.ID)
+	newRefresh, err := s.auth.RotateRefreshToken(r.Context(), cookie.Value, user.ID)
 	if err != nil {
-		slog.Error("refresh token: failed to create refresh token", logging.CategoryAttr(logging.CategoryAuth), "error", err, "user_id", user.ID)
+		slog.Error("refresh token: rotation failed (old token kept)", logging.CategoryAttr(logging.CategoryAuth), "error", err, "user_id", user.ID)
 		writeError(w, http.StatusInternalServerError, "failed to create refresh token")
 		return
 	}
@@ -217,11 +216,7 @@ type changePasswordRequest struct {
 }
 
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 
 	var req changePasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -267,11 +262,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 // authenticated user. The key authenticates Google Reader clients against
 // /reader/ endpoints (Authorization: GoogleLogin auth=<key>).
 func (s *Server) handleGetAPIKey(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 
 	user, err := s.queries.GetUserByID(r.Context(), userID)
 	if err != nil {
@@ -285,11 +276,7 @@ func (s *Server) handleGetAPIKey(w http.ResponseWriter, r *http.Request) {
 // handleRotateAPIKey generates a new random API key, persists it, and returns
 // it. The previous key stops authenticating immediately.
 func (s *Server) handleRotateAPIKey(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	userID := authedUserID(r)
 
 	apiKey, err := generateAPIKey()
 	if err != nil {

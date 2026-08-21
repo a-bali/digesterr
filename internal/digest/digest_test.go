@@ -2,7 +2,9 @@ package digest
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -387,7 +389,7 @@ func TestBuildContentAssignsLLMSummaryToSections(t *testing.T) {
 
 	g := &Generator{
 		queries: queries,
-		llm: fakeLLM{resp: `{"title":"Reading Rainbow","summary":"overall","highlights":[{"title":"A","summary":"hl A summary"}]}`},
+		llm:     fakeLLM{resp: `{"title":"Reading Rainbow","summary":"overall","highlights":[{"title":"A","summary":"hl A summary"}]}`},
 	}
 
 	highlights := []digestItem{{
@@ -465,9 +467,31 @@ func TestCronFieldMatches(t *testing.T) {
 		{"10-20/3", 11, false},
 	}
 	for _, tt := range tests {
-		got := cronFieldMatches(tt.field, tt.value)
+		got := cronFieldMatches(tt.field, tt.value, 0)
 		if got != tt.want {
 			t.Errorf("cronFieldMatches(%q, %d) = %v, want %v", tt.field, tt.value, got, tt.want)
+		}
+	}
+}
+
+func TestCronWeekdayAndBounds(t *testing.T) {
+	// Sunday: Go Weekday()=0, cron accepts both 0 and 7.
+	sunday := time.Date(2026, 8, 23, 8, 0, 0, 0, time.UTC) // a Sunday
+	if !cronMatches("0 8 * * 0", sunday) {
+		t.Error("weekday 0 should match Sunday")
+	}
+	if !cronMatches("0 8 * * 7", sunday) {
+		t.Error("weekday 7 should match Sunday")
+	}
+	monday := time.Date(2026, 8, 24, 8, 0, 0, 0, time.UTC)
+	if cronMatches("0 8 * * 7", monday) {
+		t.Error("weekday 7 should not match Monday")
+	}
+	// Out-of-range values are rejected, not silently accepted.
+	notSunday := time.Date(2026, 8, 25, 8, 0, 0, 0, time.UTC) // Tuesday
+	for _, sched := range []string{"0 8 * * 1-100", "0 8 1-100 *", "1-100 * * * *"} {
+		if cronMatches(sched, notSunday) {
+			t.Errorf("out-of-range schedule %q must never match", sched)
 		}
 	}
 }
@@ -545,8 +569,13 @@ func TestGeneratorFullPipeline(t *testing.T) {
 
 	titles := []string{"Go 1.25 Released", "New SQLite Features", "Rust Gets Faster"}
 	points := []int64{342, 256, 180}
+	// Local stand-in for feed.itemHash: any stable per-title hash works here.
+	hashOf := func(s string) string {
+		sum := sha256.Sum256([]byte(s))
+		return hex.EncodeToString(sum[:])
+	}
 	for i := 0; i < 3; i++ {
-		hash := feed.ItemHash(titles[i], titles[i], "https://example.com/"+titles[i], "")
+		hash := hashOf(titles[i])
 		_, err := queries.CreateItem(ctx, store.CreateItemParams{
 			FeedID:        feedObj.ID,
 			Hash:          hash,

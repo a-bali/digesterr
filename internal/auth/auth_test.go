@@ -30,7 +30,7 @@ func TestCheckPassword(t *testing.T) {
 }
 
 func TestGenerateAndValidateAccessToken(t *testing.T) {
-	svc := NewService("test-secret-key", nil)
+	svc := NewService("test-secret-key", nil, nil)
 	user := &store.User{ID: 1, Email: "test@example.com"}
 
 	token, err := svc.GenerateAccessToken(user)
@@ -54,7 +54,7 @@ func TestGenerateAndValidateAccessToken(t *testing.T) {
 }
 
 func TestValidateAccessTokenInvalid(t *testing.T) {
-	svc := NewService("test-secret-key", nil)
+	svc := NewService("test-secret-key", nil, nil)
 	_, err := svc.ValidateAccessToken("invalid-token")
 	if err == nil {
 		t.Fatal("expected error for invalid token")
@@ -62,8 +62,8 @@ func TestValidateAccessTokenInvalid(t *testing.T) {
 }
 
 func TestValidateAccessTokenWrongSecret(t *testing.T) {
-	svc1 := NewService("secret1", nil)
-	svc2 := NewService("secret2", nil)
+	svc1 := NewService("secret1", nil, nil)
+	svc2 := NewService("secret2", nil, nil)
 	user := &store.User{ID: 1, Email: "test@example.com"}
 
 	token, _ := svc1.GenerateAccessToken(user)

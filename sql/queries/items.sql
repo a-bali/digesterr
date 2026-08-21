@@ -17,6 +17,13 @@ SELECT * FROM items WHERE id = ?;
 -- name: ListItemsByFeed :many
 SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC;
 
+-- name: ListItemsByFeedStreamPage :many
+-- Reader-stream page: newest-first or oldest-first (when oldest_first is 1),
+-- offset-based. COALESCE mirrors itemTimestamp's published_at fallback.
+SELECT * FROM items WHERE feed_id = ?
+ORDER BY COALESCE(published_at, fetched_at, created_at) DESC, created_at DESC
+LIMIT @lim OFFSET @off;
+
 -- name: ListItemsByFeedAndStatus :many
 SELECT * FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC;
 
@@ -50,7 +57,12 @@ JOIN feeds f ON f.id = i.feed_id
 WHERE i.id = ? AND f.user_id = ?;
 
 -- name: GetUnreadCounts :many
-SELECT f.id AS feed_id, CAST(COALESCE((SELECT COUNT(*) FROM items WHERE feed_id = f.id AND status = 'unread'), 0) AS INTEGER) AS unread_count FROM feeds f WHERE f.user_id = ?;
+-- Single GROUP BY join instead of a correlated subquery per feed.
+SELECT f.id AS feed_id, CAST(COALESCE(COUNT(i.id), 0) AS INTEGER) AS unread_count
+FROM feeds f
+LEFT JOIN items i ON i.feed_id = f.id AND i.status = 'unread'
+WHERE f.user_id = ?
+GROUP BY f.id;
 
 -- name: NewestUnreadItemPerFeed :many
 SELECT f.id AS feed_id,
@@ -127,6 +139,30 @@ SELECT i.* FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE f.user_id = ? AND i.status = ?
 ORDER BY i.published_at DESC, i.created_at DESC;
+
+-- name: ListItemsByUserStatusPaginated :many
+-- Reader-stream page for a user-wide status filter.
+SELECT i.* FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = @user_id AND i.status = @status
+ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at DESC
+LIMIT @lim OFFSET @off;
+
+-- name: ListItemsByUserReadPaginated :many
+-- Reader-stream page for the 'read' stream (read + digested).
+SELECT i.* FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = @user_id AND i.status IN ('read', 'digested')
+ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at DESC
+LIMIT @lim OFFSET @off;
+
+-- name: ListItemsByCategoryPaginated :many
+-- Reader-stream page for a label (feed category).
+SELECT i.* FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.category = @category AND f.user_id = @user_id
+ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at DESC
+LIMIT @lim OFFSET @off;
 
 -- name: ListItemsByUserRead :many
 SELECT i.* FROM items i
