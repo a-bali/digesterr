@@ -69,6 +69,8 @@ function requestMarkFeedRead(id: number) {
   if (feed) feedToMarkRead.value = feed
 }
 
+defineExpose({ requestMarkFeedRead })
+
 function closeMarkReadDialog() {
   feedToMarkRead.value = null
 }

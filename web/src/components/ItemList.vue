@@ -149,6 +149,7 @@ function onScroll() {
       role="button" tabindex="0"
       class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
       :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved' }"
+      :data-selected-item="item.id === feedStore.selectedItem?.id ? '' : undefined"
       @click="emit('selectItem', item)"
       @keydown.enter.prevent="emit('selectItem', item)"
       @keydown.space.prevent="emit('selectItem', item)">
