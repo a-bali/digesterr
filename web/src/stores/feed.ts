@@ -52,11 +52,12 @@ export const useFeedStore = defineStore('feed', () => {
   let fetchReq = 0
 
   // Loads a single page of items for a feed, replacing or appending to `items`.
+  // Replace keeps existing rows visible while in flight (dimmed via `loading`
+  // in ItemList) so the pane never flashes empty.
   async function loadPage(feedId: number, replace: boolean) {
     const rid = ++fetchReq
     if (replace) {
       loading.value = true
-      items.value = []
       hasMore.value = false
     } else {
       loadingMore.value = true
@@ -108,6 +109,7 @@ export const useFeedStore = defineStore('feed', () => {
   async function refreshItems() {
     if (!activeFeedId.value) return
     const rid = ++fetchReq
+    loading.value = true
     try {
       const resp = await feedApi.getItems(activeFeedId.value, {
         status: filter.value === 'all' ? undefined : filter.value,
@@ -125,6 +127,8 @@ export const useFeedStore = defineStore('feed', () => {
       totalItems.value = resp.total ?? 0
     } catch (e) {
       toastError(e, 'Failed to load items')
+    } finally {
+      if (rid === fetchReq) loading.value = false
     }
   }
 

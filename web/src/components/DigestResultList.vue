@@ -73,14 +73,15 @@ function onSelect(result: DigestResult) {
       @update:status-filter="digestFilter = $event"
       @update:sort-value="sortOrder = $event"
     />
-    <!-- Results load async; skeleton rows matching the result-row height. -->
-    <div v-if="digestStore.loading" class="space-y-1 p-3" data-loading-skeleton>
+    <!-- Results load async; skeleton rows only when the list is empty, dim
+         the existing rows during a refresh so the pane never flashes. -->
+    <div v-if="digestStore.loading && visibleResults.length === 0" class="space-y-1 p-3" data-loading-skeleton>
       <Skeleton v-for="i in 5" :key="i" class="h-20 w-full" />
     </div>
     <div v-else class="space-y-1 p-3">
       <button v-for="result in visibleResults" :key="result.id"
         class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
-        :class="{ 'bg-accent/10 font-medium text-accent': isSelected(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read' }"
+        :class="{ 'bg-accent/10 font-medium text-accent': isSelected(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read', 'opacity-50': digestStore.loading }"
         @click="onSelect(result)"
       >
         <div class="flex items-start gap-1 min-w-0">
