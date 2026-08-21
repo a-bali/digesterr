@@ -5,6 +5,7 @@ import { itemApi } from '../services/api'
 import { toastError } from '../lib/toast'
 import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
+import Skeleton from './ui/Skeleton.vue'
 import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown } from 'lucide-vue-next'
 import { absoluteTime } from '../lib/format'
 
@@ -118,6 +119,15 @@ onUnmounted(() => {
   <div ref="scroller" class="h-full overflow-y-auto overflow-x-hidden min-w-0 px-3 py-3 sm:p-6" data-item-content>
     <div v-if="!feedStore.selectedItem" class="flex h-full items-center justify-center text-muted-foreground">
       <BookOpen class="size-8 mr-2" /> <span>Select an item</span>
+    </div>
+    <!-- Extraction in flight: skeleton where the extracted block will land. -->
+    <div v-else-if="extracting && !feedStore.selectedItem.extract_content" data-extracting-skeleton>
+      <Skeleton class="h-7 w-3/4 mb-2" />
+      <Skeleton class="h-4 w-1/2 mb-6" />
+      <Separator class="mb-4" />
+      <div class="space-y-2">
+        <Skeleton v-for="i in 8" :key="i" class="h-4" :class="i % 4 === 0 ? 'w-5/6' : 'w-full'" />
+      </div>
     </div>
     <div v-else>
       <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank"
