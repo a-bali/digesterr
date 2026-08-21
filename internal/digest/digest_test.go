@@ -2,6 +2,7 @@ package digest
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -131,7 +132,7 @@ func TestCronMatches(t *testing.T) {
 	}
 }
 
-func setupDigestTest(t *testing.T) (*store.Queries, func()) {
+func setupDigestTest(t *testing.T) (*sql.DB, *store.Queries, func()) {
 	t.Helper()
 	db, err := testutil.OpenTestDB()
 	if err != nil {
@@ -139,11 +140,11 @@ func setupDigestTest(t *testing.T) (*store.Queries, func()) {
 	}
 	queries := store.New(db)
 	cleanup := func() { db.Close() }
-	return queries, cleanup
+	return db, queries, cleanup
 }
 
 func TestGeneratorBuildFeedLimits(t *testing.T) {
-	queries, cleanup := setupDigestTest(t)
+	_, queries, cleanup := setupDigestTest(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -380,7 +381,7 @@ func (f fakeLLM) Chat(ctx context.Context, systemPrompt, userPrompt string) (str
 // where per-highlight LLM summaries were assigned after buildSections, leaving
 // the rendered (section-based) digest without any highlight summaries.
 func TestBuildContentAssignsLLMSummaryToSections(t *testing.T) {
-	queries, cleanup := setupDigestTest(t)
+	_, queries, cleanup := setupDigestTest(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -515,7 +516,7 @@ func TestGeneratorFullPipeline(t *testing.T) {
 		model = "auto"
 	}
 
-	queries, cleanup := setupDigestTest(t)
+	db, queries, cleanup := setupDigestTest(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -573,7 +574,7 @@ func TestGeneratorFullPipeline(t *testing.T) {
 
 	poller := feed.NewPoller(queries)
 	llmClient := NewLLMClient(endpoint, apiKey, model)
-	gen := NewGenerator(queries, llmClient, poller)
+	gen := NewGenerator(db, queries, llmClient, poller)
 
 	result, err := gen.Generate(ctx, dcfg)
 	if err != nil {
@@ -629,7 +630,7 @@ func TestGeneratorFullPipeline(t *testing.T) {
 }
 
 func TestGenerateNoFeedsReturnsError(t *testing.T) {
-	queries, cleanup := setupDigestTest(t)
+	db, queries, cleanup := setupDigestTest(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -643,7 +644,7 @@ func TestGenerateNoFeedsReturnsError(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 
-	g := NewGenerator(queries, nil, feed.NewPoller(queries))
+	g := NewGenerator(db, queries, nil, feed.NewPoller(queries))
 	cfg := store.DigestConfig{
 		ID:     42,
 		Name:   "empty",

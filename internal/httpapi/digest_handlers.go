@@ -257,6 +257,14 @@ func (s *Server) handleUpdateDigestResultStatus(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusNotFound, "digest result not found")
 		return
 	}
+	// Spec: when a digest result transitions to read, all of its linked items
+	// move from digested to read.
+	if req.Status == "read" {
+		if err := s.queries.MarkDigestResultItemsRead(r.Context(), result.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update linked items")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 

@@ -52,6 +52,10 @@ func (s *Server) setDigestStatus(ctx context.Context, id, userID int64, status s
 		return
 	}
 	_, _ = s.queries.UpdateDigestResultStatus(ctx, store.UpdateDigestResultStatusParams{ID: id, UserID: userID, Status: status})
+	if status == "read" {
+		// Spec: result read -> linked items digested -> read.
+		_ = s.queries.MarkDigestResultItemsRead(ctx, id)
+	}
 }
 
 // applyEditTag applies a single add/remove tag transition to an item or digest
@@ -182,6 +186,10 @@ func (s *Server) handleReaderMarkAllAsRead(w http.ResponseWriter, r *http.Reques
 			writeServerError(w, "failed to mark digest read", err)
 			return
 		}
+		if _, err := s.queries.MarkDigestConfigResultItemsRead(ctx, store.MarkDigestConfigResultItemsReadParams{UserID: userID, Column2: nil}); err != nil {
+			writeServerError(w, "failed to update digest items", err)
+			return
+		}
 
 	default:
 		// reading-list, all, empty/missing s, or any unrecognized stream
@@ -192,6 +200,10 @@ func (s *Server) handleReaderMarkAllAsRead(w http.ResponseWriter, r *http.Reques
 		}
 		if err := s.queries.MarkAllUserDigestResultsRead(ctx, userID); err != nil {
 			writeServerError(w, "failed to mark all digest results read", err)
+			return
+		}
+		if _, err := s.queries.MarkDigestConfigResultItemsRead(ctx, store.MarkDigestConfigResultItemsReadParams{UserID: userID, Column2: nil}); err != nil {
+			writeServerError(w, "failed to update digest items", err)
 			return
 		}
 	}

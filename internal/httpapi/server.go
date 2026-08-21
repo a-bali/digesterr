@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -17,6 +18,7 @@ import (
 
 type Server struct {
 	mux       *http.ServeMux
+	db        *sql.DB
 	queries   *store.Queries
 	auth      *auth.Service
 	poller    *feed.Poller
@@ -28,9 +30,10 @@ type Server struct {
 	publicBaseURL string
 }
 
-func NewServer(queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffer, cfg config.Config) *Server {
+func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffer, cfg config.Config) *Server {
 	s := &Server{
 		mux:           http.NewServeMux(),
+		db:            db,
 		queries:       queries,
 		auth:          authSvc,
 		poller:        feed.NewPoller(queries),
@@ -39,7 +42,7 @@ func NewServer(queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffe
 	}
 
 	llmClient := digest.NewLLMClient(cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model)
-	s.generator = digest.NewGenerator(queries, llmClient, s.poller)
+	s.generator = digest.NewGenerator(db, queries, llmClient, s.poller)
 
 	// Data retention and provider credentials come from the merged config
 	// (defaults < config file < env < CLI flags). The expiry age is shared by

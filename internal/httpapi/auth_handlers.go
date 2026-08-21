@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"digesterr/internal/auth"
 	"digesterr/internal/logging"
@@ -22,6 +23,20 @@ func generateAPIKey() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
+// userResponse is the JSON-safe view of a user. store.User carries the
+// bcrypt hash and Reader API key, which must never be serialized.
+type userResponse struct {
+	ID        int64  `json:"id"`
+	Email     string `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func newUserResponse(u store.User) userResponse {
+	return userResponse{ID: u.ID, Email: u.Email, CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt}
+}
+
+// refreshCookie builds the refresh-token cookie scoped to /api/auth/refresh.
 func refreshCookie(r *http.Request, value string, maxAge int) *http.Cookie {
 	secure := r.TLS != nil
 	return &http.Cookie{
@@ -87,7 +102,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, refreshCookie(r, refreshToken, int(auth.RefreshTokenDuration.Seconds())))
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"user":         user,
+		"user":         newUserResponse(user),
 		"access_token": accessToken,
 		"api_key":      apiKey,
 	})
@@ -129,7 +144,7 @@ func (s *Server) handleSignin(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, refreshCookie(r, refreshToken, int(auth.RefreshTokenDuration.Seconds())))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"user":         user,
+		"user":         newUserResponse(user),
 		"access_token": accessToken,
 	})
 }

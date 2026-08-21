@@ -38,7 +38,7 @@ func llmTestServer(t *testing.T, content string) *httptest.Server {
 // TestGeneratorDigestInfoLogs verifies digest generation logs at info with
 // config id/name, item counts, LLM input/output sizes, and response time.
 func TestGeneratorDigestInfoLogs(t *testing.T) {
-	queries, cleanup := setupDigestTest(t)
+	db, queries, cleanup := setupDigestTest(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -96,7 +96,7 @@ func TestGeneratorDigestInfoLogs(t *testing.T) {
 	}
 
 	capture := testutil.CaptureSlog(t, slog.LevelInfo)
-	gen := NewGenerator(queries, llm, feed.NewPoller(queries))
+	gen := NewGenerator(db, queries, llm, feed.NewPoller(queries))
 	result, err := gen.Generate(ctx, cfg)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -238,7 +238,7 @@ func (fakeCommentFetcher) FetchComments(_ context.Context, _ store.Item, _ int) 
 // TestGeneratorFetchCommentsInfoLogs verifies comment fetching for digest
 // highlights logs at info with item url and comment count.
 func TestGeneratorFetchCommentsInfoLogs(t *testing.T) {
-	queries, cleanup := setupDigestTest(t)
+	_, queries, cleanup := setupDigestTest(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -309,7 +309,7 @@ func TestGeneratorFetchCommentsInfoLogs(t *testing.T) {
 // TestSchedulerGenerationFailureLogs verifies a failed scheduled digest
 // generation is logged at error with config context.
 func TestSchedulerGenerationFailureLogs(t *testing.T) {
-	queries, cleanup := setupDigestTest(t)
+	_, queries, cleanup := setupDigestTest(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -379,7 +379,7 @@ func TestSchedulerGenerationFailureLogs(t *testing.T) {
 // LLM_API_KEY empty). The generation itself still proceeds; the error is a
 // loud signal that the request will fail downstream.
 func TestGeneratorMissingLLMKeyLogsError(t *testing.T) {
-	queries, cleanup := setupDigestTest(t)
+	db, queries, cleanup := setupDigestTest(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -432,7 +432,7 @@ func TestGeneratorMissingLLMKeyLogsError(t *testing.T) {
 	llm := NewLLMClient(llmSrv.URL, "", "test-model")
 
 	capture := testutil.CaptureSlog(t, slog.LevelError)
-	gen := NewGenerator(queries, llm, feed.NewPoller(queries))
+	gen := NewGenerator(db, queries, llm, feed.NewPoller(queries))
 	result, err := gen.Generate(ctx, cfg)
 	if err != nil {
 		t.Fatalf("generate: %v", err)

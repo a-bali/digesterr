@@ -15,6 +15,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+
 	"digesterr/internal/auth"
 	"digesterr/internal/config"
 	"digesterr/internal/httpapi"
@@ -108,7 +109,7 @@ func main() {
 
 	queries := store.New(db)
 	authSvc := auth.NewService(cfg.Server.JWTSecret, queries)
-	server := httpapi.NewServer(queries, authSvc, logBuf, cfg)
+	server := httpapi.NewServer(db, queries, authSvc, logBuf, cfg)
 	server.StartPoller(context.Background(), cfg.Feed.SyncInterval.Duration())
 	server.StartScheduler(context.Background())
 
@@ -260,6 +261,13 @@ PRAGMA foreign_keys=ON;
 			"CREATE INDEX IF NOT EXISTS idx_items_created_at ON items(created_at)",
 		},
 		{
+			"add feeds.min_score",
+			// Must run after the feeds table-recreate migrations: those use
+			// `INSERT INTO feeds_new SELECT *`, which breaks if the column
+			// count changed beforehand.
+			"ALTER TABLE feeds ADD COLUMN min_score INTEGER NOT NULL DEFAULT 0",
+		},
+		{
 			"add digest_results.created_at index",
 			"CREATE INDEX IF NOT EXISTS idx_digest_results_created_at ON digest_results(created_at)",
 		},
@@ -272,7 +280,12 @@ PRAGMA foreign_keys=ON;
 			continue
 		}
 		if _, err := db.Exec(m.sql); err != nil {
-			slog.Debug("schema migration (may already exist)", "name", m.name, "error", err)
+			// Most "failures" here are duplicate-column/index errors on
+			// databases that already have the change, which are expected and
+			// safe to ignore. Anything else (disk error, syntax) must be
+			// visible: log at warn so operators see real failures at the
+			// default info level.
+			slog.Warn("schema migration not applied (may already exist)", "name", m.name, "error", err)
 		} else {
 			slog.Info("schema migration applied", "name", m.name)
 		}
@@ -280,11 +293,20 @@ PRAGMA foreign_keys=ON;
 	// Migrations toggle PRAGMA foreign_keys; make sure enforcement is on even
 	// if a migration failed partway.
 	db.Exec("PRAGMA foreign_keys=ON")
-	// Copy existing guid data into hash and create new unique index.
-	db.Exec("UPDATE items SET hash = guid WHERE hash = '' AND guid != ''")
+	// Copy existing guid data into hash and create new unique index. Only
+	// report when there was actual work to do.
+	res, err := db.Exec("UPDATE items SET hash = guid WHERE hash = '' AND guid != ''")
+	hashMigrated := false
+	if err == nil {
+		if n, rerr := res.RowsAffected(); rerr == nil && n > 0 {
+			hashMigrated = true
+		}
+	}
 	db.Exec("DROP INDEX IF EXISTS idx_items_feed_guid")
 	db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_feed_hash ON items(feed_id, hash) WHERE hash != ''")
-	slog.Info("hash migration complete")
+	if hashMigrated {
+		slog.Info("hash migration complete: copied legacy guid values into items.hash")
+	}
 	return nil
 }
 

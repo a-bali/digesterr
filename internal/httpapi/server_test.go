@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,21 +14,21 @@ import (
 	"digesterr/internal/store"
 )
 
-func setupTestDB(t *testing.T) *store.Queries {
+func setupTestDB(t *testing.T) (*sql.DB, *store.Queries) {
 	t.Helper()
 	db, err := openTestDB()
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return store.New(db)
+	return db, store.New(db)
 }
 
 func setupTestServer(t *testing.T) (*Server, *store.Queries) {
 	t.Helper()
-	queries := setupTestDB(t)
+	db, queries := setupTestDB(t)
 	authSvc := auth.NewService("test-jwt-secret-for-testing", queries)
-	server := NewServer(queries, authSvc, logbuf.New(100), config.Default())
+	server := NewServer(db, queries, authSvc, logbuf.New(100), config.Default())
 	return server, queries
 }
 
@@ -83,6 +84,54 @@ func TestSignup(t *testing.T) {
 	w := makeRequest(server, http.MethodPost, "/api/auth/signup", body, "")
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected status 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAuthResponsesDoNotLeakSecrets guards against serializing the bcrypt
+// hash or Reader API key inside the user object of auth responses.
+func TestAuthResponsesDoNotLeakSecrets(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	w := makeRequest(server, http.MethodPost, "/api/auth/signup", map[string]string{
+		"email":    "leak@example.com",
+		"password": "password123",
+	}, "")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("signup: expected 201, got %d", w.Code)
+	}
+	var signup struct {
+		User   map[string]any `json:"user"`
+		APIKey string         `json:"api_key"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &signup); err != nil {
+		t.Fatalf("decode signup response: %v", err)
+	}
+	for _, field := range []string{"password_hash", "api_key"} {
+		if _, present := signup.User[field]; present {
+			t.Errorf("signup user object contains %q", field)
+		}
+	}
+	if signup.APIKey == "" {
+		t.Error("signup response must still return api_key at top level")
+	}
+
+	w = makeRequest(server, http.MethodPost, "/api/auth/signin", map[string]string{
+		"email":    "leak@example.com",
+		"password": "password123",
+	}, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("signin: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var signin struct {
+		User map[string]any `json:"user"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &signin); err != nil {
+		t.Fatalf("decode signin response: %v", err)
+	}
+	for _, field := range []string{"password_hash", "api_key"} {
+		if _, present := signin.User[field]; present {
+			t.Errorf("signin user object contains %q", field)
+		}
 	}
 }
 
