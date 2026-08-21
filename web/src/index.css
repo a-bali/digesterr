@@ -71,6 +71,13 @@ body {
   color: hsl(var(--foreground));
 }
 
+/* Allow vertical panning everywhere but keep horizontal touches cancelable,
+   so the left-edge swipe composable can preventDefault() and suppress the
+   browser's native back-swipe gesture (mobile). */
+#app {
+  touch-action: pan-y;
+}
+
 /* Themed scrollbars — colors resolve from the theme tokens defined on
    :root/.dark (and the inline --accent override), so switching mode or
    accent recolors every scrollbar instantly, no reload needed. Dimensions
