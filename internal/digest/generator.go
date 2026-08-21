@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"html"
 	"log/slog"
 	"sort"
 	"strings"
@@ -54,6 +53,9 @@ type Generator struct {
 	// sender delivers digests via email when configured; nil disables the
 	// feature entirely.
 	sender emailSender
+	// webBaseURL is the digesterr public base URL (server.public_base_url)
+	// used for in-app links inside emailed digest HTML. May be empty.
+	webBaseURL string
 }
 
 func NewGenerator(queries *store.Queries, llm llmChatter, poller *feed.Poller) *Generator {
@@ -70,6 +72,12 @@ func NewGenerator(queries *store.Queries, llm llmChatter, poller *feed.Poller) *
 // sender (the default) disables the feature.
 func (g *Generator) SetEmailSender(sender emailSender) {
 	g.sender = sender
+}
+
+// SetWebBaseURL sets the public base URL used for in-app links in the
+// rendered email body.
+func (g *Generator) SetWebBaseURL(url string) {
+	g.webBaseURL = strings.TrimRight(url, "/")
 }
 
 type digestItem struct {
@@ -239,7 +247,7 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*stor
 	// Optional email delivery via agentmail. Failures are logged but do not
 	// fail generation: the digest result already exists in-app.
 	if dcfg.SendEmail && g.sender != nil {
-		subject, textBody, htmlBody := renderDigestEmail(content)
+		subject, textBody, htmlBody := renderDigestEmail(content, g.webBaseURL)
 		if err := g.sender.Send(ctx, dcfg.EmailTo, subject, textBody, htmlBody); err != nil {
 			genLogger.Error("digest email delivery failed", "error", err, "to", dcfg.EmailTo)
 		} else {
@@ -251,8 +259,11 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*stor
 }
 
 // renderDigestEmail renders a digest result content as a plain subject line,
-// a plain-text body and a simple HTML body for email delivery.
-func renderDigestEmail(content *digestResultContent) (subject, textBody, htmlBody string) {
+// a plain-text body and an HTML body for email delivery. The HTML body reuses
+// RenderDigestHTML — the same renderer the web interface and Google Reader API
+// use — wrapped in a minimal HTML document. webBaseURL is the digesterr public
+// base URL used for feed-name links.
+func renderDigestEmail(content *digestResultContent, webBaseURL string) (subject, textBody, htmlBody string) {
 	subject = "Your digest"
 	if content.Title != "" {
 		subject = content.Title
@@ -275,27 +286,11 @@ func renderDigestEmail(content *digestResultContent) (subject, textBody, htmlBod
 	}
 	textBody = strings.TrimSpace(b.String())
 
-	var h strings.Builder
-	h.WriteString("<html><body>")
-	if content.Summary != "" {
-		h.WriteString("<p>" + html.EscapeString(content.Summary) + "</p>")
+	contentJSON, err := json.Marshal(content)
+	if err != nil {
+		contentJSON = nil
 	}
-	if len(content.Highlights) > 0 {
-		h.WriteString("<h3>Highlights</h3><ul>")
-		for _, hl := range content.Highlights {
-			h.WriteString(fmt.Sprintf("<li><a href=%q>%s</a><br>%s</li>", hl.URL, html.EscapeString(hl.Title), html.EscapeString(hl.LLMSummary)))
-		}
-		h.WriteString("</ul>")
-	}
-	if len(content.Items) > 0 {
-		h.WriteString("<h3>Items</h3><ul>")
-		for _, it := range content.Items {
-			h.WriteString(fmt.Sprintf("<li><a href=%q>%s</a></li>", it.URL, html.EscapeString(it.Title)))
-		}
-		h.WriteString("</ul>")
-	}
-	h.WriteString("</body></html>")
-	htmlBody = h.String()
+	htmlBody = "<html><body>" + RenderDigestHTML(string(contentJSON), webBaseURL) + "</body></html>"
 	return
 }
 

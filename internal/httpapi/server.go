@@ -47,6 +47,7 @@ func NewServer(queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffe
 	// are set; otherwise the generator's sender stays nil and the feature is
 	// inert.
 	s.generator.SetEmailSender(digest.NewAgentMailSender(cfg.AgentMail.Token, cfg.AgentMail.InboxID))
+	s.generator.SetWebBaseURL(cfg.Server.PublicBaseURL)
 	s.agentMailConfigured = cfg.AgentMail.Token != "" && cfg.AgentMail.InboxID != ""
 
 	// Data retention and provider credentials come from the merged config

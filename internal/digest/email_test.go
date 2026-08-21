@@ -108,7 +108,7 @@ func TestRenderDigestEmail(t *testing.T) {
 			{Title: "I1", URL: "https://x/2"},
 		},
 	}
-	subject, text, htmlBody := renderDigestEmail(content)
+	subject, text, htmlBody := renderDigestEmail(content, "https://digesterr.example.com")
 	if subject != "Weekly tech" {
 		t.Errorf("subject = %q", subject)
 	}
@@ -120,5 +120,10 @@ func TestRenderDigestEmail(t *testing.T) {
 	}
 	if !strings.Contains(htmlBody, "&lt;script&gt;") {
 		t.Errorf("escaped title missing: %q", htmlBody)
+	}
+	// The email HTML must reuse the shared web/Reader renderer (title/summary
+	// markup, highlight cards, "All items" list).
+	if !strings.Contains(htmlBody, `class="digest-title"`) || !strings.Contains(htmlBody, `class="digest-summary"`) || !strings.Contains(htmlBody, "<h4>All items</h4>") {
+		t.Errorf("expected shared renderer markup, got %q", htmlBody)
 	}
 }
