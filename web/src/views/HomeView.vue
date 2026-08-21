@@ -36,19 +36,16 @@ const savedItems = ref<Item[]>([])
 const showingSaved = ref(false)
 const sidebarOpen = ref(false)
 
-// Swipe from left edge opens the sidebar on mobile/tablet.
+// Left-edge swipe walks one pane to the left: content -> list, list ->
+// sidebar (per user spec — no separate right-edge gesture).
 const canSwipe = computed(() => !isDesktop.value) as unknown as Ref<boolean>
-// Left-edge swipe opens the sidebar. Right-edge leftward swipe goes back one
-// pane: content -> list (per task t_dc7e0368). Only active when the content
-// pane is showing, otherwise the right edge stays free. The callbacks
-// reference computeds declared below — fine, because they only run on
-// touch events long after setup completes.
-useSwipeGesture(canSwipe, () => { sidebarOpen.value = true }, {
-  onBackSwipe: () => {
-    if (!showContentPane.value) return
+useSwipeGesture(canSwipe, () => {
+  if (showContentPane.value) {
     if (digestMode.value) digestStore.selectedResult = null
     else feedStore.selectedItem = null
-  },
+  } else {
+    sidebarOpen.value = true
+  }
 })
 
 const pendingItemId = ref<number | null>(null)

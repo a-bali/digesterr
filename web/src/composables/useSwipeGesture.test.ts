@@ -137,56 +137,15 @@ describe('useSwipeGesture', () => {
     expect(e.preventDefault).not.toHaveBeenCalled()
   })
 
-  describe('right-edge back swipe', () => {
-    function touchStartRight(x: number, y: number) {
-      const e = new TouchEvent('touchstart', {
-        touches: [new Touch({ identifier: 0, target: document.body, clientX: x, clientY: y })],
-        bubbles: true,
-        cancelable: true,
-      })
-      vi.spyOn(e, 'preventDefault')
-      document.dispatchEvent(e)
-      return e
-    }
-
-    it('fires onBackSwipe on a leftward right-edge swipe', async () => {
-      current.app.unmount()
-      const onBackSwipe = vi.fn()
-      // jsdom viewport is 1024 wide; right edge zone starts at 1024-20.
-      current = mountSwipe({ onSwipe: vi.fn(), onBackSwipe } as any)
-      touchStartRight(1015, 100)
-      touchMove(950, 102)
-      touchEnd(940, 104)
-      await nextTick()
-      expect(onBackSwipe).toHaveBeenCalledOnce()
-    })
-
-    it('does not fire onBackSwipe for rightward movement from the right edge', async () => {
-      current.app.unmount()
-      const onBackSwipe = vi.fn()
-      current = mountSwipe({ onSwipe: vi.fn(), onBackSwipe } as any)
-      touchStartRight(1015, 100)
-      touchEnd(1023, 102)
-      await nextTick()
-      expect(onBackSwipe).not.toHaveBeenCalled()
-    })
-
-    it('does not fire onBackSwipe when the callback is not provided', async () => {
-      current.app.unmount()
-      const onSwipe = vi.fn()
-      current = mountSwipe({ onSwipe })
-      touchStartRight(1015, 100)
-      touchEnd(940, 102)
-      await nextTick()
-      expect(onSwipe).not.toHaveBeenCalled()
-    })
-
-    it('preventDefaults touchstart in the right edge zone too', async () => {
-      current.app.unmount()
-      const onBackSwipe = vi.fn()
-      current = mountSwipe({ onSwipe: vi.fn(), onBackSwipe } as any)
-      const e = touchStartRight(1015, 100)
-      expect(e.preventDefault).toHaveBeenCalled()
-    })
+  it('ignores right-edge touches entirely (no back-swipe gesture)', async () => {
+    current.app.unmount()
+    const onSwipe = vi.fn()
+    // jsdom viewport is 1024 wide; right edge zone would start at ~1004.
+    current = mountSwipe({ onSwipe })
+    touchStart(1015, 100)
+    touchMove(950, 102)
+    touchEnd(940, 104)
+    await nextTick()
+    expect(onSwipe).not.toHaveBeenCalled()
   })
 })

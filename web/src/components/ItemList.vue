@@ -142,14 +142,16 @@ function commentsTitle(val: number): string {
       @update:sort-value="onSortValue"
       @update:min-score="onMinScore"
     />
-    <Skeleton v-if="feedStore.loading" class="m-3 h-12" />
+    <Skeleton v-if="feedStore.loading && displayItems.length === 0" class="m-3 h-12" />
     <div v-else-if="!feedStore.activeFeedId && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
     <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
     <template v-else>
+      <!-- Refresh in flight with rows present: dim instead of replacing, so
+           the list and scroll position stay visible during the reload. -->
       <div v-for="item in displayItems" :key="item.id"
       role="button" tabindex="0"
       class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
-      :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved' }"
+      :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved', 'opacity-50 transition-opacity': feedStore.loading }"
       :data-selected-item="item.id === feedStore.selectedItem?.id ? '' : undefined"
       @click="emit('selectItem', item)"
       @keydown.enter.prevent="emit('selectItem', item)"
