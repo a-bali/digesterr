@@ -41,6 +41,7 @@ type digestConfigJSON struct {
 }
 
 type Generator struct {
+	db              *sql.DB
 	queries         *store.Queries
 	llm             llmChatter
 	enrichers       map[string]feed.Enricher
@@ -48,8 +49,9 @@ type Generator struct {
 	extractor       *feed.Poller
 }
 
-func NewGenerator(queries *store.Queries, llm llmChatter, poller *feed.Poller) *Generator {
+func NewGenerator(db *sql.DB, queries *store.Queries, llm llmChatter, poller *feed.Poller) *Generator {
 	return &Generator{
+		db:              db,
 		queries:         queries,
 		llm:             llm,
 		enrichers:       poller.Enrichers(),
@@ -186,7 +188,17 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*stor
 	configSnapshot := cfg.Config
 	contentJSON, _ := json.Marshal(content)
 
-	result, err := g.queries.CreateDigestResult(ctx, store.CreateDigestResultParams{
+	// Persist the result, its item links, and the digested status flips in a
+	// single transaction: a partial failure must not leave a digest result
+	// with missing links or items stuck in the wrong state.
+	tx, err := g.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("beginning digest persistence: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := g.queries.WithTx(tx)
+
+	result, err := qtx.CreateDigestResult(ctx, store.CreateDigestResultParams{
 		UserID:         cfg.UserID,
 		ConfigID:       cfg.ID,
 		ConfigSnapshot: configSnapshot,
@@ -198,26 +210,38 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*stor
 	}
 
 	for _, h := range highlights {
-		g.queries.CreateDigestResultItem(ctx, store.CreateDigestResultItemParams{
+		if _, err := qtx.CreateDigestResultItem(ctx, store.CreateDigestResultItemParams{
 			ResultID:    result.ID,
 			ItemID:      h.ID,
 			IsHighlight: 1,
-		})
-		g.queries.UpdateItemStatus(ctx, store.UpdateItemStatusParams{
+		}); err != nil {
+			return nil, fmt.Errorf("linking highlight item %d to result: %w", h.ID, err)
+		}
+		if _, err := qtx.UpdateItemStatus(ctx, store.UpdateItemStatusParams{
 			ID:     h.ID,
 			Status: "digested",
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("marking item %d digested: %w", h.ID, err)
+		}
 	}
 	for _, item := range rest {
-		g.queries.CreateDigestResultItem(ctx, store.CreateDigestResultItemParams{
+		if _, err := qtx.CreateDigestResultItem(ctx, store.CreateDigestResultItemParams{
 			ResultID:    result.ID,
 			ItemID:      item.ID,
 			IsHighlight: 0,
-		})
-		g.queries.UpdateItemStatus(ctx, store.UpdateItemStatusParams{
+		}); err != nil {
+			return nil, fmt.Errorf("linking item %d to result: %w", item.ID, err)
+		}
+		if _, err := qtx.UpdateItemStatus(ctx, store.UpdateItemStatusParams{
 			ID:     item.ID,
 			Status: "digested",
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("marking item %d digested: %w", item.ID, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing digest result: %w", err)
 	}
 
 	slog.Info("digest generated", "result_id", result.ID, "config_id", cfg.ID, "config_name", cfg.Name, "highlights", len(highlights), "items", len(rest), "duration", time.Since(start))

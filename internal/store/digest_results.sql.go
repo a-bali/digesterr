@@ -571,6 +571,47 @@ func (q *Queries) MarkDigestConfigRead(ctx context.Context, arg MarkDigestConfig
 	return err
 }
 
+const markDigestConfigResultItemsRead = `-- name: MarkDigestConfigResultItemsRead :execrows
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE status = 'digested'
+  AND id IN (
+    SELECT dri.item_id FROM digest_result_items dri
+    JOIN digest_results dr ON dr.id = dri.result_id
+    WHERE dr.user_id = ?1
+      AND dr.status = 'read'
+      AND (?2 IS NULL OR dr.config_id = ?2)
+  )
+`
+
+type MarkDigestConfigResultItemsReadParams struct {
+	UserID  int64       `json:"user_id"`
+	Column2 interface{} `json:"column_2"`
+}
+
+// Cascade for mark-config-read / mark-all-read: flips digested items of every
+// result that just transitioned new -> read for the given config (or all
+// configs when configID is NULL).
+func (q *Queries) MarkDigestConfigResultItemsRead(ctx context.Context, arg MarkDigestConfigResultItemsReadParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markDigestConfigResultItemsRead, arg.UserID, arg.Column2)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const markDigestResultItemsRead = `-- name: MarkDigestResultItemsRead :exec
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE status = 'digested'
+  AND id IN (SELECT item_id FROM digest_result_items WHERE result_id = ?)
+`
+
+// When a digest result is marked read, its linked items transition from
+// digested to read (spec: item lifecycle). Items in other states are untouched.
+func (q *Queries) MarkDigestResultItemsRead(ctx context.Context, resultID int64) error {
+	_, err := q.db.ExecContext(ctx, markDigestResultItemsRead, resultID)
+	return err
+}
+
 const updateDigestResultStatus = `-- name: UpdateDigestResultStatus :one
 UPDATE digest_results
 SET status = ?, updated_at = DATETIME('now')

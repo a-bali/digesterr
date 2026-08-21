@@ -470,13 +470,15 @@ func TestDigestResultReadCascade(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
+	// Spec: marking a digest result read flips its linked items from
+	// digested to read.
 	updated1, _ := queries.GetItem(t.Context(), item1.ID)
-	if updated1.Status != "digested" {
-		t.Fatalf("expected item1 status 'digested', got %s", updated1.Status)
+	if updated1.Status != "read" {
+		t.Fatalf("expected item1 status 'read' after cascade, got %s", updated1.Status)
 	}
 	updated2, _ := queries.GetItem(t.Context(), item2.ID)
-	if updated2.Status != "digested" {
-		t.Fatalf("expected item2 status 'digested', got %s", updated2.Status)
+	if updated2.Status != "read" {
+		t.Fatalf("expected item2 status 'read' after cascade, got %s", updated2.Status)
 	}
 }
 

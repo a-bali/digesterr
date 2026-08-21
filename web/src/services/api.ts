@@ -56,6 +56,22 @@ async function tryRefresh(): Promise<boolean> {
   return refreshPromise
 }
 
+// parseBody reads the response body defensively: 204/empty bodies become null,
+// valid JSON is parsed, and non-JSON payloads (e.g. HTML error pages from a
+// reverse proxy) are converted into an error-shaped body instead of throwing
+// a raw SyntaxError.
+async function parseBody(res: Response): Promise<any> {
+  if (res.status === 204) return null
+  const text = await res.text()
+  try {
+    return JSON.parse(text)
+  } catch {
+    if (!text && res.ok) return null
+    if (res.ok) throw new ApiError(res.status, { error: 'invalid response from server' })
+    return { error: text.slice(0, 200) || res.statusText }
+  }
+}
+
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -76,7 +92,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     onUnauthorized?.()
     throw new ApiError(401, { error: 'unauthorized' })
   }
-  const body = res.status === 204 ? null : await res.json()
+  const body = await parseBody(res)
   if (!res.ok) throw new ApiError(res.status, body)
   return body as T
 }

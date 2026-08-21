@@ -40,7 +40,7 @@ func TestValidateConfig(t *testing.T) {
 }
 
 func TestFilterByMinScore(t *testing.T) {
-	queries, cleanup := setupDigestTest(t)
+	_, queries, cleanup := setupDigestTest(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -157,7 +157,7 @@ func (f *fakeScoreEnricher) BulkEnrich(_ context.Context, items []*store.Item) e
 // fresh score is at or above min_score. The excluded items keep their
 // refreshed scores persisted but stay unread.
 func TestGenerateMinScoreRefreshesScoresThenFilters(t *testing.T) {
-	queries, cleanup := setupDigestTest(t)
+	db, queries, cleanup := setupDigestTest(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -213,6 +213,7 @@ func TestGenerateMinScoreRefreshesScoresThenFilters(t *testing.T) {
 	}
 
 	g := &Generator{
+		db:      db,
 		queries: queries,
 		llm: fakeLLM{resp: `{"title":"Filtered","summary":"s","highlights":[]}`},
 		enrichers: map[string]feed.Enricher{
