@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { useFeedStore } from '../stores/feed'
-import { appApi } from '../services/api'
 import Dialog from './ui/Dialog.vue'
 import Input from './ui/Input.vue'
 import Button from './ui/Button.vue'
@@ -43,18 +42,6 @@ const form = reactive({
   maxItems: 100,
   minScore: 0,
   prompt: DEFAULT_PROMPT,
-  sendEmail: false,
-  emailTo: '',
-})
-
-// AgentMail email delivery is only offered when the server has credentials
-// configured (surfaced via the authenticated /api/health payload).
-const agentMailConfigured = ref(false)
-onMounted(async () => {
-  try {
-    const h = await appApi.health()
-    agentMailConfigured.value = !!(h as any).agentmail
-  } catch { /* unconfigured is the safe default */ }
 })
 
 // The min-score threshold only makes sense when at least one selected source
@@ -83,7 +70,6 @@ watch(
         if (parsed.max_items) maxItems = parsed.max_items
         if (typeof parsed.min_score === 'number') minScore = parsed.min_score
         if (parsed.prompt) prompt = parsed.prompt
-        if (parsed.send_email) { form.sendEmail = true; form.emailTo = parsed.email_to || '' }
         if (Array.isArray(parsed.categories) && parsed.categories.length) {
           mode = 'categories'; ids = parsed.categories.map((c: any) => c.name ?? c.id)
         } else if (Array.isArray(parsed.feeds) && parsed.feeds.length) {
@@ -108,8 +94,6 @@ watch(
       form.maxItems = 100
       form.minScore = 0
       form.prompt = DEFAULT_PROMPT
-      form.sendEmail = false
-      form.emailTo = ''
       sourceMode.value = 'categories'
     }
   },
@@ -123,10 +107,6 @@ function buildConfig(): string {
     max_items: form.maxItems,
     min_score: Number(form.minScore) || 0,
     prompt: form.prompt || undefined,
-  }
-  if (agentMailConfigured.value && form.sendEmail && form.emailTo.trim()) {
-    c.send_email = true
-    c.email_to = form.emailTo.trim()
   }
   if (sourceMode.value === 'categories') {
     c.categories = form.sourceIds.map(name => ({ name, highlights: form.highlights, comments: form.comments }))
@@ -191,25 +171,6 @@ function submit() {
       <div class="space-y-1">
         <label class="text-sm font-medium">Prompt (optional)</label>
         <textarea v-model="form.prompt" rows="3" class="flex w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs" />
-      </div>
-
-      <div class="space-y-2">
-        <label class="flex items-center gap-2 text-sm font-medium">
-          <input
-            v-model="form.sendEmail"
-            type="checkbox"
-            class="size-4 accent-accent"
-            :disabled="!agentMailConfigured"
-          />
-          Send via email
-        </label>
-        <p v-if="!agentMailConfigured" class="text-xs text-muted-foreground">
-          Requires AgentMail credentials on the server (AGENTMAIL_TOKEN and AGENTMAIL_INBOX_ID).
-        </p>
-        <div v-if="agentMailConfigured && form.sendEmail" class="space-y-1">
-          <label class="text-sm font-medium">Email address</label>
-          <Input v-model="form.emailTo" type="email" placeholder="me@example.com" required />
-        </div>
       </div>
       <div class="flex gap-2">
         <Button type="submit">{{ config ? 'Save' : 'Create' }}</Button>
