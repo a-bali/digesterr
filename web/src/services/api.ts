@@ -162,3 +162,9 @@ export const logsApi = {
   list: (opts?: { limit?: number; offset?: number; level?: string; type?: string }) =>
     api<LogsResponse>(`/logs${qs({ limit: opts?.limit, offset: opts?.offset, level: opts?.level, type: opts?.type })}`),
 }
+
+// App-level endpoints. /api/health reports "agentmail": true only on
+// authenticated requests when the server has AgentMail credentials.
+export const appApi = {
+  health: () => api<{ status: string; agentmail?: boolean }>('/health'),
+}
