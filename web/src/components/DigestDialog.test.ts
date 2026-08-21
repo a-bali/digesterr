@@ -169,3 +169,84 @@ describe('DigestDialog min score', () => {
     expect(minScoreInput().disabled).toBe(false)
   })
 })
+
+describe('DigestDialog send via email', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    vi.clearAllMocks()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ status: 'ok', agentmail: true }),
+    }))
+  })
+
+  function emailCheckbox(): HTMLInputElement {
+    return [...document.body.querySelectorAll('input[type="checkbox"]')].find(
+      c => c.closest('label')?.textContent?.includes('Send via email'),
+    ) as HTMLInputElement
+  }
+
+  function submit(wrapper: ReturnType<typeof mount>) {
+    const form = document.body.querySelector('form') as HTMLFormElement
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    return flushPromises().then(() => {
+      const emitted = wrapper.emitted('save') as unknown as Array<{ config: string }>[]
+      return JSON.parse(emitted[0][0].config)
+    })
+  }
+
+  it('checkbox is disabled with a hint when agentmail is not configured', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ status: 'ok', agentmail: false }),
+    }))
+    mountDialog()
+    await flushPromises()
+    expect(emailCheckbox().disabled).toBe(true)
+    expect(dialogBody().textContent).toContain('AGENTMAIL_TOKEN')
+  })
+
+  it('shows the email address input when checked and serializes it into the config', async () => {
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    emailCheckbox().click()
+    await flushPromises()
+
+    const emailInput = document.body.querySelector('input[type="email"]') as HTMLInputElement
+    expect(emailInput).toBeTruthy()
+    fillNumber(emailInput, 'me@example.com')
+    await flushPromises()
+
+    const parsed = await submit(wrapper)
+    expect(parsed.send_email).toBe(true)
+    expect(parsed.email_to).toBe('me@example.com')
+  })
+
+  it('omits email fields when unchecked', async () => {
+    const wrapper = mountDialog()
+    await flushPromises()
+    const parsed = await submit(wrapper)
+    expect(parsed.send_email).toBeUndefined()
+    expect(parsed.email_to).toBeUndefined()
+  })
+
+  it('restores send_email and email_to when editing an existing config', async () => {
+    mountDialog({
+      config: {
+        id: 9,
+        user_id: 1,
+        name: 'Daily',
+        schedule: '0 8 * * *',
+        config: JSON.stringify({ feeds: [{ id: 2, highlights: 5, comments: 10 }], send_email: true, email_to: 'x@y.z' }),
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+    })
+    await flushPromises()
+
+    expect(emailCheckbox().checked).toBe(true)
+    const emailInput = document.body.querySelector('input[type="email"]') as HTMLInputElement
+    expect(emailInput?.value).toBe('x@y.z')
+  })
+})

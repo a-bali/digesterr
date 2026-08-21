@@ -87,6 +87,7 @@ type Config struct {
 	LLM     LLMConfig     `yaml:"llm"`
 	Feed    FeedConfig    `yaml:"feed"`
 	Reddit  RedditConfig  `yaml:"reddit"`
+	AgentMail AgentMailConfig `yaml:"agentmail"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -129,6 +130,13 @@ type FeedConfig struct {
 type RedditConfig struct {
 	ClientID     string `yaml:"client_id"`
 	ClientSecret string `yaml:"client_secret"`
+}
+
+// AgentMailConfig holds agentmail.to credentials used for optional email
+// delivery of generated digests.
+type AgentMailConfig struct {
+	Token   string `yaml:"token"`
+	InboxID string `yaml:"inbox_id"`
 }
 
 // Default returns the built-in configuration, used when neither the config
@@ -287,4 +295,7 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 
 	setString(&cfg.Reddit.ClientID, "REDDIT_CLIENT_ID", "")
 	setString(&cfg.Reddit.ClientSecret, "REDDIT_CLIENT_SECRET", "")
+
+	setString(&cfg.AgentMail.Token, "AGENTMAIL_TOKEN", "")
+	setString(&cfg.AgentMail.InboxID, "AGENTMAIL_INBOX_ID", "")
 }

@@ -168,6 +168,9 @@ feed:
   expire_items: 1y
 reddit:
   client_id: file-rid
+agentmail:
+  token: file-token
+  inbox_id: file-inbox
 `)
 	t.Setenv("SERVER_PORT", "7000")
 	t.Setenv("JWT_SECRET", "env-secret")
@@ -179,6 +182,8 @@ reddit:
 	t.Setenv("FEED_EXPIRE_ITEMS", "30d")
 	t.Setenv("REDDIT_CLIENT_ID", "env-rid")
 	t.Setenv("REDDIT_CLIENT_SECRET", "env-rsecret")
+	t.Setenv("AGENTMAIL_TOKEN", "env-token")
+	t.Setenv("AGENTMAIL_INBOX_ID", "env-inbox")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -210,6 +215,9 @@ reddit:
 	}
 	if cfg.Reddit.ClientID != "env-rid" || cfg.Reddit.ClientSecret != "env-rsecret" {
 		t.Errorf("reddit = %q/%q, want env", cfg.Reddit.ClientID, cfg.Reddit.ClientSecret)
+	}
+	if cfg.AgentMail.Token != "env-token" || cfg.AgentMail.InboxID != "env-inbox" {
+		t.Errorf("agentmail = %q/%q, want env", cfg.AgentMail.Token, cfg.AgentMail.InboxID)
 	}
 	// Unset-by-env values keep the file value.
 	if cfg.Logging.BufferSize != 1000 {

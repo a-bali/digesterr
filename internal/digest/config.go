@@ -3,6 +3,7 @@ package digest
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // ValidateConfig validates the JSON stored in a digest config's `config`
@@ -20,6 +21,21 @@ func ValidateConfig(raw string) error {
 	}
 	if cfg.MinScore < 0 {
 		return fmt.Errorf("min_score must be >= 0, got %d", cfg.MinScore)
+	}
+	if cfg.SendEmail {
+		if err := validateEmailTo(cfg.EmailTo); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateEmailTo performs a light sanity check on the delivery address:
+// exactly one @ with non-empty local and domain parts.
+func validateEmailTo(addr string) error {
+	parts := strings.Split(addr, "@")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("email_to must be a valid email address, got %q", addr)
 	}
 	return nil
 }

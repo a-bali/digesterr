@@ -22,6 +22,9 @@ type Server struct {
 	poller    *feed.Poller
 	generator *digest.Generator
 	logs      *logbuf.Buffer
+	// agentMailConfigured reports whether agentmail credentials are set,
+	// exposed via /api/health so the UI can enable the email-delivery option.
+	agentMailConfigured bool
 	// publicBaseURL is the absolute base URL of the digesterr web UI, used to
 	// build in-app links surfaced to Reader clients (feed home pages, digest
 	// article links). Empty means "derive from the request host".
@@ -40,6 +43,11 @@ func NewServer(queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffe
 
 	llmClient := digest.NewLLMClient(cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model)
 	s.generator = digest.NewGenerator(queries, llmClient, s.poller)
+	// Optional agentmail email delivery: enabled only when both credentials
+	// are set; otherwise the generator's sender stays nil and the feature is
+	// inert.
+	s.generator.SetEmailSender(digest.NewAgentMailSender(cfg.AgentMail.Token, cfg.AgentMail.InboxID))
+	s.agentMailConfigured = cfg.AgentMail.Token != "" && cfg.AgentMail.InboxID != ""
 
 	// Data retention and provider credentials come from the merged config
 	// (defaults < config file < env < CLI flags). The expiry age is shared by

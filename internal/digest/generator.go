@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log/slog"
 	"sort"
 	"strings"
@@ -38,6 +39,10 @@ type digestConfigJSON struct {
 	// scores (e.g. plain RSS/Atom) have no score data and always pass.
 	MinScore int    `json:"min_score"`
 	Prompt   string `json:"prompt"`
+	// SendEmail enables optional email delivery of the generated digest via
+	// agentmail (requires server-level agentmail credentials).
+	SendEmail bool   `json:"send_email,omitempty"`
+	EmailTo   string `json:"email_to,omitempty"`
 }
 
 type Generator struct {
@@ -46,6 +51,9 @@ type Generator struct {
 	enrichers       map[string]feed.Enricher
 	commentFetchers map[string]feed.CommentFetcher
 	extractor       *feed.Poller
+	// sender delivers digests via email when configured; nil disables the
+	// feature entirely.
+	sender emailSender
 }
 
 func NewGenerator(queries *store.Queries, llm llmChatter, poller *feed.Poller) *Generator {
@@ -56,6 +64,12 @@ func NewGenerator(queries *store.Queries, llm llmChatter, poller *feed.Poller) *
 		commentFetchers: poller.CommentFetchers(),
 		extractor:       poller,
 	}
+}
+
+// SetEmailSender enables optional email delivery of generated digests. A nil
+// sender (the default) disables the feature.
+func (g *Generator) SetEmailSender(sender emailSender) {
+	g.sender = sender
 }
 
 type digestItem struct {
@@ -221,7 +235,68 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*stor
 	}
 
 	slog.Info("digest generated", "result_id", result.ID, "config_id", cfg.ID, "config_name", cfg.Name, "highlights", len(highlights), "items", len(rest), "duration", time.Since(start))
+
+	// Optional email delivery via agentmail. Failures are logged but do not
+	// fail generation: the digest result already exists in-app.
+	if dcfg.SendEmail && g.sender != nil {
+		subject, textBody, htmlBody := renderDigestEmail(content)
+		if err := g.sender.Send(ctx, dcfg.EmailTo, subject, textBody, htmlBody); err != nil {
+			genLogger.Error("digest email delivery failed", "error", err, "to", dcfg.EmailTo)
+		} else {
+			genLogger.Info("digest emailed", "to", dcfg.EmailTo)
+		}
+	}
+
 	return &result, nil
+}
+
+// renderDigestEmail renders a digest result content as a plain subject line,
+// a plain-text body and a simple HTML body for email delivery.
+func renderDigestEmail(content *digestResultContent) (subject, textBody, htmlBody string) {
+	subject = "Your digest"
+	if content.Title != "" {
+		subject = content.Title
+	}
+
+	var b strings.Builder
+	b.WriteString(content.Summary)
+	b.WriteString("\n\n")
+	if len(content.Highlights) > 0 {
+		b.WriteString("Highlights:\n")
+		for _, h := range content.Highlights {
+			b.WriteString(fmt.Sprintf("* %s\n  %s\n  %s\n\n", h.Title, h.URL, h.LLMSummary))
+		}
+	}
+	if len(content.Items) > 0 {
+		b.WriteString("Items:\n")
+		for _, it := range content.Items {
+			b.WriteString(fmt.Sprintf("* %s\n  %s\n\n", it.Title, it.URL))
+		}
+	}
+	textBody = strings.TrimSpace(b.String())
+
+	var h strings.Builder
+	h.WriteString("<html><body>")
+	if content.Summary != "" {
+		h.WriteString("<p>" + html.EscapeString(content.Summary) + "</p>")
+	}
+	if len(content.Highlights) > 0 {
+		h.WriteString("<h3>Highlights</h3><ul>")
+		for _, hl := range content.Highlights {
+			h.WriteString(fmt.Sprintf("<li><a href=%q>%s</a><br>%s</li>", hl.URL, html.EscapeString(hl.Title), html.EscapeString(hl.LLMSummary)))
+		}
+		h.WriteString("</ul>")
+	}
+	if len(content.Items) > 0 {
+		h.WriteString("<h3>Items</h3><ul>")
+		for _, it := range content.Items {
+			h.WriteString(fmt.Sprintf("<li><a href=%q>%s</a></li>", it.URL, html.EscapeString(it.Title)))
+		}
+		h.WriteString("</ul>")
+	}
+	h.WriteString("</body></html>")
+	htmlBody = h.String()
+	return
 }
 
 type feedLimit struct {

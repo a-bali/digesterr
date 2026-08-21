@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import Dialog from './ui/Dialog.vue'
 import Input from './ui/Input.vue'
@@ -15,6 +15,19 @@ const emit = defineEmits<{
 }>()
 
 const feedStore = useFeedStore()
+
+// Email delivery requires server-side agentmail credentials, reported by the
+// unauthenticated /api/health endpoint.
+const agentMailConfigured = ref(false)
+onMounted(async () => {
+  try {
+    const res = await fetch('/api/health')
+    if (res.ok) {
+      const data = await res.json()
+      agentMailConfigured.value = !!data.agentmail
+    }
+  } catch { /* feature stays hidden */ }
+})
 
 // Feed types that produce a real score (points/upvotes) for their items.
 // Plain RSS/Atom feeds never get scores.
@@ -42,6 +55,8 @@ const form = reactive({
   maxItems: 100,
   minScore: 0,
   prompt: DEFAULT_PROMPT,
+  sendEmail: false,
+  emailTo: '',
 })
 
 // The min-score threshold only makes sense when at least one selected source
@@ -62,6 +77,7 @@ watch(
     if (cfg) {
       let ids: TagValue[] = []
       let highlights = 5, comments = 10, maxItems = 100, minScore = 0, prompt = DEFAULT_PROMPT
+      let sendEmail = false, emailTo = ''
       let mode: 'categories' | 'feeds' = 'categories'
       try {
         const parsed = JSON.parse(cfg.config)
@@ -70,6 +86,8 @@ watch(
         if (parsed.max_items) maxItems = parsed.max_items
         if (typeof parsed.min_score === 'number') minScore = parsed.min_score
         if (parsed.prompt) prompt = parsed.prompt
+        if (parsed.send_email) sendEmail = true
+        if (parsed.email_to) emailTo = parsed.email_to
         if (Array.isArray(parsed.categories) && parsed.categories.length) {
           mode = 'categories'; ids = parsed.categories.map((c: any) => c.name ?? c.id)
         } else if (Array.isArray(parsed.feeds) && parsed.feeds.length) {
@@ -84,6 +102,8 @@ watch(
       form.maxItems = maxItems
       form.minScore = minScore
       form.prompt = prompt
+      form.sendEmail = sendEmail
+      form.emailTo = emailTo
       sourceMode.value = mode
     } else {
       form.name = ''
@@ -94,6 +114,8 @@ watch(
       form.maxItems = 100
       form.minScore = 0
       form.prompt = DEFAULT_PROMPT
+      form.sendEmail = false
+      form.emailTo = ''
       sourceMode.value = 'categories'
     }
   },
@@ -112,6 +134,10 @@ function buildConfig(): string {
     c.categories = form.sourceIds.map(name => ({ name, highlights: form.highlights, comments: form.comments }))
   } else {
     c.feeds = form.sourceIds.map(id => ({ id, highlights: form.highlights, comments: form.comments }))
+  }
+  if (form.sendEmail && agentMailConfigured.value && form.emailTo.trim()) {
+    c.send_email = true
+    c.email_to = form.emailTo.trim()
   }
   return JSON.stringify(c)
 }
@@ -171,6 +197,19 @@ function submit() {
       <div class="space-y-1">
         <label class="text-sm font-medium">Prompt (optional)</label>
         <textarea v-model="form.prompt" rows="3" class="flex w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs" />
+      </div>
+      <div class="space-y-2">
+        <label class="flex items-center gap-2 text-sm font-medium">
+          <input v-model="form.sendEmail" type="checkbox" :disabled="!agentMailConfigured" class="h-4 w-4 accent-primary" />
+          Send via email
+        </label>
+        <p v-if="!agentMailConfigured" class="text-xs text-muted-foreground">
+          Requires agentmail credentials on the server (AGENTMAIL_TOKEN and AGENTMAIL_INBOX_ID).
+        </p>
+        <div v-if="agentMailConfigured && form.sendEmail" class="space-y-1">
+          <label class="text-sm font-medium">Email address</label>
+          <Input v-model="form.emailTo" type="email" placeholder="you@example.com" required />
+        </div>
       </div>
       <div class="flex gap-2">
         <Button type="submit">{{ config ? 'Save' : 'Create' }}</Button>
