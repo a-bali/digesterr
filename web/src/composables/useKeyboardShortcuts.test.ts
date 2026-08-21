@@ -117,6 +117,15 @@ describe('useKeyboardShortcuts', () => {
     wrapper.unmount()
   })
 
+  it('f toggles saved (star) on the selected item', () => {
+    const sel = { id: 2 }
+    const ctx = makeCtx({ selectedItem: () => sel })
+    const { press, wrapper } = mountHarness(ctx)
+    press({ key: 'f' })
+    expect(ctx.toggleSaved).toHaveBeenCalledWith(sel)
+    wrapper.unmount()
+  })
+
   it('v opens the item URL', () => {
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
     const ctx = makeCtx({ selectedItem: () => ({ id: 1, url: 'https://example.com/x' }) })
@@ -157,6 +166,14 @@ describe('useKeyboardShortcuts', () => {
     const ctx = makeCtx()
     const { press, wrapper } = mountHarness(ctx)
     press({ key: 'r' })
+    expect(ctx.refreshCounts).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('Shift+R refreshes feeds (counts)', () => {
+    const ctx = makeCtx()
+    const { press, wrapper } = mountHarness(ctx)
+    press({ key: 'R', shiftKey: true })
     expect(ctx.refreshCounts).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })

@@ -11,7 +11,7 @@ const groups: { title: string; bindings: [string, string][] }[] = [
       ['k / p / ←', 'Previous item'],
       ['Home / End', 'First / last item'],
       ['m or Space', 'Toggle read/unread'],
-      ['s', 'Toggle saved'],
+      ['s or f', 'Toggle saved'],
       ['v', 'Open article URL'],
     ],
   },
@@ -27,7 +27,7 @@ const groups: { title: string; bindings: [string, string][] }[] = [
     bindings: [
       ['u', 'Toggle unread-only filter'],
       ['Shift+A', 'Mark feed as read'],
-      ['r', 'Refresh unread counts'],
+      ['r / Shift+R', 'Refresh unread counts / feeds'],
       ['Shift+D', 'Toggle dark/light theme'],
       ['?', 'Show this help'],
     ],

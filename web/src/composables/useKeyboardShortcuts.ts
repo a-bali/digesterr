@@ -7,9 +7,10 @@ import { onMounted, onUnmounted } from 'vue'
 //   s                  : toggle saved       v : open article URL
 //   ArrowUp / ArrowDown: previous / next feed
 //   PageUp / PageDown  : scroll content pane by one page
+//   f                  : toggle saved (starred)
 //   u                  : toggle unread-only filter
 //   Shift+A            : mark active feed read
-//   r                  : refresh unread counts
+//   r / Shift+R        : refresh unread counts / feeds
 //   Shift+D            : toggle dark/light theme
 //   ? or h             : shortcuts help overlay
 // All shortcuts are suppressed while typing in inputs, textareas, select
@@ -94,6 +95,8 @@ export function useKeyboardShortcuts(ctx: {
         break
       case 's':
       case 'S':
+      case 'f':
+      case 'F':
         if (item) ctx.toggleSaved(item)
         break
       case 'v':
