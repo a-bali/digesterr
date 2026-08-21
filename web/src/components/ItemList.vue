@@ -4,7 +4,7 @@ import { useFeedStore, type FeedSort, type FeedStatusFilter } from '../stores/fe
 import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
-import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare } from 'lucide-vue-next'
+import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, LoaderCircle } from 'lucide-vue-next'
 import { stripContent } from '../lib/utils'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { relativeTime, absoluteTime } from '../lib/format'
@@ -142,9 +142,9 @@ function commentsTitle(val: number): string {
       @update:sort-value="onSortValue"
       @update:min-score="onMinScore"
     />
-    <!-- Empty + in flight: skeleton rows matching item-row height. -->
-    <div v-if="feedStore.loading && displayItems.length === 0" class="space-y-1" data-loading-skeleton>
-      <Skeleton v-for="i in 5" :key="i" class="h-20 w-full" />
+    <!-- Empty + in flight: centered spinner. -->
+    <div v-if="feedStore.loading && displayItems.length === 0" class="flex justify-center py-10" data-loading-spinner>
+      <LoaderCircle class="size-6 animate-spin text-muted-foreground" />
     </div>
     <div v-else-if="!feedStore.activeFeedId && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
     <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
