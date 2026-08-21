@@ -2,8 +2,8 @@
 import { ref, computed } from 'vue'
 import { useDigestStore } from '../stores/digest'
 import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
-import { Circle, CircleDot } from 'lucide-vue-next'
 import Skeleton from './ui/Skeleton.vue'
+import { Circle, CircleDot } from 'lucide-vue-next'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { absoluteTime } from '../lib/format'
 import type { DigestResult } from '../types/api'
@@ -73,7 +73,10 @@ function onSelect(result: DigestResult) {
       @update:status-filter="digestFilter = $event"
       @update:sort-value="sortOrder = $event"
     />
-    <Skeleton v-if="digestStore.loading" class="m-3 h-12" />
+    <!-- Results load async; skeleton rows matching the result-row height. -->
+    <div v-if="digestStore.loading" class="space-y-1 p-3" data-loading-skeleton>
+      <Skeleton v-for="i in 5" :key="i" class="h-20 w-full" />
+    </div>
     <div v-else class="space-y-1 p-3">
       <button v-for="result in visibleResults" :key="result.id"
         class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"

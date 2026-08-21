@@ -5,6 +5,8 @@ import { useDigestStore } from '../stores/digest'
 import { useFeedStore } from '../stores/feed'
 import type { DigestContent, DigestContentItem, DigestSection } from '../types/api'
 import Button from './ui/Button.vue'
+import Separator from './ui/Separator.vue'
+import Skeleton from './ui/Skeleton.vue'
 import { ExternalLink, Clock, MessageCircle, Trash2, Check, ArrowUp, BookOpen } from 'lucide-vue-next'
 import { absoluteTime, feedIcon } from '../lib/format'
 
@@ -90,6 +92,18 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
   <div ref="scroller" class="h-full overflow-y-auto overflow-x-hidden min-w-0 px-3 py-3 sm:p-6" data-digest-content>
     <div v-if="!store.selectedResult" class="flex h-full items-center justify-center text-muted-foreground">
       <BookOpen class="size-8 mr-2" /> <span>Select an item</span>
+    </div>
+    <!-- Result items load async after selection; skeleton while in flight. -->
+    <div v-else-if="store.loading" class="space-y-4" data-loading-skeleton>
+      <Skeleton class="h-7 w-3/4" />
+      <Skeleton class="h-4 w-1/2" />
+      <Separator class="my-4" />
+      <div class="space-y-2">
+        <Skeleton v-for="i in 5" :key="i" class="h-4 w-full" />
+      </div>
+      <div class="space-y-2">
+        <Skeleton v-for="i in 3" :key="i" class="h-4 w-5/6" />
+      </div>
     </div>
     <template v-else>
       <h1 class="text-xl font-semibold mb-2">
