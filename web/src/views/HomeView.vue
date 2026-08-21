@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, computed, type Ref } from 'vue'
+import { ref, watch, onMounted, onUnmounted, computed, useTemplateRef, type Ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 import Button from '../components/ui/Button.vue'
@@ -9,12 +9,14 @@ import ItemContent from '../components/ItemContent.vue'
 import DigestContent from '../components/DigestContent.vue'
 import DigestResultList from '../components/DigestResultList.vue'
 import LogsDialog from '../components/LogsDialog.vue'
+import ShortcutsDialog from '../components/ShortcutsDialog.vue'
 import ThemeMenu from '../components/ThemeMenu.vue'
 import AccountMenu from '../components/AccountMenu.vue'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
 import GoogleReaderApiDialog from '../components/GoogleReaderApiDialog.vue'
 import { useFeedStore } from '../stores/feed'
 import { useDigestStore } from '../stores/digest'
+import { useThemeStore } from '../stores/theme'
 import { feedApi } from '../services/api'
 import type { Item } from '../types/api'
 import { useBreakpoints } from '../composables/useMediaQuery'
@@ -26,6 +28,7 @@ const router = useRouter()
 const route = useRoute()
 const feedStore = useFeedStore()
 const digestStore = useDigestStore()
+const themeStore = useThemeStore()
 
 const { isDesktop, isTablet } = useBreakpoints()
 
@@ -40,6 +43,7 @@ useSwipeGesture(canSwipe, () => { sidebarOpen.value = true })
 const pendingItemId = ref<number | null>(null)
 const showChangePassword = ref(false)
 const readerApiOpen = ref(false)
+const showShortcuts = ref(false)
 
 const feedMode = computed(() => feedStore.activeFeedId != null || showingSaved.value)
 const digestMode = computed(() => digestStore.activeConfigId != null && !feedMode.value)
@@ -62,6 +66,20 @@ useKeyboardShortcuts({
     if (item.status === 'saved') unsaveItem(item)
     else feedStore.updateItemStatus(item, 'saved')
   },
+  markAllRead: () => {
+    if (feedStore.activeFeedId) requestMarkFeedRead(feedStore.activeFeedId)
+  },
+  toggleShowRead: () => {
+    feedStore.changeFilter(feedStore.filter === 'unread' ? 'all' : 'unread')
+  },
+  refreshCounts: () => {
+    feedStore.fetchUnreadCounts()
+    digestStore.fetchUnreadCounts()
+  },
+  toggleTheme: () => {
+    themeStore.mode = themeStore.mode === 'dark' ? 'light' : 'dark'
+  },
+  openHelp: () => { showShortcuts.value = true },
 })
 
 // ---- Lifecycle ----
@@ -188,6 +206,12 @@ async function fetchSavedItems() {
 function onSelectDigestResult(result: { id: number }) {
   router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)
 }
+
+// Keyboard Shift+A routes through the same confirmation as the sidebar action.
+const sidebarRef = useTemplateRef<InstanceType<typeof FeedSidebar>>('sidebar')
+function requestMarkFeedRead(id: number) {
+  sidebarRef.value?.requestMarkFeedRead(id)
+}
 </script>
 
 <template>
@@ -216,6 +240,7 @@ function onSelectDigestResult(result: { id: number }) {
 
     <ChangePasswordDialog :open="showChangePassword" @update:open="showChangePassword = $event" />
     <GoogleReaderApiDialog :open="readerApiOpen" @update:open="readerApiOpen = $event" />
+    <ShortcutsDialog v-model:open="showShortcuts" />
 
     <!-- Body -->
     <div class="flex flex-1 min-h-0">
@@ -224,7 +249,7 @@ function onSelectDigestResult(result: { id: number }) {
         <SplitterGroup direction="horizontal" auto-save-id="digesterr" class="flex-1">
           <SplitterPanel :default-size="18" :min-size="14" :max-size="28">
             <aside class="h-full border-r bg-sidebar overflow-y-auto p-3">
-              <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
+              <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
             </aside>
           </SplitterPanel>
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
