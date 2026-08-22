@@ -7,6 +7,7 @@ import Tooltip from './ui/Tooltip.vue'
 import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, LoaderCircle } from 'lucide-vue-next'
 import { stripContent } from '../lib/utils'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
+import { usePullToRefresh } from '../composables/usePullToRefresh'
 import { relativeTime, absoluteTime } from '../lib/format'
 
 const props = defineProps<{
@@ -30,6 +31,14 @@ const { onScroll } = useInfiniteScroll({
 })
 
 const scrollEl = ref<HTMLElement | null>(null)
+
+// Pull-down-to-refresh on touch devices. Silent path: corner pulse + item
+// slide-in, no full loading state. overscroll-behavior-y on the container
+// suppresses the browser's native pull-to-refresh.
+const { pull: pullDistance, refreshing: pullRefreshing } = usePullToRefresh(
+  scrollEl,
+  () => feedStore.refreshItems({ silent: true }),
+)
 
 // ---- Filter / sort controls (delegated to FilterBar) ----
 
@@ -129,7 +138,19 @@ function commentsTitle(val: number): string {
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto" ref="scrollEl" @scroll="onScroll">
+  <div class="h-full overflow-y-auto overscroll-contain" ref="scrollEl" @scroll="onScroll">
+    <!-- Pull-to-refresh indicator: drops in with the finger while dragging,
+         spins while the triggered refresh runs. -->
+    <div
+      class="flex items-center justify-center overflow-hidden transition-none"
+      :style="{ height: pullRefreshing ? '48px' : `${pullDistance}px`, opacity: pullRefreshing ? 1 : Math.min(pullDistance / 70, 1) }"
+    >
+      <LoaderCircle
+        class="size-5 text-muted-foreground"
+        :class="pullRefreshing ? 'animate-spin' : ''"
+        :style="pullRefreshing ? {} : { transform: `rotate(${pullDistance * 3}deg)` }"
+      />
+    </div>
     <FilterBar
       :status-filter="(feedStore.filter as FilterStatus)"
       :sort-value="(SCORE_MAP_REV[feedStore.sort] ?? 'newest') as FilterSort"
