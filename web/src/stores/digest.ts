@@ -14,6 +14,9 @@ export const useDigestStore = defineStore('digest', () => {
   const selectedResult = ref<DigestResult | null>(null)
   const resultItems = ref<DigestResultItemWithData[]>([])
   const loading = ref(false)
+  // True while the 10s poll / visibility-change background refresh runs;
+  // drives the corner pulse indicator, not any list UI.
+  const backgroundRefreshing = ref(false)
   const generating = ref(false)
   const loadingMore = ref(false)
   const hasMore = ref(false)
@@ -171,6 +174,7 @@ export const useDigestStore = defineStore('digest', () => {
   }
 
   async function silentRefresh() {
+    backgroundRefreshing.value = true
     try {
       configs.value = await digestApi.listConfigs()
       const cfgId = activeConfigId.value
@@ -183,6 +187,8 @@ export const useDigestStore = defineStore('digest', () => {
       }
     } catch {
       // silent
+    } finally {
+      backgroundRefreshing.value = false
     }
   }
 
@@ -208,7 +214,7 @@ export const useDigestStore = defineStore('digest', () => {
 
   return {
     configs, activeConfigId, results, selectedResult, resultItems,
-    loading, generating, loadingMore, hasMore, activeConfig, unreadCounts,
+    loading, generating, loadingMore, hasMore, activeConfig, unreadCounts, backgroundRefreshing,
     fetchConfigs, createConfig, updateConfig, deleteConfig,
     setActiveConfig, selectResult, generateNow, markResultRead, deleteResult,
     updateResultStatus, silentRefresh, fetchUnreadCounts, fetchMoreResults,

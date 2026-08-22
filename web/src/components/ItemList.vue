@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, TransitionGroup } from 'vue'
 import { useFeedStore, type FeedSort, type FeedStatusFilter } from '../stores/feed'
 import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
@@ -150,7 +150,9 @@ function commentsTitle(val: number): string {
     <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
     <template v-else>
       <!-- Refresh in flight with rows present: dim instead of replacing, so
-           the list and scroll position stay visible during the reload. -->
+           the list and scroll position stay visible during the reload.
+           TransitionGroup: newly fetched items slide in from the top. -->
+      <TransitionGroup name="item-enter" tag="div">
       <div v-for="item in displayItems" :key="item.id"
       role="button" tabindex="0"
       class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
@@ -187,7 +189,8 @@ function commentsTitle(val: number): string {
           <template v-if="item.comments_count > 0">{{ commentsTitle(item.comments_count) }}</template>
         </Tooltip>
       </div>
-    </div>
+      </div>
+    </TransitionGroup>
     <div v-if="!props.showingSaved && feedStore.loadingMore" class="p-3">
       <Skeleton class="h-12" />
     </div>
