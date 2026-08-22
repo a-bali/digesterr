@@ -162,3 +162,15 @@ export const logsApi = {
   list: (opts?: { limit?: number; offset?: number; level?: string; type?: string }) =>
     api<LogsResponse>(`/logs${qs({ limit: opts?.limit, offset: opts?.offset, level: opts?.level, type: opts?.type })}`),
 }
+
+export interface VersionInfo {
+  version: string
+  go: string
+  os: string
+  arch: string
+  uptime_seconds: number
+}
+
+export const systemApi = {
+  version: () => api<VersionInfo>('/version'),
+}

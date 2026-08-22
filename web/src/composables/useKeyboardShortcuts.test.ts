@@ -47,7 +47,11 @@ function mountHarness(base: ReturnType<typeof makeCtx>) {
   }))
   const press = (init: Partial<KeyboardEventInit> & { key: string }, target?: EventTarget) => {
     const ev = new KeyboardEvent('keydown', { cancelable: true, ...init })
-    ;(target ?? window).dispatchEvent(ev)
+    const t = target ?? window
+    // jsdom's KeyboardEvent has a readonly `target` set at dispatch; define
+    // it beforehand so the handler sees the simulated target.
+    try { Object.defineProperty(ev, 'target', { value: t, configurable: true, writable: true }) } catch { /* ignore */ }
+    t.dispatchEvent(ev)
     return ev
   }
   return { wrapper, press }

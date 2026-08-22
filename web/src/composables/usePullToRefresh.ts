@@ -45,6 +45,11 @@ export function usePullToRefresh(
     if (enabled && !enabled.value) return
     if (refreshing.value) return
     if (!container.value || container.value.scrollTop > 0) return
+    // Only claim touches that begin INSIDE this container. Without this, a
+    // downward drag starting in another scroller (e.g. the content pane on
+    // mobile) gets mistaken for a pull: preventDefault blocks that pane's
+    // native scrolling and the indicator flashes.
+    if (!(e.target instanceof Node) || !container.value.contains(e.target)) return
     const touch = e.touches[0]
     startY = touch.clientY
     startX = touch.clientX

@@ -35,6 +35,8 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ github.ref_name }}
           tags: |
             ghcr.io/a-bali/digesterr:${{ github.ref_name }}
             ghcr.io/a-bali/digesterr:latest

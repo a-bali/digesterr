@@ -7,7 +7,7 @@ import Skeleton from './ui/Skeleton.vue'
 import { logsApi } from '../services/api'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import type { LogEntry } from '../types/api'
-import { ChevronRight, RefreshCw, ScrollText } from 'lucide-vue-next'
+import { RefreshCw, ScrollText } from 'lucide-vue-next'
 
 const PAGE_SIZE = 200
 
@@ -19,6 +19,7 @@ const hasMore = ref(false)
 const total = ref(0)
 const levelFilter = ref('')
 const categoryFilter = ref('')
+// Rows the user clicked open to full length (wrapped) — one set per entry key.
 const expanded = ref<Set<string>>(new Set())
 const error = ref('')
 
@@ -60,15 +61,11 @@ function entryKey(e: LogEntry): string {
   return `${e.time}|${e.level}|${categoryOf(e)}|${e.message}|${JSON.stringify(e.attrs || {})}`
 }
 
-// Structured context fields to show in the expanded section. The category
-// itself is already rendered as the row badge, so it is not repeated.
+// Structured context fields rendered inline as key=value after the message.
+// The category itself is already rendered as the row badge, so it is skipped.
 function attrEntries(e: LogEntry): [string, string][] {
   if (!e.attrs) return []
   return Object.entries(e.attrs).filter(([k]) => k !== 'category')
-}
-
-function expandable(e: LogEntry): boolean {
-  return attrEntries(e).length > 0
 }
 
 function isExpanded(e: LogEntry): boolean {
@@ -78,11 +75,8 @@ function isExpanded(e: LogEntry): boolean {
 function toggleExpanded(e: LogEntry) {
   const key = entryKey(e)
   const next = new Set(expanded.value)
-  if (next.has(key)) {
-    next.delete(key)
-  } else {
-    next.add(key)
-  }
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
   expanded.value = next
 }
 
@@ -174,10 +168,10 @@ onUnmounted(() => {
     @update:open="onOpenChange"
     title="Logs"
     description="Recent backend logs (newest first)."
-    content-class="max-w-[min(66vw,1100px)]"
+    content-class="max-w-[min(95vw,1100px)] w-[95vw]"
   >
     <template #trigger>
-      <Button variant="ghost" size="icon" title="Logs">
+      <Button variant="ghost" size="icon" title="Logs" data-logs-trigger>
         <ScrollText class="size-4" />
       </Button>
     </template>
@@ -205,45 +199,24 @@ onUnmounted(() => {
       <p v-if="error" class="text-xs text-destructive">{{ error }}</p>
 
       <div class="max-h-[60vh] overflow-y-auto rounded-md border bg-muted/20" @scroll="onScroll">
+        <!-- One line per entry: time, level, category, message, then
+             key=value pairs inline (key muted, value foreground). Truncated
+             to a single row; click toggles full-length wrapping. -->
         <template v-for="(e, i) in entries" :key="i">
           <div
-            class="flex cursor-pointer items-start gap-2 border-b border-border/50 px-2 py-1 font-mono text-xs leading-relaxed last:border-b-0 hover:bg-muted/40"
-            :class="levelRowClass[e.level] || ''"
-            :data-expandable="expandable(e)"
+            class="cursor-pointer border-b border-border/50 px-2 py-1 font-mono text-xs leading-relaxed last:border-b-0 hover:bg-muted/40"
+            :class="[levelRowClass[e.level] || '', isExpanded(e) ? 'whitespace-pre-wrap break-all' : 'whitespace-nowrap overflow-hidden text-ellipsis']"
+            :title="isExpanded(e) ? undefined : 'Click to show full line'"
             @click="toggleExpanded(e)"
           >
-            <button
-              v-if="expandable(e)"
-              class="mt-px shrink-0 text-muted-foreground hover:text-foreground"
-              :aria-label="isExpanded(e) ? 'Collapse details' : 'Expand details'"
-              :aria-expanded="isExpanded(e)"
-              @click.stop="toggleExpanded(e)"
-            >
-              <ChevronRight class="size-3 transition-transform" :class="isExpanded(e) ? 'rotate-90' : ''" />
-            </button>
-            <span v-else class="mt-px size-3 shrink-0" />
-            <span class="shrink-0 text-muted-foreground">{{ fmtTime(e.time) }}</span>
-            <span class="shrink-0 rounded px-1 py-px text-[10px] font-semibold" :class="levelClass[e.level] || 'bg-muted text-muted-foreground'">
+            <span class="mr-2 shrink-0 text-muted-foreground">{{ fmtTime(e.time) }}</span>
+            <span class="mr-2 inline-block shrink-0 rounded px-1 py-px text-[10px] font-semibold align-baseline" :class="levelClass[e.level] || 'bg-muted text-muted-foreground'">
               {{ e.level }}
             </span>
-            <span class="shrink-0 rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
+            <span class="mr-2 inline-block shrink-0 rounded border border-border px-1 py-px text-[10px] text-muted-foreground align-baseline">
               {{ categoryOf(e) }}
             </span>
-            <span class="min-w-0 flex-1 break-words">
-              {{ e.message }}
-            </span>
-          </div>
-          <div v-if="isExpanded(e)" class="border-b border-border/50 bg-background/60 px-2 pb-2 pl-5">
-            <div
-              v-if="attrEntries(e).length"
-              class="grid grid-cols-[max-content,1fr] gap-x-4 gap-y-0.5 rounded-md border border-border/60 bg-muted/10 px-3 py-2 font-mono text-[11px]"
-            >
-              <template v-for="[k, v] in attrEntries(e)" :key="k">
-                <span class="text-muted-foreground">{{ k }}</span>
-                <span class="min-w-0 break-words text-foreground">{{ v }}</span>
-              </template>
-            </div>
-            <p v-else class="text-[11px] text-muted-foreground">No additional fields.</p>
+            <span>{{ e.message }}</span><template v-for="[k, v] in attrEntries(e)" :key="k">{{ ' ' }}<span class="text-muted-foreground">{{ k }}</span><span>=</span><span class="text-foreground">{{ JSON.stringify(v) }}</span></template>
           </div>
         </template>
         <div v-if="loadingMore" class="px-3 py-3 text-center text-xs text-muted-foreground">Loading older…</div>

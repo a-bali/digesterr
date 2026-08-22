@@ -15,10 +15,10 @@ build-web:
 	cp -r web/dist/. cmd/digesterr/static/
 
 build: build-web
-	go build -o bin/digesterr ./cmd/digesterr
+	go build -ldflags "-X digesterr/internal/httpapi.Version=$$(git describe --tags --always --dirty)" -o bin/digesterr ./cmd/digesterr
 
 build-linux: build-web
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/digesterr-linux-amd64 ./cmd/digesterr
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "-X digesterr/internal/httpapi.Version=$$(git describe --tags --always --dirty)" -o bin/digesterr-linux-amd64 ./cmd/digesterr
 
 run: build
 	JWT_SECRET=$(JWT_SECRET) DATABASE_PATH=$(DB_PATH) PORT=$(PORT) ./bin/digesterr

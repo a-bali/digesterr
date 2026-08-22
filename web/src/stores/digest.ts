@@ -99,14 +99,20 @@ export const useDigestStore = defineStore('digest', () => {
   }
 
   async function selectResult(result: DigestResult) {
+    // Already selected with items loaded: nothing to fetch. Clicking the
+    // current row (or the route watcher re-entering after the list already
+    // selected it) must not re-render the whole middle pane.
+    if (selectedResult.value?.id === result.id && resultItems.value.length > 0) return
     selectedResult.value = result
-    loading.value = true
+    // Deliberately NOT setting `loading` here: that flag dims the entire
+    // middle-pane list during selection. Selecting an item only affects the
+    // right pane.
     try {
-      resultItems.value = await digestApi.listResultItems(result.id)
+      const items = await digestApi.listResultItems(result.id)
+      if (selectedResult.value?.id !== result.id) return // switched away mid-flight
+      resultItems.value = items
     } catch (e) {
       toastError(e, 'Failed to load result items')
-    } finally {
-      loading.value = false
     }
   }
 

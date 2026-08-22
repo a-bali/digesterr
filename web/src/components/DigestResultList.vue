@@ -53,7 +53,9 @@ function isSelected(result: DigestResult): boolean {
   return result.id === digestStore.selectedResult?.id
 }
 
-function onSelect(result: DigestResult) {
+function onSelect(e: MouseEvent, result: DigestResult) {
+  // Blur on mouse click so no focus outline lingers after selection moves.
+  ;(e.currentTarget as HTMLElement).blur()
   if (result.status !== 'read') digestStore.updateResultStatus(result.id, 'read')
   digestStore.selectResult(result)
   emit('select', result)
@@ -80,8 +82,8 @@ function onSelect(result: DigestResult) {
     <div v-else class="space-y-1 p-3">
       <button v-for="result in visibleResults" :key="result.id"
         class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
-        :class="{ 'bg-accent/10 font-medium text-accent': isSelected(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read', 'opacity-50': digestStore.loading }"
-        @click="onSelect(result)"
+        :class="{ 'bg-accent/10': isSelected(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read', 'opacity-50': digestStore.loading }"
+        @click="onSelect($event, result)"
       >
         <div class="flex items-start gap-1 min-w-0">
           <CircleDot v-if="result.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />

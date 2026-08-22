@@ -58,6 +58,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 
 	// Health endpoints are unauthenticated so cluster probes work.
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /api/version", s.handleVersion)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 
 	mux.HandleFunc("POST /api/auth/signup", s.handleSignup)

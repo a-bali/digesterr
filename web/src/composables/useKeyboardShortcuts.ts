@@ -56,8 +56,14 @@ export function useKeyboardShortcuts(ctx: {
     // Never fire while typing in editable fields.
     const target = e.target as HTMLElement | null
     const tag = target?.tagName
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') return
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
     if (target?.isContentEditable) return
+    // Buttons swallow shortcuts too (e.g. focus restored to a header button
+    // after its dialog closes, or focus left on a clicked feed row). Blur the
+    // button and proceed instead of silently ignoring every keypress.
+    if (tag === 'BUTTON' || typeof target?.closest === 'function' && target.closest('button')) {
+      ;(document.activeElement as HTMLElement | null)?.blur?.()
+    }
     // Never hijack browser/modifier combos (except our Shift+ bindings).
     if (e.ctrlKey || e.metaKey || e.altKey) return
 

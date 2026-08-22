@@ -43,8 +43,9 @@ function scroller(): HTMLElement {
   return document.body.querySelector('[data-logs-dialog] .overflow-y-auto') as HTMLElement
 }
 
+// Log rows are the direct children of the scroller (one div per entry).
 function rows(): HTMLElement[] {
-  return Array.from(document.body.querySelectorAll('[data-logs-dialog] [data-expandable]')) as HTMLElement[]
+  return Array.from(document.body.querySelectorAll('[data-logs-dialog] .overflow-y-auto > div')) as HTMLElement[]
 }
 
 async function openDialog(wrapper: ReturnType<typeof mount>) {
@@ -79,8 +80,68 @@ describe('LogsDialog', () => {
     // Category badge: attrs.category wins for item records, type otherwise.
     expect(bodyText()).toContain('item')
     expect(bodyText()).toContain('feed')
-    // Structured attrs are hidden until the row is expanded.
-    expect(bodyText()).not.toContain('/api/feeds')
+  })
+
+  it('renders structured attrs inline on the same row as the message', async () => {
+    const wrapper = mount(LogsDialog)
+    await openDialog(wrapper)
+
+    const reqRow = rows().find(r => r.textContent?.includes('request ok'))!
+    expect(reqRow.textContent).toContain('request ok')
+    expect(reqRow.textContent).toContain('path=')
+    expect(reqRow.textContent).toContain('/api/feeds')
+    expect(reqRow.textContent).toContain('duration=')
+    expect(reqRow.textContent).toContain('12ms')
+
+    // One row per entry — no separate expanded details section.
+    const itemRow = rows().find(r => r.textContent?.includes('extract item'))!
+    expect(itemRow.textContent).toContain('item_id="42"')
+    expect(itemRow.textContent).toContain('https://example.com/a')
+    // The category attr is already shown as the badge, not repeated inline.
+    expect(itemRow.textContent).not.toContain('category=')
+  })
+
+  it('click toggles full-length wrapping of a truncated row', async () => {
+    const wrapper = mount(LogsDialog)
+    await openDialog(wrapper)
+
+    const reqRow = rows().find(r => r.textContent?.includes('request ok'))!
+    expect(reqRow.className).toContain('whitespace-nowrap')
+
+    reqRow.dispatchEvent(new Event('click'))
+    await flushPromises()
+
+    const expandedRow = rows().find(r => r.textContent?.includes('request ok'))!
+    expect(expandedRow.className).toContain('whitespace-pre-wrap')
+
+    expandedRow.dispatchEvent(new Event('click'))
+    await flushPromises()
+    const collapsedAgain = rows().find(r => r.textContent?.includes('request ok'))!
+    expect(collapsedAgain.className).toContain('whitespace-nowrap')
+  })
+
+  it('handles entries without attrs gracefully (no key=value tail, category falls back to type)', async () => {
+    const wrapper = mount(LogsDialog)
+    await openDialog(wrapper)
+
+    const genFailed = rows().find(r => r.textContent?.includes('gen failed'))!
+    expect(genFailed.textContent).not.toContain('=')
+    expect(genFailed.textContent).toContain('digest') // category badge from type
+
+    genFailed.dispatchEvent(new Event('click'))
+    await flushPromises()
+    // Toggling is harmless for rows without attrs.
+    expect(rows().length).toBe(sampleEntries().entries.length)
+  })
+
+  it('applies the wide mobile-friendly content class to the dialog', async () => {
+    const wrapper = mount(LogsDialog)
+    await openDialog(wrapper)
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog!.className).toContain('max-w-[min(95vw,1100px)]')
+    expect(dialog!.className).toContain('w-[95vw]')
   })
 
   it('passes level and category filters to the API when changed', async () => {
@@ -114,63 +175,6 @@ describe('LogsDialog', () => {
     expect(options).toContain('feed')
     expect(options).toContain('item')
     expect(options).toContain('digest')
-  })
-
-  it('expands an entry to reveal structured context fields', async () => {
-    const wrapper = mount(LogsDialog)
-    await openDialog(wrapper)
-
-    const expandable = rows().filter(r => r.dataset.expandable === 'true')
-    expect(expandable.length).toBe(2) // request ok + extract item
-
-    expandable[0].dispatchEvent(new Event('click'))
-    await flushPromises()
-
-    expect(bodyText()).toContain('path')
-    expect(bodyText()).toContain('/api/feeds')
-    expect(bodyText()).toContain('duration')
-    expect(bodyText()).toContain('12ms')
-    // The category attr is already shown as the badge, not repeated in the grid.
-    expect(bodyText()).not.toContain('feed_name=Example Feed')
-  })
-
-  it('shows item-level structured fields when the item row is expanded', async () => {
-    const wrapper = mount(LogsDialog)
-    await openDialog(wrapper)
-
-    const itemRow = rows().find(r => r.textContent?.includes('extract item'))!
-    itemRow.dispatchEvent(new Event('click'))
-    await flushPromises()
-
-    expect(bodyText()).toContain('item_id')
-    expect(bodyText()).toContain('42')
-    expect(bodyText()).toContain('feed_id')
-    expect(bodyText()).toContain('Example Feed')
-    expect(bodyText()).toContain('https://example.com/a')
-    expect(bodyText()).toContain('3456')
-  })
-
-  it('handles entries without attrs gracefully (not expandable, category falls back to type)', async () => {
-    const wrapper = mount(LogsDialog)
-    await openDialog(wrapper)
-
-    const genFailed = rows().find(r => r.textContent?.includes('gen failed'))!
-    expect(genFailed.dataset.expandable).toBe('false')
-    expect(genFailed.textContent).toContain('digest') // category badge from type
-
-    genFailed.dispatchEvent(new Event('click'))
-    await flushPromises()
-    // Nothing to expand: no details section appears.
-    expect(document.body.querySelector('[data-logs-dialog] .grid-cols-\\[max-content\\,1fr\\]')).toBeNull()
-  })
-
-  it('applies the wide content class to the dialog', async () => {
-    const wrapper = mount(LogsDialog)
-    await openDialog(wrapper)
-
-    const dialog = document.body.querySelector('[role="dialog"]')
-    expect(dialog).not.toBeNull()
-    expect(dialog!.className).toContain('max-w-[min(66vw,1100px)]')
   })
 
   it('lazy-loads older entries when scrolling to the bottom', async () => {

@@ -10,6 +10,7 @@ import DigestContent from '../components/DigestContent.vue'
 import DigestResultList from '../components/DigestResultList.vue'
 import LogsDialog from '../components/LogsDialog.vue'
 import ShortcutsDialog from '../components/ShortcutsDialog.vue'
+import VersionBadge from '../components/VersionBadge.vue'
 import ThemeMenu from '../components/ThemeMenu.vue'
 import AccountMenu from '../components/AccountMenu.vue'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
@@ -22,7 +23,7 @@ import type { Item } from '../types/api'
 import { useBreakpoints } from '../composables/useMediaQuery'
 import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts'
 import { useSwipeGesture } from '../composables/useSwipeGesture'
-import { Rss, Menu, ArrowLeft } from 'lucide-vue-next'
+import { Rss, Menu, ArrowLeft, CircleHelp } from 'lucide-vue-next'
 
 const router = useRouter()
 const route = useRoute()
@@ -215,6 +216,23 @@ function onSelectDigestResult(result: { id: number }) {
   router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)
 }
 
+// Opening help via the button leaves focus on it; when the dialog closes,
+// reka-ui restores focus to the trigger — Space would then re-open the
+// dialog and shortcuts would appear dead. Blur once the overlay is gone.
+watch(showShortcuts, (open) => {
+  if (!open) {
+    requestAnimationFrame(() => {
+      const el = document.activeElement as HTMLElement | null
+      // Only blur when focus landed on our own header controls.
+      if (el && (el.hasAttribute('data-help-button') || el.closest('[data-logs-trigger]'))) el.blur()
+    })
+  }
+})
+
+function onHelpClick() {
+  showShortcuts.value = true
+}
+
 // Keyboard Shift+A routes through the same confirmation as the sidebar action.
 const sidebarRef = useTemplateRef<InstanceType<typeof FeedSidebar>>('sidebar')
 function requestMarkFeedRead(id: number) {
@@ -247,6 +265,10 @@ function requestMarkFeedRead(id: number) {
           class="size-2 rounded-full bg-accent animate-pulse"
           title="Refreshing…"
         />
+        <!-- Help button: same overlay as pressing "?" -->
+        <Button variant="ghost" size="icon" title="Keyboard shortcuts (?)" data-help-button @click="onHelpClick">
+          <CircleHelp class="size-4" />
+        </Button>
         <LogsDialog />
         <ThemeMenu />
         <!-- Change password / Google Reader API dialogs hook into the events emitted here. -->
@@ -264,9 +286,14 @@ function requestMarkFeedRead(id: number) {
       <template v-if="isDesktop">
         <SplitterGroup direction="horizontal" auto-save-id="digesterr" class="flex-1">
           <SplitterPanel :default-size="18" :min-size="14" :max-size="28">
-            <aside class="h-full border-r bg-sidebar overflow-y-auto p-3">
-              <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
-            </aside>
+            <div class="h-full flex flex-col">
+              <aside class="flex-1 min-h-0 border-r bg-sidebar overflow-y-auto p-3">
+                <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
+              </aside>
+              <div class="shrink-0 flex justify-center border-r bg-sidebar py-1.5">
+                <VersionBadge />
+              </div>
+            </div>
           </SplitterPanel>
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
 
@@ -291,6 +318,9 @@ function requestMarkFeedRead(id: number) {
           :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
         >
           <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
+          <div class="flex justify-center pt-3 pb-1">
+            <VersionBadge />
+          </div>
         </aside>
 
         <!-- List pane -->

@@ -121,6 +121,14 @@ function accentStyle(val: number, max: number): string {
   return `color: hsl(var(--accent) / ${accentOpacity(val, max)})`
 }
 
+// Mouse clicks blur the row so no focus outline lingers on it after the
+// selection moves elsewhere (e.g. j/k navigation). Keyboard activation keeps
+// focus for accessibility.
+function onRowClick(e: MouseEvent, item: any) {
+  ;(e.currentTarget as HTMLElement).blur()
+  emit('selectItem', item)
+}
+
 function pointsTitle(val: number): string {
   const avg = scale.value.points_avg
   const diff = val - avg
@@ -139,18 +147,6 @@ function commentsTitle(val: number): string {
 
 <template>
   <div class="h-full overflow-y-auto overscroll-contain" ref="scrollEl" @scroll="onScroll">
-    <!-- Pull-to-refresh indicator: drops in with the finger while dragging,
-         spins while the triggered refresh runs. -->
-    <div
-      class="flex items-center justify-center overflow-hidden transition-none"
-      :style="{ height: pullRefreshing ? '48px' : `${pullDistance}px`, opacity: pullRefreshing ? 1 : Math.min(pullDistance / 70, 1) }"
-    >
-      <LoaderCircle
-        class="size-5 text-muted-foreground"
-        :class="pullRefreshing ? 'animate-spin' : ''"
-        :style="pullRefreshing ? {} : { transform: `rotate(${pullDistance * 3}deg)` }"
-      />
-    </div>
     <FilterBar
       :status-filter="(feedStore.filter as FilterStatus)"
       :sort-value="(SCORE_MAP_REV[feedStore.sort] ?? 'newest') as FilterSort"
@@ -163,6 +159,19 @@ function commentsTitle(val: number): string {
       @update:sort-value="onSortValue"
       @update:min-score="onMinScore"
     />
+    <!-- Pull-to-refresh indicator: drops in with the finger while dragging,
+         spins while the triggered refresh runs. Sits below the filter bar so
+         its position matches the initial-loading spinner. -->
+    <div
+      class="flex items-center justify-center overflow-hidden transition-none"
+      :style="{ height: pullRefreshing ? '48px' : `${pullDistance}px`, opacity: pullRefreshing ? 1 : Math.min(pullDistance / 70, 1) }"
+    >
+      <LoaderCircle
+        class="size-5 text-muted-foreground"
+        :class="pullRefreshing ? 'animate-spin' : ''"
+        :style="pullRefreshing ? {} : { transform: `rotate(${pullDistance * 3}deg)` }"
+      />
+    </div>
     <!-- Empty + in flight: centered spinner. -->
     <div v-if="feedStore.loading && displayItems.length === 0" class="flex justify-center py-10" data-loading-spinner>
       <LoaderCircle class="size-6 animate-spin text-muted-foreground" />
@@ -177,9 +186,9 @@ function commentsTitle(val: number): string {
       <div v-for="item in displayItems" :key="item.id"
       role="button" tabindex="0"
       class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
-      :class="{ 'bg-accent/10 font-medium text-accent': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved', 'opacity-50 transition-opacity': feedStore.loading }"
+      :class="{ 'bg-accent/10': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved', 'opacity-50 transition-opacity': feedStore.loading }"
       :data-selected-item="item.id === feedStore.selectedItem?.id ? '' : undefined"
-      @click="emit('selectItem', item)"
+      @click="onRowClick($event, item)"
       @keydown.enter.prevent="emit('selectItem', item)"
       @keydown.space.prevent="emit('selectItem', item)">
       <div class="flex items-start gap-1 min-w-0">

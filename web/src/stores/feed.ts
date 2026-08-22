@@ -127,10 +127,14 @@ export const useFeedStore = defineStore('feed', () => {
         offset: 0,
       })
       if (rid !== fetchReq) return
-      // Replace in-place: avoid clearing the array first so the scroll
-      // position is preserved when this is called from the visibility-change
-      // handler on tab refocus.
-      items.value = resp.items
+      // Merge by id instead of replacing. A background refresh (tab refocus,
+      // poll) must never remove rows the user already sees — e.g. items read
+      // during this session would vanish from an Unread-filtered list.
+      // Fresh server rows first (updated statuses), then rows that dropped
+      // out of the server response (read under a filter) keep their place.
+      const knownOrder = new Set(resp.items.map(i => i.id))
+      const kept = items.value.filter(i => !knownOrder.has(i.id))
+      items.value = [...resp.items, ...kept]
       hasMore.value = resp.has_more
       totalItems.value = resp.total ?? 0
     } catch (e) {

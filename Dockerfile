@@ -22,7 +22,8 @@ COPY . .
 # compiling. (web/dist is not copied to the runtime stage; the embedded files
 # are the only static source in the container.)
 COPY --from=web /src/web/dist ./cmd/digesterr/static/
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/digesterr ./cmd/digesterr
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -ldflags "-s -w -X digesterr/internal/httpapi.Version=${VERSION:-dev}" -o /out/digesterr ./cmd/digesterr
 
 # ---- Stage 3: runtime ----
 FROM alpine:3.20
