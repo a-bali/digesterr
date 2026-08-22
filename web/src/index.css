@@ -131,3 +131,15 @@ body {
   inset: 0;
   transition: opacity 0.1s ease;
 }
+
+/* New items slide in from the top when a background refresh brings them in.
+   Only the enter transition is animated; moves/leaves stay instant to avoid
+   janky reflows on feed switches and status changes. */
+.item-enter-enter-active {
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.item-enter-enter-from {
+  transform: translateY(-12px);
+  opacity: 0;
+}

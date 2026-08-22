@@ -113,7 +113,7 @@ onUnmounted(() => {
 function onVisibilityChange() {
   if (document.visibilityState !== 'visible') return
   if (showingSaved.value) fetchSavedItems()
-  else if (feedStore.activeFeedId != null) feedStore.refreshItems()
+  else if (feedStore.activeFeedId != null) feedStore.refreshItems({ silent: true })
 }
 
 // ---- URL → state sync ----
@@ -239,6 +239,14 @@ function requestMarkFeedRead(id: number) {
         <span class="font-semibold shrink-0 hidden sm:inline">Digesterr</span>
       </template>
       <div class="ml-auto flex items-center gap-1">
+        <!-- Background refresh pulse: shown while the 10s poll or a
+             tab-refocus refresh is in flight. -->
+        <span
+          v-if="feedStore.backgroundRefreshing || digestStore.backgroundRefreshing"
+          data-background-refresh-indicator
+          class="size-2 rounded-full bg-accent animate-pulse"
+          title="Refreshing…"
+        />
         <LogsDialog />
         <ThemeMenu />
         <!-- Change password / Google Reader API dialogs hook into the events emitted here. -->

@@ -33,6 +33,9 @@ export const useFeedStore = defineStore('feed', () => {
   const sort = ref<FeedSort>('date_desc')
   const loading = ref(false)
   const loadingMore = ref(false)
+  // True while a background (visibility-change or poll-triggered) refresh of
+  // the active feed runs; drives the corner pulse indicator, not the list.
+  const backgroundRefreshing = ref(false)
   const hasMore = ref(false)
   const totalItems = ref(0)
 
@@ -110,10 +113,11 @@ export const useFeedStore = defineStore('feed', () => {
     await loadPage(activeFeedId.value, true)
   }
 
-  async function refreshItems() {
+  async function refreshItems(opts?: { silent?: boolean }) {
     if (!activeFeedId.value) return
     const rid = ++fetchReq
-    loading.value = true
+    if (opts?.silent) backgroundRefreshing.value = true
+    else loading.value = true
     try {
       const resp = await feedApi.getItems(activeFeedId.value, {
         status: filter.value === 'all' ? undefined : filter.value,
@@ -130,9 +134,14 @@ export const useFeedStore = defineStore('feed', () => {
       hasMore.value = resp.has_more
       totalItems.value = resp.total ?? 0
     } catch (e) {
-      toastError(e, 'Failed to load items')
+      // Background refreshes fail silently — stale data beats an error toast
+      // for a refresh the user didn't ask for.
+      if (!opts?.silent) toastError(e, 'Failed to load items')
     } finally {
-      if (rid === fetchReq) loading.value = false
+      if (rid === fetchReq) {
+        loading.value = false
+        backgroundRefreshing.value = false
+      }
     }
   }
 
@@ -191,7 +200,7 @@ export const useFeedStore = defineStore('feed', () => {
 
   return {
     feeds, activeFeedId, items, selectedItem, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
-    activeFeed, supportsScore, unreadCounts,
+    activeFeed, supportsScore, unreadCounts, backgroundRefreshing,
     fetchFeeds, setActiveFeed, fetchFirstPage, refreshItems, fetchMoreItems,
     selectItem, updateItemStatus, changeFilter, changeSort, changeMinScore, fetchUnreadCounts,
   }
