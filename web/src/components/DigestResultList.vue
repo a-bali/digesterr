@@ -49,6 +49,18 @@ function itemCount(result: DigestResult): number {
   }
 }
 
+// Generated digest title (LLM-produced, stored in the content JSON).
+// Falls back to the generation timestamp when absent.
+function resultTitle(result: DigestResult): string {
+  try {
+    const t = JSON.parse(result.content)?.title
+    if (typeof t === 'string' && t.trim()) return t.trim()
+  } catch {
+    // fall through to timestamp
+  }
+  return absoluteTime(result.created_at)
+}
+
 function isSelected(result: DigestResult): boolean {
   return result.id === digestStore.selectedResult?.id
 }
@@ -88,9 +100,11 @@ function onSelect(e: MouseEvent, result: DigestResult) {
         <div class="flex items-start gap-1 min-w-0">
           <CircleDot v-if="result.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
           <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
-          <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ absoluteTime(result.created_at) }}</p>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-semibold truncate">{{ resultTitle(result) }}</p>
+            <p class="text-xs text-muted-foreground truncate">{{ absoluteTime(result.created_at) }} · {{ itemCount(result) }} items</p>
+          </div>
         </div>
-        <span class="absolute right-2 bottom-2 text-[10px] text-accent font-medium">{{ itemCount(result) }} items</span>
       </button>
     </div>
   </div>
