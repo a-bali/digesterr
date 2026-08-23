@@ -333,6 +333,71 @@ func TestTwitterMediaRendering(t *testing.T) {
 	}
 }
 
+func TestTwitterLinkExpansion(t *testing.T) {
+	// Case 1: media t.co link with NO entities.urls entry (common shape) —
+	// must be dropped when the media is embedded.
+	tw := &twitterTweetResult{}
+	raw, _ := json.Marshal(map[string]any{
+		"rest_id": "2",
+		"legacy": map[string]any{
+			"full_text": "chart says it all https://t.co/JWjZnDMd6G",
+			"extended_entities": map[string]any{"media": []any{
+				map[string]any{"type": "photo", "url": "https://t.co/JWjZnDMd6G", "media_url_https": "https://pbs.twimg.com/media/x.jpg"},
+			}},
+		},
+	})
+	json.Unmarshal(raw, tw)
+	text := tw.displayText(true)
+	if strings.Contains(text, "t.co") {
+		t.Errorf("media t.co link should be dropped when media embedded: %s", text)
+	}
+	if !strings.Contains(text, "chart says it all") {
+		t.Errorf("body text lost: %s", text)
+	}
+	// Without embed, expand to the image URL instead of the opaque t.co.
+	textNoEmbed := tw.displayText(false)
+	if strings.Contains(textNoEmbed, "t.co") || !strings.Contains(textNoEmbed, "pbs.twimg.com/media/x.jpg") {
+		t.Errorf("media link should expand when no embed: %s", textNoEmbed)
+	}
+
+	// Case 2: media link listed in entities.urls too, plus a normal URL.
+	tw2 := &twitterTweetResult{}
+	raw, _ = json.Marshal(map[string]any{
+		"rest_id": "1",
+		"legacy": map[string]any{
+			"full_text": "chart says it all https://t.co/JWjZnDMd6G and read https://t.co/abc123",
+			"entities": map[string]any{
+				"media": []any{map[string]any{"type": "photo", "url": "https://t.co/JWjZnDMd6G", "media_url_https": "https://pbs.twimg.com/media/x.jpg"}},
+				"urls": []any{
+					map[string]any{"url": "https://t.co/JWjZnDMd6G", "expanded_url": "https://pbs.twimg.com/media/x.jpg", "display_url": "pic.x.com/x"},
+					map[string]any{"url": "https://t.co/abc123", "expanded_url": "https://example.com/blog/post", "display_url": "example.com/blog/post"},
+				},
+			},
+			"extended_entities": map[string]any{"media": []any{
+				map[string]any{"type": "photo", "url": "https://t.co/JWjZnDMd6G", "media_url_https": "https://pbs.twimg.com/media/x.jpg"},
+			}},
+		},
+	})
+	json.Unmarshal(raw, tw2)
+
+	text = tw2.displayText(true)
+	if strings.Contains(text, "t.co") {
+		t.Errorf("media t.co link should be dropped when media embedded: %s", text)
+	}
+	if !strings.Contains(text, `<a href="https://example.com/blog/post">`) {
+		t.Errorf("external link should be expanded: %s", text)
+	}
+	if strings.Contains(text, "t.co/abc123") {
+		t.Errorf("external t.co link should be replaced: %s", text)
+	}
+
+	// Without embedded media the media link stays (as an expanded anchor).
+	text2 := tw2.displayText(false)
+	if !strings.Contains(text2, `href="https://pbs.twimg.com/media/x.jpg"`) {
+		t.Errorf("media link should be kept when no embed: %s", text2)
+	}
+}
+
 func TestTwitterAuthHeadersSent(t *testing.T) {
 	var gotCookie, gotCSRF, gotBearer string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -238,6 +238,7 @@ func (t *twitterTweetResult) author() string {
 
 type twitterMedia struct {
 	Type          string `json:"type"`
+	URLTCo        string `json:"url"`
 	MediaURLHTTPS string `json:"media_url_https"`
 	VideoInfo     *struct {
 		Variants []struct {
@@ -246,6 +247,12 @@ type twitterMedia struct {
 			URL         string `json:"url"`
 		} `json:"variants"`
 	} `json:"video_info"`
+}
+
+type twitterURLEntity struct {
+	URL         string `json:"url"`          // t.co short link as it appears in full_text
+	ExpandedURL string `json:"expanded_url"` // real destination
+	DisplayURL  string `json:"display_url"`
 }
 
 type twitterTweetLegacy struct {
@@ -258,7 +265,8 @@ type twitterTweetLegacy struct {
 	InReplyToScreenName string `json:"in_reply_to_screen_name"`
 	RetweetedStatus *twitterTweetWrapper `json:"retweeted_status_result"`
 	Entities        struct {
-		Media []twitterMedia `json:"media"`
+		Media []twitterMedia       `json:"media"`
+		URLs  []twitterURLEntity   `json:"urls"`
 	} `json:"entities"`
 	// Photos, videos and GIFs live in extended_entities; entities.media only
 	// carries the first attachment.
@@ -274,6 +282,71 @@ func (t *twitterTweetLegacy) media() []twitterMedia {
 		return t.ExtendedEntities.Media
 	}
 	return t.Entities.Media
+}
+
+// displayText returns full_text with t.co links replaced by their real
+// destinations. When embedMedia is true, t.co links that wrap this tweet's
+// own media attachments are dropped — the embedded image/video already IS
+// the link target and keeping the raw t.co URL would duplicate it.
+func (t *twitterTweetLegacy) displayText(body string, embedMedia bool) string {
+	return expandLinks(body, t, embedMedia)
+}
+
+// expandLinks replaces t.co URLs in a tweet body with their expanded
+// destinations per the tweet's entities. Media links are dropped when the
+// media is embedded.
+func expandLinks(body string, leg *twitterTweetLegacy, embedMedia bool) string {
+	repl := make([]string, 0, (len(leg.Entities.URLs)+len(leg.media()))*4)
+	// Media attachments: X often leaves the raw t.co media link in
+	// full_text with NO entities.urls entry. When the media is embedded,
+	// drop those links outright; otherwise expand them to the image URL.
+	for _, m := range leg.media() {
+		if m.URLTCo == "" || !strings.Contains(body, m.URLTCo) {
+			continue
+		}
+		if embedMedia {
+			repl = append(repl, m.URLTCo, "")
+		} else if m.MediaURLHTTPS != "" {
+			repl = append(repl, m.URLTCo, `<a href="`+htmlEscaped(m.MediaURLHTTPS)+`">`+htmlEscaped(m.MediaURLHTTPS)+`</a>`)
+		}
+	}
+	for _, u := range leg.Entities.URLs {
+		if u.URL == "" || !strings.Contains(body, u.URL) {
+			continue
+		}
+		if embedMedia && leg.isMediaLink(u) {
+			repl = append(repl, u.URL, "")
+			continue
+		}
+		target := u.ExpandedURL
+		if target == "" {
+			target = u.DisplayURL
+		}
+		if target == "" {
+			continue
+		}
+		label := target
+		if strings.HasPrefix(target, "https://") || strings.HasPrefix(target, "http://") {
+			label = strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(target, "https://"), "http://"), "/")
+		}
+		repl = append(repl, u.URL, `<a href="`+htmlEscaped(target)+`">`+htmlEscaped(label)+`</a>`)
+	}
+	if len(repl) > 0 {
+		body = strings.NewReplacer(repl...).Replace(body)
+	}
+	return body
+}
+
+// isMediaLink reports whether a t.co URL entity wraps one of this tweet's
+// own media attachments. X lists the media link both in entities.urls and
+// entities.media with the same t.co URL.
+func (t *twitterTweetLegacy) isMediaLink(u twitterURLEntity) bool {
+	for _, m := range t.Entities.Media {
+		if m.URLTCo == u.URL && u.URL != "" {
+			return true
+		}
+	}
+	return false
 }
 
 type twitterTweetWrapper struct {
@@ -371,17 +444,22 @@ func parseUserTweets(body []byte) ([]*twitterTweetResult, error) {
 
 // item converts a parsed tweet into a feed Item.
 func (t *twitterTweetResult) item(feedScreenName string) Item {
-	text := t.text()
+	hasMedia := len(t.Legacy.media()) > 0
+	// Media links are dropped from the text only when the media is actually
+	// embedded below.
+	text := t.displayText(hasMedia)
 	author := t.author()
 	title := text
 	if len(title) > 120 {
 		title = title[:117] + "..."
 	}
 	title = strings.ReplaceAll(title, "\n", " ")
+	// Strip any residual HTML from the title for plain display.
+	title = stripRe.ReplaceAllString(title, "")
 
 	itemURL := fmt.Sprintf("https://x.com/%s/status/%s", author, t.RestID)
 
-	content := "<p>" + htmlEscaped(text) + "</p>" + t.mediaHTML()
+	content := "<p>" + htmlEscapedText(text) + "</p>" + t.mediaHTML()
 
 	return Item{
 		GUID:        "twitter:" + t.RestID,
@@ -444,8 +522,41 @@ func (t *twitterTweetResult) text() string {
 	return t.Legacy.FullText
 }
 
-// htmlEscaped escapes tweet text for safe inclusion in the HTML content.
+// displayText is text() with t.co links expanded to their real destinations
+// (and media links dropped when the media itself is embedded).
+func (t *twitterTweetResult) displayText(embedMedia bool) string {
+	if t.Note != nil && t.Note.NoteTweet.Text != "" {
+		// Note tweets keep their full text; still expand any t.co links.
+		return expandLinks(t.Note.NoteTweet.Text, &t.Legacy, embedMedia)
+	}
+	return expandLinks(t.Legacy.FullText, &t.Legacy, embedMedia)
+}
+
+// htmlEscaped escapes plain text for safe inclusion in HTML content.
 func htmlEscaped(s string) string { return html.EscapeString(s) }
+
+// htmlEscapedText escapes tweet text that may already contain <a> link
+// markup produced by displayText: existing anchors are preserved, everything
+// else is escaped.
+func htmlEscapedText(s string) string {
+	var b strings.Builder
+	for {
+		i := strings.Index(s, "<a ")
+		if i < 0 {
+			b.WriteString(html.EscapeString(s))
+			return b.String()
+		}
+		j := strings.Index(s[i:], "</a>")
+		if j < 0 {
+			b.WriteString(html.EscapeString(s))
+			return b.String()
+		}
+		end := i + j + len("</a>")
+		b.WriteString(html.EscapeString(s[:i]))
+		b.WriteString(s[i:end]) // anchor already safe (built from escaped parts)
+		s = s[end:]
+	}
+}
 
 // parseTwitterTime parses Twitter's "Mon Jan 02 15:04:05 -0700 2006" dates.
 func parseTwitterTime(s string) time.Time {
