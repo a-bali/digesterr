@@ -277,6 +277,62 @@ func TestTwitterFetchComments(t *testing.T) {
 	}
 }
 
+func TestTwitterMediaRendering(t *testing.T) {
+	photo := map[string]any{"type": "photo", "media_url_https": "https://pbs.twimg.com/media/abc.jpg"}
+	video := map[string]any{
+		"type":             "video",
+		"media_url_https":  "https://pbs.twimg.com/media/vid.jpg",
+		"video_info": map[string]any{"variants": []any{
+			map[string]any{"content_type": "video/mp4", "bitrate": 320000, "url": "https://video.twimg.com/low.mp4"},
+			map[string]any{"content_type": "video/mp4", "bitrate": 2176000, "url": "https://video.twimg.com/high.mp4"},
+			map[string]any{"content_type": "application/x-mpegURL", "bitrate": 0, "url": "https://video.twimg.com/pl.m3u8"},
+		}},
+	}
+	tw := &twitterTweetResult{RestID: "999"}
+	tw.Legacy.FullText = "tweet with media"
+	tw.Legacy.ExtendedEntities.Media = []twitterMedia{}
+	// Rebuild through JSON to exercise the struct tags.
+	raw, _ := json.Marshal(map[string]any{
+		"rest_id":          "999",
+		"legacy": map[string]any{
+			"full_text":         "tweet with media",
+			"extended_entities": map[string]any{"media": []any{photo, video}},
+			// entities.media should be ignored when extended_entities exists
+			"entities": map[string]any{"media": []any{
+				map[string]any{"type": "photo", "media_url_https": "https://pbs.twimg.com/media/first.jpg"},
+			}},
+		},
+	})
+	if err := json.Unmarshal(raw, tw); err != nil {
+		t.Fatal(err)
+	}
+	html := tw.mediaHTML()
+	if !strings.Contains(html, `src="https://pbs.twimg.com/media/abc.jpg"`) {
+		t.Errorf("photo not rendered: %s", html)
+	}
+	if strings.Contains(html, "first.jpg") {
+		t.Error("entities.media must be skipped when extended_entities is present")
+	}
+	// Highest-bitrate MP4 wins; HLS variant ignored.
+	if !strings.Contains(html, `src="https://video.twimg.com/high.mp4"`) {
+		t.Errorf("video variant not rendered: %s", html)
+	}
+	if !strings.Contains(html, `poster="https://pbs.twimg.com/media/vid.jpg"`) {
+		t.Errorf("video poster missing: %s", html)
+	}
+
+	// Fallback: media only in entities.
+	tw2 := &twitterTweetResult{}
+	raw2, _ := json.Marshal(map[string]any{"legacy": map[string]any{
+		"full_text": "x",
+		"entities":  map[string]any{"media": []any{photo}},
+	}})
+	json.Unmarshal(raw2, tw2)
+	if !strings.Contains(tw2.mediaHTML(), "abc.jpg") {
+		t.Errorf("entities fallback failed: %s", tw2.mediaHTML())
+	}
+}
+
 func TestTwitterAuthHeadersSent(t *testing.T) {
 	var gotCookie, gotCSRF, gotBearer string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

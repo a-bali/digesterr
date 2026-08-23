@@ -236,6 +236,18 @@ func (t *twitterTweetResult) author() string {
 	return t.Core.UserResults.Result.Core.ScreenName
 }
 
+type twitterMedia struct {
+	Type          string `json:"type"`
+	MediaURLHTTPS string `json:"media_url_https"`
+	VideoInfo     *struct {
+		Variants []struct {
+			ContentType string `json:"content_type"`
+			Bitrate     int64  `json:"bitrate"`
+			URL         string `json:"url"`
+		} `json:"variants"`
+	} `json:"video_info"`
+}
+
 type twitterTweetLegacy struct {
 	FullText        string `json:"full_text"`
 	CreatedAt       string `json:"created_at"`
@@ -246,18 +258,22 @@ type twitterTweetLegacy struct {
 	InReplyToScreenName string `json:"in_reply_to_screen_name"`
 	RetweetedStatus *twitterTweetWrapper `json:"retweeted_status_result"`
 	Entities        struct {
-		Media []struct {
-			Type string `json:"type"`
-			MediaURLHTTPS string `json:"media_url_https"`
-			VideoInfo *struct {
-				Variants []struct {
-					ContentType string `json:"content_type"`
-					Bitrate     int64  `json:"bitrate"`
-					URL         string `json:"url"`
-				} `json:"variants"`
-			} `json:"video_info"`
-		} `json:"media"`
+		Media []twitterMedia `json:"media"`
 	} `json:"entities"`
+	// Photos, videos and GIFs live in extended_entities; entities.media only
+	// carries the first attachment.
+	ExtendedEntities struct {
+		Media []twitterMedia `json:"media"`
+	} `json:"extended_entities"`
+}
+
+// media returns the tweet's attachments: extended_entities when present,
+// falling back to entities.
+func (t *twitterTweetLegacy) media() []twitterMedia {
+	if len(t.ExtendedEntities.Media) > 0 {
+		return t.ExtendedEntities.Media
+	}
+	return t.Entities.Media
 }
 
 type twitterTweetWrapper struct {
@@ -365,17 +381,57 @@ func (t *twitterTweetResult) item(feedScreenName string) Item {
 
 	itemURL := fmt.Sprintf("https://x.com/%s/status/%s", author, t.RestID)
 
+	content := "<p>" + htmlEscaped(text) + "</p>" + t.mediaHTML()
+
 	return Item{
 		GUID:        "twitter:" + t.RestID,
 		Title:       title,
 		URL:         itemURL,
 		CommentURL:  itemURL,
-		Content:     "<p>" + htmlEscaped(text) + "</p>",
+		Content:     content,
 		Author:      "@" + author,
 		PublishedAt: parseTwitterTime(t.Legacy.CreatedAt),
 		Points:      t.Legacy.FavoriteCount,
 		CommentsCnt: t.Legacy.ReplyCount,
 	}
+}
+
+// mediaHTML renders the tweet's photo/video/GIF attachments as HTML.
+// Photos embed the image directly (with a link to the full-size version);
+// videos and GIFs embed the highest-bitrate MP4 variant in a <video> tag.
+func (t *twitterTweetResult) mediaHTML() string {
+	var b strings.Builder
+	for _, m := range t.Legacy.media() {
+		switch m.Type {
+		case "photo":
+			if m.MediaURLHTTPS == "" {
+				continue
+			}
+			fmt.Fprintf(&b, `<p><a href="%s"><img src="%s" alt="tweet image" loading="lazy" /></a></p>`,
+				htmlEscaped(m.MediaURLHTTPS+"?name=large"), htmlEscaped(m.MediaURLHTTPS))
+		case "video", "animated_gif":
+			if m.VideoInfo == nil {
+				continue
+			}
+			best := ""
+			var bestBitrate int64 = -1
+			for _, v := range m.VideoInfo.Variants {
+				if v.ContentType == "video/mp4" && v.Bitrate > bestBitrate {
+					best, bestBitrate = v.URL, v.Bitrate
+				}
+			}
+			if best == "" {
+				continue
+			}
+			poster := ""
+			if m.MediaURLHTTPS != "" {
+				poster = fmt.Sprintf(` poster="%s"`, htmlEscaped(m.MediaURLHTTPS))
+			}
+			fmt.Fprintf(&b, `<p><video controls preload="metadata"%s><source src="%s" type="video/mp4" /></video></p>`,
+				poster, htmlEscaped(best))
+		}
+	}
+	return b.String()
 }
 
 // text returns the best available body text: long-form note tweets win over
