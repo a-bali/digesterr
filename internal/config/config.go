@@ -87,6 +87,7 @@ type Config struct {
 	LLM     LLMConfig     `yaml:"llm"`
 	Feed    FeedConfig    `yaml:"feed"`
 	Reddit  RedditConfig  `yaml:"reddit"`
+	Twitter TwitterConfig `yaml:"twitter"`
 	Digest  DigestConfig  `yaml:"digest"`
 }
 
@@ -140,6 +141,13 @@ type RedditConfig struct {
 	ClientSecret string `yaml:"client_secret"`
 }
 
+// TwitterConfig holds Twitter/X session cookies used for twitter feed
+// fetching (same ct0 + auth_token cookies a browser session uses).
+type TwitterConfig struct {
+	Ct0       string `yaml:"ct0"`
+	AuthToken string `yaml:"auth_token"`
+}
+
 // Default returns the built-in configuration, used when neither the config
 // file nor environment variables set a value.
 func Default() Config {
@@ -166,7 +174,8 @@ func Default() Config {
 			ExpireItems:   Duration(365 * 24 * time.Hour),
 			ExpireDigests: Duration(365 * 24 * time.Hour),
 		},
-		Reddit: RedditConfig{},
+		Reddit:  RedditConfig{},
+		Twitter: TwitterConfig{},
 	}
 }
 
@@ -296,6 +305,9 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 
 	setString(&cfg.Reddit.ClientID, "REDDIT_CLIENT_ID", "")
 	setString(&cfg.Reddit.ClientSecret, "REDDIT_CLIENT_SECRET", "")
+
+	setString(&cfg.Twitter.Ct0, "TWITTER_CT0", "")
+	setString(&cfg.Twitter.AuthToken, "TWITTER_AUTH_TOKEN", "")
 
 	setString(&cfg.Digest.SchedulerTimezone, "DIGEST_SCHEDULER_TIMEZONE", "")
 }

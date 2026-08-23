@@ -38,6 +38,7 @@ type fetchedCandidate struct {
 
 func NewPoller(queries *store.Queries) *Poller {
 	rssFetcher := NewRSSFetcher()
+	twitterFetcher := NewTwitterFetcher()
 	hnEnricher := NewHNEnricher()
 	lobstersEnricher := NewLobstersEnricher()
 	redditEnricher := NewRedditEnricher(queries)
@@ -45,25 +46,28 @@ func NewPoller(queries *store.Queries) *Poller {
 	return &Poller{
 		queries: queries,
 		fetchers: map[string]Fetcher{
-			"rss":      rssFetcher,
-			"atom":     rssFetcher,
-			"hn":       rssFetcher,
+			"rss":     rssFetcher,
+			"atom":    rssFetcher,
+			"hn":      rssFetcher,
 			"lobsters": rssFetcher,
-			"reddit":   rssFetcher,
+			"reddit":  rssFetcher,
+			"twitter": twitterFetcher,
 		},
 		enrichers: map[string]Enricher{
-			"rss":      noop,
-			"atom":     noop,
-			"hn":       hnEnricher,
+			"rss":     noop,
+			"atom":    noop,
+			"hn":      hnEnricher,
 			"lobsters": lobstersEnricher,
-			"reddit":   redditEnricher,
+			"reddit":  redditEnricher,
+			"twitter": noop,
 		},
 		commentFetchers: map[string]CommentFetcher{
-			"rss":      noop,
-			"atom":     noop,
-			"hn":       hnEnricher,
+			"rss":     noop,
+			"atom":    noop,
+			"hn":      hnEnricher,
 			"lobsters": lobstersEnricher,
-			"reddit":   redditEnricher,
+			"reddit":  redditEnricher,
+			"twitter": twitterFetcher,
 		},
 	}
 }
@@ -87,6 +91,17 @@ func (p *Poller) SetRedditCredentials(clientID, clientSecret string) {
 	if e, ok := p.enrichers["reddit"]; ok {
 		if re, ok := e.(*RedditEnricher); ok {
 			re.SetCredentials(clientID, clientSecret)
+		}
+	}
+}
+
+// SetTwitterCredentials overrides the Twitter/X session cookies used by the
+// twitter fetcher. The fetcher is constructed without credentials; the
+// merged config (file + env) wins here.
+func (p *Poller) SetTwitterCredentials(ct0, authToken string) {
+	if f, ok := p.fetchers["twitter"]; ok {
+		if tf, ok := f.(*TwitterFetcher); ok {
+			tf.SetCredentials(ct0, authToken)
 		}
 	}
 }

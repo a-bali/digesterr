@@ -63,3 +63,12 @@ reddit:
   # error when a reddit feed needs them and they are missing.
   client_id: ""            # [REDDIT_CLIENT_ID]
   client_secret: ""        # [REDDIT_CLIENT_SECRET]
+
+twitter:
+  # Twitter/X session cookies for twitter feed fetching. Same cookies as
+  # Nitter: ct0 (CSRF token) and auth_token (session cookie). Copy them from
+  # a logged-in browser session (DevTools → Cookies → x.com).
+  # Enrichment/fetching logs an error when a twitter feed needs them and
+  # they are missing.
+  ct0: ""        # [TWITTER_CT0]
+  auth_token: "" # [TWITTER_AUTH_TOKEN]

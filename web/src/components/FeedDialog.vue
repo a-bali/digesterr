@@ -34,7 +34,7 @@ const categoryNames = computed(() => {
 })
 
 const form = reactive({ type: 'rss', name: '', url: '', category: '', extract_content: 0, min_score: 0 })
-const typeLabel = (t: string) => ({ rss: 'RSS / Atom', hn: 'Hacker News', lobsters: 'Lobste.rs', reddit: 'Reddit' }[t] || t)
+const typeLabel = (t: string) => ({ rss: 'RSS / Atom', hn: 'Hacker News', lobsters: 'Lobste.rs', reddit: 'Reddit', twitter: 'Twitter / X' }[t] || t)
 
 function onTypeChange(type: string) {
   form.type = type
@@ -54,7 +54,11 @@ watch(
       const feed = props.feed
       form.type = feed.type
       form.name = feed.name
-      form.url = feed.type === 'reddit' ? feed.url.replace('https://www.reddit.com/r/', '').replace('.rss', '') : feed.url
+      form.url = feed.type === 'reddit'
+        ? feed.url.replace('https://www.reddit.com/r/', '').replace('.rss', '')
+        : feed.type === 'twitter'
+          ? feed.url.replace('https://x.com/', '').replace('https://twitter.com/', '').replace(/^@/, '')
+          : feed.url
       form.category = feed.category || ''
       form.extract_content = feed.extract_content
       form.min_score = feed.min_score
@@ -94,7 +98,7 @@ const dialogId = Math.random().toString(36).slice(2)
       <div class="space-y-1">
         <label class="text-sm font-medium">Type</label>
         <Select v-model="form.type" @change="onTypeChange(($event.target as HTMLSelectElement).value)">
-          <option v-for="t in ['rss','hn','lobsters','reddit']" :key="t" :value="t">{{ typeLabel(t) }}</option>
+          <option v-for="t in ['rss','hn','lobsters','reddit','twitter']" :key="t" :value="t">{{ typeLabel(t) }}</option>
         </Select>
       </div>
       <div class="space-y-1">
@@ -111,6 +115,13 @@ const dialogId = Math.random().toString(36).slice(2)
           <span class="text-xs text-muted-foreground bg-muted rounded-l-md px-2 py-1.5 border border-border border-r-0 whitespace-nowrap">https://www.reddit.com/r/</span>
           <Input v-model="form.url" placeholder="subreddit" required class="rounded-none" />
           <span class="text-xs text-muted-foreground bg-muted rounded-r-md px-2 py-1.5 border border-border border-l-0 whitespace-nowrap">.rss</span>
+        </div>
+      </div>
+      <div v-else-if="form.type === 'twitter'" class="space-y-1">
+        <label class="text-sm font-medium">URL</label>
+        <div class="flex items-center gap-0">
+          <span class="text-xs text-muted-foreground bg-muted rounded-l-md px-2 py-1.5 border border-border border-r-0 whitespace-nowrap">https://x.com/</span>
+          <Input v-model="form.url" placeholder="username" required class="rounded-none" />
         </div>
       </div>
       <div v-else class="space-y-1">
