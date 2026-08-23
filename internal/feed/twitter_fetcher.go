@@ -210,7 +210,10 @@ type twitterTweetResult struct {
 		} `json:"note_tweet"`
 	} `json:"note_tweet"`
 	Quoted *twitterTweetWrapper `json:"quoted_status_result"`
-	Core struct {
+	// RetweetedBy holds the feed account's screen name when this entry is a
+	// retweet (not part of the API payload; set by parseUserTweets).
+	RetweetedBy string `json:"-"`
+	Core   struct {
 		UserResults struct {
 			Result struct {
 				Legacy struct {
@@ -360,6 +363,18 @@ type twitterTimeline struct {
 	Data struct {
 		User struct {
 			Result struct {
+				Core struct {
+					UserResults struct {
+						Result struct {
+							Legacy struct {
+								ScreenName string `json:"screen_name"`
+							} `json:"legacy"`
+							Core struct {
+								ScreenName string `json:"screen_name"`
+							} `json:"core"`
+						} `json:"result"`
+					} `json:"user_results"`
+				} `json:"core"`
 				TimelineV2 *struct {
 					Timeline struct {
 						Instructions []twitterInstruction `json:"instructions"`
@@ -416,15 +431,23 @@ func parseUserTweets(body []byte) ([]*twitterTweetResult, error) {
 	case res.Timeline != nil:
 		instructions = res.Timeline.Timeline.Instructions
 	}
+	feedAuthor := res.Core.UserResults.Result.Legacy.ScreenName
+	if feedAuthor == "" {
+		feedAuthor = res.Core.UserResults.Result.Core.ScreenName
+	}
 
 	var out []*twitterTweetResult
 	appendTweet := func(r twitterTweetResult) {
+		retweetedBy := ""
 		if r.Legacy.RetweetedStatus != nil && r.Legacy.RetweetedStatus.Result.RestID != "" {
+			// Remember who retweeted so the item can show provenance.
+			retweetedBy = r.author()
 			r = r.Legacy.RetweetedStatus.Result
 		}
 		if r.RestID == "" || r.Legacy.FullText == "" {
 			return // promoted/filtered placeholders
 		}
+		r.RetweetedBy = retweetedBy
 		out = append(out, &r)
 	}
 	for _, ins := range instructions {
@@ -460,6 +483,13 @@ func (t *twitterTweetResult) item(feedScreenName string) Item {
 	itemURL := fmt.Sprintf("https://x.com/%s/status/%s", author, t.RestID)
 
 	content := "<p>" + htmlEscapedText(text) + "</p>" + t.mediaHTML()
+
+	// Retweets: mark provenance so readers know why this appears in the
+	// feed (the author is the original tweeter, not the followed account).
+	if t.RetweetedBy != "" && t.RetweetedBy != author {
+		title = fmt.Sprintf("[RT @%s] %s", t.RetweetedBy, title)
+		content = fmt.Sprintf("<p><em>🔁 <strong>@%s</strong> retweeted</em></p>", htmlEscaped(t.RetweetedBy)) + content
+	}
 
 	return Item{
 		GUID:        "twitter:" + t.RestID,

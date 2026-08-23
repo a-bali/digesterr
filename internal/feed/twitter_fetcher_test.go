@@ -187,13 +187,20 @@ func TestTwitterFetch(t *testing.T) {
 		t.Error("published date not parsed")
 	}
 
-	// Retweet unwraps to the original tweet's identity and score.
+	// Retweet unwraps to the original tweet's identity and score, with
+	// retweet provenance recorded.
 	rt := items[1]
 	if rt.GUID != "twitter:223" {
 		t.Errorf("retweet GUID = %q, want twitter:223 (unwrapped)", rt.GUID)
 	}
 	if rt.Points != 7 {
 		t.Errorf("retweet points = %d, want 7", rt.Points)
+	}
+	if !strings.Contains(rt.Title, "[RT @other]") {
+		t.Errorf("retweet title missing RT marker: %q", rt.Title)
+	}
+	if !strings.Contains(rt.Content, "retweeted</em>") || !strings.Contains(rt.Content, "@other") {
+		t.Errorf("retweet content missing provenance: %s", rt.Content)
 	}
 
 	// Note tweet uses long-form text as content and title source.
