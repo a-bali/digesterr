@@ -225,10 +225,10 @@ func TestTwitterFetch(t *testing.T) {
 	if rt.Points != 7 {
 		t.Errorf("retweet points = %d, want 7", rt.Points)
 	}
-	if !strings.Contains(rt.Title, "[RT @other]") {
+	if !strings.Contains(rt.Title, "[Retweet @orig]") {
 		t.Errorf("retweet title missing RT marker: %q", rt.Title)
 	}
-	if !strings.Contains(rt.Content, "retweeted</em>") || !strings.Contains(rt.Content, "@other") {
+	if !strings.Contains(rt.Content, "retweeted by") || !strings.Contains(rt.Content, "@other") {
 		t.Errorf("retweet content missing provenance: %s", rt.Content)
 	}
 
@@ -510,7 +510,7 @@ func TestTwitterSelfLinkOnlyResolvesToTarget(t *testing.T) {
 	}
 
 	item := got.item("testuser")
-	if !strings.Contains(item.Title, "[from @testuser]") {
+	if !strings.Contains(item.Title, "[Quote @testuser]") {
 		t.Errorf("title missing link provenance: %q", item.Title)
 	}
 	if !strings.Contains(item.Content, "linked by") || !strings.Contains(item.Content, "the actual thread root text") {
@@ -578,10 +578,10 @@ func TestTwitterQuoteTweetResolvesToQuoted(t *testing.T) {
 	if item.GUID != "twitter:555" {
 		t.Errorf("GUID = %q, want the quoted tweet's twitter:555", item.GUID)
 	}
-	if !strings.Contains(item.Title, "[QT @testuser]") {
+	if !strings.Contains(item.Title, "[Quote @testuser]") {
 		t.Errorf("title missing QT provenance: %q", item.Title)
 	}
-	if !strings.Contains(item.Content, "quoting") || !strings.Contains(item.Content, "the quoted tweet body") {
+	if !strings.Contains(item.Content, "quoted by") || !strings.Contains(item.Content, "the quoted tweet body") {
 		t.Errorf("content missing quoted text/provenance: %s", item.Content)
 	}
 	if !strings.Contains(item.Content, "pbs.twimg.com/media/quote.jpg") {
@@ -597,7 +597,7 @@ func TestTwitterQuoteTweetResolvesToQuoted(t *testing.T) {
 	if item2.GUID != "twitter:666" {
 		t.Errorf("non-folded GUID = %q, want twitter:666", item2.GUID)
 	}
-	if strings.Contains(item2.Title, "[QT @") {
+	if strings.Contains(item2.Title, "[Quote @") {
 		t.Errorf("non-folded quote should not carry QT title marker: %q", item2.Title)
 	}
 }

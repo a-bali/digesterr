@@ -606,6 +606,16 @@ func stripAnchors(s string) string {
 	}
 }
 
+// titleAuthorForBadge picks the @handle the badge should name: the tweet's
+// own author when it differs from the referrer (e.g. a quote of someone
+// else's tweet), otherwise the referrer themselves (self-quotes/threads).
+func titleAuthorForBadge(referrer string, t *twitterTweetResult) string {
+	if a := t.author(); a != "" && a != referrer {
+		return a
+	}
+	return referrer
+}
+
 // item converts a parsed tweet into a feed Item.
 func (t *twitterTweetResult) item(feedScreenName string) Item {
 	hasMedia := len(t.Legacy.media()) > 0
@@ -642,19 +652,18 @@ func (t *twitterTweetResult) item(feedScreenName string) Item {
 	// Retweets: mark provenance so readers know why this appears in the
 	// feed (the author is the original tweeter, not the followed account).
 	if t.RetweetedBy != "" && t.RetweetedBy != author {
-		title = fmt.Sprintf("[RT @%s] %s", t.RetweetedBy, title)
-		content = fmt.Sprintf("<p><em>🔁 <strong>@%s</strong> retweeted</em></p>", htmlEscaped(t.RetweetedBy)) + content
+		title = fmt.Sprintf("[Retweet @%s] %s", author, title)
+		content = fmt.Sprintf("<p><em>🔁 retweeted by <strong>@%s</strong></em></p>", htmlEscaped(t.RetweetedBy)) + content
 	}
 	// Quote tweets: note whose tweet is being quoted.
 	if t.QuotedBy != "" {
-		title = fmt.Sprintf("[QT @%s] %s", t.QuotedBy, title)
-		content = fmt.Sprintf("<p><em>💬 quoting <strong>@%s</strong></em></p>", htmlEscaped(t.QuotedBy)) + content
+		title = fmt.Sprintf("[Quote @%s] %s", titleAuthorForBadge(t.QuotedBy, t), title)
+		content = fmt.Sprintf("<p><em>💬 quoted by <strong>@%s</strong></em></p>", htmlEscaped(t.QuotedBy)) + content
 	}
 	// Link-only thread continuations resolved to their target tweet: same
-	// provenance idea as retweets, different verb. Unlike retweets, the
-	// linker is often the same account (self-threads), so no author check.
+	// provenance idea as quotes — the linker surfaced this tweet.
 	if t.LinkedBy != "" {
-		title = fmt.Sprintf("[from @%s] %s", t.LinkedBy, title)
+		title = fmt.Sprintf("[Quote @%s] %s", titleAuthorForBadge(t.LinkedBy, t), title)
 		content = fmt.Sprintf("<p><em>🔗 linked by <strong>@%s</strong></em></p>", htmlEscaped(t.LinkedBy)) + content
 	}
 	// Pinned profile tweet: prefix the title. The poller refreshes twitter
