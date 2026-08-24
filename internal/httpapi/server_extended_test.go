@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"digesterr/internal/store"
@@ -284,7 +285,75 @@ func TestDeleteFeed(t *testing.T) {
 	}
 }
 
-func TestUpdateItemStatus(t *testing.T) {
+func TestDeleteFeedPrunesDigestConfigs(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createTestUser(t, queries, "delfeedprune@example.com", "password123")
+	token := getTestToken(t, server.auth, &user)
+
+	// Two feeds: one to delete (with its own category) and one that stays.
+	feedA, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
+		UserID: user.ID, Category: "GoneCat", Type: "hn", Name: "A",
+		Url: "https://example.com/a", Config: "{}", Status: "active",
+	})
+	feedB, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
+		UserID: user.ID, Category: "KeepCat", Type: "rss", Name: "B",
+		Url: "https://example.com/b", Config: "{}", Status: "active",
+	})
+
+	// Config 1 references the doomed feed by ID; config 2 selects its
+	// category; config 3 references neither and must stay untouched.
+	mk := func(name string, config string) store.DigestConfig {
+		w := makeRequest(server, http.MethodPost, "/api/digest-configs", map[string]interface{}{
+			"name": name, "schedule": "0 8 * * *", "config": config,
+		}, token)
+		if w.Code != http.StatusOK && w.Code != http.StatusCreated {
+			t.Fatalf("create config %s: got %d: %s", name, w.Code, w.Body.String())
+		}
+		var dc store.DigestConfig
+		json.NewDecoder(w.Body).Decode(&dc)
+		return dc
+	}
+	cfgFeeds := mk("by-feed", `{"feeds":[{"id":`+itoa(feedA.ID)+`,"highlights":3,"comments":5}]}`)
+	cfgCats := mk("by-category", `{"categories":[{"name":"GoneCat","highlights":1,"comments":2}]}`)
+	mk("untouched", `{"feeds":[{"id":`+itoa(feedB.ID)+`,"highlights":1,"comments":1}]}`)
+
+	w := makeRequest(server, http.MethodDelete, "/api/feeds/"+itoa(feedA.ID), nil, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete failed: %d: %s", w.Code, w.Body.String())
+	}
+
+	check := func(dc store.DigestConfig, wantFeeds, wantCats string) {
+		t.Helper()
+		var cfg map[string]any
+		row, err := queries.GetDigestConfig(t.Context(), store.GetDigestConfigParams{ID: dc.ID, UserID: user.ID})
+		if err != nil {
+			t.Fatalf("loading config %s: %v", dc.Name, err)
+		}
+		json.Unmarshal([]byte(row.Config), &cfg)
+		fj, _ := json.Marshal(cfg["feeds"])
+		cj, _ := json.Marshal(cfg["categories"])
+		if string(fj) != wantFeeds || string(cj) != wantCats {
+			t.Errorf("config %s: feeds=%s (want %s), categories=%s (want %s)",
+				dc.Name, fj, wantFeeds, cj, wantCats)
+		}
+	}
+	check(cfgFeeds, "[]", "null")
+	check(cfgCats, "null", "[]")
+
+	// The untouched config keeps its single feed reference.
+	var sawUntouched bool
+	rows, _ := queries.ListDigestConfigs(t.Context(), user.ID)
+	for _, rc := range rows {
+		if !strings.Contains(rc.Config, itoa(feedB.ID)) || strings.Contains(rc.Name, "untouched") {
+			sawUntouched = strings.Contains(rc.Name, "untouched") && strings.Contains(rc.Config, `"feeds":[{"id":`)
+		}
+	}
+	if !sawUntouched {
+		t.Error("untouched config missing or modified")
+	}
+}
+
+func TestUpdateDigestResultStatus(t *testing.T) {
 	server, queries := setupTestServer(t)
 	user := createTestUser(t, queries, "itemstatus@example.com", "password123")
 	token := getTestToken(t, server.auth, &user)
