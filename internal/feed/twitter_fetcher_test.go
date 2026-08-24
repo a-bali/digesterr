@@ -458,6 +458,80 @@ func TestTwitterLinkExpansion(t *testing.T) {
 	}
 }
 
+func TestTwitterSelfLinkOnlySkipped(t *testing.T) {
+	// Thread-continuation reply: body is ONLY a t.co link to the parent tweet.
+	linkOnly := map[string]any{
+		"rest_id": "777",
+		"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": "testuser"}}}},
+		"legacy": map[string]any{
+			"full_text": "https://t.co/2vt7q5WCmm",
+			"entities": map[string]any{"urls": []any{
+				map[string]any{"url": "https://t.co/2vt7q5WCmm", "expanded_url": "https://x.com/testuser/status/111", "display_url": "x.com/testuser/statu…"},
+			}},
+		},
+	}
+	// Real tweet with a link plus actual text — must be kept.
+	withText := map[string]any{
+		"rest_id": "888",
+		"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": "testuser"}}}},
+		"legacy": map[string]any{
+			"full_text": "read this now https://t.co/abc123",
+			"entities": map[string]any{"urls": []any{
+				map[string]any{"url": "https://t.co/abc123", "expanded_url": "https://example.com/a", "display_url": "example.com/a"},
+			}},
+		},
+	}
+	entry := func(id string, res map[string]any) map[string]any {
+		return map[string]any{"entryId": id, "content": map[string]any{
+			"itemContent": map[string]any{"tweet_results": map[string]any{"result": res}}}}
+	}
+	body := map[string]any{"data": map[string]any{"user": map[string]any{"result": map[string]any{
+		"timeline_v2": map[string]any{"timeline": map[string]any{"instructions": []any{
+			map[string]any{"type": "TimelineAddEntries", "entries": []any{
+				entry("tweet-777", linkOnly),
+				entry("tweet-888", withText),
+			}},
+		}}},
+	}}}}
+	raw, _ := json.Marshal(body)
+
+	tweets, err := parseUserTweets(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tweets) != 1 {
+		t.Fatalf("got %d tweets, want 1 (link-only reply skipped)", len(tweets))
+	}
+	if tweets[0].RestID != "888" {
+		t.Errorf("kept tweet = %s, want 888", tweets[0].RestID)
+	}
+
+	// The same shape as a RETWEET is also skipped: RT of a link-only reply
+	// adds nothing either.
+	rtBody := map[string]any{"data": map[string]any{"user": map[string]any{"result": map[string]any{
+		"timeline_v2": map[string]any{"timeline": map[string]any{"instructions": []any{
+			map[string]any{"type": "TimelineAddEntries", "entries": []any{
+				entry("tweet-999", map[string]any{
+					"rest_id": "999",
+					"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": "other"}}}},
+					"legacy": map[string]any{
+						"full_text": "RT @other: https://t.co/2vt7q5WCmm",
+						"retweeted_status_result": map[string]any{"result": linkOnly},
+					},
+				}),
+			}},
+		}}},
+	}}}}
+	rawRT, _ := json.Marshal(rtBody)
+	tweetsRT, err := parseUserTweets(rawRT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tweetsRT) != 0 {
+		t.Errorf("RT of link-only tweet should be skipped, got %d", len(tweetsRT))
+	}
+}
+
 func TestTwitterAuthHeadersSent(t *testing.T) {
 	var gotCookie, gotCSRF, gotBearer string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

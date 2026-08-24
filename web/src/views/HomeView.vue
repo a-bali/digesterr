@@ -319,7 +319,7 @@ function requestMarkFeedRead(id: number) {
       <template v-else>
         <div v-if="sidebarOpen" class="fixed inset-0 z-30" @click="sidebarOpen = false"><div class="absolute inset-0 bg-black/50" /></div>
         <aside
-          class="fixed left-0 top-12 z-40 h-[calc(100vh-3rem)] w-64 bg-sidebar border-r shadow-xl transition-transform duration-200 flex flex-col"
+          class="h-drawer fixed left-0 top-12 z-40 w-64 bg-sidebar border-r shadow-xl transition-transform duration-200 flex flex-col"
           :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
         >
           <div class="flex-1 min-h-0 overflow-y-auto p-3">

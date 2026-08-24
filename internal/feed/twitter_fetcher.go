@@ -450,6 +450,13 @@ func parseUserTweets(body []byte) ([]*twitterTweetResult, error) {
 		if r.RestID == "" || r.Legacy.FullText == "" {
 			return // promoted/filtered placeholders
 		}
+		probe := r
+		if probe.Legacy.RetweetedStatus != nil && probe.Legacy.RetweetedStatus.Result.RestID != "" {
+			probe = probe.Legacy.RetweetedStatus.Result
+		}
+		if probe.isSelfLinkOnly() {
+			return // thread-continuation reply that only links to its parent
+		}
 		r.RetweetedBy = retweetedBy
 		out = append(out, &r)
 	}
@@ -479,6 +486,74 @@ func parseUserTweets(body []byte) ([]*twitterTweetResult, error) {
 		}
 	}
 	return out, nil
+}
+
+// isSelfLinkOnly reports whether the tweet's visible text (after link
+// expansion) is just a link to another tweet — typically a thread
+// continuation reply whose only content is "see previous tweet". Such
+// entries add no value to a feed: the target tweet is ingested separately.
+func (t *twitterTweetResult) isSelfLinkOnly() bool {
+	plain := stripRe.ReplaceAllString(t.displayText(false), "")
+	plain = strings.TrimSpace(plain)
+	if plain == "" {
+		return false // empty text nodes are filtered elsewhere
+	}
+	// Strip the leading RT @author: prefix retweets may carry.
+	if rest, ok := strings.CutPrefix(plain, "RT @"); ok {
+		if i := strings.Index(rest, ": "); i >= 0 {
+			plain = strings.TrimSpace(rest[i+2:])
+		}
+	}
+	target := t.linkTargetTweet()
+	if target == "" {
+		return false
+	}
+	// Every remaining character must belong to links pointing at tweets.
+	noLinks := stripAnchors(t.displayText(false))
+	return strings.TrimSpace(noLinks) == "" && plain != ""
+}
+
+// linkTargetTweet returns the tweet ID if all of the tweet's URL entities
+// point at x.com/twitter.com status URLs, or "" otherwise.
+func (t *twitterTweetResult) linkTargetTweet() string {
+	urls := t.Legacy.Entities.URLs
+	if len(urls) == 0 {
+		return ""
+	}
+	var tweetID string
+	for _, u := range urls {
+		parts := strings.Split(u.ExpandedURL, "/")
+		for i, p := range parts {
+			if (p == "status" || p == "statuses") && i+1 < len(parts) {
+				tweetID = parts[i+1]
+				break
+			}
+		}
+		if tweetID == "" {
+			return "" // at least one non-tweet link → real content
+		}
+	}
+	return tweetID
+}
+
+// stripAnchors removes <a ...>...</a> markup from text produced by
+// expandLinks.
+func stripAnchors(s string) string {
+	var b strings.Builder
+	for {
+		i := strings.Index(s, "<a ")
+		if i < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		j := strings.Index(s[i:], "</a>")
+		if j < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		b.WriteString(s[:i])
+		s = s[i+j+len("</a>"):]
+	}
 }
 
 // item converts a parsed tweet into a feed Item.

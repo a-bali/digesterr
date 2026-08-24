@@ -143,3 +143,9 @@ body {
   transform: translateY(-12px);
   opacity: 0;
 }
+
+/* Mobile drawer height: dvh with vh fallback for older browsers. */
+.h-drawer {
+  height: calc(100vh - 3rem);
+  height: calc(100dvh - 3rem);
+}
