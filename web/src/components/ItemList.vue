@@ -32,12 +32,11 @@ const { onScroll } = useInfiniteScroll({
 
 const scrollEl = ref<HTMLElement | null>(null)
 
-// Pull-down-to-refresh on touch devices. Silent path: corner pulse + item
-// slide-in, no full loading state. overscroll-behavior-y on the container
-// suppresses the browser's native pull-to-refresh.
+// Pull-down-to-refresh on touch devices. Silent UI (no dim/error toast) but
+// clean replace — user's explicit refresh action, should not merge stale items.
 const { pull: pullDistance, refreshing: pullRefreshing } = usePullToRefresh(
   scrollEl,
-  () => feedStore.refreshItems({ silent: true }),
+  () => feedStore.refreshItems({ silent: true, replace: true }),
 )
 
 // ---- Filter / sort controls (delegated to FilterBar) ----

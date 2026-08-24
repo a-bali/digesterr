@@ -113,7 +113,7 @@ export const useFeedStore = defineStore('feed', () => {
     await loadPage(activeFeedId.value, true)
   }
 
-  async function refreshItems(opts?: { silent?: boolean }) {
+  async function refreshItems(opts?: { silent?: boolean; replace?: boolean }) {
     if (!activeFeedId.value) return
     const rid = ++fetchReq
     if (opts?.silent) backgroundRefreshing.value = true
@@ -127,14 +127,40 @@ export const useFeedStore = defineStore('feed', () => {
         offset: 0,
       })
       if (rid !== fetchReq) return
-      // Merge by id instead of replacing. A background refresh (tab refocus,
-      // poll) must never remove rows the user already sees — e.g. items read
-      // during this session would vanish from an Unread-filtered list.
-      // Fresh server rows first (updated statuses), then rows that dropped
-      // out of the server response (read under a filter) keep their place.
-      const knownOrder = new Set(resp.items.map(i => i.id))
-      const kept = items.value.filter(i => !knownOrder.has(i.id))
-      items.value = [...resp.items, ...kept]
+
+      if (opts?.silent && !opts?.replace) {
+        // Silent refresh (visibility-change): merge so the list stays stable
+        // and items don't flash or shuffle. Server response is the source of
+        // truth for sort order. Stale items (read under Unread filter) that
+        // dropped from the response go at the bottom.
+        const localMap = new Map(items.value.map(i => [i.id, i]))
+        const merged: Item[] = []
+        const seenLocal = new Set<number>()
+        for (const fresh of resp.items) {
+          const old = localMap.get(fresh.id)
+          if (old) {
+            seenLocal.add(fresh.id)
+            // Keep old object reference if nothing changed — prevents
+            // TransitionGroup from re-animating unchanged rows.
+            if (fresh.status !== old.status || fresh.points !== old.points ||
+                fresh.comments_count !== old.comments_count || fresh.title !== old.title) {
+              merged.push(fresh)
+            } else {
+              merged.push(old)
+            }
+          } else {
+            merged.push(fresh)
+          }
+        }
+        // Append stale items that dropped from the server response.
+        for (const old of items.value) {
+          if (!seenLocal.has(old.id)) merged.push(old)
+        }
+        items.value = merged
+      } else {
+        // Explicit refresh (pull-to-refresh, re-fetch): clean replace.
+        items.value = resp.items
+      }
       hasMore.value = resp.has_more
       totalItems.value = resp.total ?? 0
     } catch (e) {

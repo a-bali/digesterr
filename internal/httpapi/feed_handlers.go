@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -166,6 +168,18 @@ func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If the feed left its category (moved or cleared), digest configs
+	// selecting that category should no longer include it.
+	if existing.Category != "" && category != existing.Category {
+		if removed, err := s.pruneDigestConfigSources(r.Context(), userID, nil, existing.Category); err != nil {
+			slog.Warn("failed to prune digest config sources after category change",
+				"feed_id", id, "category", existing.Category, "error", err)
+		} else if removed > 0 {
+			slog.Info("pruned digest config sources after category change",
+				"feed_id", id, "category", existing.Category, "configs_updated", removed)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, feed)
 }
 
@@ -174,6 +188,14 @@ func (s *Server) handleDeleteFeed(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	// Capture the feed before deletion so digest configs referencing it (by
+	// feed ID or by its category) can be cleaned up afterwards.
+	feed, err := s.queries.GetFeed(r.Context(), store.GetFeedParams{ID: id, UserID: userID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "feed not found")
 		return
 	}
 
@@ -186,7 +208,85 @@ func (s *Server) handleDeleteFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if removed, err := s.pruneDigestConfigSources(r.Context(), userID, []int64{feed.ID}, feed.Category); err != nil {
+		slog.Warn("failed to prune digest config sources after feed deletion",
+			"feed_id", id, "category", feed.Category, "error", err)
+	} else if removed > 0 {
+		slog.Info("pruned digest config sources after feed deletion",
+			"feed_id", id, "category", feed.Category, "configs_updated", removed)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
+}
+
+// pruneDigestConfigSources removes the given feed IDs and category from every
+// digest config of the user that references them. A config left with no
+// sources at all gets both lists cleared (it stays but generates nothing
+// until reconfigured). Returns the number of configs updated.
+func (s *Server) pruneDigestConfigSources(ctx context.Context, userID int64, feedIDs []int64, category string) (int, error) {
+	configs, err := s.queries.ListDigestConfigs(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("listing digest configs: %w", err)
+	}
+	idSet := make(map[int64]bool, len(feedIDs))
+	for _, fid := range feedIDs {
+		idSet[fid] = true
+	}
+	updated := 0
+	for _, cfg := range configs {
+		var parsed struct {
+			Feeds      []struct {
+				ID         int `json:"id"`
+				Highlights int `json:"highlights"`
+				Comments   int `json:"comments"`
+			} `json:"feeds"`
+			Categories []struct {
+				Name       string `json:"name"`
+				Highlights int    `json:"highlights"`
+				Comments   int    `json:"comments"`
+			} `json:"categories"`
+		}
+		if err := json.Unmarshal([]byte(cfg.Config), &parsed); err != nil {
+			continue // unparseable config — leave untouched
+		}
+		feedsChanged, catsChanged := false, false
+		feeds := parsed.Feeds[:0]
+		for _, f := range parsed.Feeds {
+			if idSet[int64(f.ID)] {
+				feedsChanged = true
+				continue
+			}
+			feeds = append(feeds, f)
+		}
+		categories := parsed.Categories[:0]
+		for _, c := range parsed.Categories {
+			if category != "" && c.Name == category {
+				catsChanged = true
+				continue
+			}
+			categories = append(categories, c)
+		}
+		if !feedsChanged && !catsChanged {
+			continue
+		}
+		parsed.Feeds = feeds
+		parsed.Categories = categories
+		blob, err := json.Marshal(parsed)
+		if err != nil {
+			return updated, fmt.Errorf("marshaling config %d: %w", cfg.ID, err)
+		}
+		if _, err := s.queries.UpdateDigestConfig(ctx, store.UpdateDigestConfigParams{
+			ID:       cfg.ID,
+			UserID:   userID,
+			Name:     cfg.Name,
+			Schedule: cfg.Schedule,
+			Config:   string(blob),
+		}); err != nil {
+			return updated, fmt.Errorf("updating config %d: %w", cfg.ID, err)
+		}
+		updated++
+	}
+	return updated, nil
 }
 
 func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {

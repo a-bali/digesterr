@@ -114,7 +114,12 @@ onUnmounted(() => {
 function onVisibilityChange() {
   if (document.visibilityState !== 'visible') return
   if (showingSaved.value) fetchSavedItems()
-  else if (feedStore.activeFeedId != null) feedStore.refreshItems({ silent: true })
+  // Don't refresh the item list — it causes read items to vanish from a
+  // filtered (Unread) view when the server response no longer includes them.
+  // The 10s poll already keeps sidebar counts fresh; the list itself stays
+  // exactly as the user left it.
+  feedStore.fetchUnreadCounts()
+  digestStore.fetchUnreadCounts()
 }
 
 // ---- URL → state sync ----
@@ -314,11 +319,13 @@ function requestMarkFeedRead(id: number) {
       <template v-else>
         <div v-if="sidebarOpen" class="fixed inset-0 z-30" @click="sidebarOpen = false"><div class="absolute inset-0 bg-black/50" /></div>
         <aside
-          class="fixed left-0 top-12 z-40 h-[calc(100vh-3rem)] w-64 bg-sidebar border-r shadow-xl transition-transform duration-200 overflow-y-auto p-3"
+          class="h-drawer fixed left-0 top-12 z-40 w-64 bg-sidebar border-r shadow-xl transition-transform duration-200 flex flex-col"
           :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
         >
-          <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
-          <div class="flex justify-center pt-3 pb-1">
+          <div class="flex-1 min-h-0 overflow-y-auto p-3">
+            <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
+          </div>
+          <div class="shrink-0 flex justify-center border-t border-border/50 py-1.5">
             <VersionBadge />
           </div>
         </aside>

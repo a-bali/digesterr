@@ -210,7 +210,25 @@ type twitterTweetResult struct {
 		} `json:"note_tweet"`
 	} `json:"note_tweet"`
 	Quoted *twitterTweetWrapper `json:"quoted_status_result"`
-	Core struct {
+	// RetweetedBy holds the feed account's screen name when this entry is a
+	// retweet (not part of the API payload; set by parseUserTweets).
+	RetweetedBy string `json:"-"`
+	// LinkedBy holds the screen name of the account whose tweet linked to
+	// this one, when the entry was reached via a link-only tweet (not part
+	// of the API payload; set by parseUserTweets).
+	LinkedBy string `json:"-"`
+	// QuotedBy holds the screen name of the quoting account when this tweet
+	// was reached through an empty-text quote wrapper (not part of the API
+	// payload; set by item()).
+	QuotedBy string `json:"-"`
+	// Pinned marks the profile's pinned tweet (not part of the API payload;
+	// set by parseUserTweets).
+	Pinned bool `json:"-"`
+	// linkCandidates holds every tweet node from the same response payload
+	// (not part of the API payload; set by parseUserTweets) so link-only
+	// tweets can be resolved to their target tweet.
+	linkCandidates []*twitterTweetResult `json:"-"`
+	Core   struct {
 		UserResults struct {
 			Result struct {
 				Legacy struct {
@@ -236,6 +254,25 @@ func (t *twitterTweetResult) author() string {
 	return t.Core.UserResults.Result.Core.ScreenName
 }
 
+type twitterMedia struct {
+	Type          string `json:"type"`
+	URLTCo        string `json:"url"`
+	MediaURLHTTPS string `json:"media_url_https"`
+	VideoInfo     *struct {
+		Variants []struct {
+			ContentType string `json:"content_type"`
+			Bitrate     int64  `json:"bitrate"`
+			URL         string `json:"url"`
+		} `json:"variants"`
+	} `json:"video_info"`
+}
+
+type twitterURLEntity struct {
+	URL         string `json:"url"`          // t.co short link as it appears in full_text
+	ExpandedURL string `json:"expanded_url"` // real destination
+	DisplayURL  string `json:"display_url"`
+}
+
 type twitterTweetLegacy struct {
 	FullText        string `json:"full_text"`
 	CreatedAt       string `json:"created_at"`
@@ -246,18 +283,88 @@ type twitterTweetLegacy struct {
 	InReplyToScreenName string `json:"in_reply_to_screen_name"`
 	RetweetedStatus *twitterTweetWrapper `json:"retweeted_status_result"`
 	Entities        struct {
-		Media []struct {
-			Type string `json:"type"`
-			MediaURLHTTPS string `json:"media_url_https"`
-			VideoInfo *struct {
-				Variants []struct {
-					ContentType string `json:"content_type"`
-					Bitrate     int64  `json:"bitrate"`
-					URL         string `json:"url"`
-				} `json:"variants"`
-			} `json:"video_info"`
-		} `json:"media"`
+		Media []twitterMedia       `json:"media"`
+		URLs  []twitterURLEntity   `json:"urls"`
 	} `json:"entities"`
+	// Photos, videos and GIFs live in extended_entities; entities.media only
+	// carries the first attachment.
+	ExtendedEntities struct {
+		Media []twitterMedia `json:"media"`
+	} `json:"extended_entities"`
+}
+
+// media returns the tweet's attachments: extended_entities when present,
+// falling back to entities.
+func (t *twitterTweetLegacy) media() []twitterMedia {
+	if len(t.ExtendedEntities.Media) > 0 {
+		return t.ExtendedEntities.Media
+	}
+	return t.Entities.Media
+}
+
+// displayText returns full_text with t.co links replaced by their real
+// destinations. When embedMedia is true, t.co links that wrap this tweet's
+// own media attachments are dropped — the embedded image/video already IS
+// the link target and keeping the raw t.co URL would duplicate it.
+func (t *twitterTweetLegacy) displayText(body string, embedMedia bool) string {
+	return expandLinks(body, t, embedMedia)
+}
+
+// expandLinks replaces t.co URLs in a tweet body with their expanded
+// destinations per the tweet's entities. Media links are dropped when the
+// media is embedded.
+func expandLinks(body string, leg *twitterTweetLegacy, embedMedia bool) string {
+	repl := make([]string, 0, (len(leg.Entities.URLs)+len(leg.media()))*4)
+	// Media attachments: X often leaves the raw t.co media link in
+	// full_text with NO entities.urls entry. When the media is embedded,
+	// drop those links outright; otherwise expand them to the image URL.
+	for _, m := range leg.media() {
+		if m.URLTCo == "" || !strings.Contains(body, m.URLTCo) {
+			continue
+		}
+		if embedMedia {
+			repl = append(repl, m.URLTCo, "")
+		} else if m.MediaURLHTTPS != "" {
+			repl = append(repl, m.URLTCo, `<a href="`+htmlEscaped(m.MediaURLHTTPS)+`">`+htmlEscaped(m.MediaURLHTTPS)+`</a>`)
+		}
+	}
+	for _, u := range leg.Entities.URLs {
+		if u.URL == "" || !strings.Contains(body, u.URL) {
+			continue
+		}
+		if embedMedia && leg.isMediaLink(u) {
+			repl = append(repl, u.URL, "")
+			continue
+		}
+		target := u.ExpandedURL
+		if target == "" {
+			target = u.DisplayURL
+		}
+		if target == "" {
+			continue
+		}
+		label := target
+		if strings.HasPrefix(target, "https://") || strings.HasPrefix(target, "http://") {
+			label = strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(target, "https://"), "http://"), "/")
+		}
+		repl = append(repl, u.URL, `<a href="`+htmlEscaped(target)+`">`+htmlEscaped(label)+`</a>`)
+	}
+	if len(repl) > 0 {
+		body = strings.NewReplacer(repl...).Replace(body)
+	}
+	return body
+}
+
+// isMediaLink reports whether a t.co URL entity wraps one of this tweet's
+// own media attachments. X lists the media link both in entities.urls and
+// entities.media with the same t.co URL.
+func (t *twitterTweetLegacy) isMediaLink(u twitterURLEntity) bool {
+	for _, m := range t.Entities.Media {
+		if m.URLTCo == u.URL && u.URL != "" {
+			return true
+		}
+	}
+	return false
 }
 
 type twitterTweetWrapper struct {
@@ -271,6 +378,18 @@ type twitterTimeline struct {
 	Data struct {
 		User struct {
 			Result struct {
+				Core struct {
+					UserResults struct {
+						Result struct {
+							Legacy struct {
+								ScreenName string `json:"screen_name"`
+							} `json:"legacy"`
+							Core struct {
+								ScreenName string `json:"screen_name"`
+							} `json:"core"`
+						} `json:"result"`
+					} `json:"user_results"`
+				} `json:"core"`
 				TimelineV2 *struct {
 					Timeline struct {
 						Instructions []twitterInstruction `json:"instructions"`
@@ -327,19 +446,92 @@ func parseUserTweets(body []byte) ([]*twitterTweetResult, error) {
 	case res.Timeline != nil:
 		instructions = res.Timeline.Timeline.Instructions
 	}
+	feedAuthor := res.Core.UserResults.Result.Legacy.ScreenName
+	if feedAuthor == "" {
+		feedAuthor = res.Core.UserResults.Result.Core.ScreenName
+	}
 
-	var out []*twitterTweetResult
-	appendTweet := func(r twitterTweetResult) {
-		if r.Legacy.RetweetedStatus != nil && r.Legacy.RetweetedStatus.Result.RestID != "" {
-			r = r.Legacy.RetweetedStatus.Result
-		}
+	// First pass: collect all tweet nodes from the payload (including pinned
+	// and conversation modules). These act as link-resolution candidates.
+	var nodes []*twitterTweetResult
+	collect := func(r twitterTweetResult) {
 		if r.RestID == "" || r.Legacy.FullText == "" {
 			return // promoted/filtered placeholders
 		}
+		if r.Legacy.RetweetedStatus != nil && r.Legacy.RetweetedStatus.Result.RestID != "" {
+			r = r.Legacy.RetweetedStatus.Result
+			if r.RestID == "" || r.Legacy.FullText == "" {
+				return
+			}
+		}
+		nodes = append(nodes, &r)
+	}
+	for _, ins := range instructions {
+		if ins.Type == "TimelineAddEntries" || ins.Type == "TimelinePinEntry" {
+			for _, e := range ins.Entries {
+				if strings.HasPrefix(e.EntryID, "tweet-") {
+					collect(e.Content.ItemContent.TweetResults.Result)
+				}
+				for _, it := range e.Content.Items { // conversation threads
+					collect(it.Item.ItemContent.TweetResults.Result)
+				}
+			}
+			if ins.Type == "TimelinePinEntry" && ins.Entry != nil &&
+				strings.HasPrefix(ins.Entry.EntryID, "tweet-") {
+				collect(ins.Entry.Content.ItemContent.TweetResults.Result)
+			}
+		}
+	}
+	for _, n := range nodes {
+		n.linkCandidates = nodes
+	}
+
+	// Second pass: emit items. Link-only tweets (thread continuations whose
+	// body is just a link to another tweet) are treated like retweets: the
+	// linked tweet is emitted instead, with provenance naming the linker.
+	out := make([]*twitterTweetResult, 0, len(nodes))
+	seen := map[string]bool{}
+	markSeen := func(r *twitterTweetResult) { seen[r.RestID] = true }
+	pinnedIDs := map[string]bool{}
+	for _, ins := range instructions {
+		if ins.Type == "TimelinePinEntry" && ins.Entry != nil &&
+			strings.HasPrefix(ins.Entry.EntryID, "tweet-") {
+			if r := ins.Entry.Content.ItemContent.TweetResults.Result; r.RestID != "" {
+				if r.Legacy.RetweetedStatus != nil && r.Legacy.RetweetedStatus.Result.RestID != "" {
+					r = r.Legacy.RetweetedStatus.Result
+				}
+				pinnedIDs[r.RestID] = true
+			}
+		}
+	}
+	appendTweet := func(r twitterTweetResult) {
+		r.linkCandidates = nodes // fresh decode: attach payload-wide candidates
+		retweetedBy := ""
+		if r.Legacy.RetweetedStatus != nil && r.Legacy.RetweetedStatus.Result.RestID != "" {
+			retweetedBy = r.author()
+			r = r.Legacy.RetweetedStatus.Result
+		}
+		if r.RestID == "" || seen[r.RestID] {
+			return // promoted/filtered placeholders or already emitted
+		}
+		markSeen(&r)
+		if target := r.linkTargetTweet(); target != "" {
+			// Link-only entry: fold into its target instead.
+			if linked := r.linkedTweetNode(target); linked != nil && !seen[linked.RestID] {
+				copied := *linked
+				copied.LinkedBy = r.author()
+				markSeen(&copied)
+				copied.Pinned = pinnedIDs[copied.RestID]
+				out = append(out, &copied)
+			}
+			return
+		}
+		r.RetweetedBy = retweetedBy
+		r.Pinned = pinnedIDs[r.RestID]
 		out = append(out, &r)
 	}
 	for _, ins := range instructions {
-		if ins.Type == "TimelineAddEntries" {
+		if ins.Type == "TimelineAddEntries" || ins.Type == "TimelinePinEntry" {
 			for _, e := range ins.Entries {
 				if strings.HasPrefix(e.EntryID, "tweet-") {
 					appendTweet(e.Content.ItemContent.TweetResults.Result)
@@ -348,34 +540,188 @@ func parseUserTweets(body []byte) ([]*twitterTweetResult, error) {
 					appendTweet(it.Item.ItemContent.TweetResults.Result)
 				}
 			}
+			if ins.Type == "TimelinePinEntry" && ins.Entry != nil &&
+				strings.HasPrefix(ins.Entry.EntryID, "tweet-") {
+				appendTweet(ins.Entry.Content.ItemContent.TweetResults.Result)
+			}
 		}
 	}
 	return out, nil
 }
 
+// linkTargetTweet returns the tweet ID if all of the tweet's URL entities
+// point at x.com/twitter.com status URLs, or "" otherwise.
+func (t *twitterTweetResult) linkTargetTweet() string {
+	urls := t.Legacy.Entities.URLs
+	if len(urls) == 0 {
+		return ""
+	}
+	var tweetID string
+	for _, u := range urls {
+		parts := strings.Split(u.ExpandedURL, "/")
+		for i, p := range parts {
+			if (p == "status" || p == "statuses") && i+1 < len(parts) {
+				tweetID = parts[i+1]
+				break
+			}
+		}
+		if tweetID == "" {
+			return "" // at least one non-tweet link → real content
+		}
+	}
+	return tweetID
+}
+
+// linkedTweetNode looks up the tweet node for a thread-continuation target.
+// The conversation payload (TweetDetail responses embed the whole thread)
+// usually carries it in the same instruction set as the linking tweet, so
+// callers pass all parsed nodes here. Returns nil when the target is not in
+// the payload — the caller then simply drops the link-only entry.
+func (t *twitterTweetResult) linkedTweetNode(target string) *twitterTweetResult {
+	for _, cand := range t.linkCandidates {
+		if cand.RestID == target && cand.Legacy.FullText != "" {
+			return cand
+		}
+	}
+	return nil
+}
+
+// stripAnchors removes <a ...>...</a> markup from text produced by
+// expandLinks.
+func stripAnchors(s string) string {
+	var b strings.Builder
+	for {
+		i := strings.Index(s, "<a ")
+		if i < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		j := strings.Index(s[i:], "</a>")
+		if j < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		b.WriteString(s[:i])
+		s = s[i+j+len("</a>"):]
+	}
+}
+
+// titleAuthorForBadge picks the @handle the badge should name: the tweet's
+// own author when it differs from the referrer (e.g. a quote of someone
+// else's tweet), otherwise the referrer themselves (self-quotes/threads).
+func titleAuthorForBadge(referrer string, t *twitterTweetResult) string {
+	if a := t.author(); a != "" && a != referrer {
+		return a
+	}
+	return referrer
+}
+
 // item converts a parsed tweet into a feed Item.
 func (t *twitterTweetResult) item(feedScreenName string) Item {
-	text := t.text()
+	hasMedia := len(t.Legacy.media()) > 0
+	// Media links are dropped from the text only when the media is actually
+	// embedded below.
+	text := t.displayText(hasMedia)
 	author := t.author()
+
+	// Quote tweets always fold into the quoted tweet's content with
+	// provenance, mirroring retweet handling — regardless of how much own
+	// text the quote carries. The quoted tweet is the substance; the quote's
+	// commentary stays visible on x.com via the item URL.
+	if t.Quoted != nil {
+		q := &t.Quoted.Result
+		if q.RestID != "" && q.Legacy.FullText != "" {
+			copied := *q
+			copied.QuotedBy = author
+			return copied.item(feedScreenName)
+		}
+	}
+
 	title := text
 	if len(title) > 120 {
 		title = title[:117] + "..."
 	}
 	title = strings.ReplaceAll(title, "\n", " ")
+	// Strip any residual HTML from the title for plain display.
+	title = stripRe.ReplaceAllString(title, "")
 
 	itemURL := fmt.Sprintf("https://x.com/%s/status/%s", author, t.RestID)
+
+	content := "<p>" + textToHTML(text) + "</p>" + t.mediaHTML()
+
+	// Retweets: mark provenance so readers know why this appears in the
+	// feed (the author is the original tweeter, not the followed account).
+	if t.RetweetedBy != "" && t.RetweetedBy != author {
+		title = fmt.Sprintf("[Retweet @%s] %s", author, title)
+		content = fmt.Sprintf("<p><em>🔁 retweeted by <strong>@%s</strong></em></p>", htmlEscaped(t.RetweetedBy)) + content
+	}
+	// Quote tweets: note whose tweet is being quoted.
+	if t.QuotedBy != "" {
+		title = fmt.Sprintf("[Quote @%s] %s", titleAuthorForBadge(t.QuotedBy, t), title)
+		content = fmt.Sprintf("<p><em>💬 quoted by <strong>@%s</strong></em></p>", htmlEscaped(t.QuotedBy)) + content
+	}
+	// Link-only thread continuations resolved to their target tweet: the
+	// linker surfaced this tweet by posting its URL. Badge names the linker
+	// (the link tweet's author).
+	if t.LinkedBy != "" {
+		title = fmt.Sprintf("[Link @%s] %s", t.LinkedBy, title)
+		content = fmt.Sprintf("<p><em>🔗 linked by <strong>@%s</strong></em></p>", htmlEscaped(t.LinkedBy)) + content
+	}
+	// Pinned profile tweet: prefix the title. The poller refreshes twitter
+	// item titles on every fetch, so the badge disappears when unpinned.
+	if t.Pinned {
+		title = "📌 " + title
+	}
 
 	return Item{
 		GUID:        "twitter:" + t.RestID,
 		Title:       title,
 		URL:         itemURL,
 		CommentURL:  itemURL,
-		Content:     "<p>" + htmlEscaped(text) + "</p>",
+		Content:     content,
 		Author:      "@" + author,
 		PublishedAt: parseTwitterTime(t.Legacy.CreatedAt),
 		Points:      t.Legacy.FavoriteCount,
 		CommentsCnt: t.Legacy.ReplyCount,
 	}
+}
+
+// mediaHTML renders the tweet's photo/video/GIF attachments as HTML.
+// Photos embed the image directly (with a link to the full-size version);
+// videos and GIFs embed the highest-bitrate MP4 variant in a <video> tag.
+func (t *twitterTweetResult) mediaHTML() string {
+	var b strings.Builder
+	for _, m := range t.Legacy.media() {
+		switch m.Type {
+		case "photo":
+			if m.MediaURLHTTPS == "" {
+				continue
+			}
+			fmt.Fprintf(&b, `<p><a href="%s"><img src="%s" alt="tweet image" loading="lazy" /></a></p>`,
+				htmlEscaped(m.MediaURLHTTPS+"?name=large"), htmlEscaped(m.MediaURLHTTPS))
+		case "video", "animated_gif":
+			if m.VideoInfo == nil {
+				continue
+			}
+			best := ""
+			var bestBitrate int64 = -1
+			for _, v := range m.VideoInfo.Variants {
+				if v.ContentType == "video/mp4" && v.Bitrate > bestBitrate {
+					best, bestBitrate = v.URL, v.Bitrate
+				}
+			}
+			if best == "" {
+				continue
+			}
+			poster := ""
+			if m.MediaURLHTTPS != "" {
+				poster = fmt.Sprintf(` poster="%s"`, htmlEscaped(m.MediaURLHTTPS))
+			}
+			fmt.Fprintf(&b, `<p><video controls preload="metadata"%s><source src="%s" type="video/mp4" /></video></p>`,
+				poster, htmlEscaped(best))
+		}
+	}
+	return b.String()
 }
 
 // text returns the best available body text: long-form note tweets win over
@@ -388,8 +734,49 @@ func (t *twitterTweetResult) text() string {
 	return t.Legacy.FullText
 }
 
-// htmlEscaped escapes tweet text for safe inclusion in the HTML content.
+// displayText is text() with t.co links expanded to their real destinations
+// (and media links dropped when the media itself is embedded).
+func (t *twitterTweetResult) displayText(embedMedia bool) string {
+	if t.Note != nil && t.Note.NoteTweet.Text != "" {
+		// Note tweets keep their full text; still expand any t.co links.
+		return expandLinks(t.Note.NoteTweet.Text, &t.Legacy, embedMedia)
+	}
+	return expandLinks(t.Legacy.FullText, &t.Legacy, embedMedia)
+}
+
+// htmlEscaped escapes plain text for safe inclusion in HTML content.
 func htmlEscaped(s string) string { return html.EscapeString(s) }
+
+// textToHTML escapes tweet text (preserving <a> anchors from link
+// expansion) and converts newlines to <br> so line breaks survive HTML
+// rendering instead of collapsing into spaces.
+func textToHTML(s string) string {
+	escaped := htmlEscapedText(s)
+	return strings.ReplaceAll(escaped, "\n", "<br />")
+}
+
+// htmlEscapedText escapes tweet text that may already contain <a> link
+// markup produced by displayText: existing anchors are preserved, everything
+// else is escaped.
+func htmlEscapedText(s string) string {
+	var b strings.Builder
+	for {
+		i := strings.Index(s, "<a ")
+		if i < 0 {
+			b.WriteString(html.EscapeString(s))
+			return b.String()
+		}
+		j := strings.Index(s[i:], "</a>")
+		if j < 0 {
+			b.WriteString(html.EscapeString(s))
+			return b.String()
+		}
+		end := i + j + len("</a>")
+		b.WriteString(html.EscapeString(s[:i]))
+		b.WriteString(s[i:end]) // anchor already safe (built from escaped parts)
+		s = s[end:]
+	}
+}
 
 // parseTwitterTime parses Twitter's "Mon Jan 02 15:04:05 -0700 2006" dates.
 func parseTwitterTime(s string) time.Time {

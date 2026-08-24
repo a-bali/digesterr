@@ -104,6 +104,35 @@ func userTweetsResponse() []byte {
 	return b
 }
 
+// userTweetsResponseWithPin builds a UserTweets payload with a pinned tweet:
+// the pin instruction carries a separate TimelinePinEntry for tweet-444.
+func userTweetsResponseWithPin() []byte {
+	tweet := func(id, screen, text string) map[string]any {
+		return map[string]any{
+			"rest_id": id,
+			"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": screen}}}},
+			"legacy":  map[string]any{"full_text": text},
+		}
+	}
+	entry := func(id string, res map[string]any) map[string]any {
+		return map[string]any{"entryId": id, "content": map[string]any{
+			"itemContent": map[string]any{"tweet_results": map[string]any{"result": res}}}}
+	}
+	pinEntry := entry("tweet-111", tweet("111", "testuser", "pinned announcement"))
+	body := map[string]any{"data": map[string]any{"user": map[string]any{"result": map[string]any{
+		"core": map[string]any{"user_results": map[string]any{"result": map[string]any{
+			"legacy": map[string]any{"screen_name": "testuser"}}}},
+		"timeline_v2": map[string]any{"timeline": map[string]any{"instructions": []any{
+			map[string]any{"type": "TimelinePinEntry", "entry": pinEntry},
+			map[string]any{"type": "TimelineAddEntries", "entries": []any{
+				entry("tweet-222", tweet("222", "testuser", "regular tweet")),
+			}},
+		}}},
+	}}}}
+	b, _ := json.Marshal(body)
+	return b
+}
+
 // tweetDetailResponse builds a TweetDetail (v2) payload: parent tweet plus
 // conversation-thread entries holding replies.
 func tweetDetailResponse() []byte {
@@ -187,13 +216,20 @@ func TestTwitterFetch(t *testing.T) {
 		t.Error("published date not parsed")
 	}
 
-	// Retweet unwraps to the original tweet's identity and score.
+	// Retweet unwraps to the original tweet's identity and score, with
+	// retweet provenance recorded.
 	rt := items[1]
 	if rt.GUID != "twitter:223" {
 		t.Errorf("retweet GUID = %q, want twitter:223 (unwrapped)", rt.GUID)
 	}
 	if rt.Points != 7 {
 		t.Errorf("retweet points = %d, want 7", rt.Points)
+	}
+	if !strings.Contains(rt.Title, "[Retweet @orig]") {
+		t.Errorf("retweet title missing RT marker: %q", rt.Title)
+	}
+	if !strings.Contains(rt.Content, "retweeted by") || !strings.Contains(rt.Content, "@other") {
+		t.Errorf("retweet content missing provenance: %s", rt.Content)
 	}
 
 	// Note tweet uses long-form text as content and title source.
@@ -203,6 +239,30 @@ func TestTwitterFetch(t *testing.T) {
 	}
 	if strings.Contains(note.Title, "trunc") {
 		t.Errorf("title should come from note text, got %q", note.Title)
+	}
+}
+
+func TestTwitterPinnedBadge(t *testing.T) {
+	// Build a timeline whose pinned entry (333) also carries the Pinned flag
+	// through parseUserTweets.
+	body := userTweetsResponseWithPin()
+	f, srv := newTestTwitterFetcher(t, "4444", body)
+	defer srv.Close()
+
+	items, err := f.Fetch(context.Background(), "https://x.com/testuser")
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	var pinned *Item
+	for i := range items {
+		if items[i].GUID == "twitter:111" && strings.Contains(items[i].Title, "📌") {
+			pinned = &items[i]
+		} else if strings.Contains(items[i].Title, "📌") {
+			t.Errorf("non-pinned item %s has 📌 badge", items[i].GUID)
+		}
+	}
+	if pinned == nil {
+		t.Fatal("pinned item not found with 📌 badge")
 	}
 }
 
@@ -274,6 +334,283 @@ func TestTwitterFetchComments(t *testing.T) {
 	}
 	if len(capped) != 1 {
 		t.Fatalf("capped length = %d, want 1", len(capped))
+	}
+}
+
+func TestTwitterMediaRendering(t *testing.T) {
+	photo := map[string]any{"type": "photo", "media_url_https": "https://pbs.twimg.com/media/abc.jpg"}
+	video := map[string]any{
+		"type":             "video",
+		"media_url_https":  "https://pbs.twimg.com/media/vid.jpg",
+		"video_info": map[string]any{"variants": []any{
+			map[string]any{"content_type": "video/mp4", "bitrate": 320000, "url": "https://video.twimg.com/low.mp4"},
+			map[string]any{"content_type": "video/mp4", "bitrate": 2176000, "url": "https://video.twimg.com/high.mp4"},
+			map[string]any{"content_type": "application/x-mpegURL", "bitrate": 0, "url": "https://video.twimg.com/pl.m3u8"},
+		}},
+	}
+	tw := &twitterTweetResult{RestID: "999"}
+	tw.Legacy.FullText = "tweet with media"
+	tw.Legacy.ExtendedEntities.Media = []twitterMedia{}
+	// Rebuild through JSON to exercise the struct tags.
+	raw, _ := json.Marshal(map[string]any{
+		"rest_id":          "999",
+		"legacy": map[string]any{
+			"full_text":         "tweet with media",
+			"extended_entities": map[string]any{"media": []any{photo, video}},
+			// entities.media should be ignored when extended_entities exists
+			"entities": map[string]any{"media": []any{
+				map[string]any{"type": "photo", "media_url_https": "https://pbs.twimg.com/media/first.jpg"},
+			}},
+		},
+	})
+	if err := json.Unmarshal(raw, tw); err != nil {
+		t.Fatal(err)
+	}
+	html := tw.mediaHTML()
+	if !strings.Contains(html, `src="https://pbs.twimg.com/media/abc.jpg"`) {
+		t.Errorf("photo not rendered: %s", html)
+	}
+	if strings.Contains(html, "first.jpg") {
+		t.Error("entities.media must be skipped when extended_entities is present")
+	}
+	// Highest-bitrate MP4 wins; HLS variant ignored.
+	if !strings.Contains(html, `src="https://video.twimg.com/high.mp4"`) {
+		t.Errorf("video variant not rendered: %s", html)
+	}
+	if !strings.Contains(html, `poster="https://pbs.twimg.com/media/vid.jpg"`) {
+		t.Errorf("video poster missing: %s", html)
+	}
+
+	// Fallback: media only in entities.
+	tw2 := &twitterTweetResult{}
+	raw2, _ := json.Marshal(map[string]any{"legacy": map[string]any{
+		"full_text": "x",
+		"entities":  map[string]any{"media": []any{photo}},
+	}})
+	json.Unmarshal(raw2, tw2)
+	if !strings.Contains(tw2.mediaHTML(), "abc.jpg") {
+		t.Errorf("entities fallback failed: %s", tw2.mediaHTML())
+	}
+}
+
+func TestTwitterLinkExpansion(t *testing.T) {
+	// Case 1: media t.co link with NO entities.urls entry (common shape) —
+	// must be dropped when the media is embedded.
+	tw := &twitterTweetResult{}
+	raw, _ := json.Marshal(map[string]any{
+		"rest_id": "2",
+		"legacy": map[string]any{
+			"full_text": "chart says it all https://t.co/JWjZnDMd6G",
+			"extended_entities": map[string]any{"media": []any{
+				map[string]any{"type": "photo", "url": "https://t.co/JWjZnDMd6G", "media_url_https": "https://pbs.twimg.com/media/x.jpg"},
+			}},
+		},
+	})
+	json.Unmarshal(raw, tw)
+	text := tw.displayText(true)
+	if strings.Contains(text, "t.co") {
+		t.Errorf("media t.co link should be dropped when media embedded: %s", text)
+	}
+	if !strings.Contains(text, "chart says it all") {
+		t.Errorf("body text lost: %s", text)
+	}
+	// Without embed, expand to the image URL instead of the opaque t.co.
+	textNoEmbed := tw.displayText(false)
+	if strings.Contains(textNoEmbed, "t.co") || !strings.Contains(textNoEmbed, "pbs.twimg.com/media/x.jpg") {
+		t.Errorf("media link should expand when no embed: %s", textNoEmbed)
+	}
+
+	// Case 2: media link listed in entities.urls too, plus a normal URL.
+	tw2 := &twitterTweetResult{}
+	raw, _ = json.Marshal(map[string]any{
+		"rest_id": "1",
+		"legacy": map[string]any{
+			"full_text": "chart says it all https://t.co/JWjZnDMd6G and read https://t.co/abc123",
+			"entities": map[string]any{
+				"media": []any{map[string]any{"type": "photo", "url": "https://t.co/JWjZnDMd6G", "media_url_https": "https://pbs.twimg.com/media/x.jpg"}},
+				"urls": []any{
+					map[string]any{"url": "https://t.co/JWjZnDMd6G", "expanded_url": "https://pbs.twimg.com/media/x.jpg", "display_url": "pic.x.com/x"},
+					map[string]any{"url": "https://t.co/abc123", "expanded_url": "https://example.com/blog/post", "display_url": "example.com/blog/post"},
+				},
+			},
+			"extended_entities": map[string]any{"media": []any{
+				map[string]any{"type": "photo", "url": "https://t.co/JWjZnDMd6G", "media_url_https": "https://pbs.twimg.com/media/x.jpg"},
+			}},
+		},
+	})
+	json.Unmarshal(raw, tw2)
+
+	text = tw2.displayText(true)
+	if strings.Contains(text, "t.co") {
+		t.Errorf("media t.co link should be dropped when media embedded: %s", text)
+	}
+	if !strings.Contains(text, `<a href="https://example.com/blog/post">`) {
+		t.Errorf("external link should be expanded: %s", text)
+	}
+	if strings.Contains(text, "t.co/abc123") {
+		t.Errorf("external t.co link should be replaced: %s", text)
+	}
+
+	// Without embedded media the media link stays (as an expanded anchor).
+	text2 := tw2.displayText(false)
+	if !strings.Contains(text2, `href="https://pbs.twimg.com/media/x.jpg"`) {
+		t.Errorf("media link should be kept when no embed: %s", text2)
+	}
+}
+
+func TestTwitterSelfLinkOnlyResolvesToTarget(t *testing.T) {
+	// Thread-continuation reply: body is ONLY a t.co link to the parent tweet
+	// (111), which is also present in the payload. The item must be emitted
+	// for the PARENT (its content), marked as linked-by the continuation.
+	linkOnly := map[string]any{
+		"rest_id": "777",
+		"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": "testuser"}}}},
+		"legacy": map[string]any{
+			"full_text": "https://t.co/2vt7q5WCmm",
+			"entities": map[string]any{"urls": []any{
+				map[string]any{"url": "https://t.co/2vt7q5WCmm", "expanded_url": "https://x.com/testuser/status/111", "display_url": "x.com/testuser/statu…"},
+			}},
+		},
+	}
+	parent := map[string]any{
+		"rest_id": "111",
+		"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": "testuser"}}}},
+		"legacy": map[string]any{
+			"full_text":     "the actual thread root text",
+			"favorite_count": 10,
+		},
+	}
+	entry := func(id string, res map[string]any) map[string]any {
+		return map[string]any{"entryId": id, "content": map[string]any{
+			"itemContent": map[string]any{"tweet_results": map[string]any{"result": res}}}}
+	}
+	body := map[string]any{"data": map[string]any{"user": map[string]any{"result": map[string]any{
+		"timeline_v2": map[string]any{"timeline": map[string]any{"instructions": []any{
+			map[string]any{"type": "TimelineAddEntries", "entries": []any{
+				entry("tweet-777", linkOnly),
+				entry("tweet-111", parent),
+			}},
+		}}},
+	}}}}
+	raw, _ := json.Marshal(body)
+
+	tweets, err := parseUserTweets(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tweets) != 1 {
+		t.Fatalf("got %d tweets, want 1 (link-only collapsed into parent)", len(tweets))
+	}
+	got := tweets[0]
+	if got.RestID != "111" {
+		t.Errorf("emitted tweet = %s, want parent 111", got.RestID)
+	}
+	if got.LinkedBy != "testuser" {
+		t.Errorf("LinkedBy = %q, want testuser", got.LinkedBy)
+	}
+
+	item := got.item("testuser")
+	if !strings.Contains(item.Title, "[Link @testuser]") {
+		t.Errorf("title missing link provenance: %q", item.Title)
+	}
+	if !strings.Contains(item.Content, "linked by") || !strings.Contains(item.Content, "the actual thread root text") {
+		t.Errorf("content missing target text or provenance: %s", item.Content)
+	}
+
+	// When the target is NOT in the payload, the link-only entry is dropped
+	// entirely (nothing useful to show).
+	solo := map[string]any{"data": map[string]any{"user": map[string]any{"result": map[string]any{
+		"timeline_v2": map[string]any{"timeline": map[string]any{"instructions": []any{
+			map[string]any{"type": "TimelineAddEntries", "entries": []any{
+				entry("tweet-777", linkOnly),
+			}},
+		}}},
+	}}}}
+	rawSolo, _ := json.Marshal(solo)
+	tweetsSolo, err := parseUserTweets(rawSolo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tweetsSolo) != 0 {
+		t.Errorf("link-only tweet without resolvable target should be dropped, got %d", len(tweetsSolo))
+	}
+}
+
+func TestTwitterQuoteTweetResolvesToQuoted(t *testing.T) {
+	// Empty-text quote wrapper: "available now" quoting a tweet with a photo.
+	quoted := map[string]any{
+		"rest_id": "555",
+		"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": "testuser"}}}},
+		"legacy": map[string]any{
+			"full_text":     "the quoted tweet body",
+			"favorite_count": 77,
+			"extended_entities": map[string]any{"media": []any{
+				map[string]any{"type": "photo", "media_url_https": "https://pbs.twimg.com/media/quote.jpg"},
+			}},
+		},
+	}
+	wrapper := map[string]any{
+		"rest_id": "666",
+		"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": "testuser"}}}},
+		"legacy":              map[string]any{"full_text": "available now"},
+		"quoted_status_result": map[string]any{"result": quoted},
+	}
+	entry := func(id string, res map[string]any) map[string]any {
+		return map[string]any{"entryId": id, "content": map[string]any{
+			"itemContent": map[string]any{"tweet_results": map[string]any{"result": res}}}}
+	}
+	body := map[string]any{"data": map[string]any{"user": map[string]any{"result": map[string]any{
+		"timeline_v2": map[string]any{"timeline": map[string]any{"instructions": []any{
+			map[string]any{"type": "TimelineAddEntries", "entries": []any{entry("tweet-666", wrapper)}},
+		}}},
+	}}}}
+	raw, _ := json.Marshal(body)
+	tweets, err := parseUserTweets(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tweets) != 1 {
+		t.Fatalf("got %d tweets", len(tweets))
+	}
+
+	// Empty-text wrapper folds into the quoted tweet with provenance.
+	item := tweets[0].item("testuser")
+	if item.GUID != "twitter:555" {
+		t.Errorf("GUID = %q, want the quoted tweet's twitter:555", item.GUID)
+	}
+	if !strings.Contains(item.Title, "[Quote @testuser]") {
+		t.Errorf("title missing QT provenance: %q", item.Title)
+	}
+	if !strings.Contains(item.Content, "quoted by") || !strings.Contains(item.Content, "the quoted tweet body") {
+		t.Errorf("content missing quoted text/provenance: %s", item.Content)
+	}
+	if !strings.Contains(item.Content, "pbs.twimg.com/media/quote.jpg") {
+		t.Errorf("quoted tweet's media missing: %s", item.Content)
+	}
+
+	// Long own text still folds — quotes always resolve to the quoted tweet
+	// regardless of commentary length.
+	wrapper["legacy"].(map[string]any)["full_text"] = "available now, and my own detailed thoughts about this release here"
+	raw2, _ := json.Marshal(body)
+	tweets2, _ := parseUserTweets(raw2)
+	item2 := tweets2[0].item("testuser")
+	if item2.GUID != "twitter:555" {
+		t.Errorf("long-quote GUID = %q, want twitter:555 (always folded)", item2.GUID)
+	}
+	if !strings.Contains(item2.Content, "the quoted tweet body") {
+		t.Errorf("long-quote content should be the quoted tweet: %s", item2.Content)
+	}
+}
+
+func TestTwitterNewlinesRenderAsBr(t *testing.T) {
+	tw := &twitterTweetResult{}
+	raw, _ := json.Marshal(map[string]any{"legacy": map[string]any{
+		"full_text": "line one\n\nline two",
+	}})
+	json.Unmarshal(raw, tw)
+	item := tw.item("testuser")
+	if !strings.Contains(item.Content, "line one<br /><br />line two") {
+		t.Errorf("newlines should become <br />: %s", item.Content)
 	}
 }
 

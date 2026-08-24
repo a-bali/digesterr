@@ -199,6 +199,22 @@ func (q *Queries) GetItem(ctx context.Context, id int64) (Item, error) {
 	return i, err
 }
 
+const getItemTitleByHash = `-- name: GetItemTitleByHash :one
+SELECT title FROM items WHERE feed_id = ? AND hash = ?
+`
+
+type GetItemTitleByHashParams struct {
+	FeedID int64  `json:"feed_id"`
+	Hash   string `json:"hash"`
+}
+
+func (q *Queries) GetItemTitleByHash(ctx context.Context, arg GetItemTitleByHashParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, getItemTitleByHash, arg.FeedID, arg.Hash)
+	var title string
+	err := row.Scan(&title)
+	return title, err
+}
+
 const getItemWithFeedOwner = `-- name: GetItemWithFeedOwner :one
 SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
 JOIN feeds f ON f.id = i.feed_id
@@ -1454,6 +1470,21 @@ func (q *Queries) UpdateItemStatus(ctx context.Context, arg UpdateItemStatusPara
 		&i.ExtractDate,
 	)
 	return i, err
+}
+
+const updateItemTitle = `-- name: UpdateItemTitle :exec
+UPDATE items SET title = ?, updated_at = DATETIME('now') WHERE feed_id = ? AND hash = ?
+`
+
+type UpdateItemTitleParams struct {
+	Title  string `json:"title"`
+	FeedID int64  `json:"feed_id"`
+	Hash   string `json:"hash"`
+}
+
+func (q *Queries) UpdateItemTitle(ctx context.Context, arg UpdateItemTitleParams) error {
+	_, err := q.db.ExecContext(ctx, updateItemTitle, arg.Title, arg.FeedID, arg.Hash)
+	return err
 }
 
 const updateItemURL = `-- name: UpdateItemURL :exec
