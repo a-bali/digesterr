@@ -3,7 +3,7 @@ import { SCORE_FEED_TYPES, feedUrlFor } from './feeds'
 
 describe('SCORE_FEED_TYPES', () => {
   it('contains the score-capable feed types', () => {
-    expect([...SCORE_FEED_TYPES].sort()).toEqual(['hn', 'lobsters', 'reddit'])
+    expect([...SCORE_FEED_TYPES].sort()).toEqual(['hn', 'lobsters', 'reddit', 'twitter'])
     expect(SCORE_FEED_TYPES.has('rss')).toBe(false)
   })
 })

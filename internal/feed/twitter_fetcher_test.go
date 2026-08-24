@@ -1,0 +1,309 @@
+package feed
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"digesterr/internal/store"
+)
+
+func TestExtractTwitterScreenName(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"https://x.com/elonmusk", "elonmusk"},
+		{"https://www.twitter.com/elonmusk/", "elonmusk"},
+		{"https://x.com/nasa/status/12345", "nasa"},
+		{"@elonmusk", "elonmusk"},
+		{"elonmusk", "elonmusk"},
+		{"https://example.com/foo", ""},
+		{"https://x.com/", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := extractTwitterScreenName(c.in); got != c.want {
+			t.Errorf("extractTwitterScreenName(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestExtractTweetID(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"twitter:1234567890", "1234567890"},
+		{"https://x.com/elonmusk/status/1234567890", "1234567890"},
+		{"https://twitter.com/nasa/statuses/98765/photo/1", "98765"},
+		{"https://example.com/status/1", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := extractTweetID(c.in); got != c.want {
+			t.Errorf("extractTweetID(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestParseTwitterTime(t *testing.T) {
+	got := parseTwitterTime("Sun Aug 23 10:57:54 +0000 2026")
+	if got.IsZero() {
+		t.Fatal("expected valid time")
+	}
+	if got.Year() != 2026 || got.Month().String() != "August" || got.Day() != 23 {
+		t.Fatalf("unexpected parsed date: %v", got)
+	}
+	if !parseTwitterTime("garbage").IsZero() {
+		t.Error("garbage input should yield zero time")
+	}
+}
+
+// userByResponse builds a minimal UserByScreenName payload.
+func userByResponse(id string) []byte {
+	body := map[string]any{"data": map[string]any{"user": map[string]any{
+		"result": map[string]any{"rest_id": id, "legacy": map[string]any{"screen_name": "testuser"}},
+	}}}
+	b, _ := json.Marshal(body)
+	return b
+}
+
+// userTweetsResponse builds a UserTweets payload with one original tweet,
+// one retweet (wrapped), one note tweet, and a non-tweet cursor entry.
+func userTweetsResponse() []byte {
+	tweet := func(id, screen, text, created string, fav, reply int) map[string]any {
+		return map[string]any{
+			"rest_id": id,
+			"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": screen}}}},
+			"legacy": map[string]any{
+				"full_text": text, "created_at": created,
+				"favorite_count": fav, "reply_count": reply,
+			},
+		}
+	}
+	retweet := tweet("222", "other", "RT @orig: retweeted text", "Sun Aug 23 10:30:00 +0000 2026", 0, 1)
+	retweet["legacy"].(map[string]any)["retweeted_status_result"] = map[string]any{
+		"result": tweet("223", "orig", "retweeted text", "Sun Aug 23 09:00:00 +0000 2026", 7, 2),
+	}
+	note := tweet("333", "testuser", "short trunc...", "Sun Aug 23 08:00:00 +0000 2026", 1, 0)
+	note["note_tweet"] = map[string]any{"note_tweet": map[string]any{"text": "this is a very long form note tweet body"}}
+
+	entry := func(id string, res map[string]any) map[string]any {
+		return map[string]any{"entryId": id, "content": map[string]any{
+			"itemContent": map[string]any{"tweet_results": map[string]any{"result": res}}}}
+	}
+	body := map[string]any{"data": map[string]any{"user": map[string]any{"result": map[string]any{
+		"timeline_v2": map[string]any{"timeline": map[string]any{"instructions": []any{
+			map[string]any{"type": "TimelineAddEntries", "entries": []any{
+				entry("tweet-111", tweet("111", "testuser", "hello world", "Sun Aug 23 10:00:00 +0000 2026", 42, 5)),
+				entry("tweet-222", retweet),
+				entry("tweet-333", note),
+				map[string]any{"entryId": "cursor-bottom-0", "content": map[string]any{"entryType": "TimelineTimelineCursor", "value": "abc"}},
+			}},
+		}}},
+	}}}}
+	b, _ := json.Marshal(body)
+	return b
+}
+
+// tweetDetailResponse builds a TweetDetail (v2) payload: parent tweet plus
+// conversation-thread entries holding replies.
+func tweetDetailResponse() []byte {
+	reply := func(id, screen, text string, fav int) map[string]any {
+		return map[string]any{
+			"rest_id": id,
+			"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": screen}}}},
+			"legacy": map[string]any{
+				"full_text": text, "favorite_count": fav, "in_reply_to_status_id_str": "111",
+			},
+		}
+	}
+	parent := map[string]any{
+		"rest_id": "111",
+		"legacy":  map[string]any{"full_text": "parent tweet", "favorite_count": 42, "in_reply_to_status_id_str": ""},
+	}
+	tweetEntry := func(id string, res map[string]any) map[string]any {
+		return map[string]any{"entryId": id, "content": map[string]any{
+			"itemContent": map[string]any{"tweet_results": map[string]any{"result": res}}}}
+	}
+	body := map[string]any{"data": map[string]any{"threaded_conversation_with_injections_v2": map[string]any{
+		"instructions": []any{map[string]any{"entries": []any{
+			tweetEntry("tweet-111", parent),
+			map[string]any{"entryId": "conversationthread-555", "content": map[string]any{
+				"entryType": "ConversationTimelineModule", "items": []any{
+					map[string]any{"entryId": "c-tweet-555", "item": map[string]any{
+						"itemContent": map[string]any{"tweet_results": map[string]any{"result": reply("555", "alice", "first reply", 10)}}}},
+				}}},
+			tweetEntry("conversationthread-666", reply("666", "bob", "second reply with more likes", 99)),
+		}}},
+	}}}
+	b, _ := json.Marshal(body)
+	return b
+}
+
+func newTestTwitterFetcher(t *testing.T, userID string, tweetsBody []byte) (*TwitterFetcher, *httptest.Server) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "UserByScreenName"):
+			_, _ = w.Write(userByResponse(userID))
+		case strings.Contains(r.URL.Path, "UserTweets"):
+			_, _ = w.Write(tweetsBody)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	f := NewTwitterFetcher()
+	f.baseURL = srv.URL
+	f.SetCredentials("ct0-test", "auth-test")
+	return f, srv
+}
+
+func TestTwitterFetch(t *testing.T) {
+	f, srv := newTestTwitterFetcher(t, "4444", userTweetsResponse())
+	defer srv.Close()
+
+	items, err := f.Fetch(context.Background(), "https://x.com/testuser")
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("got %d items, want 3", len(items))
+	}
+
+	first := items[0]
+	if first.GUID != "twitter:111" {
+		t.Errorf("GUID = %q, want twitter:111", first.GUID)
+	}
+	if first.URL != "https://x.com/testuser/status/111" {
+		t.Errorf("URL = %q", first.URL)
+	}
+	if first.Points != 42 || first.CommentsCnt != 5 {
+		t.Errorf("points/comments = %d/%d, want 42/5", first.Points, first.CommentsCnt)
+	}
+	if first.Author != "@testuser" {
+		t.Errorf("author = %q", first.Author)
+	}
+	if first.PublishedAt.IsZero() {
+		t.Error("published date not parsed")
+	}
+
+	// Retweet unwraps to the original tweet's identity and score.
+	rt := items[1]
+	if rt.GUID != "twitter:223" {
+		t.Errorf("retweet GUID = %q, want twitter:223 (unwrapped)", rt.GUID)
+	}
+	if rt.Points != 7 {
+		t.Errorf("retweet points = %d, want 7", rt.Points)
+	}
+
+	// Note tweet uses long-form text as content and title source.
+	note := items[2]
+	if !strings.Contains(note.Content, "long form note") {
+		t.Errorf("note tweet content = %q", note.Content)
+	}
+	if strings.Contains(note.Title, "trunc") {
+		t.Errorf("title should come from note text, got %q", note.Title)
+	}
+}
+
+func TestTwitterFetchMissingCredentials(t *testing.T) {
+	f := NewTwitterFetcher()
+	_, err := f.Fetch(context.Background(), "https://x.com/testuser")
+	if err == nil || !strings.Contains(err.Error(), "credentials not configured") {
+		t.Fatalf("expected credentials error, got %v", err)
+	}
+}
+
+func TestTwitterFetchBadURL(t *testing.T) {
+	f, srv := newTestTwitterFetcher(t, "4444", userTweetsResponse())
+	defer srv.Close()
+	if _, err := f.Fetch(context.Background(), "not-a-twitter-url"); err == nil {
+		t.Fatal("expected screen-name extraction error")
+	}
+}
+
+func TestTwitterUserNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	defer srv.Close()
+	f := NewTwitterFetcher()
+	f.baseURL = srv.URL
+	f.SetCredentials("c", "a")
+	if _, err := f.userID(context.Background(), "ghost"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected not-found error, got %v", err)
+	}
+}
+
+func TestTwitterFetchComments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "TweetDetail"):
+			_, _ = w.Write(tweetDetailResponse())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	f := NewTwitterFetcher()
+	f.baseURL = srv.URL
+	f.SetCredentials("ct0-test", "auth-test")
+
+	comments, err := f.FetchComments(context.Background(), storeItemForTwitter("twitter:111"), 50)
+	if err != nil {
+		t.Fatalf("FetchComments failed: %v", err)
+	}
+	if len(comments) != 2 {
+		t.Fatalf("got %d comments, want 2", len(comments))
+	}
+	// Sorted by likes: bob (99) before alice (10).
+	if comments[0].Author != "@bob" || comments[0].Points != 99 {
+		t.Errorf("comments[0] = %+v", comments[0])
+	}
+	if comments[1].Author != "@alice" || comments[1].Points != 10 {
+		t.Errorf("comments[1] = %+v", comments[1])
+	}
+	if comments[1].URL != "https://x.com/alice/status/555" {
+		t.Errorf("comment URL = %q", comments[1].URL)
+	}
+
+	// maxComments caps the result after sorting; URL-based ID extraction path.
+	capped, err := f.FetchComments(context.Background(), storeItemForTwitter("https://x.com/a/status/111"), 1)
+	if err != nil {
+		t.Fatalf("FetchComments (url) failed: %v", err)
+	}
+	if len(capped) != 1 {
+		t.Fatalf("capped length = %d, want 1", len(capped))
+	}
+}
+
+func TestTwitterAuthHeadersSent(t *testing.T) {
+	var gotCookie, gotCSRF, gotBearer string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCookie = r.Header.Get("Cookie")
+		gotCSRF = r.Header.Get("X-CSRF-Token")
+		gotBearer = r.Header.Get("Authorization")
+		_, _ = w.Write(userByResponse("1"))
+	}))
+	defer srv.Close()
+	f := NewTwitterFetcher()
+	f.baseURL = srv.URL
+	f.SetCredentials("my-ct0", "my-auth")
+	if _, err := f.userID(context.Background(), "testuser"); err != nil {
+		t.Fatalf("userID failed: %v", err)
+	}
+	if !strings.Contains(gotCookie, "ct0=my-ct0") || !strings.Contains(gotCookie, "auth_token=my-auth") {
+		t.Errorf("cookie header = %q", gotCookie)
+	}
+	if gotCSRF != "my-ct0" {
+		t.Errorf("csrf token = %q", gotCSRF)
+	}
+	if !strings.HasPrefix(gotBearer, "Bearer ") {
+		t.Errorf("authorization = %q", gotBearer)
+	}
+}
+
+// storeItemForTwitter builds a store.Item for comment-fetch tests.
+func storeItemForTwitter(guidOrURL string) store.Item {
+	return store.Item{ID: 1, Hash: guidOrURL, CommentUrl: guidOrURL, Url: guidOrURL}
+}

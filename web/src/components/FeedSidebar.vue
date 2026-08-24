@@ -90,6 +90,8 @@ function buildFeedPayload(form: { type: string; name: string; url: string; categ
   if (form.type === 'reddit') {
     // Reddit form field holds just the subreddit name.
     data.url = feedUrlFor('reddit', form.url)
+  } else if (form.type === 'twitter') {
+    data.url = feedUrlFor('twitter', form.url)
   } else if (form.type === 'hn' || form.type === 'lobsters') {
     data.url = feedUrlFor(form.type, '')
   } else data.url = form.url
