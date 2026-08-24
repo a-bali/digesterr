@@ -104,6 +104,35 @@ func userTweetsResponse() []byte {
 	return b
 }
 
+// userTweetsResponseWithPin builds a UserTweets payload with a pinned tweet:
+// the pin instruction carries a separate TimelinePinEntry for tweet-444.
+func userTweetsResponseWithPin() []byte {
+	tweet := func(id, screen, text string) map[string]any {
+		return map[string]any{
+			"rest_id": id,
+			"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": screen}}}},
+			"legacy":  map[string]any{"full_text": text},
+		}
+	}
+	entry := func(id string, res map[string]any) map[string]any {
+		return map[string]any{"entryId": id, "content": map[string]any{
+			"itemContent": map[string]any{"tweet_results": map[string]any{"result": res}}}}
+	}
+	pinEntry := entry("tweet-111", tweet("111", "testuser", "pinned announcement"))
+	body := map[string]any{"data": map[string]any{"user": map[string]any{"result": map[string]any{
+		"core": map[string]any{"user_results": map[string]any{"result": map[string]any{
+			"legacy": map[string]any{"screen_name": "testuser"}}}},
+		"timeline_v2": map[string]any{"timeline": map[string]any{"instructions": []any{
+			map[string]any{"type": "TimelinePinEntry", "entry": pinEntry},
+			map[string]any{"type": "TimelineAddEntries", "entries": []any{
+				entry("tweet-222", tweet("222", "testuser", "regular tweet")),
+			}},
+		}}},
+	}}}}
+	b, _ := json.Marshal(body)
+	return b
+}
+
 // tweetDetailResponse builds a TweetDetail (v2) payload: parent tweet plus
 // conversation-thread entries holding replies.
 func tweetDetailResponse() []byte {
@@ -210,6 +239,30 @@ func TestTwitterFetch(t *testing.T) {
 	}
 	if strings.Contains(note.Title, "trunc") {
 		t.Errorf("title should come from note text, got %q", note.Title)
+	}
+}
+
+func TestTwitterPinnedBadge(t *testing.T) {
+	// Build a timeline whose pinned entry (333) also carries the Pinned flag
+	// through parseUserTweets.
+	body := userTweetsResponseWithPin()
+	f, srv := newTestTwitterFetcher(t, "4444", body)
+	defer srv.Close()
+
+	items, err := f.Fetch(context.Background(), "https://x.com/testuser")
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	var pinned *Item
+	for i := range items {
+		if items[i].GUID == "twitter:111" && strings.Contains(items[i].Title, "📌") {
+			pinned = &items[i]
+		} else if strings.Contains(items[i].Title, "📌") {
+			t.Errorf("non-pinned item %s has 📌 badge", items[i].GUID)
+		}
+	}
+	if pinned == nil {
+		t.Fatal("pinned item not found with 📌 badge")
 	}
 }
 

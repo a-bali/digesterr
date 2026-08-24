@@ -175,3 +175,9 @@ SELECT i.* FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE f.category = ? AND f.user_id = ?
 ORDER BY i.published_at DESC, i.created_at DESC;
+
+-- name: GetItemTitleByHash :one
+SELECT title FROM items WHERE feed_id = ? AND hash = ?;
+
+-- name: UpdateItemTitle :exec
+UPDATE items SET title = ?, updated_at = DATETIME('now') WHERE feed_id = ? AND hash = ?;

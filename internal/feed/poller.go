@@ -309,6 +309,14 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 			if feed.ExtractContent != 0 {
 				p.setItemExtractionPending(ctx, id, logger)
 			}
+		} else if feed.Type == "twitter" {
+			// Twitter titles carry volatile state (📌 pinned badge, RT
+			// provenance). The item hash excludes the title, so an existing
+			// row is invisible to CreateItemIfNotExists — refresh its title
+			// when the fetched one changed (e.g. tweet got pinned/unpinned).
+			if err := p.refreshTwitterTitle(ctx, feed.ID, item.GUID, item.Title); err != nil {
+				logger.Debug("twitter title refresh failed", "guid", item.GUID, "error", err)
+			}
 		}
 	}
 
@@ -387,6 +395,26 @@ func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candida
 		}
 	}
 	return scored
+}
+
+// refreshTwitterTitle updates an existing twitter item's title when the
+// freshly fetched title differs (pinned badge added/removed, RT marker).
+func (p *Poller) refreshTwitterTitle(ctx context.Context, feedID int64, guid, newTitle string) error {
+	current, err := p.queries.GetItemTitleByHash(ctx, store.GetItemTitleByHashParams{
+		FeedID: feedID,
+		Hash:   itemHash(guid, "", "", ""), // hash is GUID-anchored for twitter items
+	})
+	if err != nil {
+		return err // not stored yet or query failed — nothing to refresh
+	}
+	if current == newTitle {
+		return nil
+	}
+	return p.queries.UpdateItemTitle(ctx, store.UpdateItemTitleParams{
+		Title:  newTitle,
+		FeedID: feedID,
+		Hash:   itemHash(guid, "", "", ""),
+	})
 }
 
 func (p *Poller) setItemExtractionPending(ctx context.Context, itemID int64, logger *slog.Logger) {

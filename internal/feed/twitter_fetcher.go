@@ -213,6 +213,9 @@ type twitterTweetResult struct {
 	// RetweetedBy holds the feed account's screen name when this entry is a
 	// retweet (not part of the API payload; set by parseUserTweets).
 	RetweetedBy string `json:"-"`
+	// Pinned marks the profile's pinned tweet (not part of the API payload;
+	// set by parseUserTweets).
+	Pinned bool `json:"-"`
 	Core   struct {
 		UserResults struct {
 			Result struct {
@@ -450,6 +453,13 @@ func parseUserTweets(body []byte) ([]*twitterTweetResult, error) {
 		r.RetweetedBy = retweetedBy
 		out = append(out, &r)
 	}
+	appendPinned := func(r twitterTweetResult) {
+		n := len(out)
+		appendTweet(r)
+		if n < len(out) {
+			out[n].Pinned = true
+		}
+	}
 	for _, ins := range instructions {
 		// TimelineAddEntries holds the main timeline; TimelinePinEntry holds
 		// the profile's pinned tweet (also part of what nitter/xcancel show).
@@ -464,7 +474,7 @@ func parseUserTweets(body []byte) ([]*twitterTweetResult, error) {
 			}
 			if ins.Type == "TimelinePinEntry" && ins.Entry != nil &&
 				strings.HasPrefix(ins.Entry.EntryID, "tweet-") {
-				appendTweet(ins.Entry.Content.ItemContent.TweetResults.Result)
+				appendPinned(ins.Entry.Content.ItemContent.TweetResults.Result)
 			}
 		}
 	}
@@ -495,6 +505,11 @@ func (t *twitterTweetResult) item(feedScreenName string) Item {
 	if t.RetweetedBy != "" && t.RetweetedBy != author {
 		title = fmt.Sprintf("[RT @%s] %s", t.RetweetedBy, title)
 		content = fmt.Sprintf("<p><em>🔁 <strong>@%s</strong> retweeted</em></p>", htmlEscaped(t.RetweetedBy)) + content
+	}
+	// Pinned profile tweet: prefix the title. The poller refreshes twitter
+	// item titles on every fetch, so the badge disappears when unpinned.
+	if t.Pinned {
+		title = "📌 " + title
 	}
 
 	return Item{
