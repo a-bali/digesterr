@@ -36,12 +36,19 @@ const categoryNames = computed(() => {
 const form = reactive({ type: 'rss', name: '', url: '', category: '', extract_content: 0, min_score: 0 })
 const typeLabel = (t: string) => ({ rss: 'RSS / Atom', hn: 'Hacker News', lobsters: 'Lobste.rs', reddit: 'Reddit', twitter: 'Twitter / X' }[t] || t)
 
+// Content extraction fetches the article behind item.url with readability;
+// x.com serves a login-wall to crawlers, so it can't work for tweets —
+// tweets already carry their full content from the API.
+const extractionSupported = computed(() => form.type !== 'twitter')
+
 function onTypeChange(type: string) {
   form.type = type
   form.url = ''
   // The minimum-score field is disabled for non-score feed types, so the
   // value is reset when switching away from a score-capable type.
   if (!SCORE_FEED_TYPES.has(type)) form.min_score = 0
+  // Extraction is unsupported for twitter; never leave a stale flag on.
+  if (!extractionSupported.value) form.extract_content = 0
   // Fixed URLs for the built-in score feed types (shared with FeedSidebar).
   if (type === 'hn' || type === 'lobsters') form.url = feedUrlFor(type, '')
 }
@@ -60,7 +67,7 @@ watch(
           ? feed.url.replace('https://x.com/', '').replace('https://twitter.com/', '').replace(/^@/, '')
           : feed.url
       form.category = feed.category || ''
-      form.extract_content = feed.extract_content
+      form.extract_content = extractionSupported.value ? feed.extract_content : 0
       form.min_score = feed.min_score
     } else {
       form.type = 'rss'
@@ -128,10 +135,20 @@ const dialogId = Math.random().toString(36).slice(2)
         <label class="text-sm font-medium">URL</label>
         <Input v-model="form.url" placeholder="Feed URL" required />
       </div>
-      <label class="flex items-center gap-2 text-sm cursor-pointer">
-        <input type="checkbox" v-model.number="form.extract_content" :true-value="1" :false-value="0" class="toggle" />
+      <label class="flex items-center gap-2 text-sm" :class="extractionSupported ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'">
+        <input
+          type="checkbox"
+          v-model.number="form.extract_content"
+          :true-value="1"
+          :false-value="0"
+          :disabled="!extractionSupported"
+          class="toggle"
+        />
         Auto-extract full article content
       </label>
+      <p v-if="form.type === 'twitter'" class="text-xs text-muted-foreground -mt-2">
+        Not available for Twitter/X feeds — tweets already carry their full content.
+      </p>
       <div class="space-y-1">
         <label class="text-sm font-medium" :class="{ 'text-muted-foreground': !isScoreType }">Minimum score</label>
         <Input
