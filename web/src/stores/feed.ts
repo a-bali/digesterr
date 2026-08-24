@@ -113,7 +113,7 @@ export const useFeedStore = defineStore('feed', () => {
     await loadPage(activeFeedId.value, true)
   }
 
-  async function refreshItems(opts?: { silent?: boolean }) {
+  async function refreshItems(opts?: { silent?: boolean; replace?: boolean }) {
     if (!activeFeedId.value) return
     const rid = ++fetchReq
     if (opts?.silent) backgroundRefreshing.value = true
@@ -127,14 +127,36 @@ export const useFeedStore = defineStore('feed', () => {
         offset: 0,
       })
       if (rid !== fetchReq) return
-      // Merge by id instead of replacing. A background refresh (tab refocus,
-      // poll) must never remove rows the user already sees — e.g. items read
-      // during this session would vanish from an Unread-filtered list.
-      // Fresh server rows first (updated statuses), then rows that dropped
-      // out of the server response (read under a filter) keep their place.
-      const knownOrder = new Set(resp.items.map(i => i.id))
-      const kept = items.value.filter(i => !knownOrder.has(i.id))
-      items.value = [...resp.items, ...kept]
+
+      if (opts?.silent && !opts?.replace) {
+        // Silent refresh (visibility-change): merge in-place so items the
+        // user is looking at never vanish. Items present in both old list
+        // and server response get their data updated in place. Items that
+        // disappeared from the server response (e.g. read under an Unread
+        // filter) stay in the list at their current position but are
+        // marked stale so their visual state updates. Items that are
+        // entirely new get prepended.
+        const serverMap = new Map(resp.items.map(i => [i.id, i]))
+        const merged: Item[] = []
+        const seenServer = new Set<number>()
+        for (const old of items.value) {
+          const fresh = serverMap.get(old.id)
+          if (fresh) {
+            merged.push(fresh)       // update in place
+            seenServer.add(old.id)
+          } else {
+            merged.push(old)         // keep stale at its current position
+          }
+        }
+        // Prepend brand-new items not in the old list.
+        for (const item of resp.items) {
+          if (!seenServer.has(item.id)) merged.unshift(item)
+        }
+        items.value = merged
+      } else {
+        // Explicit refresh (pull-to-refresh, re-fetch): clean replace.
+        items.value = resp.items
+      }
       hasMore.value = resp.has_more
       totalItems.value = resp.total ?? 0
     } catch (e) {
