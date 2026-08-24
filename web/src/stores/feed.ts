@@ -129,35 +129,32 @@ export const useFeedStore = defineStore('feed', () => {
       if (rid !== fetchReq) return
 
       if (opts?.silent && !opts?.replace) {
-        // Silent refresh (visibility-change): merge in-place so items the
-        // user is looking at never vanish. Items present in both old list
-        // and server response are compared; only changed items get a new
-        // object reference (prevents Vue TransitionGroup from re-animating
-        // every row, which causes a brief flash). Items missing from the
-        // server response (e.g. read under an Unread filter) stay at their
-        // current position with stale data.
-        const serverMap = new Map(resp.items.map(i => [i.id, i]))
+        // Silent refresh (visibility-change): merge so the list stays stable
+        // and items don't flash or shuffle. Server response is the source of
+        // truth for sort order. Stale items (read under Unread filter) that
+        // dropped from the response go at the bottom.
+        const localMap = new Map(items.value.map(i => [i.id, i]))
         const merged: Item[] = []
-        const seenServer = new Set<number>()
-        for (const old of items.value) {
-          const fresh = serverMap.get(old.id)
-          if (fresh) {
-            // Keep the same object reference if nothing changed — prevents
-            // TransitionGroup from treating it as a new element.
+        const seenLocal = new Set<number>()
+        for (const fresh of resp.items) {
+          const old = localMap.get(fresh.id)
+          if (old) {
+            seenLocal.add(fresh.id)
+            // Keep old object reference if nothing changed — prevents
+            // TransitionGroup from re-animating unchanged rows.
             if (fresh.status !== old.status || fresh.points !== old.points ||
                 fresh.comments_count !== old.comments_count || fresh.title !== old.title) {
               merged.push(fresh)
             } else {
               merged.push(old)
             }
-            seenServer.add(old.id)
           } else {
-            merged.push(old) // keep stale at its current position
+            merged.push(fresh)
           }
         }
-        // Prepend brand-new items not in the old list.
-        for (const item of resp.items) {
-          if (!seenServer.has(item.id)) merged.unshift(item)
+        // Append stale items that dropped from the server response.
+        for (const old of items.value) {
+          if (!seenLocal.has(old.id)) merged.push(old)
         }
         items.value = merged
       } else {
