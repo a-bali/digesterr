@@ -510,7 +510,7 @@ func TestTwitterSelfLinkOnlyResolvesToTarget(t *testing.T) {
 	}
 
 	item := got.item("testuser")
-	if !strings.Contains(item.Title, "[Quote @testuser]") {
+	if !strings.Contains(item.Title, "[Link @testuser]") {
 		t.Errorf("title missing link provenance: %q", item.Title)
 	}
 	if !strings.Contains(item.Content, "linked by") || !strings.Contains(item.Content, "the actual thread root text") {
@@ -588,17 +588,17 @@ func TestTwitterQuoteTweetResolvesToQuoted(t *testing.T) {
 		t.Errorf("quoted tweet's media missing: %s", item.Content)
 	}
 
-	// Quote wrapper with substantial own text is NOT folded — it keeps its
-	// own content (the quote stays embedded in X's rendering, not ours).
+	// Long own text still folds — quotes always resolve to the quoted tweet
+	// regardless of commentary length.
 	wrapper["legacy"].(map[string]any)["full_text"] = "available now, and my own detailed thoughts about this release here"
 	raw2, _ := json.Marshal(body)
 	tweets2, _ := parseUserTweets(raw2)
 	item2 := tweets2[0].item("testuser")
-	if item2.GUID != "twitter:666" {
-		t.Errorf("non-folded GUID = %q, want twitter:666", item2.GUID)
+	if item2.GUID != "twitter:555" {
+		t.Errorf("long-quote GUID = %q, want twitter:555 (always folded)", item2.GUID)
 	}
-	if strings.Contains(item2.Title, "[Quote @") {
-		t.Errorf("non-folded quote should not carry QT title marker: %q", item2.Title)
+	if !strings.Contains(item2.Content, "the quoted tweet body") {
+		t.Errorf("long-quote content should be the quoted tweet: %s", item2.Content)
 	}
 }
 

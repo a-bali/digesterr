@@ -624,11 +624,11 @@ func (t *twitterTweetResult) item(feedScreenName string) Item {
 	text := t.displayText(hasMedia)
 	author := t.author()
 
-	// Quote tweets whose own text adds little beyond the quote ("available
-	// now", "this"...) render the quoted tweet's content with provenance,
-	// mirroring retweet handling. Short own text is folded; substantial
-	// commentary is kept as-is.
-	if t.Quoted != nil && len(strings.TrimSpace(text)) <= 40 {
+	// Quote tweets always fold into the quoted tweet's content with
+	// provenance, mirroring retweet handling — regardless of how much own
+	// text the quote carries. The quoted tweet is the substance; the quote's
+	// commentary stays visible on x.com via the item URL.
+	if t.Quoted != nil {
 		q := &t.Quoted.Result
 		if q.RestID != "" && q.Legacy.FullText != "" {
 			copied := *q
@@ -660,10 +660,11 @@ func (t *twitterTweetResult) item(feedScreenName string) Item {
 		title = fmt.Sprintf("[Quote @%s] %s", titleAuthorForBadge(t.QuotedBy, t), title)
 		content = fmt.Sprintf("<p><em>💬 quoted by <strong>@%s</strong></em></p>", htmlEscaped(t.QuotedBy)) + content
 	}
-	// Link-only thread continuations resolved to their target tweet: same
-	// provenance idea as quotes — the linker surfaced this tweet.
+	// Link-only thread continuations resolved to their target tweet: the
+	// linker surfaced this tweet by posting its URL. Badge names the linker
+	// (the link tweet's author).
 	if t.LinkedBy != "" {
-		title = fmt.Sprintf("[Quote @%s] %s", titleAuthorForBadge(t.LinkedBy, t), title)
+		title = fmt.Sprintf("[Link @%s] %s", t.LinkedBy, title)
 		content = fmt.Sprintf("<p><em>🔗 linked by <strong>@%s</strong></em></p>", htmlEscaped(t.LinkedBy)) + content
 	}
 	// Pinned profile tweet: prefix the title. The poller refreshes twitter
