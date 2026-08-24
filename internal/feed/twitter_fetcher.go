@@ -217,6 +217,10 @@ type twitterTweetResult struct {
 	// this one, when the entry was reached via a link-only tweet (not part
 	// of the API payload; set by parseUserTweets).
 	LinkedBy string `json:"-"`
+	// QuotedBy holds the screen name of the quoting account when this tweet
+	// was reached through an empty-text quote wrapper (not part of the API
+	// payload; set by item()).
+	QuotedBy string `json:"-"`
 	// Pinned marks the profile's pinned tweet (not part of the API payload;
 	// set by parseUserTweets).
 	Pinned bool `json:"-"`
@@ -609,6 +613,20 @@ func (t *twitterTweetResult) item(feedScreenName string) Item {
 	// embedded below.
 	text := t.displayText(hasMedia)
 	author := t.author()
+
+	// Quote tweets whose own text adds little beyond the quote ("available
+	// now", "this"...) render the quoted tweet's content with provenance,
+	// mirroring retweet handling. Short own text is folded; substantial
+	// commentary is kept as-is.
+	if t.Quoted != nil && len(strings.TrimSpace(text)) <= 40 {
+		q := &t.Quoted.Result
+		if q.RestID != "" && q.Legacy.FullText != "" {
+			copied := *q
+			copied.QuotedBy = author
+			return copied.item(feedScreenName)
+		}
+	}
+
 	title := text
 	if len(title) > 120 {
 		title = title[:117] + "..."
@@ -619,13 +637,18 @@ func (t *twitterTweetResult) item(feedScreenName string) Item {
 
 	itemURL := fmt.Sprintf("https://x.com/%s/status/%s", author, t.RestID)
 
-	content := "<p>" + htmlEscapedText(text) + "</p>" + t.mediaHTML()
+	content := "<p>" + textToHTML(text) + "</p>" + t.mediaHTML()
 
 	// Retweets: mark provenance so readers know why this appears in the
 	// feed (the author is the original tweeter, not the followed account).
 	if t.RetweetedBy != "" && t.RetweetedBy != author {
 		title = fmt.Sprintf("[RT @%s] %s", t.RetweetedBy, title)
 		content = fmt.Sprintf("<p><em>🔁 <strong>@%s</strong> retweeted</em></p>", htmlEscaped(t.RetweetedBy)) + content
+	}
+	// Quote tweets: note whose tweet is being quoted.
+	if t.QuotedBy != "" {
+		title = fmt.Sprintf("[QT @%s] %s", t.QuotedBy, title)
+		content = fmt.Sprintf("<p><em>💬 quoting <strong>@%s</strong></em></p>", htmlEscaped(t.QuotedBy)) + content
 	}
 	// Link-only thread continuations resolved to their target tweet: same
 	// provenance idea as retweets, different verb. Unlike retweets, the
@@ -713,6 +736,14 @@ func (t *twitterTweetResult) displayText(embedMedia bool) string {
 
 // htmlEscaped escapes plain text for safe inclusion in HTML content.
 func htmlEscaped(s string) string { return html.EscapeString(s) }
+
+// textToHTML escapes tweet text (preserving <a> anchors from link
+// expansion) and converts newlines to <br> so line breaks survive HTML
+// rendering instead of collapsing into spaces.
+func textToHTML(s string) string {
+	escaped := htmlEscapedText(s)
+	return strings.ReplaceAll(escaped, "\n", "<br />")
+}
 
 // htmlEscapedText escapes tweet text that may already contain <a> link
 // markup produced by displayText: existing anchors are preserved, everything

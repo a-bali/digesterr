@@ -536,6 +536,84 @@ func TestTwitterSelfLinkOnlyResolvesToTarget(t *testing.T) {
 	}
 }
 
+func TestTwitterQuoteTweetResolvesToQuoted(t *testing.T) {
+	// Empty-text quote wrapper: "available now" quoting a tweet with a photo.
+	quoted := map[string]any{
+		"rest_id": "555",
+		"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": "testuser"}}}},
+		"legacy": map[string]any{
+			"full_text":     "the quoted tweet body",
+			"favorite_count": 77,
+			"extended_entities": map[string]any{"media": []any{
+				map[string]any{"type": "photo", "media_url_https": "https://pbs.twimg.com/media/quote.jpg"},
+			}},
+		},
+	}
+	wrapper := map[string]any{
+		"rest_id": "666",
+		"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": "testuser"}}}},
+		"legacy":              map[string]any{"full_text": "available now"},
+		"quoted_status_result": map[string]any{"result": quoted},
+	}
+	entry := func(id string, res map[string]any) map[string]any {
+		return map[string]any{"entryId": id, "content": map[string]any{
+			"itemContent": map[string]any{"tweet_results": map[string]any{"result": res}}}}
+	}
+	body := map[string]any{"data": map[string]any{"user": map[string]any{"result": map[string]any{
+		"timeline_v2": map[string]any{"timeline": map[string]any{"instructions": []any{
+			map[string]any{"type": "TimelineAddEntries", "entries": []any{entry("tweet-666", wrapper)}},
+		}}},
+	}}}}
+	raw, _ := json.Marshal(body)
+	tweets, err := parseUserTweets(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tweets) != 1 {
+		t.Fatalf("got %d tweets", len(tweets))
+	}
+
+	// Empty-text wrapper folds into the quoted tweet with provenance.
+	item := tweets[0].item("testuser")
+	if item.GUID != "twitter:555" {
+		t.Errorf("GUID = %q, want the quoted tweet's twitter:555", item.GUID)
+	}
+	if !strings.Contains(item.Title, "[QT @testuser]") {
+		t.Errorf("title missing QT provenance: %q", item.Title)
+	}
+	if !strings.Contains(item.Content, "quoting") || !strings.Contains(item.Content, "the quoted tweet body") {
+		t.Errorf("content missing quoted text/provenance: %s", item.Content)
+	}
+	if !strings.Contains(item.Content, "pbs.twimg.com/media/quote.jpg") {
+		t.Errorf("quoted tweet's media missing: %s", item.Content)
+	}
+
+	// Quote wrapper with substantial own text is NOT folded — it keeps its
+	// own content (the quote stays embedded in X's rendering, not ours).
+	wrapper["legacy"].(map[string]any)["full_text"] = "available now, and my own detailed thoughts about this release here"
+	raw2, _ := json.Marshal(body)
+	tweets2, _ := parseUserTweets(raw2)
+	item2 := tweets2[0].item("testuser")
+	if item2.GUID != "twitter:666" {
+		t.Errorf("non-folded GUID = %q, want twitter:666", item2.GUID)
+	}
+	if strings.Contains(item2.Title, "[QT @") {
+		t.Errorf("non-folded quote should not carry QT title marker: %q", item2.Title)
+	}
+}
+
+func TestTwitterNewlinesRenderAsBr(t *testing.T) {
+	tw := &twitterTweetResult{}
+	raw, _ := json.Marshal(map[string]any{"legacy": map[string]any{
+		"full_text": "line one\n\nline two",
+	}})
+	json.Unmarshal(raw, tw)
+	item := tw.item("testuser")
+	if !strings.Contains(item.Content, "line one<br /><br />line two") {
+		t.Errorf("newlines should become <br />: %s", item.Content)
+	}
+}
+
 func TestTwitterAuthHeadersSent(t *testing.T) {
 	var gotCookie, gotCSRF, gotBearer string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
