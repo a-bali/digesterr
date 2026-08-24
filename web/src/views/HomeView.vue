@@ -114,7 +114,12 @@ onUnmounted(() => {
 function onVisibilityChange() {
   if (document.visibilityState !== 'visible') return
   if (showingSaved.value) fetchSavedItems()
-  else if (feedStore.activeFeedId != null) feedStore.refreshItems({ silent: true })
+  // Don't refresh the item list — it causes read items to vanish from a
+  // filtered (Unread) view when the server response no longer includes them.
+  // The 10s poll already keeps sidebar counts fresh; the list itself stays
+  // exactly as the user left it.
+  feedStore.fetchUnreadCounts()
+  digestStore.fetchUnreadCounts()
 }
 
 // ---- URL → state sync ----
