@@ -451,7 +451,9 @@ func parseUserTweets(body []byte) ([]*twitterTweetResult, error) {
 		out = append(out, &r)
 	}
 	for _, ins := range instructions {
-		if ins.Type == "TimelineAddEntries" {
+		// TimelineAddEntries holds the main timeline; TimelinePinEntry holds
+		// the profile's pinned tweet (also part of what nitter/xcancel show).
+		if ins.Type == "TimelineAddEntries" || ins.Type == "TimelinePinEntry" {
 			for _, e := range ins.Entries {
 				if strings.HasPrefix(e.EntryID, "tweet-") {
 					appendTweet(e.Content.ItemContent.TweetResults.Result)
@@ -459,6 +461,10 @@ func parseUserTweets(body []byte) ([]*twitterTweetResult, error) {
 				for _, it := range e.Content.Items { // conversation threads
 					appendTweet(it.Item.ItemContent.TweetResults.Result)
 				}
+			}
+			if ins.Type == "TimelinePinEntry" && ins.Entry != nil &&
+				strings.HasPrefix(ins.Entry.EntryID, "tweet-") {
+				appendTweet(ins.Entry.Content.ItemContent.TweetResults.Result)
 			}
 		}
 	}
