@@ -458,8 +458,10 @@ func TestTwitterLinkExpansion(t *testing.T) {
 	}
 }
 
-func TestTwitterSelfLinkOnlySkipped(t *testing.T) {
-	// Thread-continuation reply: body is ONLY a t.co link to the parent tweet.
+func TestTwitterSelfLinkOnlyResolvesToTarget(t *testing.T) {
+	// Thread-continuation reply: body is ONLY a t.co link to the parent tweet
+	// (111), which is also present in the payload. The item must be emitted
+	// for the PARENT (its content), marked as linked-by the continuation.
 	linkOnly := map[string]any{
 		"rest_id": "777",
 		"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": "testuser"}}}},
@@ -470,15 +472,12 @@ func TestTwitterSelfLinkOnlySkipped(t *testing.T) {
 			}},
 		},
 	}
-	// Real tweet with a link plus actual text — must be kept.
-	withText := map[string]any{
-		"rest_id": "888",
+	parent := map[string]any{
+		"rest_id": "111",
 		"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": "testuser"}}}},
 		"legacy": map[string]any{
-			"full_text": "read this now https://t.co/abc123",
-			"entities": map[string]any{"urls": []any{
-				map[string]any{"url": "https://t.co/abc123", "expanded_url": "https://example.com/a", "display_url": "example.com/a"},
-			}},
+			"full_text":     "the actual thread root text",
+			"favorite_count": 10,
 		},
 	}
 	entry := func(id string, res map[string]any) map[string]any {
@@ -489,7 +488,7 @@ func TestTwitterSelfLinkOnlySkipped(t *testing.T) {
 		"timeline_v2": map[string]any{"timeline": map[string]any{"instructions": []any{
 			map[string]any{"type": "TimelineAddEntries", "entries": []any{
 				entry("tweet-777", linkOnly),
-				entry("tweet-888", withText),
+				entry("tweet-111", parent),
 			}},
 		}}},
 	}}}}
@@ -500,35 +499,40 @@ func TestTwitterSelfLinkOnlySkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(tweets) != 1 {
-		t.Fatalf("got %d tweets, want 1 (link-only reply skipped)", len(tweets))
+		t.Fatalf("got %d tweets, want 1 (link-only collapsed into parent)", len(tweets))
 	}
-	if tweets[0].RestID != "888" {
-		t.Errorf("kept tweet = %s, want 888", tweets[0].RestID)
+	got := tweets[0]
+	if got.RestID != "111" {
+		t.Errorf("emitted tweet = %s, want parent 111", got.RestID)
+	}
+	if got.LinkedBy != "testuser" {
+		t.Errorf("LinkedBy = %q, want testuser", got.LinkedBy)
 	}
 
-	// The same shape as a RETWEET is also skipped: RT of a link-only reply
-	// adds nothing either.
-	rtBody := map[string]any{"data": map[string]any{"user": map[string]any{"result": map[string]any{
+	item := got.item("testuser")
+	if !strings.Contains(item.Title, "[from @testuser]") {
+		t.Errorf("title missing link provenance: %q", item.Title)
+	}
+	if !strings.Contains(item.Content, "linked by") || !strings.Contains(item.Content, "the actual thread root text") {
+		t.Errorf("content missing target text or provenance: %s", item.Content)
+	}
+
+	// When the target is NOT in the payload, the link-only entry is dropped
+	// entirely (nothing useful to show).
+	solo := map[string]any{"data": map[string]any{"user": map[string]any{"result": map[string]any{
 		"timeline_v2": map[string]any{"timeline": map[string]any{"instructions": []any{
 			map[string]any{"type": "TimelineAddEntries", "entries": []any{
-				entry("tweet-999", map[string]any{
-					"rest_id": "999",
-					"core":    map[string]any{"user_results": map[string]any{"result": map[string]any{"legacy": map[string]any{"screen_name": "other"}}}},
-					"legacy": map[string]any{
-						"full_text": "RT @other: https://t.co/2vt7q5WCmm",
-						"retweeted_status_result": map[string]any{"result": linkOnly},
-					},
-				}),
+				entry("tweet-777", linkOnly),
 			}},
 		}}},
 	}}}}
-	rawRT, _ := json.Marshal(rtBody)
-	tweetsRT, err := parseUserTweets(rawRT)
+	rawSolo, _ := json.Marshal(solo)
+	tweetsSolo, err := parseUserTweets(rawSolo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tweetsRT) != 0 {
-		t.Errorf("RT of link-only tweet should be skipped, got %d", len(tweetsRT))
+	if len(tweetsSolo) != 0 {
+		t.Errorf("link-only tweet without resolvable target should be dropped, got %d", len(tweetsSolo))
 	}
 }
 

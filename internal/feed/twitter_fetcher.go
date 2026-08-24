@@ -213,9 +213,17 @@ type twitterTweetResult struct {
 	// RetweetedBy holds the feed account's screen name when this entry is a
 	// retweet (not part of the API payload; set by parseUserTweets).
 	RetweetedBy string `json:"-"`
+	// LinkedBy holds the screen name of the account whose tweet linked to
+	// this one, when the entry was reached via a link-only tweet (not part
+	// of the API payload; set by parseUserTweets).
+	LinkedBy string `json:"-"`
 	// Pinned marks the profile's pinned tweet (not part of the API payload;
 	// set by parseUserTweets).
 	Pinned bool `json:"-"`
+	// linkCandidates holds every tweet node from the same response payload
+	// (not part of the API payload; set by parseUserTweets) so link-only
+	// tweets can be resolved to their target tweet.
+	linkCandidates []*twitterTweetResult `json:"-"`
 	Core   struct {
 		UserResults struct {
 			Result struct {
@@ -439,37 +447,86 @@ func parseUserTweets(body []byte) ([]*twitterTweetResult, error) {
 		feedAuthor = res.Core.UserResults.Result.Core.ScreenName
 	}
 
-	var out []*twitterTweetResult
-	appendTweet := func(r twitterTweetResult) {
-		retweetedBy := ""
-		if r.Legacy.RetweetedStatus != nil && r.Legacy.RetweetedStatus.Result.RestID != "" {
-			// Remember who retweeted so the item can show provenance.
-			retweetedBy = r.author()
-			r = r.Legacy.RetweetedStatus.Result
-		}
+	// First pass: collect all tweet nodes from the payload (including pinned
+	// and conversation modules). These act as link-resolution candidates.
+	var nodes []*twitterTweetResult
+	collect := func(r twitterTweetResult) {
 		if r.RestID == "" || r.Legacy.FullText == "" {
 			return // promoted/filtered placeholders
 		}
-		probe := r
-		if probe.Legacy.RetweetedStatus != nil && probe.Legacy.RetweetedStatus.Result.RestID != "" {
-			probe = probe.Legacy.RetweetedStatus.Result
+		if r.Legacy.RetweetedStatus != nil && r.Legacy.RetweetedStatus.Result.RestID != "" {
+			r = r.Legacy.RetweetedStatus.Result
+			if r.RestID == "" || r.Legacy.FullText == "" {
+				return
+			}
 		}
-		if probe.isSelfLinkOnly() {
-			return // thread-continuation reply that only links to its parent
-		}
-		r.RetweetedBy = retweetedBy
-		out = append(out, &r)
-	}
-	appendPinned := func(r twitterTweetResult) {
-		n := len(out)
-		appendTweet(r)
-		if n < len(out) {
-			out[n].Pinned = true
-		}
+		nodes = append(nodes, &r)
 	}
 	for _, ins := range instructions {
-		// TimelineAddEntries holds the main timeline; TimelinePinEntry holds
-		// the profile's pinned tweet (also part of what nitter/xcancel show).
+		if ins.Type == "TimelineAddEntries" || ins.Type == "TimelinePinEntry" {
+			for _, e := range ins.Entries {
+				if strings.HasPrefix(e.EntryID, "tweet-") {
+					collect(e.Content.ItemContent.TweetResults.Result)
+				}
+				for _, it := range e.Content.Items { // conversation threads
+					collect(it.Item.ItemContent.TweetResults.Result)
+				}
+			}
+			if ins.Type == "TimelinePinEntry" && ins.Entry != nil &&
+				strings.HasPrefix(ins.Entry.EntryID, "tweet-") {
+				collect(ins.Entry.Content.ItemContent.TweetResults.Result)
+			}
+		}
+	}
+	for _, n := range nodes {
+		n.linkCandidates = nodes
+	}
+
+	// Second pass: emit items. Link-only tweets (thread continuations whose
+	// body is just a link to another tweet) are treated like retweets: the
+	// linked tweet is emitted instead, with provenance naming the linker.
+	out := make([]*twitterTweetResult, 0, len(nodes))
+	seen := map[string]bool{}
+	markSeen := func(r *twitterTweetResult) { seen[r.RestID] = true }
+	pinnedIDs := map[string]bool{}
+	for _, ins := range instructions {
+		if ins.Type == "TimelinePinEntry" && ins.Entry != nil &&
+			strings.HasPrefix(ins.Entry.EntryID, "tweet-") {
+			if r := ins.Entry.Content.ItemContent.TweetResults.Result; r.RestID != "" {
+				if r.Legacy.RetweetedStatus != nil && r.Legacy.RetweetedStatus.Result.RestID != "" {
+					r = r.Legacy.RetweetedStatus.Result
+				}
+				pinnedIDs[r.RestID] = true
+			}
+		}
+	}
+	appendTweet := func(r twitterTweetResult) {
+		r.linkCandidates = nodes // fresh decode: attach payload-wide candidates
+		retweetedBy := ""
+		if r.Legacy.RetweetedStatus != nil && r.Legacy.RetweetedStatus.Result.RestID != "" {
+			retweetedBy = r.author()
+			r = r.Legacy.RetweetedStatus.Result
+		}
+		if r.RestID == "" || seen[r.RestID] {
+			return // promoted/filtered placeholders or already emitted
+		}
+		markSeen(&r)
+		if target := r.linkTargetTweet(); target != "" {
+			// Link-only entry: fold into its target instead.
+			if linked := r.linkedTweetNode(target); linked != nil && !seen[linked.RestID] {
+				copied := *linked
+				copied.LinkedBy = r.author()
+				markSeen(&copied)
+				copied.Pinned = pinnedIDs[copied.RestID]
+				out = append(out, &copied)
+			}
+			return
+		}
+		r.RetweetedBy = retweetedBy
+		r.Pinned = pinnedIDs[r.RestID]
+		out = append(out, &r)
+	}
+	for _, ins := range instructions {
 		if ins.Type == "TimelineAddEntries" || ins.Type == "TimelinePinEntry" {
 			for _, e := range ins.Entries {
 				if strings.HasPrefix(e.EntryID, "tweet-") {
@@ -481,36 +538,11 @@ func parseUserTweets(body []byte) ([]*twitterTweetResult, error) {
 			}
 			if ins.Type == "TimelinePinEntry" && ins.Entry != nil &&
 				strings.HasPrefix(ins.Entry.EntryID, "tweet-") {
-				appendPinned(ins.Entry.Content.ItemContent.TweetResults.Result)
+				appendTweet(ins.Entry.Content.ItemContent.TweetResults.Result)
 			}
 		}
 	}
 	return out, nil
-}
-
-// isSelfLinkOnly reports whether the tweet's visible text (after link
-// expansion) is just a link to another tweet — typically a thread
-// continuation reply whose only content is "see previous tweet". Such
-// entries add no value to a feed: the target tweet is ingested separately.
-func (t *twitterTweetResult) isSelfLinkOnly() bool {
-	plain := stripRe.ReplaceAllString(t.displayText(false), "")
-	plain = strings.TrimSpace(plain)
-	if plain == "" {
-		return false // empty text nodes are filtered elsewhere
-	}
-	// Strip the leading RT @author: prefix retweets may carry.
-	if rest, ok := strings.CutPrefix(plain, "RT @"); ok {
-		if i := strings.Index(rest, ": "); i >= 0 {
-			plain = strings.TrimSpace(rest[i+2:])
-		}
-	}
-	target := t.linkTargetTweet()
-	if target == "" {
-		return false
-	}
-	// Every remaining character must belong to links pointing at tweets.
-	noLinks := stripAnchors(t.displayText(false))
-	return strings.TrimSpace(noLinks) == "" && plain != ""
 }
 
 // linkTargetTweet returns the tweet ID if all of the tweet's URL entities
@@ -534,6 +566,20 @@ func (t *twitterTweetResult) linkTargetTweet() string {
 		}
 	}
 	return tweetID
+}
+
+// linkedTweetNode looks up the tweet node for a thread-continuation target.
+// The conversation payload (TweetDetail responses embed the whole thread)
+// usually carries it in the same instruction set as the linking tweet, so
+// callers pass all parsed nodes here. Returns nil when the target is not in
+// the payload — the caller then simply drops the link-only entry.
+func (t *twitterTweetResult) linkedTweetNode(target string) *twitterTweetResult {
+	for _, cand := range t.linkCandidates {
+		if cand.RestID == target && cand.Legacy.FullText != "" {
+			return cand
+		}
+	}
+	return nil
 }
 
 // stripAnchors removes <a ...>...</a> markup from text produced by
@@ -580,6 +626,13 @@ func (t *twitterTweetResult) item(feedScreenName string) Item {
 	if t.RetweetedBy != "" && t.RetweetedBy != author {
 		title = fmt.Sprintf("[RT @%s] %s", t.RetweetedBy, title)
 		content = fmt.Sprintf("<p><em>🔁 <strong>@%s</strong> retweeted</em></p>", htmlEscaped(t.RetweetedBy)) + content
+	}
+	// Link-only thread continuations resolved to their target tweet: same
+	// provenance idea as retweets, different verb. Unlike retweets, the
+	// linker is often the same account (self-threads), so no author check.
+	if t.LinkedBy != "" {
+		title = fmt.Sprintf("[from @%s] %s", t.LinkedBy, title)
+		content = fmt.Sprintf("<p><em>🔗 linked by <strong>@%s</strong></em></p>", htmlEscaped(t.LinkedBy)) + content
 	}
 	// Pinned profile tweet: prefix the title. The poller refreshes twitter
 	// item titles on every fetch, so the badge disappears when unpinned.
