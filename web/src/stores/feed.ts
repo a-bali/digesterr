@@ -131,21 +131,28 @@ export const useFeedStore = defineStore('feed', () => {
       if (opts?.silent && !opts?.replace) {
         // Silent refresh (visibility-change): merge in-place so items the
         // user is looking at never vanish. Items present in both old list
-        // and server response get their data updated in place. Items that
-        // disappeared from the server response (e.g. read under an Unread
-        // filter) stay in the list at their current position but are
-        // marked stale so their visual state updates. Items that are
-        // entirely new get prepended.
+        // and server response are compared; only changed items get a new
+        // object reference (prevents Vue TransitionGroup from re-animating
+        // every row, which causes a brief flash). Items missing from the
+        // server response (e.g. read under an Unread filter) stay at their
+        // current position with stale data.
         const serverMap = new Map(resp.items.map(i => [i.id, i]))
         const merged: Item[] = []
         const seenServer = new Set<number>()
         for (const old of items.value) {
           const fresh = serverMap.get(old.id)
           if (fresh) {
-            merged.push(fresh)       // update in place
+            // Keep the same object reference if nothing changed — prevents
+            // TransitionGroup from treating it as a new element.
+            if (fresh.status !== old.status || fresh.points !== old.points ||
+                fresh.comments_count !== old.comments_count || fresh.title !== old.title) {
+              merged.push(fresh)
+            } else {
+              merged.push(old)
+            }
             seenServer.add(old.id)
           } else {
-            merged.push(old)         // keep stale at its current position
+            merged.push(old) // keep stale at its current position
           }
         }
         // Prepend brand-new items not in the old list.
