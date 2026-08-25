@@ -3,6 +3,8 @@ package feed
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -56,12 +58,12 @@ func TestPostInsertRemovalBelowMinScore(t *testing.T) {
 
 	// Insert an unenriched (NULL) item directly — simulates outage-era insert.
 	item, err := queries.CreateItem(context.Background(), store.CreateItemParams{
-		FeedID:     feedObj.ID,
-		Hash:       "h-null",
-		Title:      "Below threshold",
-		Url:        "https://news.ycombinator.com/item?id=55",
-		Points:     nullInt64(),
-		Status:     "unread",
+		FeedID: feedObj.ID,
+		Hash:   "h-null",
+		Title:  "Below threshold",
+		Url:    "https://news.ycombinator.com/item?id=55",
+		Points: nullInt64(),
+		Status: "unread",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -156,3 +158,68 @@ func (p *Poller) enrichFeedItemsForTest(ctx context.Context, feed store.Feed, e 
 }
 
 func nullInt64() sql.NullInt64 { return sql.NullInt64{} }
+
+// TestPreInsertFirebaseFallback verifies that when BulkEnrich (Algolia)
+// fails for an HN feed, the pre-insert per-item fallback calls Firebase
+// and applies the score to the insert decision.
+func TestPreInsertFirebaseFallback(t *testing.T) {
+	firebaseScore := 42
+	fbServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp, _ := json.Marshal(map[string]interface{}{"id": 2001, "score": firebaseScore, "descendants": 10})
+		w.Write(resp)
+	}))
+	defer fbServer.Close()
+
+	// Algolia server that always returns errors
+	brokenAlgolia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("algolia down"))
+	}))
+	defer brokenAlgolia.Close()
+
+	queries, poller := setupEnrichmentWindowDB(t)
+	user := createFeedLoggingUser(t, queries)
+	feedObj, err := queries.CreateFeed(context.Background(), store.CreateFeedParams{
+		UserID:   user.ID,
+		Type:     "hn",
+		Name:     "HN",
+		Url:      "https://example.com/hn",
+		Config:   "{}",
+		Status:   "active",
+		MinScore: 20, // only items with score >= 20 pass
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hnEnricher := NewHNEnricher()
+	hnEnricher.firebaseURL = fbServer.URL
+	hnEnricher.algoliaURL = brokenAlgolia.URL
+
+	// Simulate the pre-insert scoring path: scoreFetchedItems creates temp
+	// items, runs bulk (which fails), then runs per-item fallback.
+	candidates := []fetchedCandidate{{
+		hash: "cand-1",
+		item: Item{Title: "scored item", URL: "https://news.ycombinator.com/item?id=2001", CommentURL: "https://news.ycombinator.com/item?id=2001"},
+	}}
+	scored := poller.scoreFetchedItemsForTest(context.Background(), feedObj, candidates, hnEnricher)
+
+	si, ok := scored["cand-1"]
+	if !ok {
+		t.Fatal("scored map missing candidate")
+	}
+	if !si.Points.Valid {
+		t.Fatal("expected valid score from Firebase fallback, got NULL")
+	}
+	if si.Points.Int64 != int64(firebaseScore) {
+		t.Errorf("score = %d, want %d", si.Points.Int64, firebaseScore)
+	}
+}
+
+func (p *Poller) scoreFetchedItemsForTest(ctx context.Context, f store.Feed, cands []fetchedCandidate, e Enricher) map[string]*store.Item {
+	// Temporarily override the poller's enricher for this feed type.
+	orig := p.enrichers[f.Type]
+	p.enrichers[f.Type] = e
+	defer func() { p.enrichers[f.Type] = orig }()
+	return p.scoreFetchedItems(ctx, f, cands, slog.Default())
+}

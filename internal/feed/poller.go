@@ -385,6 +385,12 @@ func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candida
 	scored := make(map[string]*store.Item, len(candidates))
 	ptrs := make([]*store.Item, 0, len(candidates))
 	for _, c := range candidates {
+		// HN scores come from enrichment (Firebase/Algolia), not RSS,
+		// so temp items start as NULL (Valid=false) to trigger the
+		// per-item fallback before the insert decision. Other feeds
+		// (Lobsters, Reddit, Twitter) provide inline scores in the
+		// parsed item; use them as-is.
+		hasInlineScores := feed.Type != "hn"
 		si := &store.Item{
 			Hash:          c.hash,
 			Title:         c.item.Title,
@@ -392,8 +398,8 @@ func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candida
 			Content:       c.item.Content,
 			CommentUrl:    c.item.CommentURL,
 			Author:        c.item.Author,
-			Points:        sql.NullInt64{Int64: int64(c.item.Points), Valid: true},
-			CommentsCount: sql.NullInt64{Int64: int64(c.item.CommentsCnt), Valid: true},
+			Points:        sql.NullInt64{Int64: int64(c.item.Points), Valid: hasInlineScores},
+			CommentsCount: sql.NullInt64{Int64: int64(c.item.CommentsCnt), Valid: hasInlineScores},
 		}
 		if !c.item.PublishedAt.IsZero() {
 			si.PublishedAt = sql.NullTime{Time: c.item.PublishedAt, Valid: true}
