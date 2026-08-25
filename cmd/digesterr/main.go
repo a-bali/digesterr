@@ -307,7 +307,29 @@ PRAGMA foreign_keys=ON;
 		}
 	}
 	db.Exec("DROP INDEX IF EXISTS idx_items_feed_guid")
-	db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_feed_hash ON items(feed_id, hash) WHERE hash != ''")
+	// Deduplicate items that share the same (feed_id, hash) — this can
+	// happen when the unique index was never created (e.g. the migration
+	// failed silently due to pre-existing duplicates). Keep the oldest
+	// row; protect saved items and items linked to digest results.
+	res, err = db.Exec(`
+		DELETE FROM items
+		WHERE hash != ''
+		  AND id NOT IN (
+			SELECT MIN(id) FROM items WHERE hash != '' GROUP BY feed_id, hash
+		  )
+		  AND status != 'saved'
+		  AND NOT EXISTS (SELECT 1 FROM digest_result_items dri WHERE dri.item_id = items.id)
+	`)
+	if err == nil {
+		if n, rerr := res.RowsAffected(); rerr == nil && n > 0 {
+			slog.Info("deduplicated items before index creation", "deleted", n)
+		}
+	} else {
+		slog.Warn("item deduplication failed", "error", err)
+	}
+	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_feed_hash ON items(feed_id, hash) WHERE hash != ''"); err != nil {
+		slog.Warn("failed to create idx_items_feed_hash (may already exist)", "error", err)
+	}
 	if hashMigrated {
 		slog.Info("hash migration complete: copied legacy guid values into items.hash")
 	}
