@@ -574,31 +574,32 @@ func TestTwitterQuoteTweetResolvesToQuoted(t *testing.T) {
 	}
 
 	// Empty-text wrapper folds into the quoted tweet with provenance.
+	// Quote with own text: the quoter's commentary is primary, the quoted
+	// tweet is appended as a blockquote.
 	item := tweets[0].item("testuser")
-	if item.GUID != "twitter:555" {
-		t.Errorf("GUID = %q, want the quoted tweet's twitter:555", item.GUID)
+	if item.GUID != "twitter:666" {
+		t.Errorf("GUID = %q, want the quoting tweet's twitter:666", item.GUID)
 	}
-	if !strings.Contains(item.Title, "[Quote @testuser]") {
-		t.Errorf("title missing QT provenance: %q", item.Title)
+	if !strings.Contains(item.Content, "available now") {
+		t.Errorf("quoter's own text missing: %s", item.Content)
 	}
-	if !strings.Contains(item.Content, "quoted by") || !strings.Contains(item.Content, "the quoted tweet body") {
-		t.Errorf("content missing quoted text/provenance: %s", item.Content)
+	if !strings.Contains(item.Content, "the quoted tweet body") {
+		t.Errorf("quoted tweet body missing from blockquote: %s", item.Content)
 	}
 	if !strings.Contains(item.Content, "pbs.twimg.com/media/quote.jpg") {
 		t.Errorf("quoted tweet's media missing: %s", item.Content)
 	}
 
-	// Long own text still folds — quotes always resolve to the quoted tweet
-	// regardless of commentary length.
-	wrapper["legacy"].(map[string]any)["full_text"] = "available now, and my own detailed thoughts about this release here"
+	// Quote with no own text folds completely into the quoted tweet.
+	wrapper["legacy"].(map[string]any)["full_text"] = ""
 	raw2, _ := json.Marshal(body)
 	tweets2, _ := parseUserTweets(raw2)
 	item2 := tweets2[0].item("testuser")
 	if item2.GUID != "twitter:555" {
-		t.Errorf("long-quote GUID = %q, want twitter:555 (always folded)", item2.GUID)
+		t.Errorf("empty-text quote GUID = %q, want twitter:555 (full fold)", item2.GUID)
 	}
-	if !strings.Contains(item2.Content, "the quoted tweet body") {
-		t.Errorf("long-quote content should be the quoted tweet: %s", item2.Content)
+	if !strings.Contains(item2.Content, "the quoted tweet body") || item2.GUID != "twitter:555" {
+		t.Errorf("empty-text quote should fold cleanly into the quoted tweet: %s | %s", item2.Title, item2.Content)
 	}
 }
 

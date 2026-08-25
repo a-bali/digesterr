@@ -627,6 +627,12 @@ func parseUserTweets(body []byte) ([]*twitterTweetResult, error) {
 // linkTargetTweet returns the tweet ID if all of the tweet's URL entities
 // point at x.com/twitter.com status URLs, or "" otherwise.
 func (t *twitterTweetResult) linkTargetTweet() string {
+	// Quote tweets often carry the quoted status as their only URL entity,
+	// but they are real content (the quote text matters), not thread
+	// continuations — never fold them into their target.
+	if t.Quoted != nil {
+		return ""
+	}
 	urls := t.Legacy.Entities.URLs
 	if len(urls) == 0 {
 		return ""
@@ -699,16 +705,45 @@ func (t *twitterTweetResult) item(feedScreenName string) Item {
 	text := t.displayText(hasMedia)
 	author := t.author()
 
-	// Quote tweets always fold into the quoted tweet's content with
-	// provenance, mirroring retweet handling — regardless of how much own
-	// text the quote carries. The quoted tweet is the substance; the quote's
-	// commentary stays visible on x.com via the item URL.
+	// Quote tweets keep the quoter's own commentary as the primary content,
+	// with the quoted tweet appended below as context. (Previously the own
+	// text was discarded in favor of the quoted tweet, hiding what the
+	// followed account actually said.) A quote with no own text folds
+	// completely into the quoted tweet.
 	if t.Quoted != nil {
 		q := &t.Quoted.Result
 		if q.RestID != "" && q.Legacy.FullText != "" {
+			// No own text at all: fold completely into the quoted tweet.
+			if strings.TrimSpace(text) == "" {
+				copied := *q
+				copied.QuotedBy = author
+				return copied.item(feedScreenName)
+			}
 			copied := *q
-			copied.QuotedBy = author
-			return copied.item(feedScreenName)
+			copied.QuotedBy = ""
+			copied.RetweetedBy = ""
+			base := copied.item(feedScreenName)
+
+			title := text
+			if len(title) > 120 {
+				title = title[:117] + "..."
+			}
+			title = strings.ReplaceAll(title, "\n", " ")
+			title = stripRe.ReplaceAllString(title, "")
+
+			return Item{
+				GUID:        "twitter:" + t.RestID,
+				Title:       fmt.Sprintf("[Quote @%s] %s", q.author(), title),
+				URL:         fmt.Sprintf("https://x.com/%s/status/%s", author, t.RestID),
+				CommentURL:  fmt.Sprintf("https://x.com/%s/status/%s", author, t.RestID),
+				Content: "<p>" + textToHTML(text) + "</p>" + t.mediaHTML() +
+					fmt.Sprintf("<p><em>💬 quoting <a href=\"%s\">@%s</a>:</em></p><blockquote>%s</blockquote>",
+						htmlEscaped(base.URL), htmlEscaped(q.author()), base.Content),
+				Author:      "@" + author,
+				PublishedAt: parseTwitterTime(t.Legacy.CreatedAt),
+				Points:      t.Legacy.FavoriteCount,
+				CommentsCnt: t.Legacy.ReplyCount,
+			}
 		}
 	}
 
