@@ -2,6 +2,7 @@ package feed
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -12,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"digesterr/internal/store"
 )
@@ -44,6 +47,7 @@ type TwitterFetcher struct {
 	ct0       string
 	authToken string
 	bearer    string
+	limiter   *rate.Limiter
 }
 
 func NewTwitterFetcher() *TwitterFetcher {
@@ -51,7 +55,76 @@ func NewTwitterFetcher() *TwitterFetcher {
 		client:  &http.Client{Timeout: 15 * time.Second},
 		baseURL: "https://x.com",
 		bearer:  twitterPublicBearer,
+		limiter: rate.NewLimiter(defaultTwitterRate, defaultTwitterBurst),
 	}
+}
+
+// SetRateLimiter overrides the GraphQL call limiter (nil disables limiting).
+func (f *TwitterFetcher) SetRateLimiter(l *rate.Limiter) { f.limiter = l }
+
+// Enrich implements the Enricher interface via EnrichFeed (single item).
+func (f *TwitterFetcher) Enrich(ctx context.Context, item *store.Item) error {
+	return f.EnrichFeed(ctx, item.CommentUrl, []*store.Item{item})
+}
+
+// EnrichFeed re-fetches a user timeline and updates scores (favorites) and
+// reply counts for matching items in-place. One GraphQL request covers all
+// tweets still visible on the timeline; older items keep their last known
+// scores.
+func (f *TwitterFetcher) EnrichFeed(ctx context.Context, feedURL string, items []*store.Item) error {
+	screenName := extractTwitterScreenName(feedURL)
+	if screenName == "" {
+		screenName = extractTwitterScreenName(itemSourceURL(items))
+	}
+	if screenName == "" {
+		return fmt.Errorf("could not extract Twitter screen name")
+	}
+	userID, err := f.userID(ctx, screenName)
+	if err != nil {
+		return fmt.Errorf("resolving user %s: %w", screenName, err)
+	}
+	variables := fmt.Sprintf(`{"userId":%q,"count":20,"includePromotedContent":false,"withQuickPromoteEligibilityTelemetry":true,"withVoice":true}`, userID)
+	body, err := f.gqlGet(ctx, twitterUserTweetsQuery, variables)
+	if err != nil {
+		return err
+	}
+	tweets, err := parseUserTweets(body)
+	if err != nil {
+		return err
+	}
+	byID := make(map[string]*twitterTweetResult, len(tweets))
+	for _, t := range tweets {
+		byID[t.RestID] = t
+	}
+	matched := 0
+	for _, item := range items {
+		tweetID := extractTweetID(item.Hash, item.CommentUrl, item.Url)
+		if tweetID == "" {
+			continue
+		}
+		t, ok := byID[tweetID]
+		if !ok || t.RestID == "" {
+			continue // no longer on the timeline — keep last known scores
+		}
+		item.Points = sql.NullInt64{Int64: int64(t.Legacy.FavoriteCount), Valid: true}
+		item.CommentsCount = sql.NullInt64{Int64: int64(t.Legacy.ReplyCount), Valid: true}
+		matched++
+	}
+	slog.Debug("twitter enrichment completed", "screen_name", screenName, "requested", len(items), "matched", matched)
+	return nil
+}
+
+// itemSourceURL returns the first non-empty item URL as a heuristic source
+// for screen-name extraction when the feed URL itself is unavailable.
+func itemSourceURL(items []*store.Item) string {
+	for _, it := range items {
+		for _, u := range []string{it.Url, it.CommentUrl} {
+			if u != "" && (strings.Contains(u, "x.com") || strings.Contains(u, "twitter.com")) {
+				return u
+			}
+		}
+	}
+	return ""
 }
 
 // SetCredentials overrides the session cookies (and optionally the bearer
@@ -98,6 +171,9 @@ func extractTwitterScreenName(raw string) string {
 
 // gqlGet performs an authenticated GET against the GraphQL endpoint.
 func (f *TwitterFetcher) gqlGet(ctx context.Context, queryHash string, variables string) ([]byte, error) {
+	if err := waitLimiter(ctx, f.limiter); err != nil {
+		return nil, fmt.Errorf("rate limiter: %w", err)
+	}
 	if f.ct0 == "" || f.authToken == "" {
 		return nil, fmt.Errorf("Twitter credentials not configured (twitter.ct0 / TWITTER_CT0, twitter.auth_token / TWITTER_AUTH_TOKEN)")
 	}
@@ -228,7 +304,7 @@ type twitterTweetResult struct {
 	// (not part of the API payload; set by parseUserTweets) so link-only
 	// tweets can be resolved to their target tweet.
 	linkCandidates []*twitterTweetResult `json:"-"`
-	Core   struct {
+	Core           struct {
 		UserResults struct {
 			Result struct {
 				Legacy struct {
@@ -274,17 +350,17 @@ type twitterURLEntity struct {
 }
 
 type twitterTweetLegacy struct {
-	FullText        string `json:"full_text"`
-	CreatedAt       string `json:"created_at"`
-	FavoriteCount   int    `json:"favorite_count"`
-	RetweetCount    int    `json:"retweet_count"`
-	ReplyCount      int    `json:"reply_count"`
-	InReplyToStatusID string `json:"in_reply_to_status_id_str"`
-	InReplyToScreenName string `json:"in_reply_to_screen_name"`
-	RetweetedStatus *twitterTweetWrapper `json:"retweeted_status_result"`
-	Entities        struct {
-		Media []twitterMedia       `json:"media"`
-		URLs  []twitterURLEntity   `json:"urls"`
+	FullText            string               `json:"full_text"`
+	CreatedAt           string               `json:"created_at"`
+	FavoriteCount       int                  `json:"favorite_count"`
+	RetweetCount        int                  `json:"retweet_count"`
+	ReplyCount          int                  `json:"reply_count"`
+	InReplyToStatusID   string               `json:"in_reply_to_status_id_str"`
+	InReplyToScreenName string               `json:"in_reply_to_screen_name"`
+	RetweetedStatus     *twitterTweetWrapper `json:"retweeted_status_result"`
+	Entities            struct {
+		Media []twitterMedia     `json:"media"`
+		URLs  []twitterURLEntity `json:"urls"`
 	} `json:"entities"`
 	// Photos, videos and GIFs live in extended_entities; entities.media only
 	// carries the first attachment.
@@ -406,14 +482,14 @@ type twitterTimeline struct {
 }
 
 type twitterInstruction struct {
-	Type    string           `json:"type"`
-	Entries []twitterEntry   `json:"entries"`
-	Entry   *twitterEntry    `json:"entry"` // pinned tweets arrive as a single entry
+	Type    string         `json:"type"`
+	Entries []twitterEntry `json:"entries"`
+	Entry   *twitterEntry  `json:"entry"` // pinned tweets arrive as a single entry
 }
 
 type twitterEntry struct {
-	EntryID    string `json:"entryId"`
-	Content    struct {
+	EntryID string `json:"entryId"`
+	Content struct {
 		ItemContent struct {
 			TweetResults struct {
 				Result twitterTweetResult `json:"result"`

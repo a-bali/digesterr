@@ -27,6 +27,9 @@ type Poller struct {
 	// than this. Zero disables expiry.
 	expireItems   time.Duration
 	expireDigests time.Duration
+	// enrichmentWindow bounds how long after insertion an item stays
+	// eligible for periodic score re-enrichment. Zero means 24h.
+	enrichmentWindow time.Duration
 }
 
 // fetchedCandidate pairs a freshly fetched item with its duplicate-detection
@@ -46,28 +49,28 @@ func NewPoller(queries *store.Queries) *Poller {
 	return &Poller{
 		queries: queries,
 		fetchers: map[string]Fetcher{
-			"rss":     rssFetcher,
-			"atom":    rssFetcher,
-			"hn":      rssFetcher,
+			"rss":      rssFetcher,
+			"atom":     rssFetcher,
+			"hn":       rssFetcher,
 			"lobsters": rssFetcher,
-			"reddit":  rssFetcher,
-			"twitter": twitterFetcher,
+			"reddit":   rssFetcher,
+			"twitter":  twitterFetcher,
 		},
 		enrichers: map[string]Enricher{
-			"rss":     noop,
-			"atom":    noop,
-			"hn":      hnEnricher,
+			"rss":      noop,
+			"atom":     noop,
+			"hn":       hnEnricher,
 			"lobsters": lobstersEnricher,
-			"reddit":  redditEnricher,
-			"twitter": noop,
+			"reddit":   redditEnricher,
+			"twitter":  twitterFetcher,
 		},
 		commentFetchers: map[string]CommentFetcher{
-			"rss":     noop,
-			"atom":    noop,
-			"hn":      hnEnricher,
+			"rss":      noop,
+			"atom":     noop,
+			"hn":       hnEnricher,
 			"lobsters": lobstersEnricher,
-			"reddit":  redditEnricher,
-			"twitter": twitterFetcher,
+			"reddit":   redditEnricher,
+			"twitter":  twitterFetcher,
 		},
 	}
 }
@@ -82,6 +85,16 @@ func (p *Poller) Enrichers() map[string]Enricher {
 func (p *Poller) SetExpiry(itemsAge, digestsAge time.Duration) {
 	p.expireItems = itemsAge
 	p.expireDigests = digestsAge
+}
+
+// SetEnrichmentWindow configures how long after insertion items are
+// re-enriched each cycle to track score/comment growth. A zero value
+// means the default of 24 hours.
+func (p *Poller) SetEnrichmentWindow(d time.Duration) {
+	if d <= 0 {
+		d = 24 * time.Hour
+	}
+	p.enrichmentWindow = d
 }
 
 // SetRedditCredentials overrides the Reddit API credentials used by the
@@ -265,17 +278,24 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 
 	for _, c := range candidates {
 		item := c.item
+		// enriched tracks whether a real score was obtained for this
+		// candidate before insertion. Unenriched items are stored with
+		// NULL points so the post-insert enrichment pass retries them.
+		enriched := false
 		if si, ok := scored[c.hash]; ok {
 			// Apply the refreshed score (when available) at insert time.
-			item.Points = int(si.Points)
-			item.CommentsCnt = int(si.CommentsCount)
+			if si.Points.Valid || si.CommentsCount.Valid {
+				enriched = true
+			}
+			item.Points = int(si.Points.Int64)
+			item.CommentsCnt = int(si.CommentsCount.Int64)
 			if si.CommentUrl != "" {
 				item.CommentURL = si.CommentUrl
 			}
-			// Items without score data (Points == 0) always pass: the
-			// threshold only applies when a real score is known.
-			if si.Points > 0 && si.Points < feed.MinScore {
-				logger.Debug("item below min_score, skipping insert", "title", item.Title, "points", si.Points, "min_score", feed.MinScore)
+			// Items without score data (NULL) are treated as zero: the
+			// threshold applies uniformly and unknown-score items fail it.
+			if si.Points.Int64 < feed.MinScore {
+				logger.Debug("item below min_score, skipping insert", "title", item.Title, "points", item.Points, "min_score", feed.MinScore)
 				continue
 			}
 		}
@@ -293,8 +313,8 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 			CommentUrl:    item.CommentURL,
 			Author:        item.Author,
 			PublishedAt:   pubAt,
-			Points:        int64(item.Points),
-			CommentsCount: int64(item.CommentsCnt),
+			Points:        sql.NullInt64{Int64: int64(item.Points), Valid: enriched},
+			CommentsCount: sql.NullInt64{Int64: int64(item.CommentsCnt), Valid: enriched},
 		})
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -332,12 +352,12 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	}
 
 	if enricher, ok := p.enrichers[feed.Type]; ok {
-		// Skip the post-insert enrichment pass for min_score feeds: those
-		// items were just enriched during pre-insert scoring in this same
-		// cycle, so re-enriching would double the provider API traffic.
-		if !(feed.MinScore > 0) {
-			p.enrichFeedItems(ctx, feed, enricher)
-		}
+		// Always run the post-insert enrichment pass for score-capable
+		// feeds: scores and comment counts move over time, failed
+		// enrichments must be retried, and items inserted with unknown
+		// (NULL) scores need to catch up. The 1h last_enriched_at window
+		// in ListUnreadItemsForEnrichment bounds the API traffic.
+		p.enrichFeedItems(ctx, feed, enricher)
 	}
 
 	if feed.ExtractContent != 0 {
@@ -365,6 +385,12 @@ func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candida
 	scored := make(map[string]*store.Item, len(candidates))
 	ptrs := make([]*store.Item, 0, len(candidates))
 	for _, c := range candidates {
+		// HN scores come from enrichment (Firebase/Algolia), not RSS,
+		// so temp items start as NULL (Valid=false) to trigger the
+		// per-item fallback before the insert decision. Other feeds
+		// (Lobsters, Reddit, Twitter) provide inline scores in the
+		// parsed item; use them as-is.
+		hasInlineScores := feed.Type != "hn"
 		si := &store.Item{
 			Hash:          c.hash,
 			Title:         c.item.Title,
@@ -372,8 +398,8 @@ func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candida
 			Content:       c.item.Content,
 			CommentUrl:    c.item.CommentURL,
 			Author:        c.item.Author,
-			Points:        int64(c.item.Points),
-			CommentsCount: int64(c.item.CommentsCnt),
+			Points:        sql.NullInt64{Int64: int64(c.item.Points), Valid: hasInlineScores},
+			CommentsCount: sql.NullInt64{Int64: int64(c.item.CommentsCnt), Valid: hasInlineScores},
 		}
 		if !c.item.PublishedAt.IsZero() {
 			si.PublishedAt = sql.NullTime{Time: c.item.PublishedAt, Valid: true}
@@ -385,7 +411,22 @@ func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candida
 	logger.Debug("refreshing scores before insert", "count", len(ptrs), "min_score", feed.MinScore)
 	if b, ok := enricher.(BulkEnricher); ok {
 		if err := b.BulkEnrich(ctx, ptrs); err != nil {
-			logger.Debug("pre-insert score refresh failed; items without scores will pass", "error", err)
+			// NULL-scored candidates are treated as zero at the min_score
+			// threshold, so a total scoring outage drops items instead of
+			// admitting everything — make that visible.
+			logger.Warn("pre-insert score refresh failed", "error", err)
+		}
+		// Per-item fallback for items the bulk call missed (e.g. Algolia
+		// index stall while the Firebase API still serves fresh scores).
+		// HN's BulkEnrich already falls back internally; this covers
+		// enrichers whose bulk path has no built-in retry.
+		for _, si := range ptrs {
+			if si.Points.Valid {
+				continue
+			}
+			if err := enricher.Enrich(ctx, si); err != nil {
+				logger.Debug("pre-insert fallback failed for item", "title", si.Title, "error", err)
+			}
 		}
 	} else {
 		for _, si := range ptrs {
@@ -520,7 +561,11 @@ func itemHash(guid, title, url, content string) string {
 
 func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher Enricher) {
 	logger := slog.With("feed_id", feed.ID, "feed_name", feed.Name)
-	cutoff := time.Now().Add(-24 * time.Hour)
+	window := p.enrichmentWindow
+	if window <= 0 {
+		window = 24 * time.Hour
+	}
+	cutoff := time.Now().Add(-window)
 	recent := time.Now().Add(-1 * time.Hour)
 
 	items, err := p.queries.ListUnreadItemsForEnrichment(ctx, store.ListUnreadItemsForEnrichmentParams{
@@ -540,8 +585,8 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 	logger.Info("starting enrichment", "type", feed.Type, "items", len(items))
 
 	type itemSnapshot struct {
-		Points        int64
-		CommentsCount int64
+		Points        sql.NullInt64
+		CommentsCount sql.NullInt64
 		CommentUrl    string
 	}
 	snapshots := make([]itemSnapshot, len(items))
@@ -553,9 +598,25 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 	for i := range items {
 		ptrs[i] = &items[i]
 	}
-	if b, ok := enricher.(BulkEnricher); ok {
+	if b, ok := enricher.(*TwitterFetcher); ok {
+		// Twitter enrichment is feed-scoped: one timeline request updates
+		// all items still visible on the timeline.
+		if err := b.EnrichFeed(ctx, feed.Url, ptrs); err != nil {
+			logger.Debug("twitter enrich failed", "error", err)
+		}
+	} else if b, ok := enricher.(BulkEnricher); ok {
 		if err := b.BulkEnrich(ctx, ptrs); err != nil {
 			logger.Debug("bulk enrich failed", "error", err)
+		}
+		// Per-item fallback for items left unscored (bulk outage or
+		// individual misses) so never-enriched items still get retried.
+		for _, si := range ptrs {
+			if si.Points.Valid {
+				continue
+			}
+			if err := enricher.Enrich(ctx, si); err != nil {
+				logger.Debug("post-insert fallback failed for item", "item_id", si.ID, "error", err)
+			}
 		}
 	} else {
 		for i := range items {
@@ -568,11 +629,28 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 	success := 0
 	skipped := 0
 	errcount := 0
+	removed := 0
 	for i := range items {
 		if items[i].Points == snapshots[i].Points &&
 			items[i].CommentsCount == snapshots[i].CommentsCount &&
 			items[i].CommentUrl == snapshots[i].CommentUrl {
 			skipped++
+			continue
+		}
+		// A never-enriched item that now has a real score gets its
+		// definitive min_score verdict: below the threshold it is removed
+		// rather than kept with a failing score. (Previously-inserted
+		// items that already had scores are only updated, never removed.)
+		if !snapshots[i].Points.Valid && items[i].Points.Valid &&
+			feed.MinScore > 0 && items[i].Points.Int64 < feed.MinScore {
+			if _, err := p.queries.DeleteItem(ctx, items[i].ID); err != nil {
+				logger.Warn("failed to delete below-threshold item", "item_id", items[i].ID, "error", err)
+				errcount++
+			} else {
+				logger.Info("removed item below min_score after enrichment",
+					"title", items[i].Title, "points", items[i].Points.Int64, "min_score", feed.MinScore)
+				removed++
+			}
 			continue
 		}
 		if _, err := p.queries.UpdateItemPointsAndComments(ctx, store.UpdateItemPointsAndCommentsParams{
@@ -587,5 +665,5 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 			success++
 		}
 	}
-	logger.Info("enrichment completed", "type", feed.Type, "items", len(items), "success", success, "skipped", skipped, "error", errcount)
+	logger.Info("enrichment completed", "type", feed.Type, "items", len(items), "success", success, "skipped", skipped, "removed", removed, "error", errcount)
 }

@@ -28,6 +28,8 @@ feed:
   sync_interval: 1h
   expire_items: 1y
   expire_digests: 1y
+  # How long items stay eligible for periodic score re-enrichment.
+  enrichment_window: 24h
 
 reddit:
   client_id: ""
