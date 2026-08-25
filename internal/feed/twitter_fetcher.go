@@ -2,7 +2,6 @@ package feed
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -106,8 +105,8 @@ func (f *TwitterFetcher) EnrichFeed(ctx context.Context, feedURL string, items [
 		if !ok || t.RestID == "" {
 			continue // no longer on the timeline — keep last known scores
 		}
-		item.Points = sql.NullInt64{Int64: int64(t.Legacy.FavoriteCount), Valid: true}
-		item.CommentsCount = sql.NullInt64{Int64: int64(t.Legacy.ReplyCount), Valid: true}
+		item.Points = int64(t.Legacy.FavoriteCount)
+		item.CommentsCount = int64(t.Legacy.ReplyCount)
 		matched++
 	}
 	slog.Debug("twitter enrichment completed", "screen_name", screenName, "requested", len(items), "matched", matched)

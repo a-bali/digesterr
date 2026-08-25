@@ -2,7 +2,6 @@ package feed
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -77,8 +76,8 @@ func (e *HNEnricher) Enrich(ctx context.Context, item *store.Item) error {
 		return fmt.Errorf("HN item %d not found", hnID)
 	}
 
-	item.Points = sql.NullInt64{Int64: int64(hnItem.Score), Valid: true}
-	item.CommentsCount = sql.NullInt64{Int64: int64(hnItem.Descendants), Valid: true}
+	item.Points = int64(hnItem.Score)
+	item.CommentsCount = int64(hnItem.Descendants)
 	return nil
 }
 
@@ -134,8 +133,8 @@ func (e *HNEnricher) BulkEnrich(ctx context.Context, items []*store.Item) error 
 
 	for _, hit := range algoliaResp.Hits {
 		if item, ok := idToItem[hit.ObjectID]; ok {
-			item.Points = sql.NullInt64{Int64: int64(hit.Points), Valid: true}
-			item.CommentsCount = sql.NullInt64{Int64: int64(hit.NumComments), Valid: true}
+			item.Points = int64(hit.Points)
+			item.CommentsCount = int64(hit.NumComments)
 		}
 	}
 
@@ -145,7 +144,7 @@ func (e *HNEnricher) BulkEnrich(ctx context.Context, items []*store.Item) error 
 	// Firebase API and surface a warning instead of silently storing zeros.
 	var missed []*store.Item
 	for _, item := range items {
-		if item.Points.Valid {
+		if item.Points > 0 {
 			continue
 		}
 		if extractHNID(item.CommentUrl, item.Url) != 0 {

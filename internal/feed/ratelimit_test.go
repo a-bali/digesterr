@@ -74,8 +74,8 @@ func TestHNEnricherNilLimiterDisablesLimiting(t *testing.T) {
 	if err := e.Enrich(context.Background(), item); err != nil {
 		t.Fatalf("Enrich: %v", err)
 	}
-	if !item.Points.Valid || item.Points.Int64 != 9 {
-		t.Errorf("points = %+v, want valid 9", item.Points)
+	if item.Points != 9 {
+		t.Errorf("points = %d, want 9", item.Points)
 	}
 }
 
@@ -167,14 +167,14 @@ func TestTwitterEnrichFeedMatchesItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnrichFeed: %v", err)
 	}
-	if !matching.Points.Valid || matching.Points.Int64 != 42 {
-		t.Errorf("matching points = %+v, want valid 42", matching.Points)
+	if matching.Points != 42 {
+		t.Errorf("matching points = %d, want 42", matching.Points)
 	}
-	if !matching.CommentsCount.Valid || matching.CommentsCount.Int64 != 7 {
-		t.Errorf("matching comments = %+v, want valid 7", matching.CommentsCount)
+	if matching.CommentsCount != 7 {
+		t.Errorf("matching comments = %d, want 7", matching.CommentsCount)
 	}
 	// non-matching item should remain unchanged
-	if nonMatching.Points.Valid {
-		t.Errorf("non-matching item points should remain unset, got %+v", nonMatching.Points)
+	if nonMatching.Points != 0 {
+		t.Errorf("non-matching item points should remain zero, got %d", nonMatching.Points)
 	}
 }

@@ -2,7 +2,6 @@ package feed
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -190,8 +189,8 @@ func (e *RedditEnricher) Enrich(ctx context.Context, item *store.Item) error {
 		return fmt.Errorf("Reddit post %s not found", postID)
 	}
 
-	item.Points = sql.NullInt64{Int64: int64(post.Score), Valid: true}
-	item.CommentsCount = sql.NullInt64{Int64: int64(post.NumComments), Valid: true}
+	item.Points = int64(post.Score)
+	item.CommentsCount = int64(post.NumComments)
 
 	if post.Permalink != "" {
 		item.CommentUrl = "https://www.reddit.com" + post.Permalink
@@ -277,8 +276,8 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 			continue
 		}
 		matched++
-		item.Points = sql.NullInt64{Int64: int64(child.Data.Score), Valid: true}
-		item.CommentsCount = sql.NullInt64{Int64: int64(child.Data.NumComments), Valid: true}
+		item.Points = int64(child.Data.Score)
+		item.CommentsCount = int64(child.Data.NumComments)
 		if child.Data.Permalink != "" {
 			item.CommentUrl = "https://www.reddit.com" + child.Data.Permalink
 		}

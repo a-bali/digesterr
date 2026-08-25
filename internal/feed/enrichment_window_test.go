@@ -62,7 +62,7 @@ func TestPostInsertRemovalBelowMinScore(t *testing.T) {
 		Hash:   "h-null",
 		Title:  "Below threshold",
 		Url:    "https://news.ycombinator.com/item?id=55",
-		Points: nullInt64(),
+		Points: 0,
 		Status: "unread",
 	})
 	if err != nil {
@@ -72,8 +72,8 @@ func TestPostInsertRemovalBelowMinScore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inserted.Points.Valid {
-		t.Fatal("precondition: item must have NULL points")
+	if inserted.Points != 0 {
+		t.Fatal("precondition: item must have zero points")
 	}
 
 	enricher := NewHNEnricher()
@@ -115,8 +115,8 @@ func TestInsertStoresNULLWhenUnenriched(t *testing.T) {
 		Hash:          "h-unenriched",
 		Title:         "Unenriched",
 		Url:           "https://example.com/x",
-		Points:        nullInt64(),
-		CommentsCount: nullInt64(),
+		Points:        0,
+		CommentsCount: 0,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -126,8 +126,8 @@ func TestInsertStoresNULLWhenUnenriched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inserted.Points.Valid {
-		t.Errorf("points should be NULL, got %+v", inserted.Points)
+	if inserted.Points != 0 {
+		t.Errorf("points should be zero, got %d", inserted.Points)
 	}
 
 	// The item must appear as an enrichment candidate immediately.
@@ -157,7 +157,6 @@ func (p *Poller) enrichFeedItemsForTest(ctx context.Context, feed store.Feed, e 
 	return nil
 }
 
-func nullInt64() sql.NullInt64 { return sql.NullInt64{} }
 
 // TestPreInsertFirebaseFallback verifies that when BulkEnrich (Algolia)
 // fails for an HN feed, the pre-insert per-item fallback calls Firebase
@@ -208,11 +207,11 @@ func TestPreInsertFirebaseFallback(t *testing.T) {
 	if !ok {
 		t.Fatal("scored map missing candidate")
 	}
-	if !si.Points.Valid {
-		t.Fatal("expected valid score from Firebase fallback, got NULL")
+	if si.Points == 0 {
+		t.Fatal("expected score from Firebase fallback, got zero")
 	}
-	if si.Points.Int64 != int64(firebaseScore) {
-		t.Errorf("score = %d, want %d", si.Points.Int64, firebaseScore)
+	if si.Points != int64(firebaseScore) {
+		t.Errorf("score = %d, want %d", si.Points, firebaseScore)
 	}
 }
 

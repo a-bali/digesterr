@@ -2,7 +2,6 @@ package feed
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -140,8 +139,8 @@ func (e *LobstersEnricher) enrichOne(ctx context.Context, item *store.Item, shor
 		return fmt.Errorf("Lobste.rs story %s not found", shortID)
 	}
 
-	item.Points = sql.NullInt64{Int64: int64(lsItem.Score), Valid: true}
-	item.CommentsCount = sql.NullInt64{Int64: int64(lsItem.CommentCount), Valid: true}
+	item.Points = int64(lsItem.Score)
+	item.CommentsCount = int64(lsItem.CommentCount)
 	return nil
 }
 
