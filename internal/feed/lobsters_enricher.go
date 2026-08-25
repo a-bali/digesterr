@@ -2,6 +2,7 @@ package feed
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -13,18 +14,25 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"digesterr/internal/store"
 )
 
 type LobstersEnricher struct {
 	client  *http.Client
 	baseURL string
+	limiter *rate.Limiter
 }
+
+// SetRateLimiter overrides the per-item call limiter (nil disables limiting).
+func (e *LobstersEnricher) SetRateLimiter(l *rate.Limiter) { e.limiter = l }
 
 func NewLobstersEnricher() *LobstersEnricher {
 	return &LobstersEnricher{
 		client:  &http.Client{Timeout: 10 * time.Second},
 		baseURL: "https://lobste.rs",
+		limiter: rate.NewLimiter(4, 4),
 	}
 }
 
@@ -101,6 +109,9 @@ type lobstersComment struct {
 }
 
 func (e *LobstersEnricher) enrichOne(ctx context.Context, item *store.Item, shortID string) error {
+	if err := waitLimiter(ctx, e.limiter); err != nil {
+		return err
+	}
 	apiURL := fmt.Sprintf("%s/s/%s.json", e.baseURL, shortID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
@@ -129,8 +140,8 @@ func (e *LobstersEnricher) enrichOne(ctx context.Context, item *store.Item, shor
 		return fmt.Errorf("Lobste.rs story %s not found", shortID)
 	}
 
-	item.Points = int64(lsItem.Score)
-	item.CommentsCount = int64(lsItem.CommentCount)
+	item.Points = sql.NullInt64{Int64: int64(lsItem.Score), Valid: true}
+	item.CommentsCount = sql.NullInt64{Int64: int64(lsItem.CommentCount), Valid: true}
 	return nil
 }
 
@@ -140,6 +151,9 @@ func (e *LobstersEnricher) FetchComments(ctx context.Context, item store.Item, m
 		return nil, fmt.Errorf("could not extract Lobste.rs short ID")
 	}
 
+	if err := waitLimiter(ctx, e.limiter); err != nil {
+		return nil, err
+	}
 	apiURL := fmt.Sprintf("%s/s/%s.json", e.baseURL, shortID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {

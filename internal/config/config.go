@@ -125,6 +125,9 @@ type FeedConfig struct {
 	ExpireItems Duration `yaml:"expire_items"`
 	// ExpireDigests deletes digest results older than this duration.
 	ExpireDigests Duration `yaml:"expire_digests"`
+	// EnrichmentWindow controls how long after insertion items remain
+	// eligible for periodic score re-enrichment. Zero means 24h (default).
+	EnrichmentWindow Duration `yaml:"enrichment_window"`
 }
 
 // DigestConfig holds digest scheduling settings.
@@ -170,9 +173,10 @@ func Default() Config {
 			Model:    "gpt-4o-mini",
 		},
 		Feed: FeedConfig{
-			SyncInterval:  Duration(time.Hour),
-			ExpireItems:   Duration(365 * 24 * time.Hour),
-			ExpireDigests: Duration(365 * 24 * time.Hour),
+			SyncInterval:     Duration(time.Hour),
+			ExpireItems:      Duration(365 * 24 * time.Hour),
+			ExpireDigests:    Duration(365 * 24 * time.Hour),
+			EnrichmentWindow: Duration(24 * time.Hour),
 		},
 		Reddit:  RedditConfig{},
 		Twitter: TwitterConfig{},
@@ -302,6 +306,7 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 	setDuration(&cfg.Feed.SyncInterval, "FEED_SYNC_INTERVAL")
 	setDuration(&cfg.Feed.ExpireItems, "FEED_EXPIRE_ITEMS")
 	setDuration(&cfg.Feed.ExpireDigests, "FEED_EXPIRE_DIGESTS")
+	setDuration(&cfg.Feed.EnrichmentWindow, "FEED_ENRICHMENT_WINDOW")
 
 	setString(&cfg.Reddit.ClientID, "REDDIT_CLIENT_ID", "")
 	setString(&cfg.Reddit.ClientSecret, "REDDIT_CLIENT_SECRET", "")

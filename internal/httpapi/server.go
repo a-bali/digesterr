@@ -52,6 +52,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	// feed refresh (Poller) and digest generation (Generator calls the same
 	// Poller expiry path).
 	s.poller.SetExpiry(cfg.Feed.ExpireItems.Duration(), cfg.Feed.ExpireDigests.Duration())
+	s.poller.SetEnrichmentWindow(cfg.Feed.EnrichmentWindow.Duration())
 	s.poller.SetRedditCredentials(cfg.Reddit.ClientID, cfg.Reddit.ClientSecret)
 	s.poller.SetTwitterCredentials(cfg.Twitter.Ct0, cfg.Twitter.AuthToken)
 

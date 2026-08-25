@@ -2,6 +2,7 @@ package feed
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"digesterr/internal/store"
 )
 
@@ -20,6 +23,8 @@ type HNEnricher struct {
 	client      *http.Client
 	firebaseURL string
 	algoliaURL  string
+	// limiter throttles the per-item Firebase fallback calls.
+	limiter *rate.Limiter
 }
 
 func NewHNEnricher() *HNEnricher {
@@ -27,8 +32,12 @@ func NewHNEnricher() *HNEnricher {
 		client:      &http.Client{Timeout: 10 * time.Second},
 		firebaseURL: "https://hacker-news.firebaseio.com",
 		algoliaURL:  "https://hn.algolia.com",
+		limiter:     rate.NewLimiter(defaultHNRate, defaultHNburst),
 	}
 }
+
+// SetRateLimiter overrides the per-item call limiter (nil disables limiting).
+func (e *HNEnricher) SetRateLimiter(l *rate.Limiter) { e.limiter = l }
 
 // Enrich fetches a single item from the Firebase API.
 func (e *HNEnricher) Enrich(ctx context.Context, item *store.Item) error {
@@ -37,6 +46,9 @@ func (e *HNEnricher) Enrich(ctx context.Context, item *store.Item) error {
 		return fmt.Errorf("could not extract HN item ID")
 	}
 
+	if err := waitLimiter(ctx, e.limiter); err != nil {
+		return fmt.Errorf("rate limiter: %w", err)
+	}
 	apiURL := fmt.Sprintf("%s/v0/item/%d.json", e.firebaseURL, hnID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
@@ -65,8 +77,8 @@ func (e *HNEnricher) Enrich(ctx context.Context, item *store.Item) error {
 		return fmt.Errorf("HN item %d not found", hnID)
 	}
 
-	item.Points = int64(hnItem.Score)
-	item.CommentsCount = int64(hnItem.Descendants)
+	item.Points = sql.NullInt64{Int64: int64(hnItem.Score), Valid: true}
+	item.CommentsCount = sql.NullInt64{Int64: int64(hnItem.Descendants), Valid: true}
 	return nil
 }
 
@@ -122,8 +134,36 @@ func (e *HNEnricher) BulkEnrich(ctx context.Context, items []*store.Item) error 
 
 	for _, hit := range algoliaResp.Hits {
 		if item, ok := idToItem[hit.ObjectID]; ok {
-			item.Points = int64(hit.Points)
-			item.CommentsCount = int64(hit.NumComments)
+			item.Points = sql.NullInt64{Int64: int64(hit.Points), Valid: true}
+			item.CommentsCount = sql.NullInt64{Int64: int64(hit.NumComments), Valid: true}
+		}
+	}
+
+	// Detect misses: the Algolia index can lag or stall entirely (seen in
+	// production Aug 2026 — fresh stories absent from search results while
+	// the Firebase API served them fine). Fill individual misses from the
+	// Firebase API and surface a warning instead of silently storing zeros.
+	var missed []*store.Item
+	for _, item := range items {
+		if item.Points.Valid {
+			continue
+		}
+		if extractHNID(item.CommentUrl, item.Url) != 0 {
+			missed = append(missed, item)
+		}
+	}
+	if len(missed) > 0 {
+		slog.Warn("hn algolia bulk enrichment incomplete, falling back to firebase",
+			"requested", len(filters), "matched", len(algoliaResp.Hits), "fallback", len(missed))
+		var firstErr error
+		for _, item := range missed {
+			if err := e.Enrich(ctx, item); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		if firstErr != nil {
+			return fmt.Errorf("hn enrichment incomplete (%d/%d matched via algolia): %w",
+				len(algoliaResp.Hits), len(filters), firstErr)
 		}
 	}
 

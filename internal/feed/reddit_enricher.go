@@ -2,6 +2,7 @@ package feed
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"digesterr/internal/store"
 )
@@ -66,6 +69,7 @@ type RedditEnricher struct {
 	token        string
 	tokenExpiry  time.Time
 	tokenMu      sync.Mutex
+	limiter      *rate.Limiter
 }
 
 func NewRedditEnricher(queries *store.Queries) *RedditEnricher {
@@ -76,8 +80,12 @@ func NewRedditEnricher(queries *store.Queries) *RedditEnricher {
 		queries:      queries,
 		clientID:     os.Getenv("REDDIT_CLIENT_ID"),
 		clientSecret: os.Getenv("REDDIT_CLIENT_SECRET"),
+		limiter:      rate.NewLimiter(defaultRedditRate, defaultRedditBurst),
 	}
 }
+
+// SetRateLimiter overrides the API call limiter (nil disables limiting).
+func (e *RedditEnricher) SetRateLimiter(l *rate.Limiter) { e.limiter = l }
 
 // SetCredentials overrides the Reddit API credentials. The merged config
 // (file + env) is applied by the server after construction; the constructor
@@ -182,8 +190,8 @@ func (e *RedditEnricher) Enrich(ctx context.Context, item *store.Item) error {
 		return fmt.Errorf("Reddit post %s not found", postID)
 	}
 
-	item.Points = int64(post.Score)
-	item.CommentsCount = int64(post.NumComments)
+	item.Points = sql.NullInt64{Int64: int64(post.Score), Valid: true}
+	item.CommentsCount = sql.NullInt64{Int64: int64(post.NumComments), Valid: true}
 
 	if post.Permalink != "" {
 		item.CommentUrl = "https://www.reddit.com" + post.Permalink
@@ -228,6 +236,9 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 	if err := e.ensureToken(ctx); err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
+	if err := waitLimiter(ctx, e.limiter); err != nil {
+		return fmt.Errorf("rate limiter: %w", err)
+	}
 
 	apiURL := fmt.Sprintf("%s/api/info.json?id=%s", e.apiBaseURL, strings.Join(ids, ","))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
@@ -266,8 +277,8 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 			continue
 		}
 		matched++
-		item.Points = int64(child.Data.Score)
-		item.CommentsCount = int64(child.Data.NumComments)
+		item.Points = sql.NullInt64{Int64: int64(child.Data.Score), Valid: true}
+		item.CommentsCount = sql.NullInt64{Int64: int64(child.Data.NumComments), Valid: true}
 		if child.Data.Permalink != "" {
 			item.CommentUrl = "https://www.reddit.com" + child.Data.Permalink
 		}
