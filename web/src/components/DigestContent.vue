@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useDigestStore } from '../stores/digest'
 import { useFeedStore } from '../stores/feed'
@@ -13,15 +13,36 @@ import { absoluteTime, feedIcon } from '../lib/format'
 const store = useDigestStore()
 const feedStore = useFeedStore()
 
-// Reset vertical scroll when a different digest result is opened. The
-// scroller is a single persistent DOM element, so without this the previous
-// result's scroll position carries over.
+// Per-result scroll memory: reopening the SAME result restores its previous
+// scroll position; opening a DIFFERENT result resets to top. The scroller is
+// a single persistent DOM element, so positions would otherwise leak across
+// results or get lost on back-navigation.
 const scroller = ref<HTMLElement | null>(null)
+// Module-level: HomeView's keyed <Transition> unmounts this component when
+// navigating back to the list, so per-instance state would be lost.
+const scrollMemory: Map<number, number> =
+  ((globalThis as any).__digestScrollMemory ??= new Map())
+// Continuous capture via @scroll (bound in template): the watcher approach can't
+// save on back-navigation because Vue unmounts this component before the
+// selected-result watcher job runs, leaving scroller.value null.
+function onScroll() {
+  const id = store.selectedResult?.id
+  if (id != null && scroller.value) scrollMemory.set(id, scroller.value.scrollTop)
+}
 watch(
   () => store.selectedResult?.id,
-  () => {
-    if (scroller.value) scroller.value.scrollTop = 0
+  (newId) => {
+    const saved = (newId != null && scrollMemory.get(newId)) || 0
+    // Defer past render + null-check inside: with {immediate:true} this fires
+    // during setup when scroller is still null, and a fresh mount's result body
+    // isn't in the DOM until nextTick — setting scrollTop before either would
+    // no-op or clamp to 0.
+    nextTick(() => {
+      if (!scroller.value) return
+      scroller.value.scrollTop = saved
+    })
   },
+  { immediate: true },
 )
 
 const digestContent = computed<DigestContent | null>(() => {
@@ -89,7 +110,7 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
        scroll container on mobile — phantom overflow (scrollWidth a few px
        wider than clientWidth from children's intrinsic min-widths) made the
        pane draggable with snap-back even when content fit. -->
-  <div ref="scroller" class="h-full overflow-y-auto overflow-x-hidden min-w-0 px-3 py-3 sm:p-6" data-digest-content>
+  <div ref="scroller" class="h-full overflow-y-auto overflow-x-hidden min-w-0 px-3 py-3 sm:p-6" data-digest-content @scroll.passive="onScroll">
     <div v-if="!store.selectedResult" class="flex h-full items-center justify-center text-muted-foreground">
       <BookOpen class="size-8 mr-2" /> <span>Select an item</span>
     </div>
