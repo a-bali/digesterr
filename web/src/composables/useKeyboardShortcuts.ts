@@ -24,6 +24,7 @@ export function useKeyboardShortcuts(ctx: {
   toggleRead: (item: any) => void
   toggleSaved: (item: any) => void
   markAllRead: () => void
+  markAllReadDialogOpen: () => boolean
   toggleShowRead: () => void
   refreshCounts: () => void
   toggleTheme: () => void
@@ -138,6 +139,9 @@ export function useKeyboardShortcuts(ctx: {
         ctx.toggleShowRead()
         break
       case 'A':
+        // While the mark-all-read confirmation is open, Enter on the
+        // confirm button is the primary action — don't reopen the dialog.
+        if (ctx.markAllReadDialogOpen()) break
         ctx.markAllRead()
         break
       case 'r':

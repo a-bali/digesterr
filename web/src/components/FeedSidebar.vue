@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, useTemplateRef } from 'vue'
 import { toast } from 'vue-sonner'
 import { useFeedStore } from '../stores/feed'
 import { useDigestStore } from '../stores/digest'
@@ -71,7 +71,8 @@ function requestMarkFeedRead(id: number) {
   if (feed) feedToMarkRead.value = feed
 }
 
-defineExpose({ requestMarkFeedRead })
+const markAllReadDialogOpen = computed(() => feedToMarkRead.value !== null)
+defineExpose({ requestMarkFeedRead, markAllReadDialogOpen })
 
 function closeMarkReadDialog() {
   feedToMarkRead.value = null
@@ -82,6 +83,28 @@ async function confirmMarkFeedRead() {
   feedToMarkRead.value = null
   if (feed) await markFeedRead(feed.id)
 }
+
+// When the confirm button is focused, Enter fires both the keydown handler
+// below and the native button click. Use a microtask guard so only one path
+// executes confirmMarkFeedRead.
+let confirmKeyHandled = false
+function onConfirmKeyDown(e: KeyboardEvent) {
+  if (e.key !== 'Enter') return
+  if (confirmKeyHandled) { e.preventDefault(); return }
+  confirmKeyHandled = true
+  queueMicrotask(() => { confirmKeyHandled = false })
+  e.preventDefault()
+  confirmMarkFeedRead()
+}
+
+const confirmBtnRef = useTemplateRef<InstanceType<typeof Button>>('confirmBtn')
+watch(feedToMarkRead, async (feed) => {
+  if (feed) {
+    await nextTick()
+    const el = (confirmBtnRef.value?.$el as HTMLElement | undefined)
+    el?.focus()
+  }
+})
 
 // Resolve category name -> payload field and build final URL.
 function buildFeedPayload(form: { type: string; name: string; url: string; category: string; extract_content: number; min_score: number }): any {
@@ -154,6 +177,18 @@ onMounted(() => {
 })
 
 const collapsedCategories = reactive(new Set<string>())
+// ---- Section totals ----
+const totalDigestUnread = computed(() => {
+  let sum = 0
+  for (const cfg of digestStore.configs) sum += digestStore.unreadCounts[cfg.id] ?? 0
+  return sum
+})
+const totalFeedUnread = computed(() => {
+  let sum = 0
+  for (const feed of feedStore.feeds) sum += feedStore.unreadCounts[feed.id] ?? 0
+  return sum
+})
+
 // Categories are derived from feeds: only names still in use, sorted
 // alphabetically. Feeds without a category are listed under "Feeds".
 const uncategorizedFeeds = computed(() => feedStore.feeds.filter(f => !f.category))
@@ -183,6 +218,12 @@ function toggleCategory(name: string) {
       <span class="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase">
         <MessageSquare class="size-3.5 shrink-0 text-accent" />
         Digests
+        <span
+          v-if="totalDigestUnread > 0"
+          data-testid="digests-section-total"
+          class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground"
+          :title="`${totalDigestUnread} unread across ${digestStore.configs.length} digest config${digestStore.configs.length === 1 ? '' : 's'}`"
+        >{{ totalDigestUnread }}</span>
       </span>
       <button class="p-1 rounded hover:bg-accent/20" title="Create digest config" @click="showAddDigest = true">
         <Plus class="size-3.5" />
@@ -216,6 +257,12 @@ function toggleCategory(name: string) {
       <span class="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase">
         <Rss class="size-3.5 shrink-0 text-accent" />
         Feeds
+        <span
+          v-if="totalFeedUnread > 0"
+          data-testid="feeds-section-total"
+          class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground"
+          :title="`${totalFeedUnread} unread across ${feedStore.feeds.length} feed${feedStore.feeds.length === 1 ? '' : 's'}`"
+        >{{ totalFeedUnread }}</span>
       </span>
       <button class="p-1 rounded hover:bg-accent/20" title="Add feed" @click="showAddFeed = true">
         <Plus class="size-3.5" />
@@ -267,7 +314,7 @@ function toggleCategory(name: string) {
     >
       <div class="flex justify-end gap-2">
         <Button variant="outline" @click="closeMarkReadDialog">Cancel</Button>
-        <Button data-mark-all-read-confirm @click="confirmMarkFeedRead">Mark read</Button>
+        <Button ref="confirmBtn" data-mark-all-read-confirm @click="confirmMarkFeedRead" @keydown="onConfirmKeyDown">Mark read</Button>
       </div>
     </Dialog>
   </div>

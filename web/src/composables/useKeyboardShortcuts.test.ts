@@ -18,6 +18,7 @@ function makeCtx(overrides: Partial<Parameters<typeof useKeyboardShortcuts>[0]> 
     toggleRead: vi.fn(),
     toggleSaved: vi.fn(),
     markAllRead: vi.fn(),
+    markAllReadDialogOpen: () => false,
     toggleShowRead: vi.fn(),
     refreshCounts: vi.fn(),
     toggleTheme: vi.fn(),
@@ -156,6 +157,14 @@ describe('useKeyboardShortcuts', () => {
     const { press, wrapper } = mountHarness(ctx)
     press({ key: 'A', shiftKey: true })
     expect(ctx.markAllRead).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('Shift+A is suppressed while the mark-all-read confirmation is open', () => {
+    const ctx = makeCtx({ markAllReadDialogOpen: () => true })
+    const { press, wrapper } = mountHarness(ctx)
+    press({ key: 'A', shiftKey: true })
+    expect(ctx.markAllRead).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

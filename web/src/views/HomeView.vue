@@ -23,6 +23,7 @@ import type { Item } from '../types/api'
 import { useBreakpoints } from '../composables/useMediaQuery'
 import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts'
 import { useSwipeGesture } from '../composables/useSwipeGesture'
+import { usePageTitle, digestResultTitle } from '../composables/usePageTitle'
 import { Rss, Menu, ArrowLeft, CircleHelp } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -78,6 +79,7 @@ useKeyboardShortcuts({
   markAllRead: () => {
     if (feedStore.activeFeedId) requestMarkFeedRead(feedStore.activeFeedId)
   },
+  markAllReadDialogOpen,
   toggleShowRead: () => {
     feedStore.changeFilter(feedStore.filter === 'unread' ? 'all' : 'unread')
   },
@@ -243,6 +245,21 @@ const sidebarRef = useTemplateRef<InstanceType<typeof FeedSidebar>>('sidebar')
 function requestMarkFeedRead(id: number) {
   sidebarRef.value?.requestMarkFeedRead(id)
 }
+function markAllReadDialogOpen() {
+  return sidebarRef.value?.markAllReadDialogOpen ?? false
+}
+
+// ---- Page title ----
+const totalUnread = computed(() => {
+  let n = 0
+  for (const feed of feedStore.feeds) n += feedStore.unreadCounts[feed.id] ?? 0
+  for (const cfg of digestStore.configs) n += digestStore.unreadCounts[cfg.id] ?? 0
+  return n
+})
+const activeFeedName = computed(() => feedStore.activeFeed?.name ?? digestStore.activeConfig?.name ?? '')
+const activeItemTitle = computed(() => feedStore.selectedItem?.title ?? digestResultTitle(digestStore.selectedResult?.content) ?? '')
+
+usePageTitle({ total: totalUnread, feedName: activeFeedName, itemTitle: activeItemTitle })
 </script>
 
 <template>
