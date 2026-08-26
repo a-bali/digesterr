@@ -256,10 +256,16 @@ const totalUnread = computed(() => {
   for (const cfg of digestStore.configs) n += digestStore.unreadCounts[cfg.id] ?? 0
   return n
 })
+const activeFeedId = computed(() => feedStore.activeFeedId ?? digestStore.activeConfigId)
 const activeFeedName = computed(() => feedStore.activeFeed?.name ?? digestStore.activeConfig?.name ?? '')
+const activeFeedUnread = computed(() => {
+  const id = activeFeedId.value
+  if (id == null) return 0
+  return feedStore.unreadCounts[id] ?? digestStore.unreadCounts[id] ?? 0
+})
 const activeItemTitle = computed(() => feedStore.selectedItem?.title ?? digestResultTitle(digestStore.selectedResult?.content) ?? '')
 
-usePageTitle({ total: totalUnread, feedName: activeFeedName, itemTitle: activeItemTitle })
+usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeFeedUnread, itemTitle: activeItemTitle })
 </script>
 
 <template>
