@@ -330,17 +330,21 @@ function requestMarkFeedRead(id: number) {
           </div>
         </aside>
 
-        <!-- List pane -->
+        <!-- List pane. Never unmounted on selection change (remounting resets
+             scroll). On mobile, when content is shown, the wrapper leaves the
+             flex flow (zero-width + absolute overlay off-screen) so the content
+             pane takes the full width — display:none would also zero scrollTop. -->
         <div
-          class="flex-1 min-w-0"
-          :class="[isTablet ? '' : (showContentPane ? 'hidden' : ''), 'flex flex-col']"
+          class="min-w-0"
+          :class="!isTablet && showContentPane ? 'relative w-0 flex-none' : 'flex-1'"
         >
-          <Transition name="slide-from-left" appear>
-            <div :key="showContentPane ? 'behind' : 'list'" class="flex-1 min-h-0 flex flex-col">
+          <div
+            class="absolute inset-0 flex flex-col transition-transform duration-200"
+            :class="!isTablet && showContentPane ? '-translate-x-full pointer-events-none' : 'static w-full h-full'"
+          >
               <DigestResultList v-if="digestMode" class="flex-1 min-h-0" @select="onSelectDigestResult" />
               <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" />
-            </div>
-          </Transition>
+          </div>
         </div>
 
         <!-- Content pane (tablet: side-by-side; mobile: replaces list).

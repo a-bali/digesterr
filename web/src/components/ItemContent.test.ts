@@ -167,6 +167,23 @@ describe('ItemContent collapsible blocks', () => {
     await wrapper.vm.$nextTick()
     expect((root.element as HTMLElement).scrollTop).toBe(0)
   })
+
+  it('restores scroll position when the same item is reopened', async () => {
+    const root = wrapper.find('[data-item-content]')
+    // Simulate the user scrolling: the @scroll handler is what persists position
+    // (a watcher-based save can't run — the component unmounts before it fires).
+    Object.defineProperty(root.element, 'scrollTop', { value: 500, writable: true, configurable: true })
+    await root.trigger('scroll')
+    const store = useFeedStore()
+    // Deselect (back to list), then reopen the same item.
+    store.selectedItem = null
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    store.selectedItem = makeItem({ id: 1 })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect((root.element as HTMLElement).scrollTop).toBe(500)
+  })
 })
 
 describe('ItemContent feed link', () => {
