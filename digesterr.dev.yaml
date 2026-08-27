@@ -25,7 +25,7 @@ llm:
   model: virtual-regular
 
 feed:
-  sync_interval: 1h
+  sync_interval: 15m
   expire_items: 1y
   expire_digests: 1y
   # How long items stay eligible for periodic score re-enrichment.

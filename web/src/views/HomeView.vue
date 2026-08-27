@@ -24,7 +24,7 @@ import { useBreakpoints } from '../composables/useMediaQuery'
 import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts'
 import { useSwipeGesture } from '../composables/useSwipeGesture'
 import { usePageTitle, digestResultTitle } from '../composables/usePageTitle'
-import { Rss, Menu, ArrowLeft, CircleHelp } from 'lucide-vue-next'
+import { Newspaper, Menu, ArrowLeft, CircleHelp } from 'lucide-vue-next'
 
 const router = useRouter()
 const route = useRoute()
@@ -281,7 +281,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
         </Button>
       </template>
       <template v-else>
-        <Rss class="size-5 text-accent shrink-0" />
+        <Newspaper class="size-5 text-accent shrink-0" />
         <span class="font-semibold shrink-0 hidden sm:inline">Digesterr</span>
       </template>
       <div class="ml-auto flex items-center gap-1">

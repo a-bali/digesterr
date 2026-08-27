@@ -15,10 +15,10 @@ export interface PageTitleParts {
  * Sets document.title reactively.
  *
  * Format:
- *   - nothing selected:       `[N] 🛜`
- *   - feed selected:          `[N] 🛜 (FeedName: M)`
- *   - feed + item selected:   `[N] 🛜 (FeedName: M) ItemTitle`
- *   - empty feedUnread:       `[N] 🛜 (FeedName: 0)` (defensive — show the zero)
+ *   - nothing selected:       `[N] 📰`
+ *   - feed selected:          `[N] 📰 (FeedName: M)`
+ *   - feed + item selected:   `[N] 📰 (FeedName: M) ItemTitle`
+ *   - empty feedUnread:       `[N] 📰 (FeedName: 0)` (defensive — show the zero)
  *
  * `total` is always the app-wide unread total, regardless of selection.
  * The feed name is always wrapped in parens when present.
@@ -57,10 +57,10 @@ function formatTitle(parts: {
   const name = parts.feedName?.trim() ?? ''
   const m = parts.feedUnread ?? 0
   const title = parts.itemTitle?.trim() ?? ''
-  if (!name) return `[${n}] 🛜`
+  if (!name) return `[${n}] 📰`
   const feedPart = `(${name}: ${m})`
-  if (title) return `[${n}] 🛜 ${feedPart} ${title}`
-  return `[${n}] 🛜 ${feedPart}`
+  if (title) return `[${n}] 📰 ${feedPart} ${title}`
+  return `[${n}] 📰 ${feedPart}`
 }
 
 /** Extract the rendered title from a digest result's JSON content blob. */

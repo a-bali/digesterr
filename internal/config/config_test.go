@@ -67,8 +67,8 @@ func TestDefaults(t *testing.T) {
 	if cfg.LLM.APIKey != "" {
 		t.Errorf("llm.api_key = %q, want empty", cfg.LLM.APIKey)
 	}
-	if cfg.Feed.SyncInterval.Duration() != time.Hour {
-		t.Errorf("feed.sync_interval = %v, want 1h", cfg.Feed.SyncInterval.Duration())
+	if cfg.Feed.SyncInterval.Duration() != 15*time.Minute {
+		t.Errorf("feed.sync_interval = %v, want 15m", cfg.Feed.SyncInterval.Duration())
 	}
 	if cfg.Feed.ExpireItems.Duration() != 365*24*time.Hour {
 		t.Errorf("feed.expire_items = %v, want 8760h", cfg.Feed.ExpireItems.Duration())

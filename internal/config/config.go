@@ -173,7 +173,7 @@ func Default() Config {
 			Model:    "gpt-4o-mini",
 		},
 		Feed: FeedConfig{
-			SyncInterval:     Duration(time.Hour),
+			SyncInterval:     Duration(15 * time.Minute),
 			ExpireItems:      Duration(365 * 24 * time.Hour),
 			ExpireDigests:    Duration(365 * 24 * time.Hour),
 			EnrichmentWindow: Duration(24 * time.Hour),

@@ -21,31 +21,31 @@ describe('usePageTitle', () => {
   beforeEach(() => { document.title = ORIGINAL })
   afterEach(() => { document.title = ORIGINAL })
 
-  it('shows "[N] 🛜" when no feed is selected', async () => {
+  it('shows "[N] 📰" when no feed is selected', async () => {
     withSetup(() => usePageTitle({ total: 0, feedName: '', feedUnread: 0, itemTitle: '' }))
     await nextTick()
-    expect(document.title).toBe('[0] 🛜')
+    expect(document.title).toBe('[0] 📰')
   })
 
-  it('shows "[N] 🛜" when no feed is selected and there are unreads', async () => {
+  it('shows "[N] 📰" when no feed is selected and there are unreads', async () => {
     withSetup(() => usePageTitle({ total: 42, feedName: '', feedUnread: 0, itemTitle: '' }))
     await nextTick()
-    expect(document.title).toBe('[42] 🛜')
+    expect(document.title).toBe('[42] 📰')
   })
 
-  it('shows "[N] 🛜 (FeedName: M)" when a feed is selected with no item', async () => {
+  it('shows "[N] 📰 (FeedName: M)" when a feed is selected with no item', async () => {
     withSetup(() => usePageTitle({ total: 5, feedName: 'Hacker News', feedUnread: 12, itemTitle: '' }))
     await nextTick()
-    expect(document.title).toBe('[5] 🛜 (Hacker News: 12)')
+    expect(document.title).toBe('[5] 📰 (Hacker News: 12)')
   })
 
-  it('shows "[N] 🛜 (FeedName: 0)" when feed is selected with no unreads in it', async () => {
+  it('shows "[N] 📰 (FeedName: 0)" when feed is selected with no unreads in it', async () => {
     withSetup(() => usePageTitle({ total: 42, feedName: 'Hacker News', feedUnread: 0, itemTitle: '' }))
     await nextTick()
-    expect(document.title).toBe('[42] 🛜 (Hacker News: 0)')
+    expect(document.title).toBe('[42] 📰 (Hacker News: 0)')
   })
 
-  it('shows "[N] 🛜 (FeedName: M) ItemTitle" when a feed + item are selected', async () => {
+  it('shows "[N] 📰 (FeedName: M) ItemTitle" when a feed + item are selected', async () => {
     withSetup(() => usePageTitle({
       total: 7,
       feedName: 'Hacker News',
@@ -53,17 +53,17 @@ describe('usePageTitle', () => {
       itemTitle: 'Show HN: a project',
     }))
     await nextTick()
-    expect(document.title).toBe('[7] 🛜 (Hacker News: 12) Show HN: a project')
+    expect(document.title).toBe('[7] 📰 (Hacker News: 12) Show HN: a project')
   })
 
   it('updates reactively when total changes', async () => {
     const total = ref(1)
     withSetup(() => usePageTitle({ total, feedName: 'RSS', feedUnread: 3, itemTitle: 't' }))
     await nextTick()
-    expect(document.title).toBe('[1] 🛜 (RSS: 3) t')
+    expect(document.title).toBe('[1] 📰 (RSS: 3) t')
     total.value = 999
     await nextTick()
-    expect(document.title).toBe('[999] 🛜 (RSS: 3) t')
+    expect(document.title).toBe('[999] 📰 (RSS: 3) t')
   })
 
   it('updates reactively when feedName, feedUnread, and itemTitle change', async () => {
@@ -72,39 +72,39 @@ describe('usePageTitle', () => {
     const itemTitle = ref('item1')
     withSetup(() => usePageTitle({ total: 3, feedName, feedUnread, itemTitle }))
     await nextTick()
-    expect(document.title).toBe('[3] 🛜 (A: 5) item1')
+    expect(document.title).toBe('[3] 📰 (A: 5) item1')
     feedName.value = 'B'
     feedUnread.value = 2
     itemTitle.value = 'item2'
     await nextTick()
-    expect(document.title).toBe('[3] 🛜 (B: 2) item2')
+    expect(document.title).toBe('[3] 📰 (B: 2) item2')
     feedName.value = ''
     await nextTick()
-    expect(document.title).toBe('[3] 🛜')
+    expect(document.title).toBe('[3] 📰')
   })
 
   it('restores the original title on unmount', async () => {
     const { wrapper } = withSetup(() =>
       usePageTitle({ total: 4, feedName: 'X', feedUnread: 7, itemTitle: 'y' }))
     await nextTick()
-    expect(document.title).toBe('[4] 🛜 (X: 7) y')
+    expect(document.title).toBe('[4] 📰 (X: 7) y')
     wrapper.unmount()
     expect(document.title).toBe(ORIGINAL)
   })
 
-  it('falls back to "[0] 🛜" when total is null/undefined and no feed', async () => {
+  it('falls back to "[0] 📰" when total is null/undefined and no feed', async () => {
     withSetup(() => usePageTitle({ total: null, feedName: '', feedUnread: 0, itemTitle: '' }))
     await nextTick()
-    expect(document.title).toBe('[0] 🛜')
+    expect(document.title).toBe('[0] 📰')
     withSetup(() => usePageTitle({ total: undefined, feedName: '', feedUnread: 0, itemTitle: '' }))
     await nextTick()
-    expect(document.title).toBe('[0] 🛜')
+    expect(document.title).toBe('[0] 📰')
   })
 
   it('trims whitespace in feedName and itemTitle', async () => {
     withSetup(() => usePageTitle({ total: 1, feedName: '  HN  ', feedUnread: 4, itemTitle: '  foo  ' }))
     await nextTick()
-    expect(document.title).toBe('[1] 🛜 (HN: 4) foo')
+    expect(document.title).toBe('[1] 📰 (HN: 4) foo')
   })
 })
 
