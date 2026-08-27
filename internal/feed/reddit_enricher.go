@@ -45,6 +45,12 @@ type redditPostData struct {
 	Permalink   string        `json:"permalink"`
 	Depth       int           `json:"depth"`
 	Replies     redditReplies `json:"replies"`
+	// Post-specific fields (used by RedditFetcher, ignored by enricher)
+	Selftext   string  `json:"selftext"`
+	CreatedUTC float64 `json:"created_utc"`
+	IsSelf     bool    `json:"is_self"`
+	Over18     bool    `json:"over_18"`
+	Stickied   bool    `json:"stickied"`
 }
 
 type redditChild struct {
@@ -69,6 +75,7 @@ type RedditEnricher struct {
 	tokenExpiry  time.Time
 	tokenMu      sync.Mutex
 	limiter      *rate.Limiter
+	userAgent    string
 }
 
 func NewRedditEnricher(queries *store.Queries) *RedditEnricher {
@@ -80,6 +87,7 @@ func NewRedditEnricher(queries *store.Queries) *RedditEnricher {
 		clientID:     os.Getenv("REDDIT_CLIENT_ID"),
 		clientSecret: os.Getenv("REDDIT_CLIENT_SECRET"),
 		limiter:      rate.NewLimiter(defaultRedditRate, defaultRedditBurst),
+		userAgent:    DefaultUserAgent,
 	}
 }
 
@@ -93,6 +101,9 @@ func (e *RedditEnricher) SetCredentials(clientID, clientSecret string) {
 	e.clientID = clientID
 	e.clientSecret = clientSecret
 }
+
+// SetUserAgent overrides the User-Agent header for this enricher.
+func (e *RedditEnricher) SetUserAgent(ua string) { e.userAgent = ua }
 
 func (e *RedditEnricher) ensureToken(ctx context.Context) error {
 	e.tokenMu.Lock()
@@ -115,7 +126,7 @@ func (e *RedditEnricher) ensureToken(ctx context.Context) error {
 	}
 	req.SetBasicAuth(e.clientID, e.clientSecret)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0")
+	req.Header.Set("User-Agent", e.userAgent)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -164,7 +175,7 @@ func (e *RedditEnricher) Enrich(ctx context.Context, item *store.Item) error {
 		return fmt.Errorf("creating Reddit API request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+e.token)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0")
+	req.Header.Set("User-Agent", e.userAgent)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -245,7 +256,7 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 		return fmt.Errorf("creating Reddit API request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+e.token)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0")
+	req.Header.Set("User-Agent", e.userAgent)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -331,7 +342,7 @@ func (e *RedditEnricher) FetchComments(ctx context.Context, item store.Item, max
 		if err != nil {
 			return nil, fmt.Errorf("creating Reddit API request: %w", err)
 		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0")
+		req.Header.Set("User-Agent", e.userAgent)
 		if attempt.auth {
 			if err := e.ensureToken(ctx); err != nil {
 				lastErr = fmt.Errorf("auth: %w", err)

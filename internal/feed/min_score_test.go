@@ -133,11 +133,11 @@ func TestPollFeedMinScoreRejectsBelowThreshold(t *testing.T) {
 	if got := byTitle["Item C"].Points; got != 150 {
 		t.Errorf("above-threshold item points = %d, want 150", got)
 	}
-	if _, ok := byTitle["Item D"]; !ok {
-		t.Error("item without score data was rejected; it must always pass")
+	if _, ok := byTitle["Item D"]; ok {
+		t.Error("item without score data should have been cleaned up by min_score filter")
 	}
-	if len(byTitle) != 3 {
-		t.Errorf("expected 3 inserted items, got %d", len(byTitle))
+	if len(byTitle) != 2 {
+		t.Errorf("expected 2 inserted items (A below threshold, D unenriched zero-score), got %d", len(byTitle))
 	}
 }
 
@@ -156,8 +156,8 @@ func TestPollFeedMinScoreNoScoreDataPassesWithoutEnricher(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list items: %v", err)
 	}
-	if len(items) != len(scoreFeedURLs) {
-		t.Errorf("expected %d items (all pass without score data), got %d", len(scoreFeedURLs), len(items))
+	if len(items) != 0 {
+		t.Errorf("expected 0 items (enricher returned no scores, min_score cleans them up), got %d", len(items))
 	}
 }
 

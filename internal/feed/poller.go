@@ -42,6 +42,7 @@ type fetchedCandidate struct {
 func NewPoller(queries *store.Queries) *Poller {
 	rssFetcher := NewRSSFetcher()
 	twitterFetcher := NewTwitterFetcher()
+	redditFetcher := NewRedditFetcher()
 	hnEnricher := NewHNEnricher()
 	lobstersEnricher := NewLobstersEnricher()
 	redditEnricher := NewRedditEnricher(queries)
@@ -53,7 +54,7 @@ func NewPoller(queries *store.Queries) *Poller {
 			"atom":     rssFetcher,
 			"hn":       rssFetcher,
 			"lobsters": rssFetcher,
-			"reddit":   rssFetcher,
+			"reddit":   redditFetcher,
 			"twitter":  twitterFetcher,
 		},
 		enrichers: map[string]Enricher{
@@ -106,6 +107,11 @@ func (p *Poller) SetRedditCredentials(clientID, clientSecret string) {
 			re.SetCredentials(clientID, clientSecret)
 		}
 	}
+	if f, ok := p.fetchers["reddit"]; ok {
+		if rf, ok := f.(*RedditFetcher); ok {
+			rf.SetCredentials(clientID, clientSecret)
+		}
+	}
 }
 
 // SetTwitterCredentials overrides the Twitter/X session cookies used by the
@@ -115,6 +121,67 @@ func (p *Poller) SetTwitterCredentials(ct0, authToken string) {
 	if f, ok := p.fetchers["twitter"]; ok {
 		if tf, ok := f.(*TwitterFetcher); ok {
 			tf.SetCredentials(ct0, authToken)
+		}
+	}
+}
+
+// SetUserAgent overrides the User-Agent header for all outbound HTTP
+// requests across fetchers and enrichers.
+func (p *Poller) SetUserAgent(ua string) {
+	if ua == "" {
+		return
+	}
+	for _, f := range p.fetchers {
+		switch ff := f.(type) {
+		case *RSSFetcher:
+			ff.SetUserAgent(ua)
+		case *TwitterFetcher:
+			ff.SetUserAgent(ua)
+		case *RedditFetcher:
+			ff.SetUserAgent(ua)
+		}
+	}
+	for _, e := range p.enrichers {
+		if re, ok := e.(*RedditEnricher); ok {
+			re.SetUserAgent(ua)
+		}
+	}
+}
+
+// SetTwitterCount overrides how many tweets to fetch per poll.
+func (p *Poller) SetTwitterCount(n int) {
+	if f, ok := p.fetchers["twitter"]; ok {
+		if tf, ok := f.(*TwitterFetcher); ok {
+			tf.SetCount(n)
+		}
+	}
+}
+
+// SetRedditCount overrides how many posts to fetch per subreddit poll.
+func (p *Poller) SetRedditCount(n int) {
+	if f, ok := p.fetchers["reddit"]; ok {
+		if rf, ok := f.(*RedditFetcher); ok {
+			rf.SetLimit(n)
+		}
+	}
+}
+
+// SetHNEnrichCount overrides the max number of HN items to resolve per
+// enrichment batch. Zero means unbounded (all pending items).
+func (p *Poller) SetHNEnrichCount(n int) {
+	for _, e := range p.enrichers {
+		if he, ok := e.(*HNEnricher); ok {
+			he.SetMaxHits(n)
+		}
+	}
+}
+
+// SetLobstersEnrichCount overrides how many Lobste.rs stories to enrich
+// per poll. Zero means all items returned by the RSS feed.
+func (p *Poller) SetLobstersEnrichCount(n int) {
+	for _, e := range p.enrichers {
+		if le, ok := e.(*LobstersEnricher); ok {
+			le.SetMaxItems(n)
 		}
 	}
 }
@@ -272,8 +339,9 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	// re-evaluated on every fetch: an item skipped on one poll may rise above
 	// the threshold and be inserted on a later one.
 	var scored map[string]*store.Item
+	var enrichedHashes map[string]bool
 	if feed.MinScore > 0 {
-		scored = p.scoreFetchedItems(ctx, feed, candidates, logger)
+		scored, enrichedHashes = p.scoreFetchedItems(ctx, feed, candidates, logger)
 	}
 
 	for _, c := range candidates {
@@ -338,6 +406,21 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 		}
 	}
 
+	// Clean up newly-inserted items the enricher couldn't reach: when
+	// min_score > 0 and a real enricher ran, items the enricher didn't
+	// modify (not in enrichedHashes) with score=0 should be removed.
+	if feed.MinScore > 0 && enrichedHashes != nil {
+		for _, c := range candidates {
+			if !enrichedHashes[c.hash] && c.item.Points == 0 {
+				if _, err := p.queries.DB().ExecContext(ctx,
+					`DELETE FROM items WHERE feed_id = ? AND hash = ?`,
+					feed.ID, c.hash); err != nil {
+					logger.Warn("failed to clean up unenriched zero-score item", "hash", c.hash, "error", err)
+				}
+			}
+		}
+	}
+
 	if _, err := p.queries.UpdateFeedFetchTime(ctx, feed.ID); err != nil {
 		logger.Error("failed to update feed fetch time", "error", err)
 	}
@@ -371,16 +454,17 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 // Items the enricher cannot score keep Points == 0 ("no score data") and are
 // treated as passing the threshold. Returns a map keyed by item hash, or nil
 // when scoring is not possible (unknown or non-score feed types).
-func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candidates []fetchedCandidate, logger *slog.Logger) map[string]*store.Item {
+func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candidates []fetchedCandidate, logger *slog.Logger) (map[string]*store.Item, map[string]bool) {
 	enricher, ok := p.enrichers[feed.Type]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	if _, ok := enricher.(*NoopEnricher); ok {
-		return nil
+		return nil, nil
 	}
 
 	scored := make(map[string]*store.Item, len(candidates))
+	enrichedHashes := make(map[string]bool, len(candidates))
 	ptrs := make([]*store.Item, 0, len(candidates))
 	for _, c := range candidates {
 		// HN scores come from enrichment (Firebase/Algolia), not RSS.
@@ -405,6 +489,11 @@ func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candida
 	}
 
 	logger.Debug("refreshing scores before insert", "count", len(ptrs), "min_score", feed.MinScore)
+	// Save original scores to detect enricher modifications
+	origScores := make(map[string]int64, len(ptrs))
+	for _, si := range ptrs {
+		origScores[si.Hash] = si.Points
+	}
 	if b, ok := enricher.(BulkEnricher); ok {
 		if err := b.BulkEnrich(ctx, ptrs); err != nil {
 			// NULL-scored candidates are treated as zero at the min_score
@@ -431,7 +520,13 @@ func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candida
 			}
 		}
 	}
-	return scored
+	// Track which items the enricher actually modified
+	for _, si := range ptrs {
+		if si.Points != origScores[si.Hash] {
+			enrichedHashes[si.Hash] = true
+		}
+	}
+	return scored, enrichedHashes
 }
 
 // refreshTwitterTitle updates an existing twitter item's title when the

@@ -70,7 +70,7 @@ func ExtractContent(ctx context.Context, pageURL string, client *http.Client, lo
 	if err != nil {
 		return "", fmt.Errorf("creating request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0")
+	req.Header.Set("User-Agent", DefaultUserAgent)
 
 	resp, err := client.Do(req)
 	if err != nil {

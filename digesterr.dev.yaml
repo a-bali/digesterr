@@ -34,3 +34,8 @@ feed:
 reddit:
   client_id: ""
   client_secret: ""
+  # user_agent: ""
+  # twitter_count: 20
+  # reddit_count: 25
+  # hn_enrich_count: 0
+  # lobsters_enrich_count: 0

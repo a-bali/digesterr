@@ -128,6 +128,20 @@ type FeedConfig struct {
 	// EnrichmentWindow controls how long after insertion items remain
 	// eligible for periodic score re-enrichment. Zero means 24h (default).
 	EnrichmentWindow Duration `yaml:"enrichment_window"`
+	// UserAgent is the default User-Agent header for all outbound HTTP
+	// requests. Empty means a built-in desktop-browser string.
+	UserAgent string `yaml:"user_agent"`
+	// TwitterCount is how many tweets to fetch per poll (max 20 for the
+	// UserTweets endpoint; values above 20 are clamped).
+	TwitterCount int `yaml:"twitter_count"`
+	// RedditCount is how many posts to fetch per subreddit poll.
+	RedditCount int `yaml:"reddit_count"`
+	// HNEnrichCount is the max number of HN items to resolve per
+	// enrichment batch. Zero means unbounded (resolve all pending items).
+	HNEnrichCount int `yaml:"hn_enrich_count"`
+	// LobstersEnrichCount is the max number of Lobste.rs stories to
+	// enrich per poll. Zero means all items returned by the RSS feed.
+	LobstersEnrichCount int `yaml:"lobsters_enrich_count"`
 }
 
 // DigestConfig holds digest scheduling settings.
@@ -177,6 +191,11 @@ func Default() Config {
 			ExpireItems:      Duration(365 * 24 * time.Hour),
 			ExpireDigests:    Duration(365 * 24 * time.Hour),
 			EnrichmentWindow: Duration(24 * time.Hour),
+			UserAgent:          "",
+			TwitterCount:       20,
+			RedditCount:        20,
+			HNEnrichCount:      0,
+			LobstersEnrichCount: 0,
 		},
 		Reddit:  RedditConfig{},
 		Twitter: TwitterConfig{},
@@ -307,6 +326,11 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 	setDuration(&cfg.Feed.ExpireItems, "FEED_EXPIRE_ITEMS")
 	setDuration(&cfg.Feed.ExpireDigests, "FEED_EXPIRE_DIGESTS")
 	setDuration(&cfg.Feed.EnrichmentWindow, "FEED_ENRICHMENT_WINDOW")
+	setString(&cfg.Feed.UserAgent, "FEED_USER_AGENT", "")
+	setInt(&cfg.Feed.TwitterCount, "FEED_TWITTER_COUNT", "")
+	setInt(&cfg.Feed.RedditCount, "FEED_REDDIT_COUNT", "")
+	setInt(&cfg.Feed.HNEnrichCount, "FEED_HN_ENRICH_COUNT", "")
+	setInt(&cfg.Feed.LobstersEnrichCount, "FEED_LOBSTERS_ENRICH_COUNT", "")
 
 	setString(&cfg.Reddit.ClientID, "REDDIT_CLIENT_ID", "")
 	setString(&cfg.Reddit.ClientSecret, "REDDIT_CLIENT_SECRET", "")

@@ -72,3 +72,25 @@ twitter:
   # they are missing.
   ct0: ""        # [TWITTER_CT0]
   auth_token: "" # [TWITTER_AUTH_TOKEN]
+
+  # User-Agent header for all outbound HTTP requests.
+  # Empty means a built-in desktop-browser string.
+  #                                   [FEED_USER_AGENT]
+  # user_agent: "Mozilla/5.0 ..."
+
+  # Max tweets fetched per poll (Twitter API max: 20).
+  #                                   [FEED_TWITTER_COUNT]
+  # twitter_count: 20
+
+  # Max posts fetched per subreddit poll (Reddit JSON API).
+  #                                   [FEED_REDDIT_LIMIT]
+  # reddit_count: 25
+
+  # Max HN items to resolve per Algolia enrichment batch.
+  # Zero = unbounded (resolve all pending items).
+  #                                   [FEED_HN_ALGOLIA_HITS]
+  # hn_enrich_count: 0
+
+  # Max Lobste.rs stories per poll. Zero = all from RSS.
+  #                                   [FEED_LOBSTERS_LIMIT]
+  # lobsters_enrich_count: 0

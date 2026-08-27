@@ -23,7 +23,8 @@ type HNEnricher struct {
 	firebaseURL string
 	algoliaURL  string
 	// limiter throttles the per-item Firebase fallback calls.
-	limiter *rate.Limiter
+	limiter  *rate.Limiter
+	maxHits  int // 0 = unbounded (resolve all pending items)
 }
 
 func NewHNEnricher() *HNEnricher {
@@ -37,6 +38,10 @@ func NewHNEnricher() *HNEnricher {
 
 // SetRateLimiter overrides the per-item call limiter (nil disables limiting).
 func (e *HNEnricher) SetRateLimiter(l *rate.Limiter) { e.limiter = l }
+
+// SetMaxHits overrides the max number of items to resolve per enrichment
+// batch. Zero means unbounded.
+func (e *HNEnricher) SetMaxHits(n int) { e.maxHits = n }
 
 // Enrich fetches a single item from the Firebase API.
 func (e *HNEnricher) Enrich(ctx context.Context, item *store.Item) error {
@@ -102,9 +107,23 @@ func (e *HNEnricher) BulkEnrich(ctx context.Context, items []*store.Item) error 
 	if len(filters) == 0 {
 		return nil
 	}
+	// Cap the batch size when a limit is configured.
+	hitsPerPage := len(filters)
+	if e.maxHits > 0 && hitsPerPage > e.maxHits {
+		hitsPerPage = e.maxHits
+		filters = filters[:hitsPerPage]
+		idToItemTrimmed := make(map[string]*store.Item, hitsPerPage)
+		for _, f := range filters {
+			id := strings.TrimPrefix(f, "objectID:")
+			if item, ok := idToItem[id]; ok {
+				idToItemTrimmed[id] = item
+			}
+		}
+		idToItem = idToItemTrimmed
+	}
 
 	apiURL := fmt.Sprintf("%s/api/v1/search?query=&tags=story&filters=%s&hitsPerPage=%d",
-		e.algoliaURL, url.QueryEscape(strings.Join(filters, " OR ")), len(filters))
+		e.algoliaURL, url.QueryEscape(strings.Join(filters, " OR ")), hitsPerPage)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return fmt.Errorf("creating Algolia request: %w", err)

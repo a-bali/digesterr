@@ -220,5 +220,6 @@ func (p *Poller) scoreFetchedItemsForTest(ctx context.Context, f store.Feed, can
 	orig := p.enrichers[f.Type]
 	p.enrichers[f.Type] = e
 	defer func() { p.enrichers[f.Type] = orig }()
-	return p.scoreFetchedItems(ctx, f, cands, slog.Default())
+	scored, _ := p.scoreFetchedItems(ctx, f, cands, slog.Default())
+	return scored
 }

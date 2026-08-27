@@ -25,6 +25,22 @@ const selectedFeed = computed(() =>
   feedStore.feeds.find(f => f.id === feedStore.selectedItem?.feed_id) || null,
 )
 
+// Content extraction is not useful for twitter (login wall) or reddit
+// posts whose content is already rendered by the fetcher (self-text,
+// reddit-hosted images). Reddit posts linking to external articles
+// still benefit from extraction.
+// When the feed type is unknown (not in store), allow extraction as a fallback.
+const extractionSupported = computed(() => {
+  const type = selectedFeed.value?.type
+  if (type === 'twitter') return false
+  if (type === 'reddit') {
+    const url = feedStore.selectedItem?.url ?? ''
+    // Hide extraction for reddit-hosted content that's already rendered
+    if (/i\.redd\.it|preview\.redd\.it|reddit\.com\/r\//i.test(url)) return false
+  }
+  return true
+})
+
 const extracting = ref(false)
 const extractedCollapsed = ref(false)
 const originalCollapsed = ref(false)
@@ -142,8 +158,8 @@ onUnmounted(() => {
     <div v-if="!feedStore.selectedItem" class="flex h-full items-center justify-center text-muted-foreground">
       <BookOpen class="size-8 mr-2" /> <span>Select an item</span>
     </div>
-    <!-- Extraction in flight: skeleton where the extracted block will land. -->
-    <div v-else-if="extracting && !feedStore.selectedItem.extract_content" data-extracting-skeleton>
+    <!-- Extraction in flight: skeleton only when item has no content yet. -->
+    <div v-else-if="extracting && !feedStore.selectedItem.content" data-extracting-skeleton>
       <Skeleton class="h-7 w-3/4 mb-2" />
       <Skeleton class="h-4 w-1/2 mb-6" />
       <Separator class="mb-4" />
@@ -191,7 +207,7 @@ onUnmounted(() => {
         <Button v-else size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, 'saved')">
           <Bookmark /> Save
         </Button>
-        <Button size="sm" variant="outline" :disabled="extracting" @click="doExtract">
+        <Button v-if="extractionSupported" size="sm" variant="outline" :disabled="extracting" @click="doExtract">
           <template v-if="extracting"><RefreshCw class="animate-spin" /> Extracting</template>
           <template v-else><Download /> {{ feedStore.selectedItem.extract_status === 'done' ? 'Re-extract' : 'Extract' }}</template>
         </Button>

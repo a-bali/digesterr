@@ -55,6 +55,11 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	s.poller.SetEnrichmentWindow(cfg.Feed.EnrichmentWindow.Duration())
 	s.poller.SetRedditCredentials(cfg.Reddit.ClientID, cfg.Reddit.ClientSecret)
 	s.poller.SetTwitterCredentials(cfg.Twitter.Ct0, cfg.Twitter.AuthToken)
+	s.poller.SetUserAgent(cfg.Feed.UserAgent)
+	s.poller.SetTwitterCount(cfg.Feed.TwitterCount)
+	s.poller.SetRedditCount(cfg.Feed.RedditCount)
+	s.poller.SetHNEnrichCount(cfg.Feed.HNEnrichCount)
+	s.poller.SetLobstersEnrichCount(cfg.Feed.LobstersEnrichCount)
 
 	mux := s.mux
 

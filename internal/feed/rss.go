@@ -15,11 +15,13 @@ import (
 )
 
 type RSSFetcher struct {
+	userAgent string
 	client *http.Client
 }
 
 func NewRSSFetcher() *RSSFetcher {
 	return &RSSFetcher{
+		userAgent: DefaultUserAgent,
 		client: &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -29,7 +31,7 @@ func (f *RSSFetcher) Fetch(ctx context.Context, feedURL string) ([]Item, error) 
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0")
+	req.Header.Set("User-Agent", f.userAgent)
 
 	resp, err := f.client.Do(req)
 	if err != nil {
@@ -233,3 +235,6 @@ func parseDate(s string) (time.Time, error) {
 	}
 	return time.Time{}, fmt.Errorf("unable to parse date: %s", s)
 }
+
+// SetUserAgent overrides the User-Agent header for this fetcher.
+func (f *RSSFetcher) SetUserAgent(ua string) { f.userAgent = ua }

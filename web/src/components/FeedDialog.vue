@@ -120,8 +120,7 @@ const dialogId = Math.random().toString(36).slice(2)
         <label class="text-sm font-medium">URL</label>
         <div class="flex items-center gap-0">
           <span class="text-xs text-muted-foreground bg-muted rounded-l-md px-2 py-1.5 border border-border border-r-0 whitespace-nowrap">https://www.reddit.com/r/</span>
-          <Input v-model="form.url" placeholder="subreddit" required class="rounded-none" />
-          <span class="text-xs text-muted-foreground bg-muted rounded-r-md px-2 py-1.5 border border-border border-l-0 whitespace-nowrap">.rss</span>
+          <Input v-model="form.url" placeholder="subreddit" required />
         </div>
       </div>
       <div v-else-if="form.type === 'twitter'" class="space-y-1">

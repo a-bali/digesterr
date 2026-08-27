@@ -34,7 +34,6 @@ const (
 	twitterTweetDetailQuery      = "XMOz5h24KAZ86qKffKTLdQ/TweetDetail"
 )
 
-const twitterUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0"
 
 const twitterFeatures = `{"rweb_tipjar_consumption_enabled":true,"responsive_web_graphql_exclude_directive_enabled":true,"verified_phone_label_enabled":false,"creator_subscriptions_tweet_preview_api_enabled":true,"responsive_web_graphql_timeline_navigation_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"articles_preview_enabled":true,"longform_notetweets_inline_media_enabled":true,"articles_preview_20251118_enabled":true,"rweb_video_screen_enabled":false,"responsive_web_edit_tweet_api_enabled":true,"tweetypie_unmention_optimization_enabled":true,"responsive_text_only_conversations_in_reply_tab_enabled":true,"freedom_of_speech_not_reach_fetch_enabled":true,"standardized_nudges_misinfo":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_creation_enabled":true,"profile_label_editable":true,"immersive_video_status_ring_live_survey":false,"content_disclosure_indicator_enabled":true,"super_follow_badge_enabled":true,"subscriptions_verification_info_verified_since_enabled":true}`
 
@@ -47,19 +46,37 @@ type TwitterFetcher struct {
 	authToken string
 	bearer    string
 	limiter   *rate.Limiter
+	userAgent string
+	count     int // tweets per request (max 20)
 }
 
 func NewTwitterFetcher() *TwitterFetcher {
 	return &TwitterFetcher{
-		client:  &http.Client{Timeout: 15 * time.Second},
-		baseURL: "https://x.com",
-		bearer:  twitterPublicBearer,
-		limiter: rate.NewLimiter(defaultTwitterRate, defaultTwitterBurst),
+		client:    &http.Client{Timeout: 15 * time.Second},
+		baseURL:   "https://x.com",
+		bearer:    twitterPublicBearer,
+		limiter:   rate.NewLimiter(defaultTwitterRate, defaultTwitterBurst),
+		userAgent: DefaultUserAgent,
+		count:     20,
 	}
 }
 
 // SetRateLimiter overrides the GraphQL call limiter (nil disables limiting).
 func (f *TwitterFetcher) SetRateLimiter(l *rate.Limiter) { f.limiter = l }
+
+// SetUserAgent overrides the User-Agent header for this fetcher.
+func (f *TwitterFetcher) SetUserAgent(ua string) { f.userAgent = ua }
+
+// SetCount overrides how many tweets to fetch per request (max 20).
+func (f *TwitterFetcher) SetCount(n int) {
+	if n < 1 {
+		n = 1
+	}
+	if n > 20 {
+		n = 20
+	}
+	f.count = n
+}
 
 // Enrich implements the Enricher interface via EnrichFeed (single item).
 func (f *TwitterFetcher) Enrich(ctx context.Context, item *store.Item) error {
@@ -82,7 +99,7 @@ func (f *TwitterFetcher) EnrichFeed(ctx context.Context, feedURL string, items [
 	if err != nil {
 		return fmt.Errorf("resolving user %s: %w", screenName, err)
 	}
-	variables := fmt.Sprintf(`{"userId":%q,"count":20,"includePromotedContent":false,"withQuickPromoteEligibilityTelemetry":true,"withVoice":true}`, userID)
+	variables := fmt.Sprintf(`{"userId":%q,"count":%d,"includePromotedContent":false,"withQuickPromoteEligibilityTelemetry":true,"withVoice":true}`, userID, f.count)
 	body, err := f.gqlGet(ctx, twitterUserTweetsQuery, variables)
 	if err != nil {
 		return err
@@ -187,7 +204,7 @@ func (f *TwitterFetcher) gqlGet(ctx context.Context, queryHash string, variables
 	req.Header.Set("X-CSRF-Token", f.ct0)
 	req.Header.Set("X-Twitter-Active-User", "yes")
 	req.Header.Set("X-Twitter-Client-Language", "en")
-	req.Header.Set("User-Agent", twitterUserAgent)
+	req.Header.Set("User-Agent", f.userAgent)
 
 	resp, err := f.client.Do(req)
 	if err != nil {
@@ -225,7 +242,7 @@ func (f *TwitterFetcher) Fetch(ctx context.Context, feedURL string) ([]Item, err
 		return nil, err
 	}
 
-	variables := fmt.Sprintf(`{"userId":%q,"count":20,"includePromotedContent":false,"withQuickPromoteEligibilityTelemetry":true,"withVoice":true}`, userID)
+	variables := fmt.Sprintf(`{"userId":%q,"count":%d,"includePromotedContent":false,"withQuickPromoteEligibilityTelemetry":true,"withVoice":true}`, userID, f.count)
 	body, err := f.gqlGet(ctx, twitterUserTweetsQuery, variables)
 	if err != nil {
 		return nil, err

@@ -122,9 +122,17 @@ function buildFeedPayload(form: { type: string; name: string; url: string; categ
 }
 
 async function addFeed(form: { type: string; name: string; url: string; category: string; extract_content: number; min_score: number }) {
-  await feedApi.create(buildFeedPayload(form))
+  const newFeed = await feedApi.create(buildFeedPayload(form))
   await feedStore.fetchFeeds()
   showAddFeed.value = false
+  // Auto-fetch the new feed immediately with spinner animation
+  refreshingFeeds.value = new Set(refreshingFeeds.value).add(newFeed.id)
+  try {
+    await feedApi.fetch(newFeed.id)
+    await feedStore.fetchFeeds()
+  } catch { /* fire-and-forget errors are ok */ } finally {
+    const next = new Set(refreshingFeeds.value); next.delete(newFeed.id); refreshingFeeds.value = next
+  }
 }
 
 async function saveEditFeed(form: { type: string; name: string; url: string; category: string; extract_content: number; min_score: number }) {
@@ -137,6 +145,12 @@ async function saveEditFeed(form: { type: string; name: string; url: string; cat
 async function deleteFeed(id: number) {
   await feedApi.delete(id)
   showEditFeed.value = false; editingFeed.value = null
+  // Clear middle/right panes if the deleted feed was active
+  if (feedStore.activeFeedId === id) {
+    feedStore.activeFeedId = null
+    feedStore.items = []
+    feedStore.selectedItem = null
+  }
   await feedStore.fetchFeeds()
 }
 

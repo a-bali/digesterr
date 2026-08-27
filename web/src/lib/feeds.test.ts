@@ -14,9 +14,9 @@ describe('feedUrlFor', () => {
     expect(feedUrlFor('lobsters', '')).toBe('https://lobste.rs/rss')
   })
 
-  it('builds a subreddit RSS URL, tolerating an .rss suffix', () => {
-    expect(feedUrlFor('reddit', 'golang')).toBe('https://www.reddit.com/r/golang.rss')
-    expect(feedUrlFor('reddit', 'golang.rss')).toBe('https://www.reddit.com/r/golang.rss')
+  it('builds a subreddit URL, tolerating an .rss suffix', () => {
+    expect(feedUrlFor('reddit', 'golang')).toBe('https://www.reddit.com/r/golang')
+    expect(feedUrlFor('reddit', 'golang.rss')).toBe('https://www.reddit.com/r/golang')
   })
 
   it('passes other URLs through unchanged', () => {

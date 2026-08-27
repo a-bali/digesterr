@@ -6,7 +6,7 @@ export const SCORE_FEED_TYPES: ReadonlySet<string> = new Set(['hn', 'lobsters', 
 // value (full URL for rss/atom, subreddit name for reddit, username for
 // twitter, ignored for hn / lobsters which have fixed URLs).
 export function feedUrlFor(type: string, value: string): string {
-  if (type === 'reddit') return 'https://www.reddit.com/r/' + value.replace(/\.rss$/, '') + '.rss'
+  if (type === 'reddit') return 'https://www.reddit.com/r/' + value.replace(/\.rss$/, '')
   if (type === 'hn') return 'https://news.ycombinator.com/rss'
   if (type === 'lobsters') return 'https://lobste.rs/rss'
   if (type === 'twitter') return 'https://x.com/' + value.replace(/^@/, '')

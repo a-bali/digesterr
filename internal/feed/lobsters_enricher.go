@@ -19,13 +19,18 @@ import (
 )
 
 type LobstersEnricher struct {
-	client  *http.Client
-	baseURL string
-	limiter *rate.Limiter
+	client   *http.Client
+	baseURL  string
+	limiter  *rate.Limiter
+	maxItems int // 0 = unbounded (enrich all items)
 }
 
 // SetRateLimiter overrides the per-item call limiter (nil disables limiting).
 func (e *LobstersEnricher) SetRateLimiter(l *rate.Limiter) { e.limiter = l }
+
+// SetMaxItems overrides the max number of stories to enrich per poll.
+// Zero means all items returned by the RSS feed.
+func (e *LobstersEnricher) SetMaxItems(n int) { e.maxItems = n }
 
 func NewLobstersEnricher() *LobstersEnricher {
 	return &LobstersEnricher{
@@ -58,6 +63,10 @@ func (e *LobstersEnricher) BulkEnrich(ctx context.Context, items []*store.Item) 
 	}
 	if len(targets) == 0 {
 		return nil
+	}
+	// Cap the batch size when a limit is configured.
+	if e.maxItems > 0 && len(targets) > e.maxItems {
+		targets = targets[:e.maxItems]
 	}
 
 	const workers = 4
