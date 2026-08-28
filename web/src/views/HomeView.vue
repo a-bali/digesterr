@@ -269,7 +269,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
 </script>
 
 <template>
-  <div class="flex h-screen flex-col">
+  <div class="flex h-dvh flex-col">
     <!-- Header -->
     <header class="flex h-12 items-center gap-2 border-b bg-background px-4 shrink-0">
       <Button v-if="!isDesktop" variant="ghost" size="icon" @click="sidebarOpen = !sidebarOpen">
