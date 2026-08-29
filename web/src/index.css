@@ -65,7 +65,10 @@
 }
 
 * { border-color: hsl(var(--border)); }
-body {
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
   font-family: 'Inter Variable', sans-serif;
   background: hsl(var(--background));
   color: hsl(var(--foreground));
@@ -75,6 +78,7 @@ body {
    so the left-edge swipe composable can preventDefault() and suppress the
    browser's native back-swipe gesture (mobile). */
 #app {
+  height: 100%;
   touch-action: pan-y;
 }
 
