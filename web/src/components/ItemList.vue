@@ -4,7 +4,7 @@ import { useFeedStore, type FeedSort, type FeedStatusFilter } from '../stores/fe
 import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
-import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, LoaderCircle } from 'lucide-vue-next'
+import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, LoaderCircle, CheckCircle2 } from 'lucide-vue-next'
 import { stripContent } from '../lib/utils'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { usePullToRefresh } from '../composables/usePullToRefresh'
@@ -17,6 +17,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'selectItem', item: any): void
+  (e: 'markAllRead'): void
 }>()
 
 const feedStore = useFeedStore()
@@ -54,6 +55,10 @@ const SCORE_MAP: Record<string, FeedSort> = { newest: 'date_desc', oldest: 'date
 const SCORE_MAP_REV: Record<string, FilterSort> = { date_desc: 'newest', date_asc: 'oldest', score_desc: 'highest', score_asc: 'lowest' }
 
 const scoreSupported = computed(() => !props.showingSaved && feedStore.supportsScore)
+
+const showMarkAllRead = computed(() =>
+  feedStore.activeFeedId != null && !props.showingSaved && (feedStore.unreadCounts[feedStore.activeFeedId] ?? 0) > 0,
+)
 
 function onFilterStatus(v: FilterStatus) { feedStore.changeFilter(v as FeedStatusFilter) }
 function onSortValue(v: FilterSort) { feedStore.changeSort(SCORE_MAP[v] ?? 'date_desc') }
@@ -222,6 +227,19 @@ function commentsTitle(val: number): string {
     </TransitionGroup>
     <div v-if="!props.showingSaved && feedStore.loadingMore" class="p-3">
       <Skeleton class="h-12" />
+    </div>
+    <!-- End-of-list mark-all-read button: visible only when the active feed
+         has unread items, so the user can clear the feed after scrolling
+         through it. Positioned inside the scroll flow so it scrolls with
+         the list. -->
+    <div v-if="showMarkAllRead" class="px-4 py-6 flex items-center justify-center">
+      <button
+        class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-accent/20 bg-accent/5 text-accent text-sm font-medium hover:bg-accent/10 active:bg-accent/20 transition-colors"
+        @click="emit('markAllRead')"
+      >
+        <CheckCircle2 class="size-4" />
+        Mark all as read
+      </button>
     </div>
     </template>
   </div>

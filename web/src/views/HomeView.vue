@@ -327,7 +327,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
 
           <SplitterPanel :default-size="30" :min-size="20" :max-size="50">
             <DigestResultList v-if="digestMode" class="border-r" @select="onSelectDigestResult" />
-            <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" />
+            <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="requestMarkFeedRead(feedStore.activeFeedId!)" />
           </SplitterPanel>
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
 
@@ -366,7 +366,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
             :class="!isTablet && showContentPane ? '-translate-x-full pointer-events-none' : 'static w-full h-full'"
           >
               <DigestResultList v-if="digestMode" class="flex-1 min-h-0" @select="onSelectDigestResult" />
-              <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" />
+              <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="requestMarkFeedRead(feedStore.activeFeedId!)" />
           </div>
         </div>
 
