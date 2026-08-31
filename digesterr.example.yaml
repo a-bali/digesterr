@@ -57,26 +57,6 @@ feed:
   #                                         [FEED_ENRICHMENT_WINDOW]
   # enrichment_window: 24h
 
-digest:
-  # IANA timezone used to evaluate digest cron schedules (e.g. Europe/Paris).
-  # Empty means the server's local timezone.            [DIGEST_SCHEDULER_TIMEZONE]
-  scheduler_timezone: ""
-
-reddit:
-  # Reddit API credentials for reddit feed enrichment. Enrichment logs an
-  # error when a reddit feed needs them and they are missing.
-  client_id: ""            # [REDDIT_CLIENT_ID]
-  client_secret: ""        # [REDDIT_CLIENT_SECRET]
-
-twitter:
-  # Twitter/X session cookies for twitter feed fetching. Same cookies as
-  # Nitter: ct0 (CSRF token) and auth_token (session cookie). Copy them from
-  # a logged-in browser session (DevTools → Cookies → x.com).
-  # Enrichment/fetching logs an error when a twitter feed needs them and
-  # they are missing.
-  ct0: ""        # [TWITTER_CT0]
-  auth_token: "" # [TWITTER_AUTH_TOKEN]
-
   # User-Agent header for all outbound HTTP requests.
   # Empty means a built-in desktop-browser string.
   #                                   [FEED_USER_AGENT]
@@ -98,3 +78,24 @@ twitter:
   # Max Lobste.rs stories per poll. Zero = all from RSS.
   #                                   [FEED_LOBSTERS_ENRICH_COUNT]
   # lobsters_enrich_count: 0
+
+digest:
+  # IANA timezone used to evaluate digest cron schedules (e.g. Europe/Paris).
+  # Empty means the server's local timezone.            [DIGEST_SCHEDULER_TIMEZONE]
+  scheduler_timezone: ""
+
+reddit:
+  # Reddit API credentials for reddit feed enrichment. Enrichment logs an
+  # error when a reddit feed needs them and they are missing.
+  client_id: ""            # [REDDIT_CLIENT_ID]
+  client_secret: ""        # [REDDIT_CLIENT_SECRET]
+
+twitter:
+  # Twitter/X session cookies for twitter feed fetching. Same cookies as
+  # Nitter: ct0 (CSRF token) and auth_token (session cookie). Copy them from
+  # a logged-in browser session (DevTools → Cookies → x.com).
+  # Enrichment/fetching logs an error when a twitter feed needs them and
+  # they are missing.
+  ct0: ""        # [TWITTER_CT0]
+  auth_token: "" # [TWITTER_AUTH_TOKEN]
+
