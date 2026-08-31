@@ -24,3 +24,4 @@ cmd/digesterr/static/*
 # Hermes agent working state
 .hermes/
 .worktrees/
+digesterr.dev.yaml
