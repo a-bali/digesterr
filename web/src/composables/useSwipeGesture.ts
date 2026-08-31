@@ -31,7 +31,7 @@ export function useSwipeGesture(
     maxDuration?: number
   },
 ) {
-  const edgeWidth = opts?.edgeWidth ?? 20
+  const edgeWidth = opts?.edgeWidth ?? 12
   const threshold = opts?.threshold ?? 60
   const maxDuration = opts?.maxDuration ?? 400
 
