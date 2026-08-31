@@ -56,4 +56,4 @@ release:
 	git tag -a "$(VERSION)" -m "$(VERSION)"
 	git push origin "$(VERSION)"
 	$(MAKE) image VERSION=$(VERSION)
-	gh release create "$(VERSION)" --repo a-bali/digesterr --title "$(VERSION)" --generate-notes
+	@echo "==> Release $(VERSION) built and pushed"
