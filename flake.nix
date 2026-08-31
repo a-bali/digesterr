@@ -13,7 +13,7 @@
 
   outputs = { self, nixpkgs, devenv, ... }@inputs:
     let
-      system = "aarch64-darwin";
+      system = builtins.currentSystem or "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
     in {
       devShells.${system}.default = devenv.lib.mkShell {

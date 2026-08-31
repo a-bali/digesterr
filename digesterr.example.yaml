@@ -52,6 +52,10 @@ feed:
   expire_items: 1y
   # Delete digest results older than this.                   [FEED_EXPIRE_DIGESTS]
   expire_digests: 1y
+  # How long after insertion items remain eligible for periodic
+  # score re-enrichment. Zero means 24h (default).
+  #                                         [FEED_ENRICHMENT_WINDOW]
+  # enrichment_window: 24h
 
 digest:
   # IANA timezone used to evaluate digest cron schedules (e.g. Europe/Paris).
@@ -83,14 +87,14 @@ twitter:
   # twitter_count: 20
 
   # Max posts fetched per subreddit poll (Reddit JSON API).
-  #                                   [FEED_REDDIT_LIMIT]
+  #                                   [FEED_REDDIT_COUNT]
   # reddit_count: 25
 
   # Max HN items to resolve per Algolia enrichment batch.
   # Zero = unbounded (resolve all pending items).
-  #                                   [FEED_HN_ALGOLIA_HITS]
+  #                                   [FEED_HN_ENRICH_COUNT]
   # hn_enrich_count: 0
 
   # Max Lobste.rs stories per poll. Zero = all from RSS.
-  #                                   [FEED_LOBSTERS_LIMIT]
+  #                                   [FEED_LOBSTERS_ENRICH_COUNT]
   # lobsters_enrich_count: 0
