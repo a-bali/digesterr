@@ -15,8 +15,7 @@ Digesterr — feed reader with AI-generated digests. See `PLAN.md` for full spec
 ## Commands
 
 ```bash
-nix develop --no-pure-eval --accept-flake-config  # enter dev shell (all tools)
-devenv shell             # enter dev shell (all tools, env vars set) — alternative to nix develop
+devenv shell             # enter dev shell (all tools, env vars set)
 devenv up                # start both servers (foreground, Ctrl+C to stop)
 make generate            # run sqlc code generation
 make build               # compile to bin/digesterr
@@ -50,7 +49,7 @@ make build     # pnpm build -> cp web/dist cmd/digesterr/static -> go build (emb
 `cmd/digesterr/main.go` embeds `static/*` (`//go:embed static/*`). At runtime it serves
 `web/dist` if present (dev fallback), otherwise the embedded files.
 
-Use `nix develop --no-pure-eval --accept-flake-config` or `devenv shell` to enter a shell with all tools. Use `devenv up` to run both servers with env vars pre-set.
+Use `devenv shell` to enter a shell with all tools. Use `devenv up` to run both servers with env vars pre-set.
 
 ## Architecture
 
