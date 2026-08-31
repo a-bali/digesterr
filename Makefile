@@ -1,8 +1,8 @@
-.PHONY: all build build-linux build-web generate test test-web lint run clean
+.PHONY: all build build-linux build-web generate test test-web lint run clean \
+       image release
 
-DB_PATH ?= digesterr.db
-PORT ?= 8080
-JWT_SECRET ?= dev-secret-change-in-production
+IMAGE_REPO ?= ghcr.io/a-bali/digesterr
+VERSION ?= $(shell git describe --tags --always --dirty)
 
 all: generate build-web build
 
@@ -15,10 +15,10 @@ build-web:
 	cp -r web/dist/. cmd/digesterr/static/
 
 build: build-web
-	go build -ldflags "-X digesterr/internal/httpapi.Version=$$(git describe --tags --always --dirty)" -o bin/digesterr ./cmd/digesterr
+	go build -ldflags "-X digesterr/internal/httpapi.Version=$(VERSION)" -o bin/digesterr ./cmd/digesterr
 
 build-linux: build-web
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "-X digesterr/internal/httpapi.Version=$$(git describe --tags --always --dirty)" -o bin/digesterr-linux-amd64 ./cmd/digesterr
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "-X digesterr/internal/httpapi.Version=$(VERSION)" -o bin/digesterr-linux-amd64 ./cmd/digesterr
 
 run: build
 	JWT_SECRET=$(JWT_SECRET) DATABASE_PATH=$(DB_PATH) PORT=$(PORT) ./bin/digesterr
@@ -37,3 +37,23 @@ clean:
 	rm -rf cmd/digesterr/static
 	mkdir -p cmd/digesterr/static
 	@echo 'placeholder' > cmd/digesterr/static/.gitkeep
+
+image: build-web
+	VERSION=$(VERSION) \
+	KO_DOCKER_REPO=$(IMAGE_REPO) \
+	ko build ./cmd/digesterr \
+	  --bare \
+	  --tags "$(VERSION)" \
+	  --image-user "1000:1000"
+	@if echo "$(VERSION)" | grep -qE '^v[0-9]'; then \
+	  crane tag "$(IMAGE_REPO):$(VERSION)" latest; \
+	fi
+
+release:
+	@test -n "$(VERSION)" || (echo "VERSION not set (e.g. make release VERSION=v0.5.0)" >&2; exit 1)
+	test -z "$$(git status --porcelain)" || (echo "uncommitted changes" >&2; exit 1)
+	@test "$$(git rev-parse --abbrev-ref HEAD)" = "main" || (echo "must be on main" >&2; exit 1)
+	git tag -a "$(VERSION)" -m "$(VERSION)"
+	git push origin "$(VERSION)"
+	$(MAKE) image VERSION=$(VERSION)
+	gh release create "$(VERSION)" --repo a-bali/digesterr --title "$(VERSION)" --generate-notes
