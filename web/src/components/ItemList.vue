@@ -57,7 +57,7 @@ const SCORE_MAP_REV: Record<string, FilterSort> = { date_desc: 'newest', date_as
 const scoreSupported = computed(() => !props.showingSaved && feedStore.supportsScore)
 
 const showMarkAllRead = computed(() =>
-  feedStore.activeFeedId != null && !props.showingSaved && (feedStore.unreadCounts[feedStore.activeFeedId] ?? 0) > 0,
+  feedStore.activeFeedId != null && !props.showingSaved && !feedStore.loadingMore && (feedStore.unreadCounts[feedStore.activeFeedId] ?? 0) > 0,
 )
 
 function onFilterStatus(v: FilterStatus) { feedStore.changeFilter(v as FeedStatusFilter) }
