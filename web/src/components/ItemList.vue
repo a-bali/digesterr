@@ -150,7 +150,7 @@ function commentsTitle(val: number): string {
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto overscroll-contain" ref="scrollEl" @scroll="onScroll">
+  <div class="h-full overflow-y-auto overflow-x-hidden overscroll-contain" ref="scrollEl" @scroll="onScroll">
     <FilterBar
       :status-filter="(feedStore.filter as FilterStatus)"
       :sort-value="(SCORE_MAP_REV[feedStore.sort] ?? 'newest') as FilterSort"
