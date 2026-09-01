@@ -309,7 +309,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
     <ShortcutsDialog v-model:open="showShortcuts" />
 
     <!-- Body -->
-    <div class="flex flex-1 min-h-0">
+    <div class="flex flex-1 min-h-0 overflow-x-hidden">
       <!-- Desktop: 3 resizable panes -->
       <template v-if="isDesktop">
         <SplitterGroup direction="horizontal" auto-save-id="digesterr" class="flex-1">
@@ -346,7 +346,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
           :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
         >
           <div class="flex-1 min-h-0 overflow-y-auto p-3">
-            <FeedSidebar :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
+            <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
           </div>
           <div class="shrink-0 flex justify-center border-t border-border/50 py-1.5">
             <VersionBadge />
