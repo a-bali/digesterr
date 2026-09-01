@@ -28,7 +28,7 @@ async function submit() {
 </script>
 
 <template>
-  <div class="flex min-h-screen items-center justify-center bg-muted/50">
+  <div class="flex min-h-screen items-center justify-center bg-muted/50 overflow-x-hidden">
     <div class="w-full max-w-sm rounded-lg border bg-background p-6 shadow-sm">
       <h1 class="text-xl font-semibold mb-2">Digesterr</h1>
       <p class="text-sm text-muted-foreground mb-6">

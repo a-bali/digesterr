@@ -76,7 +76,7 @@ function onSelect(e: MouseEvent, result: DigestResult) {
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto" @scroll="onScroll">
+  <div class="h-full overflow-y-auto overflow-x-hidden" @scroll="onScroll">
     <FilterBar
       :status-filter="digestFilter"
       :sort-value="sortOrder"
