@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -683,5 +684,62 @@ func TestGenerateNoFeedsReturnsError(t *testing.T) {
 	_, err = g.Generate(ctx, cfg)
 	if err == nil {
 		t.Fatal("expected error for digest config matching no feeds, got nil")
+	}
+}
+
+func TestCleanContentForLLM(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "plain text passes through",
+			in:   "Hello world, this is a test.",
+			want: "Hello world, this is a test.",
+		},
+		{
+			name: "strips HTML tags",
+			in:   "<div><p>Hello <b>world</b></p></div>",
+			want: "Hello world",
+		},
+		{
+			name: "collapses whitespace",
+			in:   "<p>  Hello   \n\n  world  </p>",
+			want: "Hello world",
+		},
+		{
+			name: "strips attributes",
+			in:   `<div class="article" id="main" data-value="123">Content here</div>`,
+			want: "Content here",
+		},
+		{
+			name: "handles SVG tags",
+			in:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none"><path d="M12 3v1m0 16v1"/></svg><p>Real content</p>`,
+			want: "Real content",
+		},
+		{
+			name: "truncates long content",
+			in:   strings.Repeat("x", 5000),
+			want: strings.Repeat("x", 4000) + "… [truncated]",
+		},
+		{
+			name: "empty string",
+			in:   "",
+			want: "",
+		},
+		{
+			name: "only tags",
+			in:   "<div><br/><hr/></div>",
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := cleanContentForLLM(tt.in)
+			if got != tt.want {
+				t.Errorf("cleanContentForLLM() =\n  %q\nwant:\n  %q", got, tt.want)
+			}
+		})
 	}
 }
