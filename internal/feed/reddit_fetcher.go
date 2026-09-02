@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -29,6 +30,11 @@ func isRedditImageURL(url string) bool {
 		}
 	}
 	return false
+}
+
+// isRedditVideoURL reports whether the URL points to a Reddit-hosted video.
+func isRedditVideoURL(url string) bool {
+	return strings.Contains(strings.ToLower(url), "v.redd.it/")
 }
 
 // RedditFetcher fetches subreddit posts via Reddit's OAuth JSON API.
@@ -195,6 +201,26 @@ func (f *RedditFetcher) Fetch(ctx context.Context, feedURL string) ([]Item, erro
 	return f.parseListing(body, subreddit)
 }
 
+// renderGalleryContent extracts image URLs from Reddit's gallery API response
+// and renders them as inline images. The gallery_data provides ordering;
+// media_metadata provides the actual URLs. Reddit escapes URLs in the JSON
+// as HTML entities, so we unescape them.
+func renderGalleryContent(p redditPostData) string {
+	if len(p.GalleryData.Items) == 0 || len(p.MediaMetadata) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, item := range p.GalleryData.Items {
+		mi, ok := p.MediaMetadata[item.MediaID]
+		if !ok || mi.S.URL == "" {
+			continue
+		}
+		src := html.UnescapeString(mi.S.URL)
+		fmt.Fprintf(&b, `<p><img src="%s" loading="lazy" style="max-width:100%%;border-radius:4px" /></p>`, src)
+	}
+	return b.String()
+}
+
 func (f *RedditFetcher) parseListing(data []byte, subreddit string) ([]Item, error) {
 	var listing redditListing
 	if err := json.Unmarshal(data, &listing); err != nil {
@@ -223,11 +249,29 @@ func (f *RedditFetcher) parseListing(data []byte, subreddit string) ([]Item, err
 		commentURL := "https://www.reddit.com" + p.Permalink
 
 		content := ""
-		if p.Selftext != "" {
+		// Reddit media (images, videos, galleries) always renders inline
+		// regardless of selftext — the media IS the content.
+		if p.IsGallery {
+			if gallery := renderGalleryContent(p); gallery != "" {
+				content = gallery
+			}
+		}
+		if content == "" && isRedditVideoURL(itemURL) {
+			videoURL := itemURL
+			if p.IsVideo && p.Media.RedditVideo != nil && p.Media.RedditVideo.FallbackURL != "" {
+				videoURL = p.Media.RedditVideo.FallbackURL
+			}
+			content = `<p><video src="` + videoURL + `" controls style="max-width:100%;border-radius:4px"><a href="` + itemURL + `" target="_blank" rel="noopener">Watch video ↗</a></video></p>`
+		}
+		if content == "" && isRedditImageURL(itemURL) {
+			content = `<p><img src="` + itemURL + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
+		}
+		// Selftext fallback (only when no Reddit media was rendered)
+		if content == "" && p.Selftext != "" {
 			content = "<p>" + renderRedditMarkdown(p.Selftext) + "</p>"
-		} else if !p.IsSelf && itemURL != "" {
-			// Image/link posts: render the URL as content when there's
-			// no selftext, so the viewer sees the media inline.
+		}
+		// External images/links
+		if content == "" && !p.IsSelf && itemURL != "" {
 			if isRedditImageURL(itemURL) {
 				content = `<p><img src="` + itemURL + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
 			} else {

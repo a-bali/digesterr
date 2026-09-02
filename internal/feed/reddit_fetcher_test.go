@@ -118,6 +118,66 @@ func TestRedditFetcherFetch(t *testing.T) {
 							"stickied":     true,
 						},
 					},
+					{
+						"kind": "t3",
+						"data": map[string]any{
+							"id":        "gallery001",
+							"title":     "Gallery post with images",
+							"author":    "galleryuser",
+							"url":       "https://www.reddit.com/gallery/gallery001",
+							"permalink": "/r/testsub/comments/gallery001/gallery_post_with_images/",
+							"selftext":  "",
+							"score":     100,
+							"num_comments": 15,
+							"created_utc":  1693000400.0,
+							"is_self":      false,
+							"is_gallery":   true,
+							"over_18":      false,
+							"stickied":     false,
+							"media_metadata": map[string]any{
+								"img_a": map[string]any{
+									"m": "image/jpeg",
+									"s": map[string]any{"u": "https://preview.redd.it/gallery-photo1.jpg?width=640"},
+								},
+								"img_b": map[string]any{
+									"m": "image/png",
+									"s": map[string]any{"u": "https://i.redd.it/gallery-photo2.png"},
+								},
+							},
+							"gallery_data": map[string]any{
+								"items": []map[string]any{
+									{"media_id": "img_a"},
+									{"media_id": "img_b"},
+								},
+							},
+						},
+					},
+					{
+						"kind": "t3",
+						"data": map[string]any{
+							"id":        "video001",
+							"title":     "Video post with fallback URL",
+							"author":    "videouser",
+							"url":       "https://v.redd.it/abc123video",
+							"permalink": "/r/testsub/comments/video001/video_post_with_fallback_url/",
+							"selftext":  "",
+							"score":     50,
+							"num_comments": 3,
+							"created_utc":  1693000500.0,
+							"is_self":      false,
+							"is_video":     true,
+							"over_18":      false,
+							"stickied":     false,
+							"media": map[string]any{
+								"reddit_video": map[string]any{
+									"fallback_url": "https://v.redd.it/abc123video/DASH_720.mp4",
+									"height":       720,
+									"width":        1280,
+									"is_gif":       false,
+								},
+							},
+						},
+					},
 				},
 			},
 		})
@@ -137,9 +197,9 @@ func TestRedditFetcherFetch(t *testing.T) {
 		t.Fatalf("Fetch failed: %v", err)
 	}
 
-	// Should have 2 items: 1 external link + 1 self post (NSFW and stickied filtered out)
-	if len(items) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(items))
+	// Should have 4 items: 1 external link + 1 self post + 1 gallery + 1 video (NSFW and stickied filtered out)
+	if len(items) != 4 {
+		t.Fatalf("expected 4 items, got %d", len(items))
 	}
 
 	// Check first item (external link)
@@ -172,6 +232,46 @@ func TestRedditFetcherFetch(t *testing.T) {
 	// Self post URL should be the permalink, not the self-referencing URL
 	if items[1].URL != "https://www.reddit.com/r/testsub/comments/def456/self_post_with_text/" {
 		t.Errorf("item[1].URL = %q, want permalink for self post", items[1].URL)
+	}
+
+	// Check third item (gallery post)
+	if items[2].GUID != "reddit:gallery001" {
+		t.Errorf("item[2].GUID = %q, want reddit:gallery001", items[2].GUID)
+	}
+	if items[2].Title != "Gallery post with images" {
+		t.Errorf("item[2].Title = %q, want 'Gallery post with images'", items[2].Title)
+	}
+	if items[2].Points != 100 {
+		t.Errorf("item[2].Points = %d, want 100", items[2].Points)
+	}
+	// Gallery content should contain inline images, not a bare link
+	if !strings.Contains(items[2].Content, "<img src=") {
+		t.Errorf("gallery content should contain <img> tags, got: %q", items[2].Content)
+	}
+	if strings.Count(items[2].Content, "<img src=") != 2 {
+		t.Errorf("gallery content should have 2 images, got: %q", items[2].Content)
+	}
+	// Gallery URL should be the permalink
+	if items[2].URL != "https://www.reddit.com/gallery/gallery001" {
+		t.Errorf("item[2].URL = %q, want gallery URL", items[2].URL)
+	}
+
+	// Check fourth item (video post)
+	if items[3].GUID != "reddit:video001" {
+		t.Errorf("item[3].GUID = %q, want reddit:video001", items[3].GUID)
+	}
+	if items[3].Points != 50 {
+		t.Errorf("item[3].Points = %d, want 50", items[3].Points)
+	}
+	// Video content should use fallback_url, not the bare v.redd.it URL
+	if !strings.Contains(items[3].Content, "<video") {
+		t.Errorf("video content should contain <video> tag, got: %q", items[3].Content)
+	}
+	if !strings.Contains(items[3].Content, "DASH_720.mp4") {
+		t.Errorf("video content should use fallback_url with DASH_720.mp4, got: %q", items[3].Content)
+	}
+	if strings.Contains(items[3].Content, `src="https://v.redd.it/abc123video"`) {
+		t.Errorf("video content should NOT use bare v.redd.it URL, got: %q", items[3].Content)
 	}
 }
 

@@ -34,6 +34,36 @@ func (r *redditReplies) UnmarshalJSON(b []byte) error {
 	return json.Unmarshal(b, (*alias)(r))
 }
 
+// redditMediaSource is a single resolution variant inside media_metadata.
+type redditMediaSource struct {
+	URL string `json:"u"`
+}
+
+// redditMediaItem represents one gallery image/video entry from media_metadata.
+type redditMediaItem struct {
+	Status string           `json:"status"`
+	M      string           `json:"m"` // MIME type
+	S      redditMediaSource `json:"s"`
+}
+
+// redditGalleryItem is one entry in gallery_data.items (determines display order).
+type redditGalleryItem struct {
+	MediaID string `json:"media_id"`
+}
+
+// redditVideo holds the video metadata from Reddit's API media.reddit_video.
+type redditVideo struct {
+	FallbackURL string `json:"fallback_url"`
+	Height      int    `json:"height"`
+	Width       int    `json:"width"`
+	IsGif       bool   `json:"is_gif"`
+}
+
+// redditMedia holds the media object from a Reddit post.
+type redditMedia struct {
+	RedditVideo *redditVideo `json:"reddit_video"`
+}
+
 type redditPostData struct {
 	ID          string        `json:"id"`
 	Score       int           `json:"score"`
@@ -46,11 +76,18 @@ type redditPostData struct {
 	Depth       int           `json:"depth"`
 	Replies     redditReplies `json:"replies"`
 	// Post-specific fields (used by RedditFetcher, ignored by enricher)
-	Selftext   string  `json:"selftext"`
-	CreatedUTC float64 `json:"created_utc"`
-	IsSelf     bool    `json:"is_self"`
-	Over18     bool    `json:"over_18"`
-	Stickied   bool    `json:"stickied"`
+	Selftext     string                          `json:"selftext"`
+	CreatedUTC   float64                         `json:"created_utc"`
+	IsSelf       bool                            `json:"is_self"`
+	Over18       bool                            `json:"over_18"`
+	Stickied     bool                            `json:"stickied"`
+	IsVideo      bool                            `json:"is_video"`
+	IsGallery    bool                            `json:"is_gallery"`
+	Media        redditMedia                     `json:"media"`
+	MediaMetadata map[string]redditMediaItem     `json:"media_metadata"`
+	GalleryData  struct {
+		Items []redditGalleryItem `json:"items"`
+	} `json:"gallery_data"`
 }
 
 type redditChild struct {
@@ -414,7 +451,7 @@ func flattenRedditComment(child redditChild, depth int, out *[]Comment) {
 		Author:      child.Data.Author,
 		Text:        child.Data.Body,
 		Points:      child.Data.Score,
-		ValidPoints: true,
+		ValidPoints: child.Data.Score > 1, // Reddit's anonymous OAuth API returns 1 for all comments; only show score when >1
 		Depth:       depth,
 		URL:         commentURL,
 	})
