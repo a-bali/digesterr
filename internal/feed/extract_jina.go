@@ -65,7 +65,26 @@ func htmlEscape(s string) string {
 	return s
 }
 
+// isRedditHostedURL reports whether the URL points to content hosted on
+// Reddit itself (reddit.com, *.reddit.com, *.redd.it). Content extraction
+// should be skipped for these because the Reddit API already provides the
+// full content, and fetching the web page returns comment tree HTML instead.
+func isRedditHostedURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "www.reddit.com" || host == "reddit.com" ||
+		strings.HasSuffix(host, ".reddit.com") ||
+		host == "redd.it" || strings.HasSuffix(host, ".redd.it")
+}
+
 func ExtractContent(ctx context.Context, pageURL string, client *http.Client, logger *slog.Logger) (string, error) {
+	if isRedditHostedURL(pageURL) {
+		logger.Debug("content extraction: skipping reddit-hosted URL", "url", pageURL)
+		return "", nil
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", pageURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("creating request: %w", err)

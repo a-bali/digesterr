@@ -591,10 +591,27 @@ func (p *Poller) extractSingleItem(ctx context.Context, client *http.Client, ite
 	logger = logger.With("item_id", item.ID, "url", item.Url)
 	start := time.Now()
 
+	// Reddit-hosted content (galleries, videos, images) is already fully
+	// captured by the Reddit API fetcher — skip extraction.
+	if isRedditHostedURL(item.Url) {
+		logger.Debug("extraction skipped: reddit-hosted URL", "duration", time.Since(start))
+		_, _ = p.queries.UpdateItemExtraction(ctx, store.UpdateItemExtractionParams{
+			ID:             item.ID,
+			ExtractContent: "",
+			ExtractStatus:  "skipped",
+			ExtractRetries: 0,
+		})
+		return
+	}
+
 	content, err := ExtractContent(ctx, item.Url, client, logger)
 	if err != nil {
 		logger.Debug("extraction failed", "error", err)
 		p.failItemExtraction(item, fmt.Sprintf("[%s] %v", time.Now().Format("2006-01-02 15:04"), err))
+		return
+	}
+	if content == "" {
+		logger.Debug("extraction returned empty", "duration", time.Since(start))
 		return
 	}
 
