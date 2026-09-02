@@ -136,6 +136,8 @@ export const itemApi = {
     api<Item>(`/items/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   getItem: (id: number) => api<Item>(`/items/${id}`),
   extract: (id: number) => api<Item>(`/items/${id}/extract`, { method: 'POST' }),
+  getComments: (id: number, opts?: { limit?: number; refresh?: boolean }) =>
+    api<import('../types/api').ItemCommentsResponse>(`/items/${id}/comments${qs({ limit: opts?.limit, refresh: opts?.refresh ? 'true' : undefined })}`),
 }
 
 export const digestApi = {

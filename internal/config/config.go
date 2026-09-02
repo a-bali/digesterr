@@ -136,6 +136,13 @@ type FeedConfig struct {
 	TwitterCount int `yaml:"twitter_count"`
 	// RedditCount is how many posts to fetch per subreddit poll.
 	RedditCount int `yaml:"reddit_count"`
+	// TopComments is the max number of top comments to fetch per item
+	// when viewing item detail or serving content via the Reader API.
+	// Zero disables on-demand comment fetching (experimental).
+	TopComments int `yaml:"top_comments"`
+	// CommentCacheTTL is how long fetched comments are cached in memory
+	// before re-fetching from upstream. Zero means 5 minutes (default).
+	CommentCacheTTL Duration `yaml:"comment_cache_ttl"`
 	// HNEnrichCount is the max number of HN items to resolve per
 	// enrichment batch. Zero means unbounded (resolve all pending items).
 	HNEnrichCount int `yaml:"hn_enrich_count"`
@@ -194,6 +201,8 @@ func Default() Config {
 			UserAgent:          "",
 			TwitterCount:       20,
 			RedditCount:        20,
+			TopComments:        0,
+			CommentCacheTTL:    Duration(5 * time.Minute),
 			HNEnrichCount:      0,
 			LobstersEnrichCount: 0,
 		},
@@ -329,6 +338,8 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 	setString(&cfg.Feed.UserAgent, "FEED_USER_AGENT", "")
 	setInt(&cfg.Feed.TwitterCount, "FEED_TWITTER_COUNT", "")
 	setInt(&cfg.Feed.RedditCount, "FEED_REDDIT_COUNT", "")
+	setInt(&cfg.Feed.TopComments, "FEED_TOP_COMMENTS", "")
+	setDuration(&cfg.Feed.CommentCacheTTL, "FEED_COMMENT_CACHE_TTL")
 	setInt(&cfg.Feed.HNEnrichCount, "FEED_HN_ENRICH_COUNT", "")
 	setInt(&cfg.Feed.LobstersEnrichCount, "FEED_LOBSTERS_ENRICH_COUNT", "")
 

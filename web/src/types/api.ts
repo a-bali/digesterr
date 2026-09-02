@@ -44,6 +44,19 @@ export interface Item {
   extract_date: string | null
 }
 
+export interface ItemComment {
+  author: string
+  text: string
+  points: number
+  valid_points: boolean
+  url: string
+}
+
+export interface ItemCommentsResponse {
+  comments: ItemComment[]
+  cached: boolean
+}
+
 export interface DigestConfig {
   id: number
   user_id: number

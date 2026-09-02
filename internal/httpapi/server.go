@@ -28,6 +28,11 @@ type Server struct {
 	// build in-app links surfaced to Reader clients (feed home pages, digest
 	// article links). Empty means "derive from the request host".
 	publicBaseURL string
+	// topComments is the experimental per-item comment fetch limit.
+	// Zero disables on-demand comment fetching.
+	topComments int
+	// commentCache caches fetched comments in memory with a configurable TTL.
+	commentCache *commentCache
 	// schedulerTimezone is the IANA timezone name for digest cron schedules.
 	schedulerTimezone string
 }
@@ -41,6 +46,8 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 		poller:            feed.NewPoller(queries),
 		logs:              logs,
 		publicBaseURL:     strings.TrimRight(cfg.Server.PublicBaseURL, "/"),
+		topComments:       cfg.Feed.TopComments,
+		commentCache:      newCommentCache(cfg.Feed.CommentCacheTTL.Duration()),
 		schedulerTimezone: cfg.Digest.SchedulerTimezone,
 	}
 
@@ -91,6 +98,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 
 	mux.HandleFunc("PATCH /api/items/{id}", s.requireAuth(s.handleUpdateItemStatus))
 	mux.HandleFunc("GET /api/items/{id}", s.requireAuth(s.handleGetItem))
+	mux.HandleFunc("GET /api/items/{id}/comments", s.requireAuth(s.handleGetItemComments))
 	mux.HandleFunc("POST /api/items/{id}/extract", s.requireAuth(s.handleExtractItem))
 
 	mux.HandleFunc("GET /api/digest-configs", s.requireAuth(s.handleListDigestConfigs))

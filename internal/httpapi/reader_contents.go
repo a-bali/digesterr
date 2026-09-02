@@ -220,8 +220,10 @@ func (s *Server) resolveContentObject(r *http.Request, userID int64, ref int64) 
 func (s *Server) itemContentObject(r *http.Request, item store.Item) readerContentStreamItem {
 	ctx := r.Context()
 	feedName := ""
+	feedType := ""
 	if f, err := s.queries.GetFeedByID(ctx, item.FeedID); err == nil {
 		feedName = f.Name
+		feedType = f.Type
 	}
 
 	var published int64
@@ -238,6 +240,11 @@ func (s *Server) itemContentObject(r *http.Request, item store.Item) readerConte
 	// Prepend the points/comments meta line when the item carries them.
 	if meta := readerItemMetaHTML(item); meta != "" {
 		body = meta + body
+	}
+
+	// Append top comments when experimental comment fetching is enabled.
+	if topComments, _ := s.fetchTopComments(r, item, s.topComments, false); len(topComments) > 0 {
+		body += "\n" + topCommentsHTML(topComments, feedType)
 	}
 
 	ts := itemTimestamp(item)

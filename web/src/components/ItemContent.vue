@@ -8,6 +8,7 @@ import Separator from './ui/Separator.vue'
 import Skeleton from './ui/Skeleton.vue'
 import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown } from 'lucide-vue-next'
 import { absoluteTime } from '../lib/format'
+import type { ItemComment } from '../types/api'
 
 // Prose styling for raw HTML content. The [&_table...] / [&_td...] rules
 // collapse Reddit's 2-column Atom-feed layout (thumbnail | body) into a
@@ -44,6 +45,62 @@ const extractionSupported = computed(() => {
 const extracting = ref(false)
 const extractedCollapsed = ref(false)
 const originalCollapsed = ref(false)
+
+// On-demand top comments (experimental).
+const topComments = ref<ItemComment[]>([])
+const commentsLoading = ref(false)
+const commentsCollapsed = ref(false)
+const commentsCached = ref(false)
+let commentFetchToken = 0
+
+// Render comment text: escape HTML, then convert Reddit markdown images and
+// bare image URLs to <img> tags with size constraints.
+function renderCommentHtml(text: string): string {
+  // Step 1: Extract markdown images and bare image URLs, replace with placeholders.
+  const placeholders: string[] = []
+  let work = text
+
+  // Phase 0: Convert Reddit's internal giphy syntax ![alt](giphy|ID) to real URLs.
+  work = work.replace(/!\[([^\]]*)\]\(giphy\|([^)]+)\)/g, (_m: string, alt: string, id: string) => {
+    return `![${alt}](https://media.giphy.com/media/${id}/giphy.gif)`
+  })
+
+  // Markdown images: ![alt](url)
+  work = work.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_m, alt: string, src: string) => {
+    const tag = `<img src="${src}" alt="${alt}" style="max-width:400px;max-height:300px;width:auto;height:auto;border-radius:4px;margin:4px 0;display:block" loading="lazy" />`
+    placeholders.push(tag)
+    return `\x00IMG${placeholders.length - 1}\x00`
+  })
+
+  // Bare image URLs from common hosts
+  work = work.replace(
+    /https?:\/\/(?:media\d*\.giphy\.com\/\S+\.(?:gif|webp|png|jpg|jpeg)(?:\?\S*)?|giphy\.com\/gifs\/\S+|[^/\s]*\.?(?:i\.redd\.it|preview\.redd\.it|imgur\.com|i\.imgur\.com|files\.catbox\.moe|cdn\.discordapp\.com)\/\S+\.(?:jpg|jpeg|png|gif|webp|svg)(?:\?\S*)?)/g,
+    (url) => {
+      const tag = `<img src="${url}" alt="" style="max-width:400px;max-height:300px;width:auto;height:auto;border-radius:4px;margin:4px 0;display:block" loading="lazy" />`
+      placeholders.push(tag)
+      return `\x00IMG${placeholders.length - 1}\x00`
+    },
+  )
+
+  // Step 2: Escape HTML in the remaining text.
+  const escaped = work
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+
+  // Step 2b: Decode Reddit's original HTML entities that got double-escaped.
+  // e.g. Reddit's &gt; → &amp;gt; after escaping → decode back to >
+  let decoded = escaped
+    .replace(/&amp;gt;/g, '>')
+    .replace(/&amp;lt;/g, '<')
+    .replace(/&amp;quot;/g, '"')
+    .replace(/&amp;#39;/g, "'")
+    .replace(/&amp;amp;/g, '&')
+
+  // Step 3: Restore image tags.
+  return decoded.replace(/\x00IMG(\d+)\x00/g, (_, i: string) => placeholders[parseInt(i)])
+}
 
 // Per-item scroll memory: reopening the SAME item restores its previous
 // scroll position; opening a DIFFERENT item resets to top. The scroller is a
@@ -140,16 +197,51 @@ async function doExtract() {
   }
 }
 
-// Cancel any in-flight extraction poll when a different item is selected.
+// Cancel in-flight comment fetch when a different item is selected.
+let commentFetchTimeout: ReturnType<typeof setTimeout> | null = null
+function fetchTopComments(refresh = false) {
+  const item = feedStore.selectedItem
+  if (!item || !item.comment_url && item.comments_count <= 0) {
+    topComments.value = []
+    return
+  }
+  const token = ++commentFetchToken
+  commentsLoading.value = true
+  // Debounce: wait 200ms before fetching to avoid firing during rapid navigation.
+  // Skip debounce on explicit refresh.
+  const delay = refresh ? 0 : 200
+  if (commentFetchTimeout) clearTimeout(commentFetchTimeout)
+  commentFetchTimeout = setTimeout(async () => {
+    if (token !== commentFetchToken) return
+    try {
+      const resp = await itemApi.getComments(item.id, { limit: 5, refresh })
+      if (token !== commentFetchToken) return
+      topComments.value = resp.comments
+      commentsCached.value = resp.cached
+    } catch {
+      if (token === commentFetchToken) topComments.value = []
+    } finally {
+      if (token === commentFetchToken) commentsLoading.value = false
+    }
+  }, delay)
+}
+
+// Cancel in-flight extraction poll when a different item is selected.
 watch(
   () => feedStore.selectedItem?.id,
   () => {
     if (extractPoll || extracting.value) stopExtractPoll()
+    // Reset comment state and debounce-fetch for the new item.
+    topComments.value = []
+    commentsCollapsed.value = false
+    commentsCached.value = false
+    fetchTopComments()
   },
 )
 
 onUnmounted(() => {
   stopExtractPoll()
+  if (commentFetchTimeout) clearTimeout(commentFetchTimeout)
 })
 </script>
 
@@ -256,6 +348,47 @@ onUnmounted(() => {
         <div v-if="!originalCollapsed" :class="proseClass" v-html="feedStore.selectedItem.content" />
       </template>
       <div v-else :class="proseClass" v-html="feedStore.selectedItem.content" />
+
+      <!-- Top Comments (experimental) -->
+      <template v-if="topComments.length > 0 || commentsLoading">
+        <Separator class="my-4" />
+        <div class="flex items-center gap-1.5 mb-2">
+          <button
+            type="button"
+            class="flex flex-1 items-center gap-1.5 text-left text-xs font-semibold text-muted-foreground uppercase hover:text-foreground transition-colors"
+            :aria-expanded="!commentsCollapsed"
+            @click="commentsCollapsed = !commentsCollapsed"
+          >
+            <ChevronDown class="size-3.5 shrink-0 transition-transform" :class="commentsCollapsed ? '-rotate-90' : ''" />
+            <MessageSquare class="size-3" />
+            <span>Top Comments</span>
+          </button>
+          <button
+            v-if="commentsCached && !commentsLoading"
+            type="button"
+            class="text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+            title="Refresh comments"
+            @click="fetchTopComments(true)"
+          >
+            <RefreshCw class="size-3" />
+          </button>
+        </div>
+        <div v-if="!commentsCollapsed">
+          <div v-if="commentsLoading" class="space-y-2">
+            <Skeleton v-for="i in 3" :key="i" class="h-10 w-full" />
+          </div>
+          <ul v-else class="space-y-3">
+            <li v-for="(c, i) in topComments" :key="i" class="text-sm border-l-2 border-accent/30 pl-3 py-1">
+              <div class="flex items-center gap-2 mb-0.5">
+                <a v-if="c.url" :href="c.url" target="_blank" class="font-medium text-accent hover:underline">{{ c.author }}</a>
+                <span v-else class="font-medium">{{ c.author }}</span>
+                <span v-if="c.valid_points && c.points > 0" class="text-xs text-muted-foreground">{{ c.points }} pts</span>
+              </div>
+              <p class="text-muted-foreground text-xs leading-relaxed" v-html="renderCommentHtml(c.text)" />
+            </li>
+          </ul>
+        </div>
+      </template>
     </div>
   </div>
 </template>
