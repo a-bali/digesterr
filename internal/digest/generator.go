@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -521,6 +522,27 @@ func (g *Generator) fetchCommentsForHighlights(ctx context.Context, highlights [
 	}
 }
 
+// maxContentForLLM caps the per-article content sent to the LLM to prevent
+// oversized prompts from a single article. ~4000 chars ≈ 1000-1500 tokens.
+const maxContentForLLM = 4000
+
+var (
+	htmlTagRe    = regexp.MustCompile(`</?[^>]+>`)
+	whiteSpaceRe = regexp.MustCompile(`\s+`)
+)
+
+// cleanContentForLLM strips HTML tags, collapses whitespace, and truncates
+// content so the LLM prompt stays manageable.
+func cleanContentForLLM(raw string) string {
+	s := htmlTagRe.ReplaceAllString(raw, " ")
+	s = whiteSpaceRe.ReplaceAllString(s, " ")
+	s = strings.TrimSpace(s)
+	if len(s) > maxContentForLLM {
+		s = s[:maxContentForLLM] + "… [truncated]"
+	}
+	return s
+}
+
 func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, highlights, rest []digestItem, genLogger *slog.Logger) (*digestResultContent, error) {
 	content := &digestResultContent{}
 
@@ -540,9 +562,9 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 		userPrompt += fmt.Sprintf("URL: %s\n", h.Url)
 		userPrompt += fmt.Sprintf("Points: %d | Comments: %d\n", h.Points, h.CommentsCount)
 		if h.ExtractContent != "" && h.ExtractContent != "pending" && h.ExtractContent != "failed" {
-			userPrompt += fmt.Sprintf("Content: %s\n", h.ExtractContent)
+			userPrompt += fmt.Sprintf("Content: %s\n", cleanContentForLLM(h.ExtractContent))
 		} else if h.Content != "" {
-			userPrompt += fmt.Sprintf("Content: %s\n", h.Content)
+			userPrompt += fmt.Sprintf("Content: %s\n", cleanContentForLLM(h.Content))
 		}
 		if len(h.FetchedComments) > 0 {
 			userPrompt += "Top comments:\n"
