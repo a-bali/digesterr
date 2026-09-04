@@ -62,11 +62,15 @@ vi.stubGlobal('ResizeObserver', ResizeObserverStub)
 
 const feed: Feed = {
   id: 1, user_id: 1, category: '', type: 'rss', name: 'Example Feed', url: 'https://example.com/rss',
-  config: '', last_fetched_at: null, status: 'ok', extract_content: 0, created_at: '', updated_at: '',
+  config: '', min_score: 0, last_fetched_at: null, status: 'ok', extract_content: 0,
+  last_error: '', last_error_at: null, last_error_severity: '',
+  created_at: '', updated_at: '',
 }
 
 const digestConfig: DigestConfig = {
-  id: 7, user_id: 1, name: 'Morning Brief', schedule: '0 8 * * *', config: '{}', created_at: '', updated_at: '',
+  id: 7, user_id: 1, name: 'Morning Brief', schedule: '0 8 * * *', config: '{}',
+  last_error: '', last_error_at: null,
+  created_at: '', updated_at: '',
 }
 
 function router() {

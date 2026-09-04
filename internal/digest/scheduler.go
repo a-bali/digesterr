@@ -79,6 +79,12 @@ func (s *Scheduler) tick(ctx context.Context) {
 			cfgLogger.Info("scheduled digest generation")
 			if _, err := s.generator.Generate(ctx, cfg); err != nil {
 				cfgLogger.Error("scheduled digest generation failed", "error", err)
+				s.queries.UpdateDigestConfigError(ctx, store.UpdateDigestConfigErrorParams{
+					ID:    cfg.ID,
+					Error: err.Error(),
+				})
+			} else {
+				_ = s.queries.ClearDigestConfigError(ctx, cfg.ID)
 			}
 		}(cfg, cfgLogger)
 	}

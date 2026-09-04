@@ -8,19 +8,22 @@ CREATE TABLE users (
 );
 
 CREATE TABLE feeds (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id         INTEGER NOT NULL,
-    category        TEXT    NOT NULL DEFAULT '',
-    type            TEXT    NOT NULL,
-    name            TEXT    NOT NULL,
-    url             TEXT    NOT NULL DEFAULT '',
-    config          TEXT    NOT NULL DEFAULT '{}',
-    min_score       INTEGER NOT NULL DEFAULT 0,
-    last_fetched_at DATETIME,
-    status          TEXT    NOT NULL DEFAULT 'active',
-    extract_content INTEGER NOT NULL DEFAULT 0,
-    created_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
-    updated_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id             INTEGER NOT NULL,
+    category            TEXT    NOT NULL DEFAULT '',
+    type                TEXT    NOT NULL,
+    name                TEXT    NOT NULL,
+    url                 TEXT    NOT NULL DEFAULT '',
+    config              TEXT    NOT NULL DEFAULT '{}',
+    min_score           INTEGER NOT NULL DEFAULT 0,
+    last_fetched_at     DATETIME,
+    status              TEXT    NOT NULL DEFAULT 'active',
+    extract_content     INTEGER NOT NULL DEFAULT 0,
+    last_error          TEXT    NOT NULL DEFAULT '',
+    last_error_at       DATETIME,
+    last_error_severity TEXT    NOT NULL DEFAULT '',
+    created_at          DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    updated_at          DATETIME NOT NULL DEFAULT (DATETIME('now')),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -49,13 +52,15 @@ CREATE TABLE items (
 );
 
 CREATE TABLE digest_configs (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id     INTEGER NOT NULL,
-    name        TEXT    NOT NULL DEFAULT '',
-    schedule    TEXT    NOT NULL,
-    config      TEXT    NOT NULL DEFAULT '{}',
-    created_at  DATETIME NOT NULL DEFAULT (DATETIME('now')),
-    updated_at  DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL,
+    name         TEXT    NOT NULL DEFAULT '',
+    schedule     TEXT    NOT NULL,
+    config       TEXT    NOT NULL DEFAULT '{}',
+    last_error   TEXT    NOT NULL DEFAULT '',
+    last_error_at DATETIME,
+    created_at   DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    updated_at   DATETIME NOT NULL DEFAULT (DATETIME('now')),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 

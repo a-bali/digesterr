@@ -6,14 +6,16 @@ import { useDigestStore } from '../stores/digest'
 import { feedApi } from '../services/api'
 import { feedUrlFor } from '../lib/feeds'
 import { toastError } from '../lib/toast'
+import { absoluteTime } from '../lib/format'
 import type { DigestConfig, Feed } from '../types/api'
 import { useRoute } from 'vue-router'
-import { BookmarkCheck, Plus, MessageSquare, Rss, Settings, Sparkles, ChevronDown } from 'lucide-vue-next'
+import { BookmarkCheck, Plus, MessageSquare, Rss, Settings, Sparkles, ChevronDown, AlertCircle, TriangleAlert } from 'lucide-vue-next'
 import FeedRow from './FeedRow.vue'
 import FeedDialog from './FeedDialog.vue'
 import DigestDialog from './DigestDialog.vue'
 import Dialog from './ui/Dialog.vue'
 import Button from './ui/Button.vue'
+import Tooltip from './ui/Tooltip.vue'
 
 withDefaults(defineProps<{ showingSaved?: boolean }>(), { showingSaved: false })
 
@@ -252,6 +254,13 @@ function toggleCategory(name: string) {
       >
         <div class="flex items-center gap-2 flex-1 min-w-0">
           <MessageSquare class="size-3.5 shrink-0 text-accent" />
+          <Tooltip v-if="cfg.last_error">
+            <template #trigger>
+              <AlertCircle class="size-3 text-red-500 shrink-0" />
+            </template>
+            <p>{{ cfg.last_error }}</p>
+            <p v-if="cfg.last_error_at">at {{ absoluteTime(cfg.last_error_at) }}</p>
+          </Tooltip>
           <span class="truncate">{{ cfg.name || cfg.schedule }}</span>
           <span v-if="(digestStore.unreadCounts[cfg.id] ?? 0) > 0" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-auto">{{ digestStore.unreadCounts[cfg.id] }}</span>
         </div>

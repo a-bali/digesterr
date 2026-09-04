@@ -272,6 +272,26 @@ PRAGMA foreign_keys=ON;
 			"ALTER TABLE feeds ADD COLUMN min_score INTEGER NOT NULL DEFAULT 0",
 		},
 		{
+			"add feeds.last_error",
+			"ALTER TABLE feeds ADD COLUMN last_error TEXT NOT NULL DEFAULT ''",
+		},
+		{
+			"add feeds.last_error_at",
+			"ALTER TABLE feeds ADD COLUMN last_error_at DATETIME",
+		},
+		{
+			"add feeds.last_error_severity",
+			"ALTER TABLE feeds ADD COLUMN last_error_severity TEXT NOT NULL DEFAULT ''",
+		},
+		{
+			"add digest_configs.last_error",
+			"ALTER TABLE digest_configs ADD COLUMN last_error TEXT NOT NULL DEFAULT ''",
+		},
+		{
+			"add digest_configs.last_error_at",
+			"ALTER TABLE digest_configs ADD COLUMN last_error_at DATETIME",
+		},
+		{
 			"add digest_results.created_at index",
 			"CREATE INDEX IF NOT EXISTS idx_digest_results_created_at ON digest_results(created_at)",
 		},

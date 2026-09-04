@@ -303,6 +303,10 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	items, err := fetcher.Fetch(ctx, feed.Url)
 	if err != nil {
 		logger.Warn("failed to fetch feed", "error", err)
+		p.queries.UpdateFeedError(ctx, store.UpdateFeedErrorParams{
+			ID:    feed.ID,
+			Error: err.Error(),
+		})
 		if _, ue := p.queries.UpdateFeedStatus(ctx, store.UpdateFeedStatusParams{
 			ID:     feed.ID,
 			Status: "error",
@@ -426,6 +430,7 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	}
 
 	if feed.Status == "error" {
+		_ = p.queries.ClearFeedError(ctx, feed.ID)
 		_, _ = p.queries.UpdateFeedStatus(ctx, store.UpdateFeedStatusParams{
 			ID:     feed.ID,
 			Status: "active",
@@ -772,6 +777,13 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 		} else {
 			success++
 		}
+	}
+	// Record enrichment warnings — only writes when no fetch error exists.
+	if errcount > 0 {
+		p.queries.UpdateFeedWarning(ctx, store.UpdateFeedWarningParams{
+			ID:    feed.ID,
+			Error: fmt.Sprintf("enrichment failed for %d items", errcount),
+		})
 	}
 	logger.Info("enrichment completed", "type", feed.Type, "items", len(items), "success", success, "skipped", skipped, "removed", removed, "error", errcount)
 }

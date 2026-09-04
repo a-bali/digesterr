@@ -17,6 +17,9 @@ export interface Feed {
   last_fetched_at: string | null
   status: string
   extract_content: number
+  last_error: string
+  last_error_at: string | null
+  last_error_severity: string
   created_at: string
   updated_at: string
 }
@@ -63,6 +66,8 @@ export interface DigestConfig {
   name: string
   schedule: string
   config: string
+  last_error: string
+  last_error_at: string | null
   created_at: string
   updated_at: string
 }

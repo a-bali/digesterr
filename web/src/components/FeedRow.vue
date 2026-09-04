@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useFeedStore } from '../stores/feed'
 import Tooltip from './ui/Tooltip.vue'
-import { Rss, Check, Settings, RefreshCw } from 'lucide-vue-next'
+import { Rss, Check, Settings, RefreshCw, AlertCircle, TriangleAlert } from 'lucide-vue-next'
 import { feedIcon, absoluteTime } from '../lib/format'
 import type { Feed } from '../types/api'
 
@@ -30,6 +30,14 @@ const feedStore = useFeedStore()
         </template>
         <p>Last fetched: {{ absoluteTime(feed.last_fetched_at) || 'never' }}</p>
         <p v-if="feed.status === 'error'" class="text-destructive">Failed</p>
+      </Tooltip>
+      <Tooltip v-if="feed.last_error">
+        <template #trigger>
+          <AlertCircle v-if="!feed.last_error_severity || feed.last_error_severity === 'error'" class="size-3 text-red-500 shrink-0" />
+          <TriangleAlert v-else-if="feed.last_error_severity === 'warning'" class="size-3 text-yellow-500 shrink-0" />
+        </template>
+        <p>{{ feed.last_error }}</p>
+        <p v-if="feed.last_error_at">at {{ absoluteTime(feed.last_error_at) }}</p>
       </Tooltip>
       <span v-if="(feedStore.unreadCounts[feed.id] ?? 0) > 0" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-1.5">{{ feedStore.unreadCounts[feed.id] }}</span>
     </button>
