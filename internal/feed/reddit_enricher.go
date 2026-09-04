@@ -81,6 +81,7 @@ type redditPostData struct {
 	IsSelf       bool                            `json:"is_self"`
 	Over18       bool                            `json:"over_18"`
 	Stickied     bool                            `json:"stickied"`
+	ScoreHidden  bool                            `json:"score_hidden"`
 	IsVideo      bool                            `json:"is_video"`
 	IsGallery    bool                            `json:"is_gallery"`
 	Media        redditMedia                     `json:"media"`
@@ -365,6 +366,9 @@ func (e *RedditEnricher) FetchComments(ctx context.Context, item store.Item, max
 	var lastErr error
 
 	// Try OAuth endpoint first, fall back to public endpoint.
+	// Note: Reddit's client_credentials grant returns score=1 for all comments,
+	// hiding real vote counts. The public endpoint returns real scores but may
+	// be blocked from datacenter IPs.
 	commentsURL := func(base string) string {
 		return fmt.Sprintf("%s/comments/%s.json?sort=top&threaded=true&limit=%d", base, postID, redditCommentFetchLimit)
 	}
@@ -451,7 +455,7 @@ func flattenRedditComment(child redditChild, depth int, out *[]Comment) {
 		Author:      child.Data.Author,
 		Text:        child.Data.Body,
 		Points:      child.Data.Score,
-		ValidPoints: child.Data.Score > 1, // Reddit's anonymous OAuth API returns 1 for all comments; only show score when >1
+		ValidPoints: !child.Data.ScoreHidden && child.Data.Score > 0,
 		Depth:       depth,
 		URL:         commentURL,
 	})
