@@ -201,7 +201,7 @@ func Default() Config {
 			UserAgent:          "",
 			TwitterCount:       20,
 			RedditCount:        20,
-			TopComments:        0,
+			TopComments:        5,
 			CommentCacheTTL:    Duration(5 * time.Minute),
 			HNEnrichCount:      0,
 			LobstersEnrichCount: 0,
