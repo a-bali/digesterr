@@ -32,7 +32,7 @@ describe('FeedRow error indicators', () => {
       last_error_at: '2025-01-01T00:00:00Z',
       last_error_severity: 'error',
     }))
-    // AlertCircle renders as an SVG with class containing text-red-500
+    // Inline SVG renders with class containing text-red-500
     const errorIcon = wrapper.find('.text-red-500')
     expect(errorIcon.exists()).toBe(true)
     // No warning icon

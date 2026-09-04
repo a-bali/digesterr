@@ -9,7 +9,7 @@ import { toastError } from '../lib/toast'
 import { absoluteTime } from '../lib/format'
 import type { DigestConfig, Feed } from '../types/api'
 import { useRoute } from 'vue-router'
-import { BookmarkCheck, Plus, MessageSquare, Rss, Settings, Sparkles, ChevronDown, AlertCircle, TriangleAlert } from 'lucide-vue-next'
+import { BookmarkCheck, Plus, MessageSquare, Rss, Settings, Sparkles, ChevronDown } from 'lucide-vue-next'
 import FeedRow from './FeedRow.vue'
 import FeedDialog from './FeedDialog.vue'
 import DigestDialog from './DigestDialog.vue'
@@ -256,7 +256,7 @@ function toggleCategory(name: string) {
           <MessageSquare class="size-3.5 shrink-0 text-accent" />
           <Tooltip v-if="cfg.last_error">
             <template #trigger>
-              <AlertCircle class="size-3 text-red-500 shrink-0" />
+              <svg viewBox="0 0 24 24" class="size-4 text-red-500 shrink-0" fill="none"><rect x="2" y="2" width="20" height="20" rx="4" fill="currentColor"/><path d="M12 7v6" stroke="white" stroke-width="2.5" stroke-linecap="round"/><circle cx="12" cy="16" r="1.3" fill="white"/></svg>
             </template>
             <p>{{ cfg.last_error }}</p>
             <p v-if="cfg.last_error_at">at {{ absoluteTime(cfg.last_error_at) }}</p>

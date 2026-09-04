@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useFeedStore } from '../stores/feed'
 import Tooltip from './ui/Tooltip.vue'
-import { Rss, Check, Settings, RefreshCw, AlertCircle, TriangleAlert } from 'lucide-vue-next'
+import { Rss, Check, Settings, RefreshCw } from 'lucide-vue-next'
 import { feedIcon, absoluteTime } from '../lib/format'
 import type { Feed } from '../types/api'
 
@@ -33,8 +33,8 @@ const feedStore = useFeedStore()
       </Tooltip>
       <Tooltip v-if="feed.last_error">
         <template #trigger>
-          <AlertCircle v-if="!feed.last_error_severity || feed.last_error_severity === 'error'" class="size-3 text-red-500 shrink-0" />
-          <TriangleAlert v-else-if="feed.last_error_severity === 'warning'" class="size-3 text-yellow-500 shrink-0" />
+          <svg v-if="!feed.last_error_severity || feed.last_error_severity === 'error'" viewBox="0 0 24 24" class="size-4 text-red-500 shrink-0" fill="none"><rect x="2" y="2" width="20" height="20" rx="4" fill="currentColor"/><path d="M12 7v6" stroke="white" stroke-width="2.5" stroke-linecap="round"/><circle cx="12" cy="16" r="1.3" fill="white"/></svg>
+          <svg v-else-if="feed.last_error_severity === 'warning'" viewBox="0 0 24 24" class="size-4 text-yellow-500 shrink-0" fill="none"><rect x="2" y="2" width="20" height="20" rx="4" fill="currentColor"/><path d="M12 7v6" stroke="white" stroke-width="2.5" stroke-linecap="round"/><circle cx="12" cy="16" r="1.3" fill="white"/></svg>
         </template>
         <p>{{ feed.last_error }}</p>
         <p v-if="feed.last_error_at">at {{ absoluteTime(feed.last_error_at) }}</p>
