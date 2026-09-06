@@ -19,6 +19,24 @@ type Item struct {
 	CommentsCnt int
 }
 
+// Record is an outbound HTTP request metric recorded by the poller.
+type Record struct {
+	Timestamp  time.Time
+	URL        string
+	Host       string
+	StatusCode int
+	Bytes      int64
+	DurationMs int64
+	Reason     string // "fetch", "enrichment", "extraction"
+	FeedID     int64
+	FeedName   string
+	FeedType   string
+	Error      string
+}
+
+// RecordFunc is called for each outbound HTTP request during feed operations.
+type RecordFunc func(Record)
+
 type Fetcher interface {
 	Fetch(ctx context.Context, feedURL string) ([]Item, error)
 }
@@ -43,6 +61,8 @@ type Comment struct {
 
 type CommentFetcher interface {
 	FetchComments(ctx context.Context, item store.Item, maxComments int) ([]Comment, error)
+	// CommentTargetURL returns the base API URL used for comment fetching.
+	CommentTargetURL() string
 }
 
 type NoopEnricher struct{}
@@ -52,3 +72,4 @@ func (e *NoopEnricher) BulkEnrich(_ context.Context, _ []*store.Item) error { re
 func (e *NoopEnricher) FetchComments(_ context.Context, _ store.Item, _ int) ([]Comment, error) {
 	return nil, nil
 }
+func (e *NoopEnricher) CommentTargetURL() string { return "" }

@@ -191,6 +191,9 @@ func (e *HNEnricher) BulkEnrich(ctx context.Context, items []*store.Item) error 
 }
 
 // FetchComments fetches the comment tree from Algolia and ranks by descendant count.
+func (e *HNEnricher) setTransport(t http.RoundTripper) { e.client.Transport = t }
+func (e *HNEnricher) CommentTargetURL() string { return e.algoliaURL }
+
 func (e *HNEnricher) FetchComments(ctx context.Context, item store.Item, maxComments int) ([]Comment, error) {
 	hnID := extractHNID(item.CommentUrl, item.Url)
 	if hnID == 0 {

@@ -34,6 +34,7 @@ func (m *mapEnricher) BulkEnrich(_ context.Context, items []*store.Item) error {
 func (m *mapEnricher) FetchComments(_ context.Context, _ store.Item, _ int) ([]Comment, error) {
 	return nil, nil
 }
+func (m *mapEnricher) CommentTargetURL() string { return "" }
 
 // scoreRSSBody renders an RSS document with one item per URL.
 func scoreRSSBody(urls []string) string {

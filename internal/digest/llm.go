@@ -12,11 +12,15 @@ import (
 	"time"
 )
 
+// LLMRecordFunc records an outbound LLM API call.
+type LLMRecordFunc func(timestamp time.Time, url string, statusCode int, durationMs int64, bytes int64, err string)
+
 type LLMClient struct {
 	endpoint string
 	apiKey   string
 	model    string
 	client   *http.Client
+	recordFn LLMRecordFunc
 }
 
 // llmChatter is the subset of the LLM client used by digest generation,
@@ -36,6 +40,11 @@ func NewLLMClient(endpoint, apiKey, model string) *LLMClient {
 		model:    model,
 		client:   &http.Client{Timeout: 120 * time.Second},
 	}
+}
+
+// SetRecordFunc sets the callback for recording outbound LLM API calls.
+func (c *LLMClient) SetRecordFunc(fn LLMRecordFunc) {
+	c.recordFn = fn
 }
 
 // HasAPIKey reports whether an API key is configured. Digest generation logs
@@ -102,6 +111,15 @@ func (c *LLMClient) Chat(ctx context.Context, systemPrompt, userPrompt string) (
 	}
 
 	slog.Debug("LLM response received", "model", c.model, "output_bytes", len(respBody), "status", resp.StatusCode, "duration", time.Since(start))
+
+	// Record LLM API call metrics.
+	if c.recordFn != nil {
+		errStr := ""
+		if resp.StatusCode != http.StatusOK {
+			errStr = fmt.Sprintf("status %d", resp.StatusCode)
+		}
+		c.recordFn(start, c.endpoint, resp.StatusCode, time.Since(start).Milliseconds(), int64(len(respBody)), errStr)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("LLM API returned status %d: %s", resp.StatusCode, string(respBody))

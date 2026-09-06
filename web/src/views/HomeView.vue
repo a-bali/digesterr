@@ -9,6 +9,7 @@ import ItemContent from '../components/ItemContent.vue'
 import DigestContent from '../components/DigestContent.vue'
 import DigestResultList from '../components/DigestResultList.vue'
 import LogsDialog from '../components/LogsDialog.vue'
+import MetricsDialog from '../components/MetricsDialog.vue'
 import ShortcutsDialog from '../components/ShortcutsDialog.vue'
 import VersionBadge from '../components/VersionBadge.vue'
 import ThemeMenu from '../components/ThemeMenu.vue'
@@ -355,6 +356,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
           <CircleHelp class="size-4" />
         </Button>
         <LogsDialog />
+        <MetricsDialog />
         <ThemeMenu />
         <!-- Change password / Google Reader API dialogs hook into the events emitted here. -->
         <AccountMenu @change-password="showChangePassword = true" @google-reader-api="readerApiOpen = true" />

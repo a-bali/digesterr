@@ -15,6 +15,7 @@ import (
 
 	"digesterr/internal/feed"
 	"digesterr/internal/logging"
+	"digesterr/internal/metrics"
 	"digesterr/internal/store"
 )
 
@@ -142,6 +143,7 @@ type itemCommentsResponse struct {
 // cache when available. Returns the comments and whether they were served
 // from cache. When bypassCache is true, the cache is skipped and refreshed.
 func (s *Server) fetchTopComments(r *http.Request, item store.Item, limit int, bypassCache bool) ([]feed.Comment, bool) {
+	start := time.Now()
 	if s.topComments <= 0 || limit <= 0 {
 		return nil, false
 	}
@@ -168,6 +170,26 @@ func (s *Server) fetchTopComments(r *http.Request, item store.Item, limit int, b
 	}
 
 	comments, err := cf.FetchComments(ctx, item, limit)
+	// Record comment fetch metrics with the correct target URL.
+	if s.metrics != nil {
+		statusCode := 200
+		errStr := ""
+		if err != nil {
+			statusCode = 500
+			errStr = err.Error()
+		}
+		s.metrics.Record(metrics.Record{
+			Timestamp:  time.Now(),
+			URL:        cf.CommentTargetURL(),
+			StatusCode: statusCode,
+			DurationMs: time.Since(start).Milliseconds(),
+			Reason:     "enrichment",
+			FeedID:     feedObj.ID,
+			FeedName:   feedObj.Name,
+			FeedType:   feedObj.Type,
+			Error:      errStr,
+		})
+	}
 	if err != nil {
 		slog.Warn("failed to fetch comments",
 			logging.CategoryAttr(logging.CategoryItem),

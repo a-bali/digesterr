@@ -1,4 +1,4 @@
-import type { AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, Item, LogsResponse, MultiFeedItemsResponse, AllDigestResultsResponse } from '../types/api'
+import type { AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, Item, LogsResponse, MultiFeedItemsResponse, AllDigestResultsResponse, MetricsSummary } from '../types/api'
 
 const TOKEN_KEY = 'digesterr-token'
 
@@ -182,6 +182,12 @@ export interface VersionInfo {
   os: string
   arch: string
   uptime_seconds: number
+}
+
+export const metricsApi = {
+  get: (opts?: { since?: string; group_by?: string; bucket?: string }) =>
+    api<MetricsSummary>(`/metrics${qs({ since: opts?.since, group_by: opts?.group_by, bucket: opts?.bucket })}`),
+  reset: () => api<{ message: string }>('/metrics/reset', { method: 'POST' }),
 }
 
 export const systemApi = {

@@ -93,6 +93,35 @@ export interface AllDigestResultsResponse {
   total: number
 }
 
+export interface MetricsGroup {
+  reason: string
+  feed: string
+  host: string
+  status: string
+  count: number
+  bytes: number
+  errors: number
+  avg_ms: number
+  pct_total: number
+}
+
+export interface MetricsBucket {
+  time: string
+  count: number
+  bytes: number
+  errors: number
+}
+
+export interface MetricsSummary {
+  total_requests: number
+  total_bytes: number
+  success_count: number
+  error_count: number
+  avg_duration_ms: number
+  groups: MetricsGroup[]
+  buckets: MetricsBucket[]
+}
+
 export interface DigestResultItemWithData {
   id: number
   result_id: number

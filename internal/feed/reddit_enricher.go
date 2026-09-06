@@ -360,6 +360,9 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 // the caller re-sorts by raw score afterwards.
 const redditCommentFetchLimit = 100
 
+func (e *RedditEnricher) setTransport(t http.RoundTripper) { e.client.Transport = t }
+func (e *RedditEnricher) CommentTargetURL() string { return e.apiBaseURL }
+
 func (e *RedditEnricher) FetchComments(ctx context.Context, item store.Item, maxComments int) ([]Comment, error) {
 	postID := extractRedditPostID(item.Hash, item.CommentUrl, item.Url)
 	if postID == "" {

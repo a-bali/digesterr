@@ -918,6 +918,9 @@ func parseTwitterTime(s string) time.Time {
 
 // FetchComments implements CommentFetcher: it pulls the conversation thread
 // for a tweet and returns its replies (flattened, sorted by likes).
+func (f *TwitterFetcher) setTransport(t http.RoundTripper) { f.client.Transport = t }
+func (f *TwitterFetcher) CommentTargetURL() string { return f.baseURL }
+
 func (f *TwitterFetcher) FetchComments(ctx context.Context, item store.Item, maxComments int) ([]Comment, error) {
 	tweetID := extractTweetID(item.Hash, item.CommentUrl, item.Url)
 	if tweetID == "" {

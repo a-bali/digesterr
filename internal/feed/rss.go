@@ -16,8 +16,10 @@ import (
 
 type RSSFetcher struct {
 	userAgent string
-	client *http.Client
+	client     *http.Client
 }
+
+func (f *RSSFetcher) setTransport(t http.RoundTripper) { f.client.Transport = t }
 
 func NewRSSFetcher() *RSSFetcher {
 	return &RSSFetcher{

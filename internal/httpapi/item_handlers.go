@@ -120,5 +120,7 @@ func (s *Server) doExtractItem(itemID int64, url string) {
 		return
 	}
 	logger := slog.With(logging.CategoryAttr(logging.CategoryItem), "item_id", itemID, "url", url)
-	s.poller.ExtractSingleItem(ctx, &http.Client{Timeout: 30 * time.Second}, item, logger)
+	feed, _ := s.queries.GetFeedByID(ctx, item.FeedID)
+	client := &http.Client{Timeout: 30 * time.Second, Transport: s.poller.MetricsTransport()}
+	s.poller.ExtractSingleItem(ctx, client, item, feed, logger)
 }

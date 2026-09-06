@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"digesterr/internal/metrics"
 	"digesterr/internal/store"
 )
 
@@ -22,6 +23,11 @@ type Poller struct {
 	fetchers        map[string]Fetcher
 	enrichers       map[string]Enricher
 	commentFetchers map[string]CommentFetcher
+	// recordFn is called for each outbound HTTP request made during
+	// feed fetching/enrichment. Nil means no recording.
+	recordFn RecordFunc
+	// sharedTransport is the shared HTTP transport for byte tracking.
+	sharedTransport http.RoundTripper
 	// expireItems deletes items older than this during refresh/generation
 	// (saved items are exempt); expireDigests deletes digest results older
 	// than this. Zero disables expiry.
@@ -86,6 +92,102 @@ func (p *Poller) Enrichers() map[string]Enricher {
 func (p *Poller) SetExpiry(itemsAge, digestsAge time.Duration) {
 	p.expireItems = itemsAge
 	p.expireDigests = digestsAge
+}
+
+// SetRecordFunc sets the callback for recording outbound HTTP request metrics.
+func (p *Poller) SetRecordFunc(fn RecordFunc) {
+	p.recordFn = fn
+}
+
+// SetTransport sets the HTTP transport on all fetchers and enrichers for
+// metric byte tracking.
+func (p *Poller) SetTransport(transport http.RoundTripper) {
+	p.sharedTransport = transport
+	for _, f := range p.fetchers {
+		setClientTransport(f, transport)
+	}
+	for _, e := range p.enrichers {
+		setClientTransport(e, transport)
+	}
+	for _, cf := range p.commentFetchers {
+		setClientTransport(cf, transport)
+	}
+}
+
+// MetricsTransport returns the shared metrics transport for use in
+// creating HTTP clients that should be tracked.
+func (p *Poller) MetricsTransport() http.RoundTripper {
+	return p.metricsTransport()
+}
+
+// metricsTransport returns the shared transport, falling back to http.DefaultTransport.
+func (p *Poller) metricsTransport() http.RoundTripper {
+	if p.sharedTransport != nil {
+		return p.sharedTransport
+	}
+	return http.DefaultTransport
+}
+
+// setClientTransport sets the Transport on an HTTP client embedded in a
+// fetcher, enricher, or comment fetcher via type assertion.
+func setClientTransport(v interface{}, transport http.RoundTripper) {
+	type transportSetter interface {
+		setTransport(http.RoundTripper)
+	}
+	if s, ok := v.(transportSetter); ok {
+		s.setTransport(transport)
+	}
+}
+
+// recordEnrich records an enrichment operation.
+func (p *Poller) recordEnrich(start time.Time, feed store.Feed, host string, bytes int64, err error) {
+	if p.recordFn == nil {
+		return
+	}
+	errStr := ""
+	statusCode := 200
+	if err != nil {
+		errStr = err.Error()
+		statusCode = 500
+	}
+	p.recordFn(Record{
+		Timestamp:  start,
+		Host:       host,
+		StatusCode: statusCode,
+		Bytes:      bytes,
+		DurationMs: time.Since(start).Milliseconds(),
+		Reason:     "enrichment",
+		FeedID:     feed.ID,
+		FeedName:   feed.Name,
+		FeedType:   feed.Type,
+		Error:      errStr,
+	})
+}
+
+// hostFromURL extracts a hostname from a URL string. It handles bare
+// hostnames (no scheme) by prepending https://.
+func hostFromURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err == nil && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	// Bare hostname like "sdf" — try with https:// prefix.
+	u, err = url.Parse("https://" + raw)
+	if err == nil && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	return ""
+}
+
+// consumeBytes reads and resets the shared transport byte counter.
+func (p *Poller) consumeBytes() int64 {
+	if t, ok := p.sharedTransport.(*metrics.Transport); ok {
+		return t.ResetBytes()
+	}
+	return 0
 }
 
 // SetEnrichmentWindow configures how long after insertion items are
@@ -225,9 +327,10 @@ func (p *Poller) ExtractItem(ctx context.Context, itemID int64) error {
 	if err != nil {
 		return fmt.Errorf("getting item %d: %w", itemID, err)
 	}
+	feed, _ := p.queries.GetFeedByID(ctx, item.FeedID)
 	p.setItemExtractionPending(ctx, itemID, slog.With("item_id", itemID))
 	client := &http.Client{Timeout: 30 * time.Second}
-	p.extractSingleItem(ctx, client, item, slog.With("item_id", itemID))
+	p.extractSingleItem(ctx, client, item, feed, slog.With("item_id", itemID))
 	return nil
 }
 
@@ -301,6 +404,31 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	logger.Debug("polling feed")
 
 	items, err := fetcher.Fetch(ctx, feed.Url)
+	fetchDur := time.Since(start)
+	fetchBytes := p.consumeBytes()
+		// Derive host from feed URL.
+		fetchHost := hostFromURL(feed.Url)
+		if p.recordFn != nil {
+		errStr := ""
+		statusCode := 200
+		if err != nil {
+			errStr = err.Error()
+			statusCode = 500
+		}
+		p.recordFn(Record{
+			Timestamp:  start,
+			URL:        feed.Url,
+			StatusCode: statusCode,
+			Bytes:      fetchBytes,
+			Host:       fetchHost,
+			DurationMs: fetchDur.Milliseconds(),
+			Reason:     "fetch",
+			FeedID:     feed.ID,
+			FeedName:   feed.Name,
+			FeedType:   feed.Type,
+			Error:      errStr,
+		})
+	}
 	if err != nil {
 		logger.Warn("failed to fetch feed", "error", err)
 		p.queries.UpdateFeedError(ctx, store.UpdateFeedErrorParams{
@@ -500,11 +628,16 @@ func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candida
 		origScores[si.Hash] = si.Points
 	}
 	if b, ok := enricher.(BulkEnricher); ok {
-		if err := b.BulkEnrich(ctx, ptrs); err != nil {
+		enrichStart := time.Now()
+		bulkErr := b.BulkEnrich(ctx, ptrs)
+		enrichBytes := p.consumeBytes()
+		enrichHost := hostFromURL(feed.Url)
+		p.recordEnrich(enrichStart, feed, enrichHost, enrichBytes, bulkErr)
+		if bulkErr != nil {
 			// NULL-scored candidates are treated as zero at the min_score
 			// threshold, so a total scoring outage drops items instead of
 			// admitting everything — make that visible.
-			logger.Warn("pre-insert score refresh failed", "error", err)
+			logger.Warn("pre-insert score refresh failed", "error", bulkErr)
 		}
 		// Per-item fallback for items the bulk call missed (e.g. Algolia
 		// index stall while the Firebase API still serves fresh scores).
@@ -576,23 +709,23 @@ func (p *Poller) extractFeedContent(ctx context.Context, feed store.Feed, logger
 		return
 	}
 	logger.Info("extracting content", "count", len(items))
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second, Transport: p.metricsTransport()}
 	for _, item := range items {
 		if item.Url == "" {
 			continue
 		}
-		p.extractSingleItem(ctx, client, item, logger)
+		p.extractSingleItem(ctx, client, item, feed, logger)
 	}
 }
 
 // ExtractSingleItem extracts content for one item and persists the result
 // (or the failure, with retry accounting). Shared by the feed poll cycle and
 // the per-item extract endpoint.
-func (p *Poller) ExtractSingleItem(ctx context.Context, client *http.Client, item store.Item, logger *slog.Logger) {
-	p.extractSingleItem(ctx, client, item, logger)
+func (p *Poller) ExtractSingleItem(ctx context.Context, client *http.Client, item store.Item, feed store.Feed, logger *slog.Logger) {
+	p.extractSingleItem(ctx, client, item, feed, logger)
 }
 
-func (p *Poller) extractSingleItem(ctx context.Context, client *http.Client, item store.Item, logger *slog.Logger) {
+func (p *Poller) extractSingleItem(ctx context.Context, client *http.Client, item store.Item, feed store.Feed, logger *slog.Logger) {
 	logger = logger.With("item_id", item.ID, "url", item.Url)
 	start := time.Now()
 
@@ -610,6 +743,31 @@ func (p *Poller) extractSingleItem(ctx context.Context, client *http.Client, ite
 	}
 
 	content, err := ExtractContent(ctx, item.Url, client, logger)
+	extractBytes := p.consumeBytes()
+	// Record extraction metrics.
+	if p.recordFn != nil {
+		errStr := ""
+		statusCode := 200
+		if err != nil {
+			errStr = err.Error()
+			statusCode = 500
+		}
+		// Derive host from item URL.
+		extractHost := hostFromURL(item.Url)
+		p.recordFn(Record{
+			Timestamp:  start,
+			URL:        item.Url,
+			StatusCode: statusCode,
+			Bytes:      extractBytes,
+			Host:       extractHost,
+			DurationMs: time.Since(start).Milliseconds(),
+			Reason:     "extraction",
+			FeedID:     item.FeedID,
+			FeedName:   feed.Name,
+			FeedType:   feed.Type,
+			Error:      errStr,
+		})
+	}
 	if err != nil {
 		logger.Debug("extraction failed", "error", err)
 		p.failItemExtraction(item, fmt.Sprintf("[%s] %v", time.Now().Format("2006-01-02 15:04"), err))
@@ -714,12 +872,22 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 	if b, ok := enricher.(*TwitterFetcher); ok {
 		// Twitter enrichment is feed-scoped: one timeline request updates
 		// all items still visible on the timeline.
-		if err := b.EnrichFeed(ctx, feed.Url, ptrs); err != nil {
-			logger.Debug("twitter enrich failed", "error", err)
+		enrichStart := time.Now()
+		twErr := b.EnrichFeed(ctx, feed.Url, ptrs)
+		twBytes := p.consumeBytes()
+		twHost := hostFromURL(feed.Url)
+		p.recordEnrich(enrichStart, feed, twHost, twBytes, twErr)
+		if twErr != nil {
+			logger.Debug("twitter enrich failed", "error", twErr)
 		}
 	} else if b, ok := enricher.(BulkEnricher); ok {
-		if err := b.BulkEnrich(ctx, ptrs); err != nil {
-			logger.Debug("bulk enrich failed", "error", err)
+		enrichStart := time.Now()
+		bulkErr := b.BulkEnrich(ctx, ptrs)
+		bulkBytes := p.consumeBytes()
+		bulkHost := hostFromURL(feed.Url)
+		p.recordEnrich(enrichStart, feed, bulkHost, bulkBytes, bulkErr)
+		if bulkErr != nil {
+			logger.Debug("bulk enrich failed", "error", bulkErr)
 		}
 		// Per-item fallback for items left unscored (bulk outage or
 		// individual misses) so never-enriched items still get retried.

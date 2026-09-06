@@ -22,8 +22,10 @@ type LobstersEnricher struct {
 	client   *http.Client
 	baseURL  string
 	limiter  *rate.Limiter
-	maxItems int // 0 = unbounded (enrich all items)
+	maxItems int
 }
+
+func (e *LobstersEnricher) setTransport(t http.RoundTripper) { e.client.Transport = t }
 
 // SetRateLimiter overrides the per-item call limiter (nil disables limiting).
 func (e *LobstersEnricher) SetRateLimiter(l *rate.Limiter) { e.limiter = l }
@@ -152,6 +154,8 @@ func (e *LobstersEnricher) enrichOne(ctx context.Context, item *store.Item, shor
 	item.CommentsCount = int64(lsItem.CommentCount)
 	return nil
 }
+
+func (e *LobstersEnricher) CommentTargetURL() string { return e.baseURL }
 
 func (e *LobstersEnricher) FetchComments(ctx context.Context, item store.Item, maxComments int) ([]Comment, error) {
 	shortID := extractLobstersShortID(item.CommentUrl, item.Url, item.Hash)

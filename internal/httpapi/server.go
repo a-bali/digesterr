@@ -13,6 +13,7 @@ import (
 	"digesterr/internal/digest"
 	"digesterr/internal/feed"
 	"digesterr/internal/logbuf"
+	"digesterr/internal/metrics"
 	"digesterr/internal/store"
 )
 
@@ -24,6 +25,7 @@ type Server struct {
 	poller    *feed.Poller
 	generator *digest.Generator
 	logs      *logbuf.Buffer
+	metrics   *metrics.Recorder
 	// publicBaseURL is the absolute base URL of the digesterr web UI, used to
 	// build in-app links surfaced to Reader clients (feed home pages, digest
 	// article links). Empty means "derive from the request host".
@@ -45,6 +47,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 		auth:              authSvc,
 		poller:            feed.NewPoller(queries),
 		logs:              logs,
+		metrics:           metrics.New(10000),
 		publicBaseURL:     strings.TrimRight(cfg.Server.PublicBaseURL, "/"),
 		topComments:       cfg.Feed.TopComments,
 		commentCache:      newCommentCache(cfg.Feed.CommentCacheTTL.Duration()),
@@ -52,6 +55,17 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	}
 
 	llmClient := digest.NewLLMClient(cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model)
+	llmClient.SetRecordFunc(func(timestamp time.Time, url string, statusCode int, durationMs int64, bytes int64, errMsg string) {
+		s.metrics.Record(metrics.Record{
+			Timestamp:  timestamp,
+			URL:        url,
+			StatusCode: statusCode,
+			Bytes:      bytes,
+			DurationMs: durationMs,
+			Reason:     "llm",
+			Error:      errMsg,
+		})
+	})
 	s.generator = digest.NewGenerator(db, queries, llmClient, s.poller)
 
 	// Data retention and provider credentials come from the merged config
@@ -60,6 +74,22 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	// Poller expiry path).
 	s.poller.SetExpiry(cfg.Feed.ExpireItems.Duration(), cfg.Feed.ExpireDigests.Duration())
 	s.poller.SetEnrichmentWindow(cfg.Feed.EnrichmentWindow.Duration())
+	s.poller.SetRecordFunc(func(rec feed.Record) {
+		s.metrics.Record(metrics.Record{
+			Timestamp:  rec.Timestamp,
+			URL:        rec.URL,
+			Host:       rec.Host,
+			StatusCode: rec.StatusCode,
+			Bytes:      rec.Bytes,
+			DurationMs: rec.DurationMs,
+			Reason:     rec.Reason,
+			FeedID:     rec.FeedID,
+			FeedName:   rec.FeedName,
+			FeedType:   rec.FeedType,
+			Error:      rec.Error,
+		})
+	})
+	s.poller.SetTransport(s.metrics.Transport())
 	s.poller.SetRedditCredentials(cfg.Reddit.ClientID, cfg.Reddit.ClientSecret)
 	s.poller.SetTwitterCredentials(cfg.Twitter.Ct0, cfg.Twitter.AuthToken)
 	s.poller.SetUserAgent(cfg.Feed.UserAgent)
@@ -118,6 +148,8 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	mux.HandleFunc("GET /api/digest-results/{id}/items", s.requireAuth(s.handleListDigestResultItemsWithData))
 
 	mux.HandleFunc("GET /api/logs", s.requireAuth(s.handleListLogs))
+	mux.HandleFunc("GET /api/metrics", s.requireAuth(s.handleGetMetrics))
+	mux.HandleFunc("POST /api/metrics/reset", s.requireAuth(s.handleResetMetrics))
 
 	mux.HandleFunc("GET /reader/api/0/token", s.readerAuth(s.handleReaderToken))
 	mux.HandleFunc("GET /reader/api/0/user-info", s.readerAuth(s.handleReaderUserInfo))
@@ -182,8 +214,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 type responseRecorder struct {
 	http.ResponseWriter
-	status      int
-	wroteHeader bool
+	status       int
+	wroteHeader  bool
+	bytesWritten int64
 }
 
 func (rr *responseRecorder) WriteHeader(code int) {
@@ -198,5 +231,7 @@ func (rr *responseRecorder) Write(b []byte) (int, error) {
 	if !rr.wroteHeader {
 		rr.WriteHeader(http.StatusOK)
 	}
-	return rr.ResponseWriter.Write(b)
+	n, err := rr.ResponseWriter.Write(b)
+	rr.bytesWritten += int64(n)
+	return n, err
 }

@@ -234,6 +234,7 @@ func (fakeCommentFetcher) FetchComments(_ context.Context, _ store.Item, _ int) 
 		{Author: "bob", Text: "second comment", Points: 3, ValidPoints: true},
 	}, nil
 }
+func (fakeCommentFetcher) CommentTargetURL() string { return "https://fake.api" }
 
 // TestGeneratorFetchCommentsInfoLogs verifies comment fetching for digest
 // highlights logs at info with item url and comment count.

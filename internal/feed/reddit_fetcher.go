@@ -40,6 +40,8 @@ func isRedditVideoURL(url string) bool {
 // RedditFetcher fetches subreddit posts via Reddit's OAuth JSON API.
 // The generic RSS fetcher gets blocked from datacenter IPs; the OAuth
 // path bypasses this by authenticating with a client-credentials token.
+func (f *RedditFetcher) setTransport(t http.RoundTripper) { f.client.Transport = t }
+
 type RedditFetcher struct {
 	client       *http.Client
 	baseURL      string
