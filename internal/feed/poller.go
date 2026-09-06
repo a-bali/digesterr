@@ -466,15 +466,11 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 		})
 	}
 
-	// When a minimum score is configured, refresh each item's score before
-	// insertion and skip items that fall below the threshold. Scores are
-	// re-evaluated on every fetch: an item skipped on one poll may rise above
-	// the threshold and be inserted on a later one.
+	// Enrich candidates + existing items in one BulkEnrich call.
+	// Returns scored candidates for min_score and which hashes were enriched.
 	var scored map[string]*store.Item
 	var enrichedHashes map[string]bool
-	if feed.MinScore > 0 {
-		scored, enrichedHashes = p.scoreFetchedItems(ctx, feed, candidates, logger)
-	}
+	scored, enrichedHashes = p.enrichForPoll(ctx, feed, candidates, logger)
 
 	for _, c := range candidates {
 		item := c.item
@@ -566,12 +562,11 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	}
 
 	if enricher, ok := p.enrichers[feed.Type]; ok {
-		// Always run the post-insert enrichment pass for score-capable
-		// feeds: scores and comment counts move over time, failed
-		// enrichments must be retried, and items inserted with unknown
-		// (NULL) scores need to catch up. The 1h last_enriched_at window
-		// in ListUnreadItemsForEnrichment bounds the API traffic.
-		p.enrichFeedItems(ctx, feed, enricher)
+		// Twitter uses feed-scoped enrichment (one timeline request
+		// for all items), handled separately from BulkEnrich.
+		if tf, ok := enricher.(*TwitterFetcher); ok {
+			p.enrichTwitterItems(ctx, feed, tf)
+		}
 	}
 
 	if feed.ExtractContent != 0 {
@@ -582,12 +577,11 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	return nil
 }
 
-// scoreFetchedItems refreshes scores for freshly fetched items before they
-// are inserted, so the min_score threshold can be applied at insert time.
-// Items the enricher cannot score keep Points == 0 ("no score data") and are
-// treated as passing the threshold. Returns a map keyed by item hash, or nil
-// when scoring is not possible (unknown or non-score feed types).
-func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candidates []fetchedCandidate, logger *slog.Logger) (map[string]*store.Item, map[string]bool) {
+// enrichForPoll consolidates pre-insert scoring and post-insert enrichment
+// into a single BulkEnrich call. It enriches both newly fetched candidates
+// and existing unread items in one API round-trip, then returns scored
+// candidates for min_score filtering and a hash set of enriched candidates.
+func (p *Poller) enrichForPoll(ctx context.Context, feed store.Feed, candidates []fetchedCandidate, logger *slog.Logger) (map[string]*store.Item, map[string]bool) {
 	enricher, ok := p.enrichers[feed.Type]
 	if !ok {
 		return nil, nil
@@ -596,14 +590,9 @@ func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candida
 		return nil, nil
 	}
 
+	// Build scored map for candidates.
 	scored := make(map[string]*store.Item, len(candidates))
-	enrichedHashes := make(map[string]bool, len(candidates))
-	ptrs := make([]*store.Item, 0, len(candidates))
 	for _, c := range candidates {
-		// HN scores come from enrichment (Firebase/Algolia), not RSS.
-		// Items start as 0; the pre-insert fallback enriches them via
-		// Firebase, and the post-insert pass retries on the next cycle.
-		// Other feeds provide inline scores in the parsed item.
 		si := &store.Item{
 			Hash:          c.hash,
 			Title:         c.item.Title,
@@ -618,52 +607,139 @@ func (p *Poller) scoreFetchedItems(ctx context.Context, feed store.Feed, candida
 			si.PublishedAt = sql.NullTime{Time: c.item.PublishedAt, Valid: true}
 		}
 		scored[c.hash] = si
-		ptrs = append(ptrs, si)
 	}
 
-	logger.Debug("refreshing scores before insert", "count", len(ptrs), "min_score", feed.MinScore)
-	// Save original scores to detect enricher modifications
-	origScores := make(map[string]int64, len(ptrs))
-	for _, si := range ptrs {
+	// Collect existing items needing refresh (not Twitter — feed-scoped).
+	var existing []store.Item
+	if _, isTwitter := enricher.(*TwitterFetcher); !isTwitter {
+		window := p.enrichmentWindow
+		if window <= 0 {
+			window = 24 * time.Hour
+		}
+		cutoff := time.Now().Add(-window)
+		recent := time.Now().Add(-1 * time.Hour)
+		var err error
+		existing, err = p.queries.ListUnreadItemsForEnrichment(ctx, store.ListUnreadItemsForEnrichmentParams{
+			FeedID:         feed.ID,
+			FetchedAt:      cutoff,
+			LastEnrichedAt: sql.NullTime{Time: recent, Valid: true},
+		})
+		if err != nil {
+			logger.Error("failed to list items for enrichment", "error", err)
+		}
+	}
+
+	// Merge candidates + existing, dedup by hash.
+	haveHash := make(map[string]bool, len(candidates))
+	for _, c := range candidates {
+		haveHash[c.hash] = true
+	}
+	allPtrs := make([]*store.Item, 0, len(candidates)+len(existing))
+	for _, c := range candidates {
+		allPtrs = append(allPtrs, scored[c.hash])
+	}
+	for i := range existing {
+		if !haveHash[existing[i].Hash] {
+			haveHash[existing[i].Hash] = true
+			allPtrs = append(allPtrs, &existing[i])
+		}
+	}
+
+	if len(allPtrs) == 0 {
+		return scored, nil
+	}
+
+	logger.Debug("enriching items", "candidates", len(candidates), "existing", len(existing), "total", len(allPtrs))
+
+	// Single BulkEnrich for all items.
+	origScores := make(map[string]int64, len(allPtrs))
+	for _, si := range allPtrs {
 		origScores[si.Hash] = si.Points
 	}
+	enrichStart := time.Now()
 	if b, ok := enricher.(BulkEnricher); ok {
-		enrichStart := time.Now()
-		bulkErr := b.BulkEnrich(ctx, ptrs)
+		bulkErr := b.BulkEnrich(ctx, allPtrs)
 		enrichBytes := p.consumeBytes()
 		enrichHost := hostFromURL(feed.Url)
 		p.recordEnrich(enrichStart, feed, enrichHost, enrichBytes, bulkErr)
 		if bulkErr != nil {
-			// NULL-scored candidates are treated as zero at the min_score
-			// threshold, so a total scoring outage drops items instead of
-			// admitting everything — make that visible.
-			logger.Warn("pre-insert score refresh failed", "error", bulkErr)
+			logger.Warn("bulk enrich failed", "error", bulkErr)
 		}
-		// Per-item fallback for items the bulk call missed (e.g. Algolia
-		// index stall while the Firebase API still serves fresh scores).
-		// HN's BulkEnrich already falls back internally; this covers
-		// enrichers whose bulk path has no built-in retry.
-		for _, si := range ptrs {
+		// Per-item fallback for unscored items.
+		for _, si := range allPtrs {
 			if si.Points > 0 {
 				continue
 			}
 			if err := enricher.Enrich(ctx, si); err != nil {
-				logger.Debug("pre-insert fallback failed for item", "title", si.Title, "error", err)
+				logger.Debug("enrich fallback failed", "hash", si.Hash, "error", err)
 			}
 		}
 	} else {
-		for _, si := range ptrs {
+		for _, si := range allPtrs {
 			if err := enricher.Enrich(ctx, si); err != nil {
-				logger.Debug("pre-insert score refresh failed for item", "title", si.Title, "error", err)
+				logger.Debug("enrich failed", "hash", si.Hash, "error", err)
 			}
 		}
 	}
-	// Track which items the enricher actually modified
-	for _, si := range ptrs {
-		if si.Points != origScores[si.Hash] {
-			enrichedHashes[si.Hash] = true
+
+	// Track which candidates the enricher modified.
+	enrichedHashes := make(map[string]bool, len(candidates))
+	for _, c := range candidates {
+		if si, ok := scored[c.hash]; ok {
+			if si.Points != origScores[si.Hash] {
+				enrichedHashes[c.hash] = true
+			}
 		}
 	}
+
+	// Update existing items in DB.
+	updated, skipped, removed, errcount := 0, 0, 0, 0
+	existingByID := make(map[int64]*store.Item, len(existing))
+	for i := range existing {
+		// Point to the snapshot (pre-enrichment copy) so the
+		// comparison below detects actual score changes.
+		existingByID[existing[i].ID] = &store.Item{
+			ID:            existing[i].ID,
+			Points:        origScores[existing[i].Hash],
+			CommentsCount: existing[i].CommentsCount,
+			CommentUrl:    existing[i].CommentUrl,
+			Title:         existing[i].Title,
+		}
+	}
+	for _, si := range allPtrs {
+		if ei, ok := existingByID[si.ID]; ok {
+			if si.Points == ei.Points && si.CommentsCount == ei.CommentsCount && si.CommentUrl == ei.CommentUrl {
+				skipped++
+				continue
+			}
+			if ei.Points == 0 && si.Points > 0 && feed.MinScore > 0 && si.Points < feed.MinScore {
+				if _, err := p.queries.DeleteItem(ctx, si.ID); err != nil {
+					errcount++
+				} else {
+					removed++
+				}
+				continue
+			}
+			if _, err := p.queries.UpdateItemPointsAndComments(ctx, store.UpdateItemPointsAndCommentsParams{
+				ID:            si.ID,
+				Points:        si.Points,
+				CommentsCount: si.CommentsCount,
+				CommentUrl:    si.CommentUrl,
+				}); err != nil {
+				errcount++
+			} else {
+				updated++
+			}
+		}
+	}
+	if errcount > 0 {
+		p.queries.UpdateFeedWarning(ctx, store.UpdateFeedWarningParams{
+			ID:    feed.ID,
+			Error: fmt.Sprintf("enrichment failed for %d items", errcount),
+		})
+	}
+	logger.Info("enrichment completed", "type", feed.Type, "items", len(allPtrs), "updated", updated, "skipped", skipped, "removed", removed, "error", errcount)
+
 	return scored, enrichedHashes
 }
 
@@ -830,7 +906,9 @@ func itemHash(guid, title, url, content string) string {
 	return hex.EncodeToString(s.Sum(nil))
 }
 
-func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher Enricher) {
+// enrichTwitterItems handles Twitter's feed-scoped enrichment: one timeline
+// request updates all items still visible on the timeline.
+func (p *Poller) enrichTwitterItems(ctx context.Context, feed store.Feed, tf *TwitterFetcher) {
 	logger := slog.With("feed_id", feed.ID, "feed_name", feed.Name)
 	window := p.enrichmentWindow
 	if window <= 0 {
@@ -856,7 +934,7 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 	logger.Info("starting enrichment", "type", feed.Type, "items", len(items))
 
 	type itemSnapshot struct {
-		Points        int64 // -1 = never enriched
+		Points        int64
 		CommentsCount int64
 		CommentUrl    string
 	}
@@ -869,48 +947,18 @@ func (p *Poller) enrichFeedItems(ctx context.Context, feed store.Feed, enricher 
 	for i := range items {
 		ptrs[i] = &items[i]
 	}
-	if b, ok := enricher.(*TwitterFetcher); ok {
-		// Twitter enrichment is feed-scoped: one timeline request updates
-		// all items still visible on the timeline.
-		enrichStart := time.Now()
-		twErr := b.EnrichFeed(ctx, feed.Url, ptrs)
-		twBytes := p.consumeBytes()
-		twHost := hostFromURL(feed.Url)
-		p.recordEnrich(enrichStart, feed, twHost, twBytes, twErr)
-		if twErr != nil {
-			logger.Debug("twitter enrich failed", "error", twErr)
-		}
-	} else if b, ok := enricher.(BulkEnricher); ok {
-		enrichStart := time.Now()
-		bulkErr := b.BulkEnrich(ctx, ptrs)
-		bulkBytes := p.consumeBytes()
-		bulkHost := hostFromURL(feed.Url)
-		p.recordEnrich(enrichStart, feed, bulkHost, bulkBytes, bulkErr)
-		if bulkErr != nil {
-			logger.Debug("bulk enrich failed", "error", bulkErr)
-		}
-		// Per-item fallback for items left unscored (bulk outage or
-		// individual misses) so never-enriched items still get retried.
-		for _, si := range ptrs {
-			if si.Points > 0 {
-				continue
-			}
-			if err := enricher.Enrich(ctx, si); err != nil {
-				logger.Debug("post-insert fallback failed for item", "item_id", si.ID, "error", err)
-			}
-		}
-	} else {
-		for i := range items {
-			if err := enricher.Enrich(ctx, &items[i]); err != nil {
-				logger.Debug("failed to enrich item", "item_id", items[i].ID, "error", err)
-			}
-		}
+	enrichStart := time.Now()
+	twErr := tf.EnrichFeed(ctx, feed.Url, ptrs)
+	twBytes := p.consumeBytes()
+	twHost := hostFromURL(feed.Url)
+	p.recordEnrich(enrichStart, feed, twHost, twBytes, twErr)
+	if twErr != nil {
+		logger.Debug("twitter enrich failed", "error", twErr)
 	}
 
-	success := 0
-	skipped := 0
-	errcount := 0
-	removed := 0
+	// No BulkEnrich for Twitter — it uses EnrichFeed above.
+	// Update scores for Twitter items.
+	success, skipped, errcount, removed := 0, 0, 0, 0
 	for i := range items {
 		if items[i].Points == snapshots[i].Points &&
 			items[i].CommentsCount == snapshots[i].CommentsCount &&

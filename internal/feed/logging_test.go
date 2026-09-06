@@ -336,18 +336,18 @@ func TestEnrichmentInfoLogs(t *testing.T) {
 		t.Fatalf("create item: %v", err)
 	}
 
-	capture := testutil.CaptureSlog(t, slog.LevelInfo)
+	capture := testutil.CaptureSlog(t, slog.LevelDebug)
 	poller := NewPoller(queries)
 	poller.enrichers["hn"] = fakeBulkEnricher{}
-	poller.enrichFeedItems(context.Background(), feedObj, poller.enrichers["hn"])
+	poller.enrichForPoll(context.Background(), feedObj, nil, slog.Default())
 
-	start, ok := capture.Find("starting enrichment")
+	start, ok := capture.Find("enriching items")
 	if !ok {
-		t.Fatal("missing info 'starting enrichment' record")
+		t.Fatal("missing info 'enriching items' record")
 	}
 	startAttrs := testutil.AttrMap(start)
-	if startAttrs["type"] != "hn" || startAttrs["items"] != "1" {
-		t.Errorf("starting enrichment attrs = %v, want type=hn items=1", startAttrs)
+	if startAttrs["candidates"] != "0" || startAttrs["existing"] != "1" {
+		t.Errorf("enriching items attrs = %v, want candidates=0 existing=1", startAttrs)
 	}
 
 	done, ok := capture.Find("enrichment completed")
@@ -355,8 +355,8 @@ func TestEnrichmentInfoLogs(t *testing.T) {
 		t.Fatal("missing info 'enrichment completed' record")
 	}
 	doneAttrs := testutil.AttrMap(done)
-	if doneAttrs["success"] != "1" {
-		t.Errorf("enrichment completed success = %q, want 1", doneAttrs["success"])
+	if doneAttrs["updated"] != "1" {
+		t.Errorf("enrichment completed updated = %q, want 1", doneAttrs["updated"])
 	}
 	if doneAttrs["category"] != "feed" {
 		t.Errorf("enrichment completed category = %q, want feed", doneAttrs["category"])

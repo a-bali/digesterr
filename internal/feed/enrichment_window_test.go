@@ -153,7 +153,7 @@ func TestInsertStoresNULLWhenUnenriched(t *testing.T) {
 
 // enrichFeedItemsForTest exposes the unexported enrichment pass to tests.
 func (p *Poller) enrichFeedItemsForTest(ctx context.Context, feed store.Feed, e Enricher) error {
-	p.enrichFeedItems(ctx, feed, e)
+	p.enrichForPoll(ctx, feed, nil, slog.Default())
 	return nil
 }
 
@@ -220,6 +220,6 @@ func (p *Poller) scoreFetchedItemsForTest(ctx context.Context, f store.Feed, can
 	orig := p.enrichers[f.Type]
 	p.enrichers[f.Type] = e
 	defer func() { p.enrichers[f.Type] = orig }()
-	scored, _ := p.scoreFetchedItems(ctx, f, cands, slog.Default())
+	scored, _ := p.enrichForPoll(ctx, f, cands, slog.Default())
 	return scored
 }
