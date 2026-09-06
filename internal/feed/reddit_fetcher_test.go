@@ -275,6 +275,104 @@ func TestRedditFetcherFetch(t *testing.T) {
 	}
 }
 
+func TestParseListingGalleryWithSelftext(t *testing.T) {
+	// Gallery posts that also have selftext (e.g. user explains the images)
+	// must include both the gallery images AND the selftext in content.
+	listingJSON := `{
+		"data": {
+			"children": [{
+				"kind": "t3",
+				"data": {
+					"id": "zDGYkDKbuf",
+					"title": "Built a 3-node Kubernetes homelab",
+					"author": "root0ps",
+					"url": "https://www.reddit.com/gallery/zDGYkDKbuf",
+					"permalink": "/r/selfhosted/comments/zDGYkDKbuf/built_a_3_node/",
+					"selftext": "I recently set up a 3-node Kubernetes homelab.\n\nThe setup uses three control-plane nodes.",
+					"score": 107,
+					"num_comments": 8,
+					"created_utc": 1693000000.0,
+					"is_self": false,
+					"is_gallery": true,
+					"over_18": false,
+					"stickied": false,
+					"gallery_data": {
+						"items": [
+							{"media_id": "img1"},
+							{"media_id": "img2"}
+						]
+					},
+					"media_metadata": {
+						"img1": {"status": "valid", "e": "Image", "m": "image/jpeg", "s": {"u": "https://i.redd.it/photo1.jpg"}},
+						"img2": {"status": "valid", "e": "Image", "m": "image/png", "s": {"u": "https://i.redd.it/photo2.png"}}
+					}
+				}
+			}]
+		}
+	}`
+
+	f := &RedditFetcher{}
+	items, err := f.parseListing([]byte(listingJSON), "selfhosted")
+	if err != nil {
+		t.Fatalf("parseListing: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+
+	item := items[0]
+
+	// Must contain gallery images
+	if !strings.Contains(item.Content, "<img src=\"https://i.redd.it/photo1.jpg\"") {
+		t.Errorf("content missing first gallery image: %s", item.Content)
+	}
+	if !strings.Contains(item.Content, "<img src=\"https://i.redd.it/photo2.png\"") {
+		t.Errorf("content missing second gallery image: %s", item.Content)
+	}
+
+	// Must also contain the selftext — this was the bug
+	if !strings.Contains(item.Content, "3-node Kubernetes homelab") {
+		t.Errorf("content missing selftext from gallery post: %s", item.Content)
+	}
+}
+
+func TestParseListingSelftextOnly(t *testing.T) {
+	// Self-posts with no media should still render selftext.
+	listingJSON := `{
+		"data": {
+			"children": [{
+				"kind": "t3",
+				"data": {
+					"id": "self123",
+					"title": "Question about storage",
+					"author": "user1",
+					"url": "https://www.reddit.com/r/selfhosted/comments/self123/question_about_storage/",
+					"permalink": "/r/selfhosted/comments/self123/question_about_storage/",
+					"selftext": "What NAS do you recommend?",
+					"score": 10,
+					"num_comments": 5,
+					"created_utc": 1693000000.0,
+					"is_self": true,
+					"over_18": false,
+					"stickied": false
+				}
+			}]
+		}
+	}`
+
+	f := &RedditFetcher{}
+	items, err := f.parseListing([]byte(listingJSON), "selfhosted")
+	if err != nil {
+		t.Fatalf("parseListing: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+	if !strings.Contains(items[0].Content, "What NAS do you recommend?") {
+		t.Errorf("content missing selftext: %s", items[0].Content)
+	}
+}
+
 func TestRedditFetcherExtractSubreddit(t *testing.T) {
 	tests := []struct {
 		url  string

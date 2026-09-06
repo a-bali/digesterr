@@ -201,10 +201,24 @@ func (f *RedditFetcher) Fetch(ctx context.Context, feedURL string) ([]Item, erro
 	return f.parseListing(body, subreddit)
 }
 
-// renderGalleryContent extracts image URLs from Reddit's gallery API response
-// and renders them as inline images. The gallery_data provides ordering;
+// galleryMediaURL picks the best URL from a media source, preferring
+// the static image (s.u), then GIF (s.gif), then MP4 (s.mp4). Animated
+// images from Reddit use gif/mp4 instead of u.
+func galleryMediaURL(s redditMediaSource) string {
+	if s.URL != "" {
+		return s.URL
+	}
+	if s.GIF != "" {
+		return s.GIF
+	}
+	return s.MP4
+}
+
+// renderGalleryContent extracts image/video URLs from Reddit's gallery API
+// response and renders them inline. The gallery_data provides ordering;
 // media_metadata provides the actual URLs. Reddit escapes URLs in the JSON
-// as HTML entities, so we unescape them.
+// as HTML entities, so we unescape them. Animated images (GIFs) use s.gif
+// or s.mp4 instead of s.u.
 func renderGalleryContent(p redditPostData) string {
 	if len(p.GalleryData.Items) == 0 || len(p.MediaMetadata) == 0 {
 		return ""
@@ -212,11 +226,21 @@ func renderGalleryContent(p redditPostData) string {
 	var b strings.Builder
 	for _, item := range p.GalleryData.Items {
 		mi, ok := p.MediaMetadata[item.MediaID]
-		if !ok || mi.S.URL == "" {
+		if !ok {
 			continue
 		}
-		src := html.UnescapeString(mi.S.URL)
-		fmt.Fprintf(&b, `<p><img src="%s" loading="lazy" style="max-width:100%%;border-radius:4px" /></p>`, src)
+		src := html.UnescapeString(galleryMediaURL(mi.S))
+		if src == "" {
+			continue
+		}
+		// Animated images (e) == "AnimatedImage": prefer MP4 for smoother playback,
+		// fall back to GIF. Static images always get <img>.
+		if mi.E == "AnimatedImage" && mi.S.MP4 != "" {
+			mp4 := html.UnescapeString(mi.S.MP4)
+			fmt.Fprintf(&b, `<p><video src="%s" autoplay loop muted playsinline style="max-width:100%%;border-radius:4px"><a href="%s" target="_blank" rel="noopener">Watch video ↗</a></video></p>`, mp4, src)
+		} else {
+			fmt.Fprintf(&b, `<p><img src="%s" loading="lazy" style="max-width:100%%;border-radius:4px" /></p>`, src)
+		}
 	}
 	return b.String()
 }
@@ -266,9 +290,15 @@ func (f *RedditFetcher) parseListing(data []byte, subreddit string) ([]Item, err
 		if content == "" && isRedditImageURL(itemURL) {
 			content = `<p><img src="` + itemURL + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
 		}
-		// Selftext fallback (only when no Reddit media was rendered)
-		if content == "" && p.Selftext != "" {
-			content = "<p>" + renderRedditMarkdown(p.Selftext) + "</p>"
+		// Append selftext after any media — gallery posts often include
+		// explanatory text that should not be silently dropped.
+		if p.Selftext != "" {
+			selftextHTML := "<p>" + renderRedditMarkdown(p.Selftext) + "</p>"
+			if content == "" {
+				content = selftextHTML
+			} else {
+				content += selftextHTML
+			}
 		}
 		// External images/links
 		if content == "" && !p.IsSelf && itemURL != "" {
