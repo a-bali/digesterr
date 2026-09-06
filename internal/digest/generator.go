@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"digesterr/internal/feed"
+	"digesterr/internal/metrics"
 	"digesterr/internal/store"
 )
 
@@ -50,6 +52,9 @@ type Generator struct {
 	extractor       *feed.Poller
 	// extractFlags caches feeds.extract_content per feed ID for one run.
 	extractFlags map[int64]bool
+	// recordFn is called for each outbound HTTP request made during
+	// digest generation (enrichment, comment fetching). Nil means no recording.
+	recordFn func(metrics.Record)
 }
 
 func NewGenerator(db *sql.DB, queries *store.Queries, llm llmChatter, poller *feed.Poller) *Generator {
@@ -61,6 +66,12 @@ func NewGenerator(db *sql.DB, queries *store.Queries, llm llmChatter, poller *fe
 		commentFetchers: poller.CommentFetchers(),
 		extractor:       poller,
 	}
+}
+
+// SetRecordFunc sets the callback for recording outbound HTTP request metrics
+// during digest generation (enrichment, comment fetching).
+func (g *Generator) SetRecordFunc(fn func(metrics.Record)) {
+	g.recordFn = fn
 }
 
 type digestItem struct {
@@ -346,17 +357,59 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 		if !ok {
 			continue
 		}
+		enrichStart := time.Now()
+		var enrichErr error
 		if b, ok := enricher.(feed.BulkEnricher); ok {
-			if err := b.BulkEnrich(ctx, feedItems); err != nil {
-				genLogger.Debug("bulk enrich failed for digest", "type", feedType, "error", err)
+			enrichErr = b.BulkEnrich(ctx, feedItems)
+			if enrichErr != nil {
+				genLogger.Debug("bulk enrich failed for digest", "type", feedType, "error", enrichErr)
 			}
 		} else {
 			for _, item := range feedItems {
 				if err := enricher.Enrich(ctx, item); err != nil {
 					genLogger.Debug("enrich failed for digest item", "item_id", item.ID, "error", err)
+					if enrichErr == nil {
+						enrichErr = err
+					}
 				}
 			}
 		}
+
+		// Record enrichment metrics.
+		if g.recordFn != nil && len(feedItems) > 0 {
+			var enrichBytes int64
+			if g.extractor != nil {
+				enrichBytes = g.extractor.ConsumeBytes()
+			}
+			feedObj, ferr := g.queries.GetFeedByID(ctx, feedItems[0].FeedID)
+			var feedName string
+			var feedID int64
+			var enrichHost string
+			if ferr == nil {
+				feedName = feedObj.Name
+				feedID = feedObj.ID
+				enrichHost = hostFromURL(feedObj.Url)
+			}
+			errStr := ""
+			statusCode := 200
+			if enrichErr != nil {
+				errStr = enrichErr.Error()
+				statusCode = 500
+			}
+			g.recordFn(metrics.Record{
+				Timestamp:  enrichStart,
+				Host:       enrichHost,
+				StatusCode: statusCode,
+				Bytes:      enrichBytes,
+				DurationMs: time.Since(enrichStart).Milliseconds(),
+				Reason:     "enrichment",
+				FeedID:     feedID,
+				FeedName:   feedName,
+				FeedType:   feedType,
+				Error:      errStr,
+			})
+		}
+
 		for _, item := range feedItems {
 			g.queries.UpdateItemPointsAndComments(ctx, store.UpdateItemPointsAndCommentsParams{
 				ID:            item.ID,
@@ -511,14 +564,40 @@ func (g *Generator) fetchCommentsForHighlights(ctx context.Context, highlights [
 		if !ok {
 			continue
 		}
+		fetchStart := time.Now()
 		comments, err := cf.FetchComments(ctx, item.Item, item.Comments)
+		var fetchBytes int64
+		if g.extractor != nil {
+			fetchBytes = g.extractor.ConsumeBytes()
+		}
+		// Record comment-fetch metrics.
+		if g.recordFn != nil {
+			errStr := ""
+			statusCode := 200
+			if err != nil {
+				errStr = err.Error()
+				statusCode = 500
+			}
+			g.recordFn(metrics.Record{
+				Timestamp:  fetchStart,
+				URL:        cf.CommentTargetURL(),
+				StatusCode: statusCode,
+				Bytes:      fetchBytes,
+				DurationMs: time.Since(fetchStart).Milliseconds(),
+				Reason:     "enrichment",
+				FeedID:     feedObj.ID,
+				FeedName:   feedObj.Name,
+				FeedType:   feedObj.Type,
+				Error:      errStr,
+			})
+		}
 		if err != nil {
 			genLogger.Debug("failed to fetch comments for highlight", "item_id", item.ID, "error", err)
 			continue
 		}
 		sort.Slice(comments, func(a, b int) bool { return comments[a].Points > comments[b].Points })
 		item.FetchedComments = comments
-		genLogger.Info("fetched comments for highlight", "item_id", item.ID, "url", item.Url, "count", len(comments))
+		genLogger.Info("fetched comments for highlight", "item_id", item.ID, "feed_name", feedObj.Name, "url", cf.CommentTargetURL(), "count", len(comments))
 	}
 }
 
@@ -828,6 +907,18 @@ func contentForRendering(item store.Item) string {
 func formatNullTime(nt sql.NullTime) string {
 	if nt.Valid {
 		return nt.Time.Format(time.RFC3339)
+	}
+	return ""
+}
+
+// hostFromURL extracts the hostname from a URL string.
+func hostFromURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err == nil && u.Hostname() != "" {
+		return u.Hostname()
 	}
 	return ""
 }

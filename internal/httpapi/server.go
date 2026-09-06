@@ -67,6 +67,9 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 		})
 	})
 	s.generator = digest.NewGenerator(db, queries, llmClient, s.poller)
+	s.generator.SetRecordFunc(func(rec metrics.Record) {
+		s.metrics.Record(rec)
+	})
 
 	// Data retention and provider credentials come from the merged config
 	// (defaults < config file < env < CLI flags). The expiry age is shared by

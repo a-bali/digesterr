@@ -182,6 +182,12 @@ func hostFromURL(raw string) string {
 	return ""
 }
 
+// ConsumeBytes reads and resets the shared transport byte counter.
+// Exported for use by the digest generator after enrichment/comment-fetch operations.
+func (p *Poller) ConsumeBytes() int64 {
+	return p.consumeBytes()
+}
+
 // consumeBytes reads and resets the shared transport byte counter.
 func (p *Poller) consumeBytes() int64 {
 	if t, ok := p.sharedTransport.(*metrics.Transport); ok {

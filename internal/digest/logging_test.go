@@ -295,8 +295,11 @@ func TestGeneratorFetchCommentsInfoLogs(t *testing.T) {
 	if attrs["item_id"] != strconv.FormatInt(item.ID, 10) {
 		t.Errorf("item_id = %q, want %d", attrs["item_id"], item.ID)
 	}
-	if attrs["url"] != "https://news.ycombinator.com/item?id=1" {
-		t.Errorf("url = %q, want item url", attrs["url"])
+	if attrs["feed_name"] != "HN Feed" {
+		t.Errorf("feed_name = %q, want 'HN Feed'", attrs["feed_name"])
+	}
+	if attrs["url"] != "https://fake.api" {
+		t.Errorf("url = %q, want comment target url", attrs["url"])
 	}
 	if attrs["count"] != "2" {
 		t.Errorf("count = %q, want 2", attrs["count"])
