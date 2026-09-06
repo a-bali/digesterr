@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"digesterr/internal/store"
 )
@@ -479,4 +480,280 @@ func (s *Server) handleMarkFeedRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "feed marked read"})
+}
+
+// multiItemRow is an Item with feed metadata for multi-feed/category views.
+type multiItemRow struct {
+	ID             int64       `json:"id"`
+	FeedID         int64       `json:"feed_id"`
+	Hash           string      `json:"hash"`
+	Title          string      `json:"title"`
+	Url            string      `json:"url"`
+	Content        string      `json:"content"`
+	Author         string      `json:"author"`
+	CommentUrl     string      `json:"comment_url"`
+	Points         int64       `json:"points"`
+	CommentsCount  int64       `json:"comments_count"`
+	PublishedAt    interface{} `json:"published_at"`
+	Status         string      `json:"status"`
+	FetchedAt      interface{} `json:"fetched_at"`
+	CreatedAt      interface{} `json:"created_at"`
+	UpdatedAt      interface{} `json:"updated_at"`
+	LastEnrichedAt interface{} `json:"last_enriched_at"`
+	ExtractContent string      `json:"extract_content"`
+	ExtractStatus  string      `json:"extract_status"`
+	ExtractRetries int64       `json:"extract_retries"`
+	ExtractDate    interface{} `json:"extract_date"`
+	FeedName       string      `json:"feed_name"`
+	FeedType       string      `json:"feed_type"`
+}
+
+func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request) {
+	userID := authedUserID(r)
+
+	// Parse feed_ids (comma-separated) or category from query params.
+	feedIDsRaw := r.URL.Query().Get("feed_ids")
+	category := r.URL.Query().Get("category")
+
+	if feedIDsRaw == "" && category == "" {
+		writeError(w, http.StatusBadRequest, "feed_ids or category is required")
+		return
+	}
+	if feedIDsRaw != "" && category != "" {
+		writeError(w, http.StatusBadRequest, "provide either feed_ids or category, not both")
+		return
+	}
+
+	// Parse common query params (same as handleListFeedItems).
+	status := r.URL.Query().Get("status")
+	minScore := int64(0)
+	if ms := r.URL.Query().Get("min_score"); ms != "" {
+		v, err := strconv.ParseInt(ms, 10, 64)
+		if err != nil || v < 0 {
+			writeError(w, http.StatusBadRequest, "invalid min_score")
+			return
+		}
+		minScore = v
+	}
+	sort := r.URL.Query().Get("sort")
+	if sort == "" {
+		sort = "date_desc"
+	}
+	switch sort {
+	case "date_desc", "date_asc", "score_desc", "score_asc":
+	default:
+		writeError(w, http.StatusBadRequest, "invalid sort")
+		return
+	}
+
+	limit := int64(50)
+	if l := r.URL.Query().Get("limit"); l != "" {
+		v, err := strconv.Atoi(l)
+		if err == nil && v > 0 && v <= 100 {
+			limit = int64(v)
+		}
+	}
+	offset := int64(0)
+	if o := r.URL.Query().Get("offset"); o != "" {
+		v, err := strconv.Atoi(o)
+		if err == nil && v >= 0 {
+			offset = int64(v)
+		}
+	}
+
+	// Build dynamic query.
+	var whereClause string
+	var args []interface{}
+
+	if feedIDsRaw != "" {
+		parts := strings.Split(feedIDsRaw, ",")
+		ids := make([]int64, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			v, err := strconv.ParseInt(p, 10, 64)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid feed_id: "+p)
+				return
+			}
+			ids = append(ids, v)
+		}
+		if len(ids) == 0 {
+			writeError(w, http.StatusBadRequest, "no valid feed_ids")
+			return
+		}
+		if len(ids) > 50 {
+			writeError(w, http.StatusBadRequest, "too many feed_ids (max 50)")
+			return
+		}
+		placeholders := make([]string, len(ids))
+		for i, id := range ids {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		whereClause = fmt.Sprintf("f.id IN (%s) AND f.user_id = ?", strings.Join(placeholders, ","))
+		args = append(args, userID)
+	} else {
+		whereClause = "f.category = ? AND f.user_id = ?"
+		args = append(args, category, userID)
+	}
+
+	// Add status, min_score filters.
+	if status != "" {
+		whereClause += " AND i.status = ?"
+		args = append(args, status)
+	} else {
+		whereClause += " AND (i.status IS NULL OR i.status IS NOT NULL)"
+	}
+	whereClause += " AND (i.points >= ? OR ? = 0)"
+	args = append(args, minScore, minScore)
+
+	// Sort clause.
+	var orderClause string
+	switch sort {
+	case "date_asc":
+		orderClause = "i.published_at ASC, i.created_at ASC"
+	case "score_desc":
+		orderClause = "i.points DESC, i.published_at DESC, i.created_at DESC"
+	case "score_asc":
+		orderClause = "i.points ASC, i.published_at DESC, i.created_at DESC"
+	default:
+		orderClause = "i.published_at DESC, i.created_at DESC"
+	}
+
+	// Fetch limit+1 to detect has_more.
+	queryStr := fmt.Sprintf(
+		"SELECT i.*, f.name AS feed_name, f.type AS feed_type FROM items i "+
+			"JOIN feeds f ON f.id = i.feed_id WHERE %s ORDER BY %s LIMIT ? OFFSET ?",
+		whereClause, orderClause,
+	)
+	args = append(args, limit+1, offset)
+
+	ctx := r.Context()
+	rows, err := s.db.QueryContext(ctx, queryStr, args...)
+	if err != nil {
+		writeServerError(w, "failed to list items", err)
+		return
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		writeServerError(w, "failed to list items", err)
+		return
+	}
+
+	var items []multiItemRow
+	for rows.Next() {
+		// Scan into interface{} values, then map by column name.
+		values := make([]interface{}, len(cols))
+		valuePtrs := make([]interface{}, len(cols))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+		if err := rows.Scan(valuePtrs...); err != nil {
+			writeServerError(w, "failed to list items", err)
+			return
+		}
+		colMap := make(map[string]interface{}, len(cols))
+		for i, c := range cols {
+			colMap[c] = values[i]
+		}
+		item := multiItemRow{
+			ID:             colInt64(colMap["id"]),
+			FeedID:         colInt64(colMap["feed_id"]),
+			Hash:           colStr(colMap["hash"]),
+			Title:          colStr(colMap["title"]),
+			Url:            colStr(colMap["url"]),
+			Content:        colStr(colMap["content"]),
+			Author:         colStr(colMap["author"]),
+			CommentUrl:     colStr(colMap["comment_url"]),
+			Points:         colInt64(colMap["points"]),
+			CommentsCount:  colInt64(colMap["comments_count"]),
+			PublishedAt:    colMap["published_at"],
+			Status:         colStr(colMap["status"]),
+			FetchedAt:      colMap["fetched_at"],
+			CreatedAt:      colMap["created_at"],
+			UpdatedAt:      colMap["updated_at"],
+			LastEnrichedAt: colMap["last_enriched_at"],
+			ExtractContent: colStr(colMap["extract_content"]),
+			ExtractStatus:  colStr(colMap["extract_status"]),
+			ExtractRetries: colInt64(colMap["extract_retries"]),
+			ExtractDate:    colMap["extract_date"],
+			FeedName:       colStr(colMap["feed_name"]),
+			FeedType:       colStr(colMap["feed_type"]),
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		writeServerError(w, "failed to list items", err)
+		return
+	}
+
+	hasMore := len(items) > int(limit)
+	if hasMore {
+		items = items[:int(limit)]
+	}
+
+	var total int64
+	if hasMore || offset > 0 {
+		// Count total.
+		countQuery := fmt.Sprintf(
+			"SELECT CAST(COUNT(*) AS INTEGER) FROM items i JOIN feeds f ON f.id = i.feed_id WHERE %s",
+			whereClause,
+		)
+		// args without the last 2 (limit, offset).
+		countArgs := make([]interface{}, len(args)-2)
+		copy(countArgs, args[:len(args)-2])
+		err = s.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total)
+		if err != nil {
+			writeServerError(w, "failed to count items", err)
+			return
+		}
+	}
+
+	if items == nil {
+		items = []multiItemRow{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"items":    items,
+		"has_more": hasMore,
+		"total":    total,
+	})
+}
+
+// colInt64 extracts an int64 from a scanned column value.
+func colInt64(v interface{}) int64 {
+	switch val := v.(type) {
+	case int64:
+		return val
+	case int:
+		return int64(val)
+	case float64:
+		return int64(val)
+	case []byte:
+		n, _ := strconv.ParseInt(string(val), 10, 64)
+		return n
+	case string:
+		n, _ := strconv.ParseInt(val, 10, 64)
+		return n
+	default:
+		return 0
+	}
+}
+
+// colStr extracts a string from a scanned column value.
+func colStr(v interface{}) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case []byte:
+		return string(val)
+	case nil:
+		return ""
+	default:
+		return fmt.Sprintf("%v", val)
+	}
 }

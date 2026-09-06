@@ -56,7 +56,7 @@ const readerApiOpen = ref(false)
 const showShortcuts = ref(false)
 
 const feedMode = computed(() => feedStore.activeFeedId != null || showingSaved.value)
-const digestMode = computed(() => digestStore.activeConfigId != null && !feedMode.value)
+const digestMode = computed(() => (digestStore.activeConfigId != null || digestStore.showingAllDigests) && !feedMode.value)
 
 // On mobile/tablet, one pane at a time: content when a selection exists.
 const showContentPane = computed(() =>
@@ -126,41 +126,70 @@ function onVisibilityChange() {
 
 // ---- URL → state sync ----
 watch(
-  () => ({ path: route.path, feedId: route.params.feedId, itemId: route.params.itemId }),
-  async ({ path, feedId, itemId }) => {
-    const fid = feedId ? Number(feedId) : null
-    const iid = itemId ? Number(itemId) : null
-    if (path.startsWith('/feeds/') && fid) {
+  () => route.fullPath,
+  async () => {
+    const path = route.path
+    const feedId = route.params.feedId ? Number(route.params.feedId) : null
+    const itemId = route.params.itemId ? Number(route.params.itemId) : null
+    const category = route.params.category as string | undefined
+    const configId = route.params.configId ? Number(route.params.configId) : null
+    const resultId = route.params.resultId ? Number(route.params.resultId) : null
+
+    if (path === '/feeds' && !feedId) {
+      // All feeds section view
       showingSaved.value = false
+      digestStore.exitAllDigestsMode()
       digestStore.activeConfigId = null
       digestStore.selectedResult = null
-      if (feedStore.activeFeedId !== fid) await feedStore.setActiveFeed(fid)
-      if (iid) {
-        const item = feedStore.items.find(i => i.id === iid)
-        if (item && feedStore.selectedItem?.id !== iid) { feedStore.selectItem(item); pendingItemId.value = null }
-        else if (!item) pendingItemId.value = iid
-      } else { feedStore.selectedItem = null; pendingItemId.value = null }
-    } else if (path.startsWith('/digests/')) {
+      digestStore.resultItems = []
+      feedStore.setActiveSection('feeds')
+    } else if (category) {
+      // Category view: /feeds/category/:category
       showingSaved.value = false
-      feedStore.activeFeedId = null
-      feedStore.selectedItem = null
-      pendingItemId.value = null
-      const cid = route.params.configId ? Number(route.params.configId) : null
-      const rid = route.params.resultId ? Number(route.params.resultId) : null
-      if (cid) {
-        if (digestStore.activeConfigId !== cid) await digestStore.setActiveConfig(cid)
-        if (rid) {
-          const result = digestStore.results.find(r => r.id === rid)
-          if (result) await digestStore.selectResult(result)
-        } else { digestStore.selectedResult = null; digestStore.resultItems = [] }
-      }
+      digestStore.exitAllDigestsMode()
+      digestStore.activeConfigId = null
+      digestStore.selectedResult = null
+      digestStore.resultItems = []
+      if (feedStore.activeCategory !== category) await feedStore.setActiveCategory(category)
+    } else if (feedId) {
+      // Single feed: /feeds/:feedId(/:itemId)
+      showingSaved.value = false
+      digestStore.exitAllDigestsMode()
+      digestStore.activeConfigId = null
+      digestStore.selectedResult = null
+      if (feedStore.activeFeedId !== feedId) await feedStore.setActiveFeed(feedId)
+      if (itemId) {
+        const item = feedStore.items.find(i => i.id === itemId)
+        if (item && feedStore.selectedItem?.id !== itemId) { feedStore.selectItem(item); pendingItemId.value = null }
+        else if (!item) pendingItemId.value = itemId
+      } else { feedStore.selectedItem = null; pendingItemId.value = null }
+    } else if (path === '/digests' && !configId) {
+      // All digests section view
+      showingSaved.value = false
+      feedStore.clearActiveView()
+      digestStore.enterAllDigestsMode()
+    } else if (configId) {
+      // Single digest config: /digests/:configId(/:resultId)
+      showingSaved.value = false
+      feedStore.clearActiveView()
+      digestStore.exitAllDigestsMode()
+      if (digestStore.activeConfigId !== configId) await digestStore.setActiveConfig(configId)
+      if (resultId) {
+        const result = digestStore.results.find(r => r.id === resultId)
+        if (result) await digestStore.selectResult(result)
+      } else { digestStore.selectedResult = null; digestStore.resultItems = [] }
     } else if (path === '/saved') {
       showingSaved.value = true; sidebarOpen.value = false
-      feedStore.activeFeedId = null; feedStore.selectedItem = null; pendingItemId.value = null
+      feedStore.clearActiveView()
+      digestStore.exitAllDigestsMode()
       digestStore.activeConfigId = null; digestStore.selectedResult = null
       await fetchSavedItems()
     } else if (path === '/') {
-      showingSaved.value = false; feedStore.activeFeedId = null; feedStore.selectedItem = null; pendingItemId.value = null
+      showingSaved.value = false
+      feedStore.clearActiveView()
+      digestStore.exitAllDigestsMode()
+      digestStore.activeConfigId = null
+      pendingItemId.value = null
     }
   },
   { immediate: true },
@@ -182,9 +211,29 @@ function selectFeed(id: number) {
   router.push({ path: `/feeds/${id}` })
 }
 
+function selectCategory(name: string) {
+  showingSaved.value = false; sidebarOpen.value = false
+  router.push({ path: `/feeds/category/${encodeURIComponent(name)}` })
+}
+
+function selectSection(section: 'feeds' | 'digests') {
+  showingSaved.value = false; sidebarOpen.value = false
+  if (section === 'digests') {
+    router.push({ path: '/digests' })
+    return
+  }
+  router.push({ path: '/feeds' })
+}
+
 function selectDigestConfig(id: number) {
   showingSaved.value = false; sidebarOpen.value = false
-  router.push({ path: `/digests/${id}` })
+  if (route.path === `/digests/${id}`) {
+    // URL already matches — watcher won't fire, load manually.
+    digestStore.exitAllDigestsMode()
+    digestStore.setActiveConfig(id)
+  } else {
+    router.push({ path: `/digests/${id}` })
+  }
 }
 
 function showSaved() { router.push({ path: '/saved' }) }
@@ -194,6 +243,9 @@ function goBackToList() {
   digestStore.selectedResult = null
   if (feedStore.activeFeedId) router.push({ path: `/feeds/${feedStore.activeFeedId}` })
   else if (digestStore.activeConfigId) router.push({ path: `/digests/${digestStore.activeConfigId}` })
+  else if (feedStore.activeSection === 'feeds') router.push({ path: '/feeds' })
+  else if (digestStore.showingAllDigests) router.push({ path: '/digests' })
+  else if (feedStore.activeCategory) router.push({ path: `/feeds/category/${encodeURIComponent(feedStore.activeCategory)}` })
 }
 
 async function selectItem(item: Item) {
@@ -257,7 +309,12 @@ const totalUnread = computed(() => {
   return n
 })
 const activeFeedId = computed(() => feedStore.activeFeedId ?? digestStore.activeConfigId)
-const activeFeedName = computed(() => feedStore.activeFeed?.name ?? digestStore.activeConfig?.name ?? '')
+const activeFeedName = computed(() => {
+  if (feedStore.activeFeed) return feedStore.activeFeed.name
+  if (feedStore.isMultiView) return feedStore.activeCategory ?? 'All Feeds'
+  if (digestStore.showingAllDigests) return 'All Digests'
+  return digestStore.activeConfig?.name ?? ''
+})
 const activeFeedUnread = computed(() => {
   const id = activeFeedId.value
   if (id == null) return 0
@@ -316,7 +373,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
           <SplitterPanel :default-size="18" :min-size="14" :max-size="28">
             <div class="h-full flex flex-col">
               <aside class="flex-1 min-h-0 border-r bg-sidebar overflow-y-auto p-3">
-                <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
+                <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @select-category="selectCategory" @select-section="selectSection" @show-saved="showSaved" />
               </aside>
               <div class="shrink-0 flex justify-center border-r bg-sidebar py-1.5">
                 <VersionBadge />
@@ -326,7 +383,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
 
           <SplitterPanel :default-size="30" :min-size="20" :max-size="50">
-            <DigestResultList v-if="digestMode" class="border-r" @select="onSelectDigestResult" />
+            <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="border-r" @select="onSelectDigestResult" />
             <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="requestMarkFeedRead(feedStore.activeFeedId!)" />
           </SplitterPanel>
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
@@ -346,7 +403,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
           :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
         >
           <div class="flex-1 min-h-0 overflow-y-auto p-3">
-            <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @show-saved="showSaved" />
+            <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @select-category="selectCategory" @select-section="selectSection" @show-saved="showSaved" />
           </div>
           <div class="shrink-0 flex justify-center border-t border-border/50 py-1.5">
             <VersionBadge />
@@ -365,7 +422,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
             class="absolute inset-0 flex flex-col transition-transform duration-200"
             :class="!isTablet && showContentPane ? '-translate-x-full pointer-events-none' : 'static w-full h-full'"
           >
-              <DigestResultList v-if="digestMode" class="flex-1 min-h-0" @select="onSelectDigestResult" />
+              <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="flex-1 min-h-0" @select="onSelectDigestResult" />
               <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="requestMarkFeedRead(feedStore.activeFeedId!)" />
           </div>
         </div>

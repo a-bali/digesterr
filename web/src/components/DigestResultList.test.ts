@@ -65,10 +65,10 @@ function isDisabled(item: HTMLElement): boolean {
   return item.getAttribute("aria-disabled") === "true" || item.hasAttribute("data-disabled")
 }
 
-// The list rows are the only buttons with the w-full row class; the filter and
-// sort triggers are compact ghost buttons.
+// The list rows are div[role="button"] elements with the w-full row class;
+// the filter and sort triggers are compact ghost buttons.
 function resultRows(wrapper: ReturnType<typeof mount>) {
-  return wrapper.findAll('button').filter(b => b.classes().includes('w-full'))
+  return wrapper.findAll('[role="button"]').filter(b => b.classes().includes('w-full'))
 }
 
 async function openMenu(wrapper: ReturnType<typeof mount>, index: 0 | 1) {

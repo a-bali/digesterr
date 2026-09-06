@@ -1,4 +1,4 @@
-import type { AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, Item, LogsResponse } from '../types/api'
+import type { AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, Item, LogsResponse, MultiFeedItemsResponse, AllDigestResultsResponse } from '../types/api'
 
 const TOKEN_KEY = 'digesterr-token'
 
@@ -129,6 +129,15 @@ export const feedApi = {
   fetch: (id: number) => api<{ message: string }>(`/feeds/${id}/fetch`, { method: 'POST' }),
   markRead: (id: number) => api<{ message: string }>(`/feeds/${id}/mark-read`, { method: 'POST' }),
   unreadCounts: () => api<Record<number, number>>('/unread-counts'),
+  multiItems: (opts: { feed_ids?: number[]; category?: string; status?: string; limit?: number; offset?: number; min_score?: number; sort?: string }) => {
+    const params: Record<string, string | number | undefined> = {
+      status: opts.status, limit: opts.limit, offset: opts.offset,
+      min_score: opts.min_score, sort: opts.sort,
+    }
+    if (opts.feed_ids) params.feed_ids = opts.feed_ids.join(',')
+    if (opts.category) params.category = opts.category
+    return api<MultiFeedItemsResponse>(`/items/multi${qs(params)}`)
+  },
 }
 
 export const itemApi = {
@@ -158,6 +167,8 @@ export const digestApi = {
   deleteResult: (id: number) => api<void>(`/digest-results/${id}`, { method: 'DELETE' }),
   listResultItems: (resultId: number) => api<DigestResultItemWithData[]>(`/digest-results/${resultId}/items`),
   unreadCounts: () => api<Record<number, number>>('/digest-unread-counts'),
+  listAllResults: (opts?: { limit?: number; offset?: number }) =>
+    api<AllDigestResultsResponse>(`/digest-results${qs({ limit: opts?.limit, offset: opts?.offset })}`),
 }
 
 export const logsApi = {

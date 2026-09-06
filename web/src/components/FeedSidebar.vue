@@ -22,6 +22,8 @@ withDefaults(defineProps<{ showingSaved?: boolean }>(), { showingSaved: false })
 const emit = defineEmits<{
   (e: 'selectFeed', id: number): void
   (e: 'selectDigestConfig', id: number): void
+  (e: 'selectCategory', name: string): void
+  (e: 'selectSection', section: 'feeds' | 'digests'): void
   (e: 'showSaved'): void
 }>()
 
@@ -220,6 +222,17 @@ function toggleCategory(name: string) {
   if (collapsedCategories.has(name)) collapsedCategories.delete(name)
   else collapsedCategories.add(name)
 }
+
+// Per-category unread counts.
+const categoryUnreadCounts = computed(() => {
+  const counts: Record<string, number> = {}
+  for (const feed of feedStore.feeds) {
+    if (feed.category) {
+      counts[feed.category] = (counts[feed.category] ?? 0) + (feedStore.unreadCounts[feed.id] ?? 0)
+    }
+  }
+  return counts
+})
 </script>
 
 <template>
@@ -231,7 +244,11 @@ function toggleCategory(name: string) {
 
     <!-- Digests -->
     <div class="flex items-center justify-between mb-2 px-2">
-      <span class="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase">
+      <button
+        class="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase rounded-md px-2 py-1.5 hover:bg-accent/10 transition-colors cursor-pointer w-full"
+        :class="{ 'text-accent bg-accent/10': digestStore.showingAllDigests }"
+        @click="emit('selectSection', 'digests')"
+      >
         <MessageSquare class="size-3.5 shrink-0 text-accent" />
         Digests
         <span
@@ -240,7 +257,7 @@ function toggleCategory(name: string) {
           class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground"
           :title="`${totalDigestUnread} unread across ${digestStore.configs.length} digest config${digestStore.configs.length === 1 ? '' : 's'}`"
         >{{ totalDigestUnread }}</span>
-      </span>
+      </button>
       <button class="p-1 rounded hover:bg-accent/20" title="Create digest config" @click="showAddDigest = true">
         <Plus class="size-3.5" />
       </button>
@@ -277,7 +294,11 @@ function toggleCategory(name: string) {
 
     <!-- Feeds -->
     <div class="flex items-center justify-between mb-2 px-2">
-      <span class="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase">
+      <button
+        class="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase rounded-md px-2 py-1.5 hover:bg-accent/10 transition-colors cursor-pointer w-full"
+        :class="{ 'text-accent bg-accent/10': feedStore.activeSection === 'feeds' }"
+        @click="emit('selectSection', 'feeds')"
+      >
         <Rss class="size-3.5 shrink-0 text-accent" />
         Feeds
         <span
@@ -286,7 +307,7 @@ function toggleCategory(name: string) {
           class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground"
           :title="`${totalFeedUnread} unread across ${feedStore.feeds.length} feed${feedStore.feeds.length === 1 ? '' : 's'}`"
         >{{ totalFeedUnread }}</span>
-      </span>
+      </button>
       <button class="p-1 rounded hover:bg-accent/20" title="Add feed" @click="showAddFeed = true">
         <Plus class="size-3.5" />
       </button>
@@ -304,11 +325,19 @@ function toggleCategory(name: string) {
     </div>
 
     <div v-for="catName in sortedCategoryNames" :key="catName" class="mb-3 pl-3">
-      <button class="flex w-full items-center justify-between text-[10px] font-semibold text-muted-foreground uppercase mb-1 hover:text-foreground transition-colors px-2" @click="toggleCategory(catName)">
-        <span>{{ catName }}</span>
-        <span class="inline-flex items-center justify-end h-4 w-4 shrink-0">
-          <ChevronDown class="size-4 transition-transform" :class="collapsedCategories.has(catName) ? '-rotate-90' : ''" />
+      <button
+        class="flex w-full items-center justify-between text-[10px] font-semibold uppercase mb-1 transition-colors px-2 py-1.5 rounded-md hover:bg-accent/10 cursor-pointer"
+        :class="feedStore.activeCategory === catName ? 'text-accent bg-accent/10' : 'text-muted-foreground hover:text-foreground'"
+        @click="emit('selectCategory', catName)"
+      >
+        <span class="flex items-center gap-1.5">
+          <ChevronDown class="size-3 transition-transform" :class="collapsedCategories.has(catName) ? '-rotate-90' : ''" @click.stop="toggleCategory(catName)" />
+          {{ catName }}
         </span>
+        <span
+          v-if="(categoryUnreadCounts[catName] ?? 0) > 0"
+          class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground"
+        >{{ categoryUnreadCounts[catName] }}</span>
       </button>
       <template v-if="!collapsedCategories.has(catName)">
         <div class="pl-3">

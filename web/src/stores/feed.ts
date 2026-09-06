@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { feedApi, itemApi } from '../services/api'
-import type { Feed, Item } from '../types/api'
+import type { Feed, Item, MultiItem } from '../types/api'
 import { toastError } from '../lib/toast'
 import { SCORE_FEED_TYPES } from '../lib/feeds'
 
@@ -26,25 +26,30 @@ function saveFilter(f: string) {
 export const useFeedStore = defineStore('feed', () => {
   const feeds = ref<Feed[]>([])
   const activeFeedId = ref<number | null>(null)
+  const activeCategory = ref<string | null>(null) // null = single-feed view, string = category name
+  const activeSection = ref<'feeds' | 'digests' | null>(null) // null = not viewing a section
   const items = ref<Item[]>([])
+  const multiItems = ref<MultiItem[]>([]) // items with feed metadata for multi-feed views
   const selectedItem = ref<Item | null>(null)
   const filter = ref<'all' | 'unread' | 'read' | 'digested' | 'saved'>(loadFilter())
   const minScore = ref<number | null>(null)
   const sort = ref<FeedSort>('date_desc')
   const loading = ref(false)
   const loadingMore = ref(false)
-  // True while a background (visibility-change or poll-triggered) refresh of
-  // the active feed runs; drives the corner pulse indicator, not the list.
   const backgroundRefreshing = ref(false)
   const hasMore = ref(false)
   const totalItems = ref(0)
 
   const activeFeed = computed(() => feeds.value.find(f => f.id === activeFeedId.value) || null)
 
+  // True when viewing a category or "Feeds" section (not a single feed or digest).
+  const isMultiView = computed(() => activeCategory.value !== null || activeSection.value === 'feeds')
+
   // Score filter/sort are only meaningful for feeds whose items carry score
   // data (HN, Lobste.rs, Reddit). The Saved view mixes feed types, so the
   // component treats it as unsupported regardless of this computed.
   const supportsScore = computed(() => {
+    if (isMultiView.value) return true // multi-view mixes feed types but some may have scores
     const type = activeFeed.value?.type
     return type != null && SCORE_FEED_TYPES.has(type)
   })
@@ -55,8 +60,6 @@ export const useFeedStore = defineStore('feed', () => {
   let fetchReq = 0
 
   // Loads a single page of items for a feed, replacing or appending to `items`.
-  // Replace keeps existing rows visible while in flight (dimmed via `loading`
-  // in ItemList) so the pane never flashes empty.
   async function loadPage(feedId: number, replace: boolean) {
     const rid = ++fetchReq
     if (replace) {
@@ -89,6 +92,46 @@ export const useFeedStore = defineStore('feed', () => {
     }
   }
 
+  // Loads items for a multi-feed view (category or "Feeds" section).
+  async function loadMultiPage(replace: boolean) {
+    const rid = ++fetchReq
+    if (replace) {
+      loading.value = true
+      hasMore.value = false
+    } else {
+      loadingMore.value = true
+    }
+    try {
+      const opts: Parameters<typeof feedApi.multiItems>[0] = {
+        status: filter.value === 'all' ? undefined : filter.value,
+        min_score: minScore.value || undefined,
+        sort: sort.value,
+        limit: PAGE_SIZE,
+        offset: replace ? 0 : multiItems.value.length,
+      }
+      if (activeCategory.value) {
+        opts.category = activeCategory.value
+      } else if (activeSection.value === 'feeds') {
+        // "Feeds" section: get all feed IDs from the feeds list.
+        opts.feed_ids = feeds.value.map(f => f.id)
+      }
+      const resp = await feedApi.multiItems(opts)
+      if (rid !== fetchReq) return
+      if (replace) {
+        multiItems.value = resp.items
+        totalItems.value = resp.total ?? 0
+      } else {
+        multiItems.value.push(...resp.items)
+      }
+      hasMore.value = resp.has_more
+    } catch (e) {
+      toastError(e, 'Failed to load items')
+    } finally {
+      if (replace) loading.value = false
+      else loadingMore.value = false
+    }
+  }
+
   async function fetchFeeds() {
     try {
       feeds.value = await feedApi.list()
@@ -100,20 +143,115 @@ export const useFeedStore = defineStore('feed', () => {
 
   async function setActiveFeed(id: number) {
     activeFeedId.value = id
+    activeCategory.value = null
+    activeSection.value = null
     selectedItem.value = null
-    // Feed switch: empty the list immediately so the loading skeleton shows
-    // instead of the previous feed's rows.
     items.value = []
+    multiItems.value = []
     totalItems.value = 0
     await loadPage(id, true)
   }
 
+  async function setActiveCategory(name: string) {
+    activeFeedId.value = null
+    activeCategory.value = name
+    activeSection.value = null
+    selectedItem.value = null
+    items.value = []
+    multiItems.value = []
+    totalItems.value = 0
+    await loadMultiPage(true)
+  }
+
+  async function setActiveSection(section: 'feeds' | 'digests') {
+    activeFeedId.value = null
+    activeCategory.value = null
+    activeSection.value = section
+    selectedItem.value = null
+    items.value = []
+    multiItems.value = []
+    totalItems.value = 0
+    if (section === 'feeds') {
+      await loadMultiPage(true)
+    }
+    // 'digests' section is handled by digestStore, not here.
+  }
+
+  function clearActiveView() {
+    activeFeedId.value = null
+    activeCategory.value = null
+    activeSection.value = null
+    selectedItem.value = null
+    items.value = []
+    multiItems.value = []
+    totalItems.value = 0
+  }
+
   async function fetchFirstPage() {
-    if (!activeFeedId.value) return
-    await loadPage(activeFeedId.value, true)
+    if (isMultiView.value) {
+      await loadMultiPage(true)
+    } else if (activeFeedId.value) {
+      await loadPage(activeFeedId.value, true)
+    }
   }
 
   async function refreshItems(opts?: { silent?: boolean; replace?: boolean }) {
+    if (isMultiView.value) {
+      // Multi-view refresh.
+      const rid = ++fetchReq
+      if (opts?.silent) backgroundRefreshing.value = true
+      else loading.value = true
+      try {
+        const refreshOpts: Parameters<typeof feedApi.multiItems>[0] = {
+          status: filter.value === 'all' ? undefined : filter.value,
+          min_score: minScore.value || undefined,
+          sort: sort.value,
+          limit: PAGE_SIZE,
+          offset: 0,
+        }
+        if (activeCategory.value) refreshOpts.category = activeCategory.value
+        else if (activeSection.value === 'feeds') refreshOpts.feed_ids = feeds.value.map(f => f.id)
+        const resp = await feedApi.multiItems(refreshOpts)
+        if (rid !== fetchReq) return
+        if (opts?.silent && !opts?.replace) {
+          // Silent refresh: merge to preserve scroll.
+          const localMap = new Map(multiItems.value.map(i => [i.id, i]))
+          const merged: MultiItem[] = []
+          const seenLocal = new Set<number>()
+          for (const fresh of resp.items) {
+            const old = localMap.get(fresh.id)
+            if (old) {
+              seenLocal.add(fresh.id)
+              if (fresh.status !== old.status || fresh.points !== old.points ||
+                  fresh.comments_count !== old.comments_count || fresh.title !== old.title) {
+                merged.push(fresh)
+              } else {
+                merged.push(old)
+              }
+            } else {
+              merged.push(fresh)
+            }
+          }
+          for (const old of multiItems.value) {
+            if (!seenLocal.has(old.id)) merged.push(old)
+          }
+          multiItems.value = merged
+        } else {
+          multiItems.value = resp.items
+        }
+        hasMore.value = resp.has_more
+        totalItems.value = resp.total ?? 0
+      } catch (e) {
+        if (!opts?.silent) toastError(e, 'Failed to load items')
+      } finally {
+        if (rid === fetchReq) {
+          loading.value = false
+          backgroundRefreshing.value = false
+        }
+      }
+      return
+    }
+
     if (!activeFeedId.value) return
     const rid = ++fetchReq
     if (opts?.silent) backgroundRefreshing.value = true
@@ -129,10 +267,6 @@ export const useFeedStore = defineStore('feed', () => {
       if (rid !== fetchReq) return
 
       if (opts?.silent && !opts?.replace) {
-        // Silent refresh (visibility-change): merge so the list stays stable
-        // and items don't flash or shuffle. Server response is the source of
-        // truth for sort order. Stale items (read under Unread filter) that
-        // dropped from the response go at the bottom.
         const localMap = new Map(items.value.map(i => [i.id, i]))
         const merged: Item[] = []
         const seenLocal = new Set<number>()
@@ -140,8 +274,6 @@ export const useFeedStore = defineStore('feed', () => {
           const old = localMap.get(fresh.id)
           if (old) {
             seenLocal.add(fresh.id)
-            // Keep old object reference if nothing changed — prevents
-            // TransitionGroup from re-animating unchanged rows.
             if (fresh.status !== old.status || fresh.points !== old.points ||
                 fresh.comments_count !== old.comments_count || fresh.title !== old.title) {
               merged.push(fresh)
@@ -152,20 +284,16 @@ export const useFeedStore = defineStore('feed', () => {
             merged.push(fresh)
           }
         }
-        // Append stale items that dropped from the server response.
         for (const old of items.value) {
           if (!seenLocal.has(old.id)) merged.push(old)
         }
         items.value = merged
       } else {
-        // Explicit refresh (pull-to-refresh, re-fetch): clean replace.
         items.value = resp.items
       }
       hasMore.value = resp.has_more
       totalItems.value = resp.total ?? 0
     } catch (e) {
-      // Background refreshes fail silently — stale data beats an error toast
-      // for a refresh the user didn't ask for.
       if (!opts?.silent) toastError(e, 'Failed to load items')
     } finally {
       if (rid === fetchReq) {
@@ -176,6 +304,11 @@ export const useFeedStore = defineStore('feed', () => {
   }
 
   async function fetchMoreItems() {
+    if (isMultiView.value) {
+      if (!hasMore.value || loadingMore.value || loading.value) return
+      await loadMultiPage(false)
+      return
+    }
     if (!activeFeedId.value || !hasMore.value || loadingMore.value || loading.value) return
     await loadPage(activeFeedId.value, false)
   }
@@ -187,7 +320,7 @@ export const useFeedStore = defineStore('feed', () => {
   function changeFilter(f: typeof filter.value) {
     filter.value = f
     saveFilter(f)
-    if (activeFeedId.value) {
+    if (isMultiView.value || activeFeedId.value) {
       fetchFirstPage()
     }
   }
@@ -195,15 +328,14 @@ export const useFeedStore = defineStore('feed', () => {
   function changeSort(s: FeedSort) {
     if (s === sort.value) return
     sort.value = s
-    if (activeFeedId.value) {
+    if (isMultiView.value || activeFeedId.value) {
       fetchFirstPage()
     }
   }
 
-  // minScore: null (or 0) means "any score"; only positive values filter.
   function changeMinScore(n: number | null) {
     minScore.value = n
-    if (activeFeedId.value) {
+    if (isMultiView.value || activeFeedId.value) {
       fetchFirstPage()
     }
   }
@@ -211,8 +343,11 @@ export const useFeedStore = defineStore('feed', () => {
   async function updateItemStatus(item: Item, status: string) {
     try {
       const updated = await itemApi.updateStatus(item.id, status)
+      // Update in both items and multiItems arrays.
       const idx = items.value.findIndex(i => i.id === item.id)
       if (idx !== -1) items.value[idx] = updated
+      const midx = multiItems.value.findIndex(i => i.id === item.id)
+      if (midx !== -1) (multiItems.value[midx] as any) = updated
       if (selectedItem.value?.id === item.id) selectedItem.value = updated
       fetchUnreadCounts()
     } catch (e) {
@@ -229,9 +364,9 @@ export const useFeedStore = defineStore('feed', () => {
   }
 
   return {
-    feeds, activeFeedId, items, selectedItem, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
-    activeFeed, supportsScore, unreadCounts, backgroundRefreshing,
-    fetchFeeds, setActiveFeed, fetchFirstPage, refreshItems, fetchMoreItems,
+    feeds, activeFeedId, activeCategory, activeSection, items, multiItems, selectedItem, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
+    activeFeed, isMultiView, supportsScore, unreadCounts, backgroundRefreshing,
+    fetchFeeds, setActiveFeed, setActiveCategory, setActiveSection, clearActiveView, fetchFirstPage, refreshItems, fetchMoreItems,
     selectItem, updateItemStatus, changeFilter, changeSort, changeMinScore, fetchUnreadCounts,
   }
 })

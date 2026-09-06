@@ -100,6 +100,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	mux.HandleFunc("GET /api/items/{id}", s.requireAuth(s.handleGetItem))
 	mux.HandleFunc("GET /api/items/{id}/comments", s.requireAuth(s.handleGetItemComments))
 	mux.HandleFunc("POST /api/items/{id}/extract", s.requireAuth(s.handleExtractItem))
+	mux.HandleFunc("GET /api/items/multi", s.requireAuth(s.handleListMultiFeedItems))
 
 	mux.HandleFunc("GET /api/digest-configs", s.requireAuth(s.handleListDigestConfigs))
 	mux.HandleFunc("POST /api/digest-configs", s.requireAuth(s.handleCreateDigestConfig))
@@ -107,6 +108,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	mux.HandleFunc("PATCH /api/digest-configs/{id}", s.requireAuth(s.handleUpdateDigestConfig))
 	mux.HandleFunc("DELETE /api/digest-configs/{id}", s.requireAuth(s.handleDeleteDigestConfig))
 	mux.HandleFunc("GET /api/digest-configs/{id}/results", s.requireAuth(s.handleListDigestResults))
+	mux.HandleFunc("GET /api/digest-results", s.requireAuth(s.handleListAllDigestResults))
 
 	mux.HandleFunc("POST /api/digest-configs/{id}/generate", s.requireAuth(s.handleGenerateDigest))
 

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { toast } from 'vue-sonner'
 import { digestApi } from '../services/api'
-import type { DigestConfig, DigestResult, DigestResultItemWithData } from '../types/api'
+import type { DigestConfig, DigestResult, DigestResultItemWithData, DigestResultWithConfigName } from '../types/api'
 import { toastError } from '../lib/toast'
 
 const PAGE_SIZE = 50
@@ -21,6 +21,8 @@ export const useDigestStore = defineStore('digest', () => {
   const loadingMore = ref(false)
   const hasMore = ref(false)
   const unreadCounts = ref<Record<number, number>>({})
+  const allResults = ref<DigestResultWithConfigName[]>([])
+  const showingAllDigests = ref(false)
 
   const activeConfig = computed(() => configs.value.find(c => c.id === activeConfigId.value) || null)
 
@@ -179,6 +181,48 @@ export const useDigestStore = defineStore('digest', () => {
     }
   }
 
+  async function loadAllResults(replace: boolean) {
+    const rid = ++resultsReq
+    if (replace) {
+      loading.value = true
+      hasMore.value = false
+    } else {
+      loadingMore.value = true
+    }
+    try {
+      const resp = await digestApi.listAllResults({
+        limit: PAGE_SIZE,
+        offset: replace ? 0 : allResults.value.length,
+      })
+      if (rid !== resultsReq) return
+      if (replace) {
+        allResults.value = resp.results
+      } else {
+        allResults.value.push(...resp.results)
+      }
+      hasMore.value = resp.has_more
+    } catch (e) {
+      toastError(e, 'Failed to load digest results')
+    } finally {
+      if (replace) loading.value = false
+      else loadingMore.value = false
+    }
+  }
+
+  function enterAllDigestsMode() {
+    showingAllDigests.value = true
+    activeConfigId.value = null
+    selectedResult.value = null
+    resultItems.value = []
+    allResults.value = []
+    loadAllResults(true)
+  }
+
+  function exitAllDigestsMode() {
+    showingAllDigests.value = false
+    allResults.value = []
+  }
+
   async function silentRefresh() {
     backgroundRefreshing.value = true
     try {
@@ -221,8 +265,10 @@ export const useDigestStore = defineStore('digest', () => {
   return {
     configs, activeConfigId, results, selectedResult, resultItems,
     loading, generating, loadingMore, hasMore, activeConfig, unreadCounts, backgroundRefreshing,
+    allResults, showingAllDigests,
     fetchConfigs, createConfig, updateConfig, deleteConfig,
     setActiveConfig, selectResult, generateNow, markResultRead, deleteResult,
     updateResultStatus, silentRefresh, fetchUnreadCounts, fetchMoreResults,
+    loadAllResults, enterAllDigestsMode, exitAllDigestsMode,
   }
 })

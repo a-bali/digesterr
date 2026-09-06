@@ -83,6 +83,16 @@ export interface DigestResult {
   updated_at: string
 }
 
+export interface DigestResultWithConfigName extends DigestResult {
+  config_name: string
+}
+
+export interface AllDigestResultsResponse {
+  results: DigestResultWithConfigName[]
+  has_more: boolean
+  total: number
+}
+
 export interface DigestResultItemWithData {
   id: number
   result_id: number
@@ -168,8 +178,19 @@ export interface AuthResponse {
   access_token: string
 }
 
+export interface MultiItem extends Item {
+  feed_name: string
+  feed_type: string
+}
+
 export interface FeedItemsResponse {
   items: Item[]
+  has_more: boolean
+  total: number
+}
+
+export interface MultiFeedItemsResponse {
+  items: MultiItem[]
   has_more: boolean
   total: number
 }

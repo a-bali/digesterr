@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"digesterr/internal/digest"
 	"digesterr/internal/store"
@@ -332,4 +333,81 @@ func (s *Server) handleDigestUnreadCounts(w http.ResponseWriter, r *http.Request
 		result[c.ConfigID] = c.UnreadCount
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Request) {
+	userID := authedUserID(r)
+
+	limit := 50
+	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
+			limit = v
+		}
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+			offset = v
+		}
+	}
+
+	results, err := s.queries.ListAllDigestResultsByUser(r.Context(), store.ListAllDigestResultsByUserParams{
+		UserID: userID,
+		Limit:  int64(limit + 1),
+		Offset: int64(offset),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list digest results")
+		return
+	}
+
+	hasMore := len(results) > limit
+	if hasMore {
+		results = results[:limit]
+	}
+
+	var total int64
+	if hasMore || offset > 0 {
+		total, err = s.queries.CountAllDigestResultsByUser(r.Context(), userID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to count digest results")
+			return
+		}
+	}
+
+	if results == nil {
+		results = []store.ListAllDigestResultsByUserRow{}
+	}
+
+	type resultWithConfigName struct {
+		ID             int64  `json:"id"`
+		UserID         int64  `json:"user_id"`
+		ConfigID       int64  `json:"config_id"`
+		ConfigSnapshot string `json:"config_snapshot"`
+		Content        string `json:"content"`
+		Status         string `json:"status"`
+		CreatedAt      string `json:"created_at"`
+		UpdatedAt      string `json:"updated_at"`
+		ConfigName     string `json:"config_name"`
+	}
+	items := make([]resultWithConfigName, len(results))
+	for i, r := range results {
+		items[i] = resultWithConfigName{
+			ID:             r.ID,
+			UserID:         r.UserID,
+			ConfigID:       r.ConfigID,
+			ConfigSnapshot: r.ConfigSnapshot,
+			Content:        r.Content,
+			Status:         r.Status,
+			CreatedAt:      r.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:      r.UpdatedAt.Format(time.RFC3339),
+			ConfigName:     r.ConfigName,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"results":  items,
+		"has_more": hasMore,
+		"total":    total,
+	})
 }

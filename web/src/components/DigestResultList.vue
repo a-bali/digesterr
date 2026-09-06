@@ -8,6 +8,10 @@ import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { absoluteTime } from '../lib/format'
 import type { DigestResult } from '../types/api'
 
+const props = defineProps<{
+  showingAll?: boolean
+}>()
+
 const emit = defineEmits<{ (e: 'select', result: DigestResult): void }>()
 
 const digestStore = useDigestStore()
@@ -31,9 +35,10 @@ const STATUS_OPTIONS: { value: FilterStatus; label: string }[] = [
 ]
 
 const visibleResults = computed<DigestResult[]>(() => {
+  const source = props.showingAll ? digestStore.allResults : digestStore.results
   const filtered = digestFilter.value === 'all'
-    ? digestStore.results
-    : digestStore.results.filter(res => res.status === digestFilter.value)
+    ? source
+    : source.filter(res => res.status === digestFilter.value)
   const dir = sortOrder.value === 'newest' ? -1 : 1
   return [...filtered].sort(
     (a, b) => dir * (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
@@ -91,21 +96,24 @@ function onSelect(e: MouseEvent, result: DigestResult) {
     <div v-if="digestStore.loading && visibleResults.length === 0" class="flex justify-center py-10" data-loading-spinner>
       <LoaderCircle class="size-6 animate-spin text-muted-foreground" />
     </div>
-    <div v-else class="space-y-1 p-3">
-      <button v-for="result in visibleResults" :key="result.id"
-        class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden"
-        :class="{ 'bg-accent/10': isSelected(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read', 'opacity-50': digestStore.loading }"
+    <div v-else>
+      <div v-for="result in visibleResults" :key="result.id"
+        role="button" tabindex="0"
+        class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
+        :class="{ 'bg-accent/10': isSelected(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read', 'opacity-50': digestStore.loadingMore }"
         @click="onSelect($event, result)"
+        @keydown.enter.prevent="onSelect($event, result)"
+        @keydown.space.prevent="onSelect($event, result)"
       >
         <div class="flex items-start gap-1 min-w-0">
           <CircleDot v-if="result.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
           <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
           <div class="flex-1 min-w-0">
             <p class="text-sm font-semibold truncate">{{ resultTitle(result) }}</p>
-            <p class="text-xs text-muted-foreground truncate">{{ absoluteTime(result.created_at) }} · {{ itemCount(result) }} items</p>
+            <p class="text-xs text-muted-foreground truncate">{{ absoluteTime(result.created_at) }} · {{ itemCount(result) }} items<span v-if="showingAll && (result as any).config_name"> · {{ (result as any).config_name }}</span></p>
           </div>
         </div>
-      </button>
+      </div>
     </div>
   </div>
 </template>

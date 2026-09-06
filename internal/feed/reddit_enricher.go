@@ -35,13 +35,17 @@ func (r *redditReplies) UnmarshalJSON(b []byte) error {
 }
 
 // redditMediaSource is a single resolution variant inside media_metadata.
+// Static images have "u" (URL); animated images have "gif" and "mp4" instead.
 type redditMediaSource struct {
 	URL string `json:"u"`
+	GIF string `json:"gif"`
+	MP4 string `json:"mp4"`
 }
 
 // redditMediaItem represents one gallery image/video entry from media_metadata.
 type redditMediaItem struct {
 	Status string           `json:"status"`
+	E      string           `json:"e"` // media type: "Image", "AnimatedImage", "RedditVideo"
 	M      string           `json:"m"` // MIME type
 	S      redditMediaSource `json:"s"`
 }

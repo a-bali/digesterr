@@ -6,6 +6,7 @@ import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
 import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, LoaderCircle, CheckCircle2 } from 'lucide-vue-next'
 import { stripContent } from '../lib/utils'
+import { feedIcon } from '../lib/format'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { usePullToRefresh } from '../composables/usePullToRefresh'
 import { relativeTime, absoluteTime } from '../lib/format'
@@ -67,12 +68,27 @@ function onMinScore(v: number | null) { feedStore.changeMinScore(v) }
 // ---- List ----
 
 const displayItems = computed(() => {
+  if (feedStore.isMultiView) return feedStore.multiItems as any[]
   if (!props.showingSaved) return feedStore.items
   const filtered = feedStore.filter === 'all'
     ? props.savedItems
     : props.savedItems.filter(i => i.status === feedStore.filter)
   return sortSavedItems(filtered, feedStore.sort)
 })
+
+// Simple type-based favicon URL for items that carry feed_type.
+function feedTypeIcon(feedType: string): string {
+  if (feedType === 'hn') return 'https://news.ycombinator.com/favicon.ico'
+  if (feedType === 'lobsters') return 'https://lobste.rs/favicon.ico'
+  if (feedType === 'reddit') return 'https://www.reddit.com/favicon.ico'
+  if (feedType === 'twitter') return 'https://abs.twimg.com/favicons/twitter.3.ico'
+  return ''
+}
+
+// Feed name for multi-view items.
+function feedNameFor(item: any): string {
+  return item.feed_name ?? ''
+}
 
 // The Saved view fetches once without server-side ordering, so filtering and
 // sorting happen client-side there. Feed views rely on the server params.
@@ -157,7 +173,7 @@ function commentsTitle(val: number): string {
       :min-score="feedStore.minScore"
       :score-supported="scoreSupported"
       :item-count="showingSaved ? displayItems.length : feedStore.totalItems"
-      :feed-name="showingSaved ? null : feedStore.activeFeed?.name ?? null"
+      :feed-name="showingSaved ? null : (feedStore.isMultiView ? (feedStore.activeCategory ?? 'All Feeds') : feedStore.activeFeed?.name ?? null)"
       :status-options="STATUS_OPTIONS"
       @update:status-filter="onFilterStatus"
       @update:sort-value="onSortValue"
@@ -180,7 +196,7 @@ function commentsTitle(val: number): string {
     <div v-if="feedStore.loading && displayItems.length === 0" class="flex justify-center py-10" data-loading-spinner>
       <LoaderCircle class="size-6 animate-spin text-muted-foreground" />
     </div>
-    <div v-else-if="!feedStore.activeFeedId && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
+    <div v-else-if="!feedStore.activeFeedId && !feedStore.isMultiView && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
     <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
     <template v-else>
       <!-- Refresh in flight with rows present: dim instead of replacing, so
@@ -205,6 +221,10 @@ function commentsTitle(val: number): string {
         <span class="text-[10px] text-muted-foreground/70 shrink-0 mt-0.5" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
       </div>
       <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0 pr-16">{{ stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</p>
+      <div v-if="feedStore.isMultiView && feedNameFor(item)" class="flex items-center gap-1 mt-1">
+        <img v-if="feedTypeIcon(item.feed_type)" :src="feedTypeIcon(item.feed_type)" class="size-3 shrink-0 rounded-sm" @error="($event.target as HTMLImageElement).style.display = 'none'" />
+        <span class="text-[10px] text-accent/70 truncate">{{ feedNameFor(item) }}</span>
+      </div>
       <div class="absolute right-2 bottom-2 flex items-center gap-2">
         <Tooltip v-if="item.points > 0">
           <template #trigger>

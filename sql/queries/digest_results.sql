@@ -73,6 +73,20 @@ WHERE feed_id = ? AND status = 'unread'
 ORDER BY points DESC
 LIMIT ?;
 
+-- name: ListAllDigestResultsByUser :many
+SELECT dr.*, dc.name AS config_name
+FROM digest_results dr
+JOIN digest_configs dc ON dc.id = dr.config_id
+WHERE dr.user_id = ?
+ORDER BY dr.created_at DESC
+LIMIT ? OFFSET ?;
+
+-- name: CountAllDigestResultsByUser :one
+SELECT CAST(COUNT(*) AS INTEGER) AS count
+FROM digest_results dr
+JOIN digest_configs dc ON dc.id = dr.config_id
+WHERE dr.user_id = ?;
+
 -- name: ListDigestResultsByUserStatus :many
 SELECT * FROM digest_results WHERE user_id = ? AND status = ? ORDER BY created_at DESC;
 
