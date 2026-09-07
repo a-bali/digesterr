@@ -81,6 +81,16 @@ html {
   max-width: 100vw;
 }
 
+/* iOS Safari auto-zooms when a text input with font-size < 16px is focused.
+   After form submission (login), the zoom persists into the next page,
+   making the entire UI appear wider than the viewport. Prevent this by
+   forcing 16px on all inputs/selects/textareas below the sm breakpoint. */
+@media (max-width: 639px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
 /* Allow vertical panning everywhere but keep horizontal touches cancelable,
    so the left-edge swipe composable can preventDefault() and suppress the
    browser's native back-swipe gesture (mobile). */
