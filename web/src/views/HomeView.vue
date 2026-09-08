@@ -277,6 +277,9 @@ async function fetchSavedItems() {
 }
 
 function onSelectDigestResult(result: { id: number; config_id: number }) {
+  // In "All Digests" mode, just select the result (content pane) without
+  // navigating — same as how feeds work in category/section view.
+  if (!digestStore.activeConfigId) return
   router.push(`/digests/${result.config_id}/${result.id}`)
 }
 
