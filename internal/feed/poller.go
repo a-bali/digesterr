@@ -824,6 +824,20 @@ func (p *Poller) extractSingleItem(ctx context.Context, client *http.Client, ite
 		return
 	}
 
+	// HN-hosted content (Ask HN, Show HN, etc.) is already captured by
+	// the RSS feed's description — skip extraction to avoid fetching the
+	// full page with comments and site chrome.
+	if isHNHostedURL(item.Url) {
+		logger.Debug("extraction skipped: HN-hosted URL", "duration", time.Since(start))
+		_, _ = p.queries.UpdateItemExtraction(ctx, store.UpdateItemExtractionParams{
+			ID:             item.ID,
+			ExtractContent: "",
+			ExtractStatus:  "skipped",
+			ExtractRetries: 0,
+		})
+		return
+	}
+
 	content, err := ExtractContent(ctx, item.Url, client, logger)
 	extractBytes := p.consumeBytes()
 	// Record extraction metrics.

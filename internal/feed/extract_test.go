@@ -4,6 +4,31 @@ import (
 	"testing"
 )
 
+func TestIsHNHostedURL(t *testing.T) {
+	tests := []struct {
+		url  string
+		want bool
+	}{
+		{"https://news.ycombinator.com/item?id=49589914", true},
+		{"https://news.ycombinator.com/item?id=12345", true},
+		{"https://news.ycombinator.com/newest", true},
+		{"https://hn.algolia.com/api/v1/items/49589914", true},
+		{"https://www.example.com/article", false},
+		{"https://ycombinator.com/item?id=123", false},
+		{"https://github.com/user/repo", false},
+		{"not-a-url", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			got := isHNHostedURL(tt.url)
+			if got != tt.want {
+				t.Errorf("isHNHostedURL(%q) = %v, want %v", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsRedditHostedURL(t *testing.T) {
 	tests := []struct {
 		url  string

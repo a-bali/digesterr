@@ -80,9 +80,27 @@ func isRedditHostedURL(rawURL string) bool {
 		host == "redd.it" || strings.HasSuffix(host, ".redd.it")
 }
 
+// isHNHostedURL reports whether the URL points to content hosted on
+// Hacker News itself (news.ycombinator.com, hn.algolia.com). Content
+// extraction should be skipped for these because the RSS feed already
+// provides the post body, and fetching the web page returns comments
+// and site chrome instead.
+func isHNHostedURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "news.ycombinator.com" || host == "hn.algolia.com"
+}
+
 func ExtractContent(ctx context.Context, pageURL string, client *http.Client, logger *slog.Logger) (string, error) {
 	if isRedditHostedURL(pageURL) {
 		logger.Debug("content extraction: skipping reddit-hosted URL", "url", pageURL)
+		return "", nil
+	}
+	if isHNHostedURL(pageURL) {
+		logger.Debug("content extraction: skipping HN-hosted URL", "url", pageURL)
 		return "", nil
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", pageURL, nil)
