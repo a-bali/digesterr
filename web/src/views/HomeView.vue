@@ -321,9 +321,31 @@ const activeFeedName = computed(() => {
   return digestStore.activeConfig?.name ?? ''
 })
 const activeFeedUnread = computed(() => {
-  const id = activeFeedId.value
-  if (id == null) return 0
-  return feedStore.unreadCounts[id] ?? digestStore.unreadCounts[id] ?? 0
+  // Single feed selected.
+  if (feedStore.activeFeedId) return feedStore.unreadCounts[feedStore.activeFeedId] ?? 0
+  // Single digest config selected.
+  if (digestStore.activeConfigId) return digestStore.unreadCounts[digestStore.activeConfigId] ?? 0
+  // Category view: sum unread for all feeds in that category.
+  if (feedStore.activeCategory) {
+    let n = 0
+    for (const f of feedStore.feeds) {
+      if (f.category === feedStore.activeCategory) n += feedStore.unreadCounts[f.id] ?? 0
+    }
+    return n
+  }
+  // "All Feeds" section.
+  if (feedStore.isMultiView) {
+    let n = 0
+    for (const f of feedStore.feeds) n += feedStore.unreadCounts[f.id] ?? 0
+    return n
+  }
+  // "All Digests" section.
+  if (digestStore.showingAllDigests) {
+    let n = 0
+    for (const cfg of digestStore.configs) n += digestStore.unreadCounts[cfg.id] ?? 0
+    return n
+  }
+  return 0
 })
 const activeItemTitle = computed(() => feedStore.selectedItem?.title ?? digestResultTitle(digestStore.selectedResult?.content) ?? '')
 
