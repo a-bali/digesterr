@@ -19,6 +19,7 @@ export const useDigestStore = defineStore('digest', () => {
   const backgroundRefreshing = ref(false)
   const generating = ref(false)
   const loadingMore = ref(false)
+  const loadingContent = ref(false)
   const hasMore = ref(false)
   const unreadCounts = ref<Record<number, number>>({})
   const allResults = ref<DigestResultWithConfigName[]>([])
@@ -107,12 +108,15 @@ export const useDigestStore = defineStore('digest', () => {
     selectedResult.value = result
     // List endpoints omit the heavy content field. Fetch the full result
     // so DigestContent can parse and render it.
+    loadingContent.value = true
     try {
       const full = await digestApi.getResult(result.id)
-      if (selectedResult.value?.id !== result.id) return // switched away mid-flight
+      if (selectedResult.value?.id !== result.id) { loadingContent.value = false; return }
       selectedResult.value = full
     } catch {
       // Preview stays — already set above.
+    } finally {
+      loadingContent.value = false
     }
     try {
       const items = await digestApi.listResultItems(result.id)
@@ -280,7 +284,7 @@ export const useDigestStore = defineStore('digest', () => {
 
   return {
     configs, activeConfigId, results, selectedResult, resultItems,
-    loading, generating, loadingMore, hasMore, activeConfig, unreadCounts, backgroundRefreshing,
+    loading, generating, loadingMore, loadingContent, hasMore, activeConfig, unreadCounts, backgroundRefreshing,
     allResults, showingAllDigests,
     fetchConfigs, createConfig, updateConfig, deleteConfig,
     setActiveConfig, selectResult, generateNow, markResultRead, deleteResult,

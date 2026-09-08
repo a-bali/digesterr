@@ -7,7 +7,7 @@ import type { DigestContent, DigestContentItem, DigestSection } from '../types/a
 import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
 import Skeleton from './ui/Skeleton.vue'
-import { ExternalLink, Clock, MessageCircle, Trash2, Check, ArrowUp, BookOpen } from 'lucide-vue-next'
+import { ExternalLink, Clock, MessageCircle, Trash2, Check, ArrowUp, BookOpen, LoaderCircle } from 'lucide-vue-next'
 import { absoluteTime, feedIcon } from '../lib/format'
 
 const store = useDigestStore()
@@ -244,7 +244,10 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
         </div>
       </div>
 
-      <div v-if="!digestContent?.highlights?.length && !digestContent?.items?.length" class="text-sm text-muted-foreground">
+      <div v-if="store.loadingContent" class="flex justify-center py-10">
+        <LoaderCircle class="size-6 animate-spin text-muted-foreground" />
+      </div>
+      <div v-else-if="!digestContent?.highlights?.length && !digestContent?.items?.length" class="text-sm text-muted-foreground">
         No content available for this digest.
       </div>
     </template>
