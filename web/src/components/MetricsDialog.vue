@@ -154,7 +154,7 @@ function onDimensionToggle() {
 
     <div class="flex flex-col gap-4" data-metrics-dialog>
       <!-- Timespan + Refresh + Reset -->
-      <div class="flex items-center gap-1">
+      <div class="flex items-center gap-1 flex-wrap">
         <button v-for="t in TIMESPANS" :key="t.label"
           class="px-3 py-1 rounded-md border text-xs transition-colors"
           :class="timespan === t.label ? 'bg-accent text-accent-foreground border-accent' : 'border-border text-muted-foreground hover:border-muted-foreground'"
@@ -183,8 +183,8 @@ function onDimensionToggle() {
       <div v-if="loading && !data" class="py-8"><Skeleton class="mx-auto h-48 max-w-md" /></div>
 
       <template v-if="data">
-        <!-- Summary cards -->
-        <div class="grid grid-cols-4 gap-3">
+        <!-- Summary cards — 2 cols on mobile, 4 on sm+ -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div class="rounded-lg border bg-card p-3">
             <div class="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Requests</div>
             <div class="text-xl font-bold">{{ data.total_requests.toLocaleString() }}</div>
@@ -233,7 +233,7 @@ function onDimensionToggle() {
         </div>
 
         <!-- Pivot table -->
-        <div class="rounded-lg border bg-card overflow-hidden">
+        <div class="rounded-lg border bg-card">
           <div class="overflow-x-auto max-h-[40vh] overflow-y-auto">
           <table class="w-full text-xs border-collapse">
             <thead>
