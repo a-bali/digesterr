@@ -10,10 +10,22 @@ SELECT * FROM digest_results WHERE id = ? AND user_id = ?;
 SELECT * FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC;
 
 -- name: ListDigestResultsByConfigPaginated :many
-SELECT * FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
+-- Preview query for the middle pane: excludes heavy content/config_snapshot,
+-- pre-computes title and item_count from the stored JSON.
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
+FROM digest_results dr
+WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: ListDigestResultsByConfigOldestFirstPaginated :many
-SELECT * FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at ASC LIMIT ? OFFSET ?;
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
+FROM digest_results dr
+WHERE config_id = ? AND user_id = ? ORDER BY created_at ASC LIMIT ? OFFSET ?;
 
 -- name: ListDigestResultsByUserStatusPaginated :many
 -- Reader-stream page for a user-wide digest status.

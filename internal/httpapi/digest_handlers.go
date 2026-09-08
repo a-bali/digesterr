@@ -162,7 +162,7 @@ func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if results == nil {
-		results = []store.DigestResult{}
+		results = []store.ListDigestResultsByConfigPaginatedRow{}
 	}
 
 	hasMore := len(results) > limit
@@ -170,8 +170,30 @@ func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request)
 		results = results[:limit]
 	}
 
+	type resultPreview struct {
+		ID        int64  `json:"id"`
+		ConfigID  int64  `json:"config_id"`
+		Status    string `json:"status"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+		Title     string `json:"title"`
+		ItemCount int64  `json:"item_count"`
+	}
+	items := make([]resultPreview, len(results))
+	for i, r := range results {
+		items[i] = resultPreview{
+			ID:        r.ID,
+			ConfigID:  r.ConfigID,
+			Status:    r.Status,
+			CreatedAt: r.CreatedAt.Format(time.RFC3339),
+			UpdatedAt: r.UpdatedAt.Format(time.RFC3339),
+			Title:     r.Title,
+			ItemCount: r.ItemCount,
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"results":  results,
+		"results":  items,
 		"has_more": hasMore,
 	})
 }

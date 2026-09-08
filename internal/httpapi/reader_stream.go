@@ -273,7 +273,7 @@ func (s *Server) streamEntries(r *http.Request, userID int64, stream string, old
 		if err != nil {
 			return nil, false, err
 		}
-		entries := digestStreamEntries(results)
+		entries := digestPreviewStreamEntries(results)
 		sortStreamEntries(entries, oldestFirst)
 		page, more := truncatePage(entries, offset, limit, window)
 		return page, more, nil
@@ -341,6 +341,17 @@ func itemStreamEntries(items []store.Item) []streamEntry {
 }
 
 func digestStreamEntries(results []store.DigestResult) []streamEntry {
+	entries := make([]streamEntry, 0, len(results))
+	for _, dr := range results {
+		entries = append(entries, streamEntry{
+			id:        digestItemStreamID(dr.ID),
+			timestamp: dr.CreatedAt,
+		})
+	}
+	return entries
+}
+
+func digestPreviewStreamEntries(results []store.ListDigestResultsByConfigPaginatedRow) []streamEntry {
 	entries := make([]streamEntry, 0, len(results))
 	for _, dr := range results {
 		entries = append(entries, streamEntry{

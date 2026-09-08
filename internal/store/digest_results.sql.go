@@ -427,7 +427,12 @@ func (q *Queries) ListDigestResultsByConfig(ctx context.Context, arg ListDigestR
 }
 
 const listDigestResultsByConfigOldestFirstPaginated = `-- name: ListDigestResultsByConfigOldestFirstPaginated :many
-SELECT id, user_id, config_id, config_snapshot, content, status, created_at, updated_at FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at ASC LIMIT ? OFFSET ?
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
+FROM digest_results dr
+WHERE config_id = ? AND user_id = ? ORDER BY created_at ASC LIMIT ? OFFSET ?
 `
 
 type ListDigestResultsByConfigOldestFirstPaginatedParams struct {
@@ -437,7 +442,18 @@ type ListDigestResultsByConfigOldestFirstPaginatedParams struct {
 	Offset   int64 `json:"offset"`
 }
 
-func (q *Queries) ListDigestResultsByConfigOldestFirstPaginated(ctx context.Context, arg ListDigestResultsByConfigOldestFirstPaginatedParams) ([]DigestResult, error) {
+type ListDigestResultsByConfigOldestFirstPaginatedRow struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	ConfigID  int64     `json:"config_id"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Title     string    `json:"title"`
+	ItemCount int64     `json:"item_count"`
+}
+
+func (q *Queries) ListDigestResultsByConfigOldestFirstPaginated(ctx context.Context, arg ListDigestResultsByConfigOldestFirstPaginatedParams) ([]ListDigestResultsByConfigOldestFirstPaginatedRow, error) {
 	rows, err := q.db.QueryContext(ctx, listDigestResultsByConfigOldestFirstPaginated,
 		arg.ConfigID,
 		arg.UserID,
@@ -448,18 +464,18 @@ func (q *Queries) ListDigestResultsByConfigOldestFirstPaginated(ctx context.Cont
 		return nil, err
 	}
 	defer rows.Close()
-	items := []DigestResult{}
+	items := []ListDigestResultsByConfigOldestFirstPaginatedRow{}
 	for rows.Next() {
-		var i DigestResult
+		var i ListDigestResultsByConfigOldestFirstPaginatedRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
 			&i.ConfigID,
-			&i.ConfigSnapshot,
-			&i.Content,
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Title,
+			&i.ItemCount,
 		); err != nil {
 			return nil, err
 		}
@@ -475,7 +491,12 @@ func (q *Queries) ListDigestResultsByConfigOldestFirstPaginated(ctx context.Cont
 }
 
 const listDigestResultsByConfigPaginated = `-- name: ListDigestResultsByConfigPaginated :many
-SELECT id, user_id, config_id, config_snapshot, content, status, created_at, updated_at FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
+FROM digest_results dr
+WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
 
 type ListDigestResultsByConfigPaginatedParams struct {
@@ -485,7 +506,20 @@ type ListDigestResultsByConfigPaginatedParams struct {
 	Offset   int64 `json:"offset"`
 }
 
-func (q *Queries) ListDigestResultsByConfigPaginated(ctx context.Context, arg ListDigestResultsByConfigPaginatedParams) ([]DigestResult, error) {
+type ListDigestResultsByConfigPaginatedRow struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	ConfigID  int64     `json:"config_id"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Title     string    `json:"title"`
+	ItemCount int64     `json:"item_count"`
+}
+
+// Preview query for the middle pane: excludes heavy content/config_snapshot,
+// pre-computes title and item_count from the stored JSON.
+func (q *Queries) ListDigestResultsByConfigPaginated(ctx context.Context, arg ListDigestResultsByConfigPaginatedParams) ([]ListDigestResultsByConfigPaginatedRow, error) {
 	rows, err := q.db.QueryContext(ctx, listDigestResultsByConfigPaginated,
 		arg.ConfigID,
 		arg.UserID,
@@ -496,18 +530,18 @@ func (q *Queries) ListDigestResultsByConfigPaginated(ctx context.Context, arg Li
 		return nil, err
 	}
 	defer rows.Close()
-	items := []DigestResult{}
+	items := []ListDigestResultsByConfigPaginatedRow{}
 	for rows.Next() {
-		var i DigestResult
+		var i ListDigestResultsByConfigPaginatedRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
 			&i.ConfigID,
-			&i.ConfigSnapshot,
-			&i.Content,
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Title,
+			&i.ItemCount,
 		); err != nil {
 			return nil, err
 		}
