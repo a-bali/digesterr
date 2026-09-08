@@ -276,8 +276,8 @@ async function fetchSavedItems() {
   savedItems.value = acc
 }
 
-function onSelectDigestResult(result: { id: number }) {
-  router.push(`/digests/${digestStore.activeConfigId}/${result.id}`)
+function onSelectDigestResult(result: { id: number; config_id: number }) {
+  router.push(`/digests/${result.config_id}/${result.id}`)
 }
 
 // Opening help via the button leaves focus on it; when the dialog closes,
