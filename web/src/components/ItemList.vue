@@ -221,7 +221,7 @@ function commentsTitle(val: number): string {
         <span class="text-[10px] text-muted-foreground/70 shrink-0 mt-0.5" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
       </div>
       <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0 pr-16">{{ stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</p>
-      <div v-if="feedStore.isMultiView && feedNameFor(item)" class="flex items-center gap-1 mt-1">
+      <div v-if="feedStore.isMultiView && feedNameFor(item)" class="flex items-center gap-1 mt-2">
         <img v-if="feedTypeIcon(item.feed_type)" :src="feedTypeIcon(item.feed_type)" class="size-3 shrink-0 rounded-sm" @error="($event.target as HTMLImageElement).style.display = 'none'" />
         <span class="text-[10px] text-accent/70 truncate">{{ feedNameFor(item) }}</span>
       </div>

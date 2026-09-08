@@ -70,6 +70,11 @@ function isSelected(result: DigestResult): boolean {
   return result.id === digestStore.selectedResult?.id
 }
 
+const feedLabel = computed(() => {
+  if (props.showingAll) return 'All Digests'
+  return digestStore.activeConfig?.name ?? null
+})
+
 const showMarkAllRead = computed(() =>
   visibleResults.value.some(r => r.status !== 'read')
 )
@@ -92,6 +97,7 @@ function onSelect(e: MouseEvent, result: DigestResult) {
       :min-score="null"
       :score-supported="false"
       :item-count="visibleResults.length"
+      :feed-name="feedLabel"
       :status-options="STATUS_OPTIONS"
       @update:status-filter="digestFilter = $event"
       @update:sort-value="sortOrder = $event"
@@ -114,8 +120,11 @@ function onSelect(e: MouseEvent, result: DigestResult) {
           <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
           <div class="flex-1 min-w-0">
             <p class="text-sm font-semibold truncate">{{ resultTitle(result) }}</p>
-            <p class="text-xs text-muted-foreground truncate">{{ absoluteTime(result.created_at) }} · {{ itemCount(result) }} items<span v-if="showingAll && (result as any).config_name"> · {{ (result as any).config_name }}</span></p>
+            <p class="text-xs text-muted-foreground truncate">{{ absoluteTime(result.created_at) }} · {{ itemCount(result) }} items</p>
           </div>
+        </div>
+        <div v-if="showingAll && (result as any).config_name" class="flex items-center gap-1 mt-2">
+          <span class="text-[10px] text-accent/70 truncate">{{ (result as any).config_name }}</span>
         </div>
       </div>
     </div>
