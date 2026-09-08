@@ -363,24 +363,57 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 		limit = -1
 	}
 
-	var items []store.Item
+	// All 4 sort queries return identical columns; map to a common type.
+	type itemPreview struct {
+		ID             int64       `json:"id"`
+		Title          string      `json:"title"`
+		Status         string      `json:"status"`
+		PublishedAt    interface{} `json:"published_at"`
+		Content        string      `json:"content"`
+		ExtractContent string      `json:"extract_content"`
+		ExtractStatus  string      `json:"extract_status"`
+		Points         int64       `json:"points"`
+		CommentsCount  int64       `json:"comments_count"`
+		CommentUrl     string      `json:"comment_url"`
+	}
+	var items []itemPreview
+	var rawItems interface{}
 	switch sort {
 	case "date_asc":
-		items, err = s.queries.ListItemsByFeedSortedDateAsc(r.Context(), store.ListItemsByFeedSortedDateAscParams{
+		rawItems, err = s.queries.ListItemsByFeedSortedDateAsc(r.Context(), store.ListItemsByFeedSortedDateAscParams{
 			FeedID: id, Status: statusArg, MinScore: minScore, Limit: limit, Offset: offset,
 		})
 	case "score_desc":
-		items, err = s.queries.ListItemsByFeedSortedScoreDesc(r.Context(), store.ListItemsByFeedSortedScoreDescParams{
+		rawItems, err = s.queries.ListItemsByFeedSortedScoreDesc(r.Context(), store.ListItemsByFeedSortedScoreDescParams{
 			FeedID: id, Status: statusArg, MinScore: minScore, Limit: limit, Offset: offset,
 		})
 	case "score_asc":
-		items, err = s.queries.ListItemsByFeedSortedScoreAsc(r.Context(), store.ListItemsByFeedSortedScoreAscParams{
+		rawItems, err = s.queries.ListItemsByFeedSortedScoreAsc(r.Context(), store.ListItemsByFeedSortedScoreAscParams{
 			FeedID: id, Status: statusArg, MinScore: minScore, Limit: limit, Offset: offset,
 		})
 	default:
-		items, err = s.queries.ListItemsByFeedSortedDateDesc(r.Context(), store.ListItemsByFeedSortedDateDescParams{
+		rawItems, err = s.queries.ListItemsByFeedSortedDateDesc(r.Context(), store.ListItemsByFeedSortedDateDescParams{
 			FeedID: id, Status: statusArg, MinScore: minScore, Limit: limit, Offset: offset,
 		})
+	}
+	if err != nil {
+		writeServerError(w, "failed to list items", err)
+		return
+	}
+	// Convert the sort-specific row type to the common preview type.
+	switch rows := rawItems.(type) {
+	case []store.ListItemsByFeedSortedDateDescRow:
+		items = make([]itemPreview, len(rows))
+		for i, r := range rows { items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl} }
+	case []store.ListItemsByFeedSortedDateAscRow:
+		items = make([]itemPreview, len(rows))
+		for i, r := range rows { items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl} }
+	case []store.ListItemsByFeedSortedScoreDescRow:
+		items = make([]itemPreview, len(rows))
+		for i, r := range rows { items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl} }
+	case []store.ListItemsByFeedSortedScoreAscRow:
+		items = make([]itemPreview, len(rows))
+		for i, r := range rows { items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl} }
 	}
 	if err != nil {
 		writeServerError(w, "failed to list items", err)
@@ -404,7 +437,7 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if items == nil {
-		items = []store.Item{}
+		items = []itemPreview{}
 	}
 
 	if paginated {
@@ -511,27 +544,18 @@ func (s *Server) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 }
 
 // multiItemRow is an Item with feed metadata for multi-feed/category views.
+// Only includes columns needed for the middle pane list display.
 type multiItemRow struct {
 	ID             int64       `json:"id"`
-	FeedID         int64       `json:"feed_id"`
-	Hash           string      `json:"hash"`
 	Title          string      `json:"title"`
-	Url            string      `json:"url"`
 	Content        string      `json:"content"`
-	Author         string      `json:"author"`
 	CommentUrl     string      `json:"comment_url"`
 	Points         int64       `json:"points"`
 	CommentsCount  int64       `json:"comments_count"`
 	PublishedAt    interface{} `json:"published_at"`
 	Status         string      `json:"status"`
-	FetchedAt      interface{} `json:"fetched_at"`
-	CreatedAt      interface{} `json:"created_at"`
-	UpdatedAt      interface{} `json:"updated_at"`
-	LastEnrichedAt interface{} `json:"last_enriched_at"`
 	ExtractContent string      `json:"extract_content"`
 	ExtractStatus  string      `json:"extract_status"`
-	ExtractRetries int64       `json:"extract_retries"`
-	ExtractDate    interface{} `json:"extract_date"`
 	FeedName       string      `json:"feed_name"`
 	FeedType       string      `json:"feed_type"`
 }
@@ -651,9 +675,12 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 		orderClause = "i.published_at DESC, i.created_at DESC"
 	}
 
-	// Fetch limit+1 to detect has_more.
+	// Fetch limit+1 to detect has_more. Only select columns needed for the
+	// middle pane — excludes hash, url, author, and internal metadata.
 	queryStr := fmt.Sprintf(
-		"SELECT i.*, f.name AS feed_name, f.type AS feed_type FROM items i "+
+		"SELECT i.id, i.title, i.content, i.comment_url, i.points, i.comments_count, "+
+			"i.published_at, i.status, i.extract_content, i.extract_status, "+
+			"f.name AS feed_name, f.type AS feed_type FROM items i "+
 			"JOIN feeds f ON f.id = i.feed_id WHERE %s ORDER BY %s LIMIT ? OFFSET ?",
 		whereClause, orderClause,
 	)
@@ -691,25 +718,15 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 		}
 		item := multiItemRow{
 			ID:             colInt64(colMap["id"]),
-			FeedID:         colInt64(colMap["feed_id"]),
-			Hash:           colStr(colMap["hash"]),
 			Title:          colStr(colMap["title"]),
-			Url:            colStr(colMap["url"]),
 			Content:        colStr(colMap["content"]),
-			Author:         colStr(colMap["author"]),
 			CommentUrl:     colStr(colMap["comment_url"]),
 			Points:         colInt64(colMap["points"]),
 			CommentsCount:  colInt64(colMap["comments_count"]),
 			PublishedAt:    colMap["published_at"],
 			Status:         colStr(colMap["status"]),
-			FetchedAt:      colMap["fetched_at"],
-			CreatedAt:      colMap["created_at"],
-			UpdatedAt:      colMap["updated_at"],
-			LastEnrichedAt: colMap["last_enriched_at"],
 			ExtractContent: colStr(colMap["extract_content"]),
 			ExtractStatus:  colStr(colMap["extract_status"]),
-			ExtractRetries: colInt64(colMap["extract_retries"]),
-			ExtractDate:    colMap["extract_date"],
 			FeedName:       colStr(colMap["feed_name"]),
 			FeedType:       colStr(colMap["feed_type"]),
 		}

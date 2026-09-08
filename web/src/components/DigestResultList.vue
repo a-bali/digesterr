@@ -6,7 +6,7 @@ import Skeleton from './ui/Skeleton.vue'
 import { Circle, CircleDot, LoaderCircle, CheckCircle2 } from 'lucide-vue-next'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { absoluteTime } from '../lib/format'
-import type { DigestResult } from '../types/api'
+import type { DigestResult, DigestResultWithConfigName } from '../types/api'
 
 const props = defineProps<{
   showingAll?: boolean
@@ -34,7 +34,7 @@ const STATUS_OPTIONS: { value: FilterStatus; label: string }[] = [
   { value: 'read', label: 'Read' },
 ]
 
-const visibleResults = computed<DigestResult[]>(() => {
+const visibleResults = computed<DigestResultWithConfigName[]>(() => {
   const source = props.showingAll ? digestStore.allResults : digestStore.results
   const filtered = digestFilter.value === 'all'
     ? source
@@ -46,23 +46,12 @@ const visibleResults = computed<DigestResult[]>(() => {
 })
 
 function itemCount(result: DigestResult): number {
-  try {
-    const c = JSON.parse(result.content)
-    return (c?.highlights?.length || 0) + (c?.items?.length || 0)
-  } catch {
-    return 0
-  }
+  return (result as any).item_count ?? 0
 }
 
-// Generated digest title (LLM-produced, stored in the content JSON).
-// Falls back to the generation timestamp when absent.
 function resultTitle(result: DigestResult): string {
-  try {
-    const t = JSON.parse(result.content)?.title
-    if (typeof t === 'string' && t.trim()) return t.trim()
-  } catch {
-    // fall through to timestamp
-  }
+  const r = result as any
+  if (r.title) return r.title
   return absoluteTime(result.created_at)
 }
 
@@ -120,11 +109,11 @@ function onSelect(e: MouseEvent, result: DigestResult) {
           <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
           <div class="flex-1 min-w-0">
             <p class="text-sm font-semibold truncate">{{ resultTitle(result) }}</p>
-            <p class="text-xs text-muted-foreground truncate">{{ absoluteTime(result.created_at) }} · {{ itemCount(result) }} items</p>
+            <p class="text-xs text-muted-foreground truncate">{{ absoluteTime(result.created_at) }} · {{ result.item_count }} items</p>
           </div>
         </div>
-        <div v-if="showingAll && (result as any).config_name" class="flex items-center justify-between mt-2">
-          <span class="text-[10px] text-accent/70 truncate">{{ (result as any).config_name }}</span>
+        <div v-if="showingAll && result.config_name" class="flex items-center justify-between mt-2">
+          <span class="text-[10px] text-accent/70 truncate">{{ result.config_name }}</span>
         </div>
       </div>
     </div>

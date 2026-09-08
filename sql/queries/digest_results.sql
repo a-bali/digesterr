@@ -74,7 +74,13 @@ ORDER BY points DESC
 LIMIT ?;
 
 -- name: ListAllDigestResultsByUser :many
-SELECT dr.*, dc.name AS config_name
+-- Preview query for the middle pane: excludes heavy content/config_snapshot,
+-- pre-computes title and item_count from the stored JSON.
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       dc.name AS config_name,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
 FROM digest_results dr
 JOIN digest_configs dc ON dc.id = dr.config_id
 WHERE dr.user_id = ?

@@ -417,29 +417,27 @@ func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Reque
 		results = []store.ListAllDigestResultsByUserRow{}
 	}
 
-	type resultWithConfigName struct {
-		ID             int64  `json:"id"`
-		UserID         int64  `json:"user_id"`
-		ConfigID       int64  `json:"config_id"`
-		ConfigSnapshot string `json:"config_snapshot"`
-		Content        string `json:"content"`
-		Status         string `json:"status"`
-		CreatedAt      string `json:"created_at"`
-		UpdatedAt      string `json:"updated_at"`
-		ConfigName     string `json:"config_name"`
+	type resultPreview struct {
+		ID        int64  `json:"id"`
+		ConfigID  int64  `json:"config_id"`
+		Status    string `json:"status"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+		ConfigName string `json:"config_name"`
+		Title     string `json:"title"`
+		ItemCount int64  `json:"item_count"`
 	}
-	items := make([]resultWithConfigName, len(results))
+	items := make([]resultPreview, len(results))
 	for i, r := range results {
-		items[i] = resultWithConfigName{
-			ID:             r.ID,
-			UserID:         r.UserID,
-			ConfigID:       r.ConfigID,
-			ConfigSnapshot: r.ConfigSnapshot,
-			Content:        r.Content,
-			Status:         r.Status,
-			CreatedAt:      r.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:      r.UpdatedAt.Format(time.RFC3339),
-			ConfigName:     r.ConfigName,
+		items[i] = resultPreview{
+			ID:         r.ID,
+			ConfigID:   r.ConfigID,
+			Status:     r.Status,
+			CreatedAt:  r.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:  r.UpdatedAt.Format(time.RFC3339),
+			ConfigName: r.ConfigName,
+			Title:      r.Title,
+			ItemCount:  r.ItemCount,
 		}
 	}
 

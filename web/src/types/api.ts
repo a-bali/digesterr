@@ -26,25 +26,25 @@ export interface Feed {
 
 export interface Item {
   id: number
-  feed_id: number
-  hash: string
+  feed_id?: number
+  hash?: string
   title: string
-  url: string
+  url?: string
   content: string
-  author: string
+  author?: string
   comment_url: string
   points: number
   comments_count: number
   published_at: string | null
   status: 'unread' | 'read' | 'digested' | 'saved'
-  fetched_at: string
-  created_at: string
-  updated_at: string
-  last_enriched_at: string | null
+  fetched_at?: string
+  created_at?: string
+  updated_at?: string
+  last_enriched_at?: string | null
   extract_content: string
   extract_status: string
-  extract_retries: number
-  extract_date: string | null
+  extract_retries?: number
+  extract_date?: string | null
 }
 
 export interface ItemComment {
@@ -85,6 +85,8 @@ export interface DigestResult {
 
 export interface DigestResultWithConfigName extends DigestResult {
   config_name: string
+  title: string
+  item_count: number
 }
 
 export interface AllDigestResultsResponse {

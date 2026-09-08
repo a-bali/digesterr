@@ -39,8 +39,10 @@ function makeResult(overrides: Partial<DigestResult> = {}): DigestResult {
     status: 'unread',
     created_at: '2026-08-13T08:00:00Z',
     updated_at: '2026-08-13T08:00:00Z',
+    title: 'Test Digest',
+    item_count: 1,
     ...overrides,
-  }
+  } as DigestResult
 }
 
 function mountList() {

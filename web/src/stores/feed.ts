@@ -313,8 +313,15 @@ export const useFeedStore = defineStore('feed', () => {
     await loadPage(activeFeedId.value, false)
   }
 
-  function selectItem(item: Item) {
+  async function selectItem(item: Item) {
+    // Set preview immediately so the content pane renders while we fetch.
     selectedItem.value = item
+    try {
+      const full = await itemApi.getItem(item.id)
+      selectedItem.value = full
+    } catch {
+      // Preview data stays — already set above.
+    }
   }
 
   function changeFilter(f: typeof filter.value) {

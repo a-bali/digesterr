@@ -201,7 +201,11 @@ func (q *Queries) GetLatestDigestResult(ctx context.Context, arg GetLatestDigest
 }
 
 const listAllDigestResultsByUser = `-- name: ListAllDigestResultsByUser :many
-SELECT dr.id, dr.user_id, dr.config_id, dr.config_snapshot, dr.content, dr.status, dr.created_at, dr.updated_at, dc.name AS config_name
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       dc.name AS config_name,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
 FROM digest_results dr
 JOIN digest_configs dc ON dc.id = dr.config_id
 WHERE dr.user_id = ?
@@ -216,17 +220,19 @@ type ListAllDigestResultsByUserParams struct {
 }
 
 type ListAllDigestResultsByUserRow struct {
-	ID             int64     `json:"id"`
-	UserID         int64     `json:"user_id"`
-	ConfigID       int64     `json:"config_id"`
-	ConfigSnapshot string    `json:"config_snapshot"`
-	Content        string    `json:"content"`
-	Status         string    `json:"status"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	ConfigName     string    `json:"config_name"`
+	ID         int64     `json:"id"`
+	UserID     int64     `json:"user_id"`
+	ConfigID   int64     `json:"config_id"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	ConfigName string    `json:"config_name"`
+	Title      string    `json:"title"`
+	ItemCount  int64     `json:"item_count"`
 }
 
+// Preview query for the middle pane: excludes heavy content/config_snapshot,
+// pre-computes title and item_count from the stored JSON.
 func (q *Queries) ListAllDigestResultsByUser(ctx context.Context, arg ListAllDigestResultsByUserParams) ([]ListAllDigestResultsByUserRow, error) {
 	rows, err := q.db.QueryContext(ctx, listAllDigestResultsByUser, arg.UserID, arg.Limit, arg.Offset)
 	if err != nil {
@@ -240,12 +246,12 @@ func (q *Queries) ListAllDigestResultsByUser(ctx context.Context, arg ListAllDig
 			&i.ID,
 			&i.UserID,
 			&i.ConfigID,
-			&i.ConfigSnapshot,
-			&i.Content,
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ConfigName,
+			&i.Title,
+			&i.ItemCount,
 		); err != nil {
 			return nil, err
 		}
