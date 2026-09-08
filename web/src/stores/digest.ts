@@ -273,8 +273,18 @@ export const useDigestStore = defineStore('digest', () => {
   async function updateResultStatus(resultId: number, status: string) {
     try {
       const updated = normalize(await digestApi.updateResultStatus(resultId, status))
+      // PATCH returns full content but no title/item_count (those are
+      // computed by the preview query). Derive them so the middle pane
+      // keeps showing the title after status updates.
+      try {
+        const c = JSON.parse(updated.content)
+        ;(updated as any).title = c?.title ?? ''
+        ;(updated as any).item_count = (c?.highlights?.length ?? 0) + (c?.items?.length ?? 0)
+      } catch { /* content unavailable or invalid */ }
       const idx = results.value.findIndex(r => r.id === resultId)
       if (idx !== -1) results.value[idx] = updated
+      const aidx = allResults.value.findIndex(r => r.id === resultId)
+      if (aidx !== -1) (allResults.value[aidx] as any) = { ...allResults.value[aidx], ...updated }
       if (selectedResult.value?.id === resultId) selectedResult.value = updated
       fetchUnreadCounts()
     } catch (e) {
