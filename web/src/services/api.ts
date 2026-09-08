@@ -128,6 +128,10 @@ export const feedApi = {
     api<FeedItemsResponse>(`/feeds/${id}/items${qs({ status: opts?.status, limit: opts?.limit, offset: opts?.offset, min_score: opts?.min_score, sort: opts?.sort })}`),
   fetch: (id: number) => api<{ message: string }>(`/feeds/${id}/fetch`, { method: 'POST' }),
   markRead: (id: number) => api<{ message: string }>(`/feeds/${id}/mark-read`, { method: 'POST' }),
+  markReadAll: (category?: string) => api<{ message: string }>('/mark-read', {
+    method: 'POST',
+    body: JSON.stringify(category ? { category } : {}),
+  }),
   unreadCounts: () => api<Record<number, number>>('/unread-counts'),
   multiItems: (opts: { feed_ids?: number[]; category?: string; status?: string; limit?: number; offset?: number; min_score?: number; sort?: string }) => {
     const params: Record<string, string | number | undefined> = {
@@ -169,6 +173,10 @@ export const digestApi = {
   unreadCounts: () => api<Record<number, number>>('/digest-unread-counts'),
   listAllResults: (opts?: { limit?: number; offset?: number }) =>
     api<AllDigestResultsResponse>(`/digest-results${qs({ limit: opts?.limit, offset: opts?.offset })}`),
+  markAllRead: (configId?: number) => api<{ message: string }>('/digest-results/mark-read', {
+    method: 'POST',
+    body: JSON.stringify(configId ? { config_id: configId } : {}),
+  }),
 }
 
 export const logsApi = {

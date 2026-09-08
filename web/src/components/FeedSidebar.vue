@@ -9,7 +9,7 @@ import { toastError } from '../lib/toast'
 import { absoluteTime } from '../lib/format'
 import type { DigestConfig, Feed } from '../types/api'
 import { useRoute } from 'vue-router'
-import { BookmarkCheck, Plus, MessageSquare, Rss, Settings, Sparkles, ChevronDown } from 'lucide-vue-next'
+import { BookmarkCheck, Plus, MessageSquare, Rss, Settings, Sparkles, ChevronDown, Check } from 'lucide-vue-next'
 import FeedRow from './FeedRow.vue'
 import FeedDialog from './FeedDialog.vue'
 import DigestDialog from './DigestDialog.vue'
@@ -64,6 +64,16 @@ async function markFeedRead(id: number) {
     toast.success('Feed marked read')
   } catch (e: any) {
     toastError(e, 'Failed to mark feed read')
+  }
+}
+
+async function markSectionRead(category?: string) {
+  try {
+    await feedStore.markAllRead(category)
+    await feedStore.fetchFeeds()
+    toast.success(category ? `"${category}" marked read` : 'All feeds marked read')
+  } catch (e: any) {
+    toastError(e, 'Failed to mark read')
   }
 }
 
@@ -243,7 +253,7 @@ const categoryUnreadCounts = computed(() => {
     </button>
 
     <!-- Digests -->
-    <div class="flex items-center justify-between mb-2 px-2">
+    <div class="group/section flex items-center justify-between mb-2 px-2">
       <button
         class="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase rounded-md px-2 py-1.5 hover:bg-accent/10 transition-colors cursor-pointer w-full"
         :class="{ 'text-accent bg-accent/10': digestStore.showingAllDigests }"
@@ -257,6 +267,14 @@ const categoryUnreadCounts = computed(() => {
           class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground"
           :title="`${totalDigestUnread} unread across ${digestStore.configs.length} digest config${digestStore.configs.length === 1 ? '' : 's'}`"
         >{{ totalDigestUnread }}</span>
+      </button>
+      <button
+        v-if="totalDigestUnread > 0"
+        class="shrink-0 opacity-0 group-hover/section:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20"
+        title="Mark all digests as read"
+        @click="digestStore.markAllRead()"
+      >
+        <Check class="size-3" />
       </button>
       <button class="p-1 rounded hover:bg-accent/20" title="Create digest config" @click="showAddDigest = true">
         <Plus class="size-3.5" />
@@ -282,6 +300,14 @@ const categoryUnreadCounts = computed(() => {
           <span v-if="(digestStore.unreadCounts[cfg.id] ?? 0) > 0" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-auto">{{ digestStore.unreadCounts[cfg.id] }}</span>
         </div>
         <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity">
+          <button
+            v-if="(digestStore.unreadCounts[cfg.id] ?? 0) > 0"
+            class="p-1 rounded hover:bg-accent/20"
+            title="Mark digest as read"
+            @click.stop="digestStore.markAllRead(cfg.id)"
+          >
+            <Check class="size-3" />
+          </button>
           <button class="p-1 rounded hover:bg-accent/20" title="Settings" @click.stop="editingDigest = cfg; showEditDigest = true">
             <Settings class="size-3" />
           </button>
@@ -293,7 +319,7 @@ const categoryUnreadCounts = computed(() => {
     </div>
 
     <!-- Feeds -->
-    <div class="flex items-center justify-between mb-2 px-2">
+    <div class="group/section flex items-center justify-between mb-2 px-2">
       <button
         class="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase rounded-md px-2 py-1.5 hover:bg-accent/10 transition-colors cursor-pointer w-full"
         :class="{ 'text-accent bg-accent/10': feedStore.activeSection === 'feeds' }"
@@ -307,6 +333,14 @@ const categoryUnreadCounts = computed(() => {
           class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground"
           :title="`${totalFeedUnread} unread across ${feedStore.feeds.length} feed${feedStore.feeds.length === 1 ? '' : 's'}`"
         >{{ totalFeedUnread }}</span>
+      </button>
+      <button
+        v-if="totalFeedUnread > 0"
+        class="shrink-0 opacity-0 group-hover/section:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20"
+        title="Mark all feeds as read"
+        @click="markSectionRead()"
+      >
+        <Check class="size-3" />
       </button>
       <button class="p-1 rounded hover:bg-accent/20" title="Add feed" @click="showAddFeed = true">
         <Plus class="size-3.5" />
@@ -325,20 +359,30 @@ const categoryUnreadCounts = computed(() => {
     </div>
 
     <div v-for="catName in sortedCategoryNames" :key="catName" class="mb-3 pl-3">
-      <button
-        class="flex w-full items-center justify-between text-[10px] font-semibold uppercase mb-1 transition-colors px-2 py-1.5 rounded-md hover:bg-accent/10 cursor-pointer"
-        :class="feedStore.activeCategory === catName ? 'text-accent bg-accent/10' : 'text-muted-foreground hover:text-foreground'"
-        @click="emit('selectCategory', catName)"
-      >
-        <span class="flex items-center gap-1.5">
-          <ChevronDown class="size-3 transition-transform" :class="collapsedCategories.has(catName) ? '-rotate-90' : ''" @click.stop="toggleCategory(catName)" />
-          {{ catName }}
-        </span>
-        <span
+      <div class="group/cat flex items-center justify-between">
+        <button
+          class="flex w-full items-center justify-between text-[10px] font-semibold uppercase mb-1 transition-colors px-2 py-1.5 rounded-md hover:bg-accent/10 cursor-pointer"
+          :class="feedStore.activeCategory === catName ? 'text-accent bg-accent/10' : 'text-muted-foreground hover:text-foreground'"
+          @click="emit('selectCategory', catName)"
+        >
+          <span class="flex items-center gap-1.5">
+            <ChevronDown class="size-3 transition-transform" :class="collapsedCategories.has(catName) ? '-rotate-90' : ''" @click.stop="toggleCategory(catName)" />
+            {{ catName }}
+          </span>
+          <span
+            v-if="(categoryUnreadCounts[catName] ?? 0) > 0"
+            class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground"
+          >{{ categoryUnreadCounts[catName] }}</span>
+        </button>
+        <button
           v-if="(categoryUnreadCounts[catName] ?? 0) > 0"
-          class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground"
-        >{{ categoryUnreadCounts[catName] }}</span>
-      </button>
+          class="shrink-0 opacity-0 group-hover/cat:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20"
+          title="Mark category as read"
+          @click="markSectionRead(catName)"
+        >
+          <Check class="size-3" />
+        </button>
+      </div>
       <template v-if="!collapsedCategories.has(catName)">
         <div class="pl-3">
           <FeedRow

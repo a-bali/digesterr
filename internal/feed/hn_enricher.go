@@ -290,6 +290,14 @@ func flattenComments(children []algoliaComment, depth int, out *[]Comment) {
 }
 
 func stripHTMLTags(s string) string {
+	// Replace block-level tags with newlines before stripping the rest,
+	// so paragraph and line-break structure is preserved as plain text.
+	s = strings.ReplaceAll(s, "<br>", "\n")
+	s = strings.ReplaceAll(s, "<br/>", "\n")
+	s = strings.ReplaceAll(s, "<br />", "\n")
+	s = strings.ReplaceAll(s, "<p>", "\n")
+	s = strings.ReplaceAll(s, "</p>", "\n")
+
 	var buf strings.Builder
 	inTag := false
 	for _, r := range s {
@@ -305,7 +313,12 @@ func stripHTMLTags(s string) string {
 			buf.WriteRune(r)
 		}
 	}
-	return html.UnescapeString(strings.TrimSpace(buf.String()))
+	// Collapse 3+ consecutive newlines to double-newline.
+	result := buf.String()
+	for strings.Contains(result, "\n\n\n") {
+		result = strings.ReplaceAll(result, "\n\n\n", "\n\n")
+	}
+	return html.UnescapeString(strings.TrimSpace(result))
 }
 
 func extractHNID(commentURL, itemURL string) int {

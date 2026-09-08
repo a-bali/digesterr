@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useDigestStore } from '../stores/digest'
 import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
-import { Circle, CircleDot, LoaderCircle } from 'lucide-vue-next'
+import { Circle, CircleDot, LoaderCircle, CheckCircle2 } from 'lucide-vue-next'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { absoluteTime } from '../lib/format'
 import type { DigestResult } from '../types/api'
@@ -12,7 +12,7 @@ const props = defineProps<{
   showingAll?: boolean
 }>()
 
-const emit = defineEmits<{ (e: 'select', result: DigestResult): void }>()
+const emit = defineEmits<{ (e: 'select', result: DigestResult): void; (e: 'markAllRead'): void }>()
 
 const digestStore = useDigestStore()
 
@@ -70,6 +70,10 @@ function isSelected(result: DigestResult): boolean {
   return result.id === digestStore.selectedResult?.id
 }
 
+const showMarkAllRead = computed(() =>
+  visibleResults.value.some(r => r.status !== 'read')
+)
+
 function onSelect(e: MouseEvent, result: DigestResult) {
   // Blur on mouse click so no focus outline lingers after selection moves.
   ;(e.currentTarget as HTMLElement).blur()
@@ -114,6 +118,16 @@ function onSelect(e: MouseEvent, result: DigestResult) {
           </div>
         </div>
       </div>
+    </div>
+    <!-- End-of-list mark-all-read button -->
+    <div v-if="showMarkAllRead" class="px-4 py-6 flex items-center justify-center">
+      <button
+        class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-accent/20 bg-accent/5 text-accent text-sm font-medium hover:bg-accent/10 active:bg-accent/20 transition-colors"
+        @click="emit('markAllRead')"
+      >
+        <CheckCircle2 class="size-4" />
+        Mark all as read
+      </button>
     </div>
   </div>
 </template>

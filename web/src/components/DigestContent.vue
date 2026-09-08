@@ -208,8 +208,8 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
                     <span class="font-medium text-muted-foreground">{{ c.author }}</span>
                     <span v-if="c.points != null" class="ml-1 text-accent text-[10px]">[{{ c.points }}]</span>
                     <span class="mx-1 text-muted-foreground/40">–</span>
-                    <a v-if="c.url" :href="c.url" target="_blank" class="text-foreground/80 hover:text-accent">{{ c.text }}</a>
-                    <span v-else class="text-foreground/80">{{ c.text }}</span>
+                    <a v-if="c.url" :href="c.url" target="_blank" class="text-foreground/80 hover:text-accent whitespace-pre-wrap">{{ c.text }}</a>
+                    <span v-else class="text-foreground/80 whitespace-pre-wrap">{{ c.text }}</span>
                   </div>
                 </div>
               </div>

@@ -58,7 +58,7 @@ const SCORE_MAP_REV: Record<string, FilterSort> = { date_desc: 'newest', date_as
 const scoreSupported = computed(() => !props.showingSaved && feedStore.supportsScore)
 
 const showMarkAllRead = computed(() =>
-  feedStore.activeFeedId != null && !props.showingSaved && !feedStore.loadingMore && (feedStore.unreadCounts[feedStore.activeFeedId] ?? 0) > 0,
+  (feedStore.activeFeedId != null || feedStore.isMultiView) && !props.showingSaved && !feedStore.loadingMore && feedStore.totalItems > 0,
 )
 
 function onFilterStatus(v: FilterStatus) { feedStore.changeFilter(v as FeedStatusFilter) }
@@ -248,10 +248,8 @@ function commentsTitle(val: number): string {
     <div v-if="!props.showingSaved && feedStore.loadingMore" class="p-3">
       <Skeleton class="h-12" />
     </div>
-    <!-- End-of-list mark-all-read button: visible only when the active feed
-         has unread items, so the user can clear the feed after scrolling
-         through it. Positioned inside the scroll flow so it scrolls with
-         the list. -->
+    </template>
+    <!-- End-of-list mark-all-read button -->
     <div v-if="showMarkAllRead" class="px-4 py-6 flex items-center justify-center">
       <button
         class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-accent/20 bg-accent/5 text-accent text-sm font-medium hover:bg-accent/10 active:bg-accent/20 transition-colors"
@@ -261,6 +259,5 @@ function commentsTitle(val: number): string {
         Mark all as read
       </button>
     </div>
-    </template>
   </div>
 </template>

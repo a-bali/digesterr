@@ -125,6 +125,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	mux.HandleFunc("GET /api/feeds/{id}/items", s.requireAuth(s.handleListFeedItems))
 	mux.HandleFunc("POST /api/feeds/{id}/fetch", s.requireAuth(s.handleFetchFeed))
 	mux.HandleFunc("POST /api/feeds/{id}/mark-read", s.requireAuth(s.handleMarkFeedRead))
+	mux.HandleFunc("POST /api/mark-read", s.requireAuth(s.handleMarkRead))
 
 	mux.HandleFunc("GET /api/unread-counts", s.requireAuth(s.handleUnreadCounts))
 	mux.HandleFunc("GET /api/digest-unread-counts", s.requireAuth(s.handleDigestUnreadCounts))
@@ -149,6 +150,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	mux.HandleFunc("PATCH /api/digest-results/{id}", s.requireAuth(s.handleUpdateDigestResultStatus))
 	mux.HandleFunc("DELETE /api/digest-results/{id}", s.requireAuth(s.handleDeleteDigestResult))
 	mux.HandleFunc("GET /api/digest-results/{id}/items", s.requireAuth(s.handleListDigestResultItemsWithData))
+	mux.HandleFunc("POST /api/digest-results/mark-read", s.requireAuth(s.handleMarkDigestResultsRead))
 
 	mux.HandleFunc("GET /api/logs", s.requireAuth(s.handleListLogs))
 	mux.HandleFunc("GET /api/metrics", s.requireAuth(s.handleGetMetrics))

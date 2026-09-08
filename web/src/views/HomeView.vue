@@ -78,7 +78,11 @@ useKeyboardShortcuts({
     else feedStore.updateItemStatus(item, 'saved')
   },
   markAllRead: () => {
-    if (feedStore.activeFeedId) requestMarkFeedRead(feedStore.activeFeedId)
+    if (feedStore.activeFeedId) {
+      requestMarkFeedRead(feedStore.activeFeedId)
+    } else if (feedStore.isMultiView) {
+      feedStore.markAllRead(feedStore.activeCategory ?? undefined)
+    }
   },
   markAllReadDialogOpen,
   toggleShowRead: () => {
@@ -385,7 +389,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
 
           <SplitterPanel :default-size="30" :min-size="20" :max-size="50">
-            <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="border-r" @select="onSelectDigestResult" />
+            <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="border-r" @select="onSelectDigestResult" @mark-all-read="digestStore.markAllRead()" />
             <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="requestMarkFeedRead(feedStore.activeFeedId!)" />
           </SplitterPanel>
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
@@ -424,7 +428,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
             class="absolute inset-0 flex flex-col transition-transform duration-200"
             :class="!isTablet && showContentPane ? '-translate-x-full pointer-events-none' : 'static w-full h-full'"
           >
-              <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="flex-1 min-h-0" @select="onSelectDigestResult" />
+              <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="flex-1 min-h-0" @select="onSelectDigestResult" @mark-all-read="digestStore.markAllRead()" />
               <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="requestMarkFeedRead(feedStore.activeFeedId!)" />
           </div>
         </div>

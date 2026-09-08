@@ -482,6 +482,34 @@ func (s *Server) handleMarkFeedRead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "feed marked read"})
 }
 
+// handleMarkRead marks all unread items as read for the authenticated user,
+// scoped to an optional category. Used by the multi-view mark-all-read action.
+func (s *Server) handleMarkRead(w http.ResponseWriter, r *http.Request) {
+	userID := authedUserID(r)
+	var body struct {
+		Category *string `json:"category"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	ctx := r.Context()
+	if body.Category != nil && *body.Category != "" {
+		if err := s.queries.MarkCategoryItemsRead(ctx, store.MarkCategoryItemsReadParams{
+			UserID:   userID,
+			Category: *body.Category,
+		}); err != nil {
+			writeServerError(w, "failed to mark items read", err)
+			return
+		}
+	} else {
+		if err := s.queries.MarkAllUserItemsRead(ctx, userID); err != nil {
+			writeServerError(w, "failed to mark items read", err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "items marked read"})
+}
+
 // multiItemRow is an Item with feed metadata for multi-feed/category views.
 type multiItemRow struct {
 	ID             int64       `json:"id"`
@@ -698,7 +726,7 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 	}
 
 	var total int64
-	if hasMore || offset > 0 {
+	{
 		// Count total.
 		countQuery := fmt.Sprintf(
 			"SELECT CAST(COUNT(*) AS INTEGER) FROM items i JOIN feeds f ON f.id = i.feed_id WHERE %s",

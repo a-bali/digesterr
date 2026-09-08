@@ -134,6 +134,11 @@ UPDATE items SET status = 'read', updated_at = DATETIME('now') WHERE feed_id = ?
 -- name: MarkAllUserItemsRead :exec
 UPDATE items SET status = 'read', updated_at = DATETIME('now') WHERE feed_id IN (SELECT id FROM feeds WHERE user_id = ?) AND status = 'unread';
 
+-- name: MarkCategoryItemsRead :exec
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE feed_id IN (SELECT id FROM feeds WHERE user_id = @user_id AND category = @category)
+  AND status = 'unread';
+
 -- name: ListItemsByUserStatus :many
 SELECT i.* FROM items i
 JOIN feeds f ON f.id = i.feed_id

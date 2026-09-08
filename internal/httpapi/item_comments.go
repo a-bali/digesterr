@@ -236,7 +236,8 @@ var bareImageURLRe = regexp.MustCompile(
 // to sized <img> tags. Other feed types get plain escaped text.
 func renderCommentText(text string, feedType string) string {
 	if feedType != "reddit" {
-		return html.EscapeString(text)
+		escaped := html.EscapeString(text)
+		return strings.ReplaceAll(escaped, "\n", "<br>")
 	}
 
 	// Phase 0: Convert Reddit's internal giphy syntax ![alt](giphy|ID) to real URLs.

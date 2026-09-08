@@ -255,6 +255,44 @@ func (s *Server) handleDeleteDigestResult(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
 }
 
+// handleMarkDigestResultsRead marks all new/unread digest results as read,
+// optionally scoped to a specific config_id.
+func (s *Server) handleMarkDigestResultsRead(w http.ResponseWriter, r *http.Request) {
+	userID := authedUserID(r)
+	var body struct {
+		ConfigID *int64 `json:"config_id"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	ctx := r.Context()
+	if body.ConfigID != nil {
+		if err := s.queries.MarkDigestConfigRead(ctx, store.MarkDigestConfigReadParams{
+			ConfigID: *body.ConfigID,
+			UserID:   userID,
+		}); err != nil {
+			writeServerError(w, "failed to mark digest results read", err)
+			return
+		}
+		// Cascade: flip digested items for this config's results.
+		_, _ = s.queries.MarkDigestConfigResultItemsRead(ctx, store.MarkDigestConfigResultItemsReadParams{
+			UserID: userID,
+			Column2: body.ConfigID,
+		})
+	} else {
+		if err := s.queries.MarkAllUserDigestResultsRead(ctx, userID); err != nil {
+			writeServerError(w, "failed to mark all digest results read", err)
+			return
+		}
+		// Cascade: flip all digested items.
+		_, _ = s.queries.MarkDigestConfigResultItemsRead(ctx, store.MarkDigestConfigResultItemsReadParams{
+			UserID: userID,
+			Column2: nil,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "digest results marked read"})
+}
+
 func (s *Server) handleGenerateDigest(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
 	configID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)

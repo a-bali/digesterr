@@ -38,22 +38,24 @@ const emit = defineEmits<{
       />
       <DialogContent
         :class="cn(
-          'fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-background p-6 shadow-lg animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
+          'fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-background shadow-lg animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 flex flex-col max-h-[90vh] p-0',
           props.contentClass,
         )"
       >
-        <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center justify-between shrink-0 px-6 pt-6 pb-2">
           <DialogTitle v-if="props.title" class="text-lg font-semibold">{{ props.title }}</DialogTitle>
           <DialogClose as-child>
-            <Button variant="ghost" size="icon" class="absolute right-4 top-4">
+            <Button variant="ghost" size="icon">
               <X class="size-4" />
             </Button>
           </DialogClose>
         </div>
-        <DialogDescription v-if="props.description" class="text-sm text-muted-foreground mb-4">
+        <DialogDescription v-if="props.description" class="shrink-0 px-6 pb-4 text-sm text-muted-foreground">
           {{ props.description }}
         </DialogDescription>
-        <slot />
+        <div class="flex-1 min-h-0 overflow-y-auto px-6 pb-6">
+          <slot />
+        </div>
       </DialogContent>
     </DialogPortal>
   </DialogRoot>

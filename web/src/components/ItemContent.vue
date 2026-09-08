@@ -99,7 +99,10 @@ function renderCommentHtml(text: string): string {
     .replace(/&amp;amp;/g, '&')
 
   // Step 3: Restore image tags.
-  return decoded.replace(/\x00IMG(\d+)\x00/g, (_, i: string) => placeholders[parseInt(i)])
+  const restored = decoded.replace(/\x00IMG(\d+)\x00/g, (_, i: string) => placeholders[parseInt(i)])
+
+  // Step 4: Convert plain-text newlines to <br> for visible line breaks.
+  return restored.replace(/\n/g, '<br>')
 }
 
 // Per-item scroll memory: reopening the SAME item restores its previous

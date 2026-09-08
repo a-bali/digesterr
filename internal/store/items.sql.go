@@ -1295,6 +1295,22 @@ func (q *Queries) MarkAllUserItemsRead(ctx context.Context, userID int64) error 
 	return err
 }
 
+const markCategoryItemsRead = `-- name: MarkCategoryItemsRead :exec
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE feed_id IN (SELECT id FROM feeds WHERE user_id = ?1 AND category = ?2)
+  AND status = 'unread'
+`
+
+type MarkCategoryItemsReadParams struct {
+	UserID   int64  `json:"user_id"`
+	Category string `json:"category"`
+}
+
+func (q *Queries) MarkCategoryItemsRead(ctx context.Context, arg MarkCategoryItemsReadParams) error {
+	_, err := q.db.ExecContext(ctx, markCategoryItemsRead, arg.UserID, arg.Category)
+	return err
+}
+
 const markFeedRead = `-- name: MarkFeedRead :exec
 UPDATE items SET status = 'read', updated_at = DATETIME('now') WHERE feed_id = ? AND status = 'unread'
 `

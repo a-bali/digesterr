@@ -347,7 +347,10 @@ export const useFeedStore = defineStore('feed', () => {
       const idx = items.value.findIndex(i => i.id === item.id)
       if (idx !== -1) items.value[idx] = updated
       const midx = multiItems.value.findIndex(i => i.id === item.id)
-      if (midx !== -1) (multiItems.value[midx] as any) = updated
+      if (midx !== -1) {
+        const old = multiItems.value[midx]
+        ;(multiItems.value[midx] as any) = { ...updated, feed_name: old.feed_name, feed_type: old.feed_type }
+      }
       if (selectedItem.value?.id === item.id) selectedItem.value = updated
       fetchUnreadCounts()
     } catch (e) {
@@ -363,10 +366,17 @@ export const useFeedStore = defineStore('feed', () => {
     }
   }
 
+  async function markAllRead(category?: string) {
+    await feedApi.markReadAll(category)
+    // Refresh items and unread counts after marking read.
+    await fetchFirstPage()
+    await fetchUnreadCounts()
+  }
+
   return {
     feeds, activeFeedId, activeCategory, activeSection, items, multiItems, selectedItem, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
     activeFeed, isMultiView, supportsScore, unreadCounts, backgroundRefreshing,
     fetchFeeds, setActiveFeed, setActiveCategory, setActiveSection, clearActiveView, fetchFirstPage, refreshItems, fetchMoreItems,
-    selectItem, updateItemStatus, changeFilter, changeSort, changeMinScore, fetchUnreadCounts,
+    selectItem, updateItemStatus, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, markAllRead,
   }
 })

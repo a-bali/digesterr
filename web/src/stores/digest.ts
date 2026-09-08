@@ -250,6 +250,17 @@ export const useDigestStore = defineStore('digest', () => {
     }
   }
 
+  async function markAllRead(configId?: number) {
+    await digestApi.markAllRead(configId)
+    await fetchUnreadCounts()
+    // Refresh results if we're in the affected view.
+    if (configId != null && activeConfigId.value === configId) {
+      await setActiveConfig(configId)
+    } else if (configId == null && showingAllDigests.value) {
+      await loadAllResults(true)
+    }
+  }
+
   async function updateResultStatus(resultId: number, status: string) {
     try {
       const updated = normalize(await digestApi.updateResultStatus(resultId, status))
@@ -269,6 +280,6 @@ export const useDigestStore = defineStore('digest', () => {
     fetchConfigs, createConfig, updateConfig, deleteConfig,
     setActiveConfig, selectResult, generateNow, markResultRead, deleteResult,
     updateResultStatus, silentRefresh, fetchUnreadCounts, fetchMoreResults,
-    loadAllResults, enterAllDigestsMode, exitAllDigestsMode,
+    loadAllResults, enterAllDigestsMode, exitAllDigestsMode, markAllRead,
   }
 })
