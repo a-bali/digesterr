@@ -109,8 +109,8 @@ function onSelect(e: MouseEvent, result: DigestResult) {
     <div v-else>
       <div v-for="result in visibleResults" :key="result.id"
         role="button" tabindex="0"
-        class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
-        :class="{ 'bg-accent/10': isSelected(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read', 'opacity-50': digestStore.loadingMore }"
+        class="w-full text-left p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
+        :class="[showingAll ? 'min-h-[5.5rem]' : 'h-20', { 'bg-accent/10': isSelected(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read', 'opacity-50': digestStore.loadingMore }]"
         @click="onSelect($event, result)"
         @keydown.enter.prevent="onSelect($event, result)"
         @keydown.space.prevent="onSelect($event, result)"
@@ -123,7 +123,7 @@ function onSelect(e: MouseEvent, result: DigestResult) {
             <p class="text-xs text-muted-foreground truncate">{{ absoluteTime(result.created_at) }} · {{ itemCount(result) }} items</p>
           </div>
         </div>
-        <div v-if="showingAll && (result as any).config_name" class="flex items-center gap-1 mt-2">
+        <div v-if="showingAll && (result as any).config_name" class="flex items-center justify-between mt-2">
           <span class="text-[10px] text-accent/70 truncate">{{ (result as any).config_name }}</span>
         </div>
       </div>

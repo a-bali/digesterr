@@ -205,8 +205,8 @@ function commentsTitle(val: number): string {
       <TransitionGroup name="item-enter" tag="div">
       <div v-for="item in displayItems" :key="item.id"
       role="button" tabindex="0"
-      class="w-full text-left h-20 p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
-      :class="{ 'bg-accent/10': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved', 'opacity-50 transition-opacity': feedStore.loading }"
+      class="w-full text-left p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
+      :class="[feedStore.isMultiView ? 'min-h-[5.5rem]' : 'h-20', { 'bg-accent/10': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved', 'opacity-50 transition-opacity': feedStore.loading }]"
       :data-selected-item="item.id === feedStore.selectedItem?.id ? '' : undefined"
       @click="onRowClick($event, item)"
       @keydown.enter.prevent="emit('selectItem', item)"
@@ -220,12 +220,35 @@ function commentsTitle(val: number): string {
         <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ item.title }}</p>
         <span class="text-[10px] text-muted-foreground/70 shrink-0 mt-0.5" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
       </div>
-      <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0 pr-16">{{ stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</p>
-      <div v-if="feedStore.isMultiView && feedNameFor(item)" class="flex items-center gap-1 mt-2">
-        <img v-if="feedTypeIcon(item.feed_type)" :src="feedTypeIcon(item.feed_type)" class="size-3 shrink-0 rounded-sm" @error="($event.target as HTMLImageElement).style.display = 'none'" />
-        <span class="text-[10px] text-accent/70 truncate">{{ feedNameFor(item) }}</span>
+      <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0" :class="feedStore.isMultiView ? '' : 'pr-16'">{{ stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</p>
+      <!-- Multi-view bottom: feed name + score/comments on same line -->
+      <div v-if="feedStore.isMultiView" class="flex items-center justify-between mt-2">
+        <div v-if="feedNameFor(item)" class="flex items-center gap-1 min-w-0">
+          <img v-if="feedTypeIcon(item.feed_type)" :src="feedTypeIcon(item.feed_type)" class="size-3 shrink-0 rounded-sm" @error="($event.target as HTMLImageElement).style.display = 'none'" />
+          <span class="text-[10px] text-accent/70 truncate">{{ feedNameFor(item) }}</span>
+        </div>
+        <span v-else />
+        <div class="flex items-center gap-2 shrink-0">
+          <Tooltip v-if="item.points > 0">
+            <template #trigger>
+              <span class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.points, scale.points_max)">
+                <ArrowUp class="size-3" /> {{ item.points }}
+              </span>
+            </template>
+            {{ pointsTitle(item.points) }}
+          </Tooltip>
+          <Tooltip v-if="item.comments_count > 0 || item.comment_url">
+            <template #trigger>
+              <span class="flex items-center gap-0.5 text-[10px]" :style="item.comments_count > 0 ? accentStyle(item.comments_count, scale.comments_max) : undefined" :class="item.comments_count > 0 ? '' : 'text-accent/30'">
+                <MessageSquare class="size-3" /> <template v-if="item.comments_count > 0">{{ item.comments_count }}</template>
+              </span>
+            </template>
+            <template v-if="item.comments_count > 0">{{ commentsTitle(item.comments_count) }}</template>
+          </Tooltip>
+        </div>
       </div>
-      <div class="absolute right-2 bottom-2 flex items-center gap-2">
+      <!-- Single-view: absolute score/comments -->
+      <div v-else class="absolute right-2 bottom-2 flex items-center gap-2">
         <Tooltip v-if="item.points > 0">
           <template #trigger>
             <span class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.points, scale.points_max)">
