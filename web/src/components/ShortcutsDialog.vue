@@ -20,6 +20,7 @@ const groups: { title: string; bindings: [string, string][] }[] = [
     bindings: [
       ['↑ / ↓', 'Previous / next feed'],
       ['PageUp / PageDown', 'Scroll content'],
+      ['c', 'Scroll to comments'],
     ],
   },
   {
