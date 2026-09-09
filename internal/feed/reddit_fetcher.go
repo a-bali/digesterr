@@ -17,7 +17,6 @@ import (
 	"golang.org/x/time/rate"
 )
 
-
 // isRedditImageURL reports whether the URL points to a Reddit-hosted image.
 func isRedditImageURL(url string) bool {
 	lower := strings.ToLower(url)
@@ -357,6 +356,31 @@ func renderRedditMarkdown(text string) string {
 
 	s := text
 
+	// Markdown tables: detect consecutive lines containing "|" where the
+	// second line is a separator (---, :---, :---:, ---:). Render as <table>
+	// before other inline processing to avoid placeholder conflicts.
+	lines := strings.Split(s, "\n")
+	var result []string
+	i := 0
+	for i < len(lines) {
+		if strings.Contains(lines[i], "|") {
+			start := i
+			for i < len(lines) && strings.Contains(lines[i], "|") {
+				i++
+			}
+			block := lines[start:i]
+			if len(block) >= 3 && isTableSeparator(block[1]) {
+				result = append(result, renderMarkdownTable(block, ph))
+			} else {
+				result = append(result, block...)
+			}
+		} else {
+			result = append(result, lines[i])
+			i++
+		}
+	}
+	s = strings.Join(result, "\n")
+
 	// Markdown images: ![alt](url)
 	reImg := regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
 	s = reImg.ReplaceAllStringFunc(s, func(m string) string {
@@ -411,4 +435,85 @@ func renderRedditMarkdown(text string) string {
 	}
 
 	return s
+}
+
+// isTableSeparator reports whether a line is a markdown table separator row
+// (e.g. "---", ":---", ":---:", "---:", "| --- | --- |").
+func isTableSeparator(line string) bool {
+	// Strip pipe characters and trim whitespace to get the cell contents.
+	cells := strings.Split(strings.TrimSpace(line), "|")
+	sepCount := 0
+	for _, c := range cells {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		// A separator cell is one or more dashes, optionally with leading/trailing colons.
+		valid := true
+		for _, ch := range c {
+			if ch != '-' && ch != ':' {
+				valid = false
+				break
+			}
+		}
+		if valid && strings.Contains(c, "-") {
+			sepCount++
+		}
+	}
+	// Need at least one separator cell and all non-empty cells must be separators.
+	return sepCount > 0
+}
+
+// splitTableRow splits a markdown table row into cell values, trimming
+// whitespace and leading/trailing pipes.
+func splitTableRow(line string) []string {
+	s := strings.TrimSpace(line)
+	s = strings.TrimPrefix(s, "|")
+	s = strings.TrimSuffix(s, "|")
+	parts := strings.Split(s, "|")
+	cells := make([]string, len(parts))
+	for i, p := range parts {
+		cells[i] = strings.TrimSpace(p)
+	}
+	return cells
+}
+
+// renderMarkdownTable renders a markdown table block (header + separator +
+// data rows) as an HTML <table>. The ph function registers HTML as a
+// placeholder so it survives the subsequent HTML-escaping pass.
+func renderMarkdownTable(block []string, ph func(string) string) string {
+	if len(block) < 3 {
+		return ""
+	}
+
+	headerCells := splitTableRow(block[0])
+	colCount := len(headerCells)
+
+	var b strings.Builder
+	b.WriteString("<table>")
+
+	// Header row.
+	b.WriteString("<thead><tr>")
+	for _, cell := range headerCells {
+		fmt.Fprintf(&b, "<th>%s</th>", cell)
+	}
+	b.WriteString("</tr></thead>")
+
+	// Data rows (skip separator at index 1).
+	b.WriteString("<tbody>")
+	for _, row := range block[2:] {
+		cells := splitTableRow(row)
+		b.WriteString("<tr>")
+		for ci := 0; ci < colCount; ci++ {
+			val := ""
+			if ci < len(cells) {
+				val = cells[ci]
+			}
+			fmt.Fprintf(&b, "<td>%s</td>", val)
+		}
+		b.WriteString("</tr>")
+	}
+	b.WriteString("</tbody></table>")
+
+	return ph(b.String())
 }

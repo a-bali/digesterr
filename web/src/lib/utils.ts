@@ -12,3 +12,12 @@ export function stripContent(content: string): string {
     .replace(/\s+/g, ' ')
     .trim()
 }
+
+// Decode HTML entities in a string (e.g. "&amp;" → "&", "&lt;" → "<").
+// Used for titles stored with raw HTML entities from feed APIs.
+export function decodeHTMLEntities(s: string): string {
+  if (!s) return ''
+  const el = document.createElement('textarea')
+  el.innerHTML = s
+  return el.value
+}

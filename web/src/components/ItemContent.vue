@@ -8,12 +8,11 @@ import Separator from './ui/Separator.vue'
 import Skeleton from './ui/Skeleton.vue'
 import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown } from 'lucide-vue-next'
 import { absoluteTime } from '../lib/format'
+import { decodeHTMLEntities } from '../lib/utils'
 import type { ItemComment } from '../types/api'
 
-// Prose styling for raw HTML content. The [&_table...] / [&_td...] rules
-// collapse Reddit's 2-column Atom-feed layout (thumbnail | body) into a
-// vertical stack so the self-text isn't squeezed into half the pane width.
-const proseClass = 'prose prose-sm dark:prose-invert max-w-none [&_a]:text-accent [&_a]:hover:underline [&_table]:block [&_table]:w-full [&_tbody]:block [&_tr]:flex [&_tr]:flex-col [&_tr]:border-0 [&_td]:block [&_td]:w-full [&_td]:p-0 [&_td]:border-0 [&_td_img]:w-full'
+// Prose styling for raw HTML content.
+const proseClass = 'prose prose-sm dark:prose-invert max-w-none [&_a]:text-accent [&_a]:hover:underline'
 
 defineProps<{
   unsaveItem: (item: any) => Promise<void>
@@ -265,9 +264,9 @@ onUnmounted(() => {
     <div v-else>
       <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank"
         class="text-xl font-semibold mb-2 block hover:text-accent transition-colors">
-        {{ feedStore.selectedItem.title }}
+        {{ decodeHTMLEntities(feedStore.selectedItem.title) }}
       </a>
-      <h1 v-else class="text-xl font-semibold mb-2">{{ feedStore.selectedItem.title }}</h1>
+      <h1 v-else class="text-xl font-semibold mb-2">{{ decodeHTMLEntities(feedStore.selectedItem.title) }}</h1>
       <div class="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mb-4">
         <span v-if="feedStore.selectedItem.author">By {{ feedStore.selectedItem.author }}</span>
         <span class="text-xs text-muted-foreground">{{ absoluteTime(feedStore.selectedItem.published_at) }}</span>

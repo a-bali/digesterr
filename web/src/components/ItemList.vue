@@ -5,7 +5,7 @@ import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
 import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, LoaderCircle, CheckCircle2 } from 'lucide-vue-next'
-import { stripContent } from '../lib/utils'
+import { stripContent, decodeHTMLEntities } from '../lib/utils'
 import { feedIcon } from '../lib/format'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { usePullToRefresh } from '../composables/usePullToRefresh'
@@ -217,7 +217,7 @@ function commentsTitle(val: number): string {
         <span v-else-if="item.status === 'digested'" class="size-3 shrink-0 mt-0.5 inline-flex items-center justify-center text-[10px] leading-none text-muted-foreground/60" title="digested">◐</span>
         <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
         <span v-if="item.status === 'saved'" class="text-accent shrink-0 mt-0.5"><Check class="size-3" /></span>
-        <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ item.title }}</p>
+        <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ decodeHTMLEntities(item.title) }}</p>
         <span class="text-[10px] text-muted-foreground/70 shrink-0 mt-0.5" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
       </div>
       <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0" :class="feedStore.isMultiView ? '' : 'pr-16'">{{ stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</p>
