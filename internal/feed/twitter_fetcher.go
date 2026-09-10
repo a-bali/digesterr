@@ -79,8 +79,41 @@ func (f *TwitterFetcher) SetCount(n int) {
 }
 
 // Enrich implements the Enricher interface via EnrichFeed (single item).
+//
+// This is the per-item fallback: it costs a full timeline fetch per item. It is
+// only reached when BulkEnrich is absent, so BulkEnrich must stay implemented.
 func (f *TwitterFetcher) Enrich(ctx context.Context, item *store.Item) error {
 	return f.EnrichFeed(ctx, item.CommentUrl, []*store.Item{item})
+}
+
+// BulkEnrich implements BulkEnricher: one screen-name resolution and one
+// timeline fetch cover the whole item set.
+//
+// This method MUST stay implemented. Poller.enrichForPoll type-asserts
+// BulkEnricher and, when the assertion fails, falls back to calling Enrich once
+// per item — and each of those calls re-downloads the entire timeline
+// (userID + UserTweets). That is 2 requests per item, which exhausted X's
+// 50-requests-per-15-minute UserTweets budget and caused the 2026-09-10 429
+// incident. TestTwitterPollRequestBudget guards this.
+func (f *TwitterFetcher) BulkEnrich(ctx context.Context, items []*store.Item) error {
+	if len(items) == 0 {
+		return nil
+	}
+	// enrichForPoll passes items rather than a feed URL, so derive the handle
+	// from the items' own source URLs.
+	screenName := extractTwitterScreenName(itemSourceURL(items))
+	if screenName == "" {
+		for _, it := range items {
+			if n := extractTwitterScreenName(it.CommentUrl); n != "" {
+				screenName = n
+				break
+			}
+		}
+	}
+	if screenName == "" {
+		return fmt.Errorf("could not extract Twitter screen name from %d items", len(items))
+	}
+	return f.enrichWithScreenName(ctx, screenName, items)
 }
 
 // EnrichFeed re-fetches a user timeline and updates scores (favorites) and
@@ -95,6 +128,12 @@ func (f *TwitterFetcher) EnrichFeed(ctx context.Context, feedURL string, items [
 	if screenName == "" {
 		return fmt.Errorf("could not extract Twitter screen name")
 	}
+	return f.enrichWithScreenName(ctx, screenName, items)
+}
+
+// enrichWithScreenName resolves the user once and applies one timeline fetch to
+// every item in the set.
+func (f *TwitterFetcher) enrichWithScreenName(ctx context.Context, screenName string, items []*store.Item) error {
 	userID, err := f.userID(ctx, screenName)
 	if err != nil {
 		return fmt.Errorf("resolving user %s: %w", screenName, err)
