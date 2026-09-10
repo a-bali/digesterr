@@ -19,6 +19,12 @@ const (
 	// Twitter GraphQL: unauthenticated cookie session, keep slow.
 	defaultTwitterRate  = 1.0
 	defaultTwitterBurst = 3
+	// twitterQuotaReserve is how much of X's observed per-endpoint budget must
+	// remain before opportunistic twitter enrichment may run. X allows 50
+	// UserTweets per 15-minute window, shared by every twitter feed, and each
+	// feed needs ~2 requests per cycle — so a reserve of 10 leaves ample room
+	// for ingestion (authoritative) plus manual retries.
+	twitterQuotaReserve = 10
 )
 
 // waitLimiter blocks until the limiter allows the next call. A nil limiter

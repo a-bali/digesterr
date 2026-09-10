@@ -573,8 +573,10 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	}
 
 	if enricher, ok := p.enrichers[feed.Type]; ok {
-		// Twitter uses feed-scoped enrichment (one timeline request
-		// for all items), handled separately from BulkEnrich.
+		// Twitter gets an extra feed-scoped pass refreshing scores for existing
+		// unread items. enrichForPoll already scored the freshly fetched
+		// candidates via BulkEnrich; this covers older items the timeline still
+		// lists. Skipped when the account's quota runs low.
 		if tf, ok := enricher.(*TwitterFetcher); ok {
 			p.enrichTwitterItems(ctx, feed, tf)
 		}
@@ -947,6 +949,17 @@ func itemHash(guid, title, url, content string) string {
 // request updates all items still visible on the timeline.
 func (p *Poller) enrichTwitterItems(ctx context.Context, feed store.Feed, tf *TwitterFetcher) {
 	logger := slog.With("feed_id", feed.ID, "feed_name", feed.Name)
+
+	// This pass only refreshes scores for items already stored, so losing it
+	// costs staleness and nothing else — whereas losing Fetch loses posts.
+	// When X's advertised budget runs low, spend what is left on ingestion.
+	if tf.BudgetLow(twitterQuotaReserve) {
+		limit, remaining, reset := tf.Quota()
+		logger.Info("skipping twitter enrichment: rate-limit budget low",
+			"limit", limit, "remaining", remaining, "reset", reset.UTC().Format(time.RFC3339))
+		return
+	}
+
 	window := p.enrichmentWindow
 	if window <= 0 {
 		window = 24 * time.Hour

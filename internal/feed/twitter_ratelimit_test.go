@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"digesterr/internal/store"
 )
 
 // newBareTwitterFetcher returns a fetcher pointed at a mock X server.
@@ -134,4 +136,79 @@ func TestTwitterBudgetLowWithoutData(t *testing.T) {
 	if NewTwitterFetcher().BudgetLow(10) {
 		t.Error("BudgetLow on a client with no quota data = true, want false")
 	}
+}
+
+// TestTwitterEnrichmentSkippedWhenBudgetLow asserts that on a low advertised
+// budget the poller still ingests (authoritative) but drops the opportunistic
+// score-refresh pass.
+func TestTwitterEnrichmentSkippedWhenBudgetLow(t *testing.T) {
+	// countUserTweets runs one full poll against a mock X server that reports
+	// the given remaining budget, and returns the UserTweets call count.
+	countUserTweets := func(remaining string) int {
+		var mu sync.Mutex
+		tweets := 0
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Rate-Limit-Limit", "50")
+			w.Header().Set("X-Rate-Limit-Remaining", remaining)
+			w.Header().Set("X-Rate-Limit-Reset",
+				strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10))
+			switch {
+			case strings.Contains(r.URL.Path, "UserByScreenName"):
+				_, _ = w.Write(userByResponse("4444"))
+			case strings.Contains(r.URL.Path, "UserTweets"):
+				mu.Lock()
+				tweets++
+				mu.Unlock()
+				_, _ = w.Write(buildTimeline(20))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Cleanup(srv.Close)
+
+		queries := setupFeedLoggingDB(t)
+		user := createFeedLoggingUser(t, queries)
+		feedObj, err := queries.CreateFeed(context.Background(), store.CreateFeedParams{
+			UserID: user.ID,
+			Type:   "twitter",
+			Name:   "Budget",
+			Url:    "https://x.com/testuser",
+			Config: "{}",
+			Status: "active",
+		})
+		if err != nil {
+			t.Fatalf("create feed: %v", err)
+		}
+
+		poller := NewPoller(queries)
+		tf := NewTwitterFetcher()
+		tf.baseURL = srv.URL
+		tf.SetCredentials("ct0-test", "auth-test")
+		tf.SetRateLimiter(nil)
+		poller.fetchers["twitter"] = tf
+		poller.enrichers["twitter"] = tf
+
+		if err := poller.PollFeed(context.Background(), feedObj); err != nil {
+			t.Fatalf("PollFeed: %v", err)
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+		return tweets
+	}
+
+	healthy := countUserTweets("40")
+	low := countUserTweets("2")
+
+	if low >= healthy {
+		t.Errorf("low-budget poll made %d UserTweets calls, healthy poll made %d — "+
+			"opportunistic enrichment should be skipped when the budget is low", low, healthy)
+	}
+	// Fetch plus candidate scoring still run: ingestion is never sacrificed.
+	if low != 2 {
+		t.Errorf("low-budget poll made %d UserTweets calls, want 2 (fetch + candidate scoring)", low)
+	}
+	t.Logf("UserTweets calls — healthy budget: %d, low budget: %d", healthy, low)
 }
