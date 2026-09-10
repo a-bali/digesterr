@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -48,7 +49,25 @@ type TwitterFetcher struct {
 	limiter   *rate.Limiter
 	userAgent string
 	count     int // tweets per request (max 20)
+
+	// mu guards the state below. NewPoller shares one TwitterFetcher across
+	// every twitter feed, so these caches are process-wide; X's budget is
+	// per-account (our cookies), which matches. Do not "fix" this into
+	// per-feed state.
+	mu      sync.Mutex
+	userIDs map[string]twitterUserIDEntry
 }
+
+// twitterUserIDEntry caches a resolved screen name -> numeric user ID.
+type twitterUserIDEntry struct {
+	id      string
+	fetched time.Time
+}
+
+// twitterUserIDTTL bounds how long a cached screen name -> user ID mapping is
+// trusted. The mapping is effectively permanent, but a TTL lets a rename or a
+// swapped account self-heal without a restart.
+const twitterUserIDTTL = 24 * time.Hour
 
 func NewTwitterFetcher() *TwitterFetcher {
 	return &TwitterFetcher{
@@ -58,6 +77,7 @@ func NewTwitterFetcher() *TwitterFetcher {
 		limiter:   rate.NewLimiter(defaultTwitterRate, defaultTwitterBurst),
 		userAgent: DefaultUserAgent,
 		count:     20,
+		userIDs:   make(map[string]twitterUserIDEntry),
 	}
 }
 
@@ -300,8 +320,17 @@ func (f *TwitterFetcher) Fetch(ctx context.Context, feedURL string) ([]Item, err
 	return items, nil
 }
 
-// userID resolves a screen name to Twitter's numeric user ID.
+// userID resolves a screen name to Twitter's numeric user ID, caching the
+// result. The mapping is stable and every fetch/enrichment call needs it, so
+// re-resolving it would spend a UserByScreenName request each time.
 func (f *TwitterFetcher) userID(ctx context.Context, screenName string) (string, error) {
+	f.mu.Lock()
+	if e, ok := f.userIDs[screenName]; ok && time.Since(e.fetched) < twitterUserIDTTL {
+		f.mu.Unlock()
+		return e.id, nil
+	}
+	f.mu.Unlock()
+
 	variables := fmt.Sprintf(`{"screen_name":%q,"withGrokTranslatedBio":false}`, screenName)
 	body, err := f.gqlGet(ctx, twitterUserByScreenNameQuery, variables)
 	if err != nil {
@@ -325,6 +354,9 @@ func (f *TwitterFetcher) userID(ctx context.Context, screenName string) (string,
 	if resp.Data.User.Result.ID == "" {
 		return "", fmt.Errorf("Twitter user %q not found", screenName)
 	}
+	f.mu.Lock()
+	f.userIDs[screenName] = twitterUserIDEntry{id: resp.Data.User.Result.ID, fetched: time.Now()}
+	f.mu.Unlock()
 	return resp.Data.User.Result.ID, nil
 }
 
