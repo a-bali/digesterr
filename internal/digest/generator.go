@@ -344,6 +344,12 @@ func (g *Generator) buildFeedLimits(ctx context.Context, userID int64, dcfg dige
 func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestItem, genLogger *slog.Logger) {
 	byFeedType := make(map[string][]*store.Item)
 	feedTypes := g.resolveFeedTypes(ctx, items)
+	// Snapshot the bodies as loaded from the DB so a body supplied by the
+	// enricher (HN text posts) can be detected and persisted below.
+	origContent := make(map[int64]string, len(items))
+	for i := range items {
+		origContent[items[i].ID] = items[i].Content
+	}
 	for i := range items {
 		ft := feedTypes[items[i].FeedID]
 		if ft == "" {
@@ -417,6 +423,12 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 				CommentsCount: item.CommentsCount,
 				CommentUrl:    item.CommentUrl,
 			})
+			if item.Content != origContent[item.ID] {
+				_ = g.queries.UpdateItemContent(ctx, store.UpdateItemContentParams{
+					ID:      item.ID,
+					Content: item.Content,
+				})
+			}
 		}
 		genLogger.Debug("digest enriched items", "type", feedType, "count", len(feedItems))
 	}
