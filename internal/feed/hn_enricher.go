@@ -70,9 +70,10 @@ func (e *HNEnricher) Enrich(ctx context.Context, item *store.Item) error {
 	}
 
 	var hnItem struct {
-		ID          int `json:"id"`
-		Score       int `json:"score"`
-		Descendants int `json:"descendants"`
+		ID          int    `json:"id"`
+		Score       int    `json:"score"`
+		Descendants int    `json:"descendants"`
+		Text        string `json:"text"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&hnItem); err != nil {
 		return fmt.Errorf("decoding HN API response: %w", err)
@@ -83,6 +84,7 @@ func (e *HNEnricher) Enrich(ctx context.Context, item *store.Item) error {
 
 	item.Points = int64(hnItem.Score)
 	item.CommentsCount = int64(hnItem.Descendants)
+	applyHNPostText(item, hnItem.Text)
 	return nil
 }
 
@@ -144,6 +146,7 @@ func (e *HNEnricher) BulkEnrich(ctx context.Context, items []*store.Item) error 
 			ObjectID    string `json:"objectID"`
 			Points      int    `json:"points"`
 			NumComments int    `json:"num_comments"`
+			StoryText   string `json:"story_text"`
 		} `json:"hits"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&algoliaResp); err != nil {
@@ -154,6 +157,7 @@ func (e *HNEnricher) BulkEnrich(ctx context.Context, items []*store.Item) error 
 		if item, ok := idToItem[hit.ObjectID]; ok {
 			item.Points = int64(hit.Points)
 			item.CommentsCount = int64(hit.NumComments)
+			applyHNPostText(item, hit.StoryText)
 		}
 	}
 
@@ -319,6 +323,28 @@ func stripHTMLTags(s string) string {
 		result = strings.ReplaceAll(result, "\n\n\n", "\n\n")
 	}
 	return html.UnescapeString(strings.TrimSpace(result))
+}
+
+// hnContentIsMissing reports whether an HN item holds no usable body. HN's own
+// RSS feed (news.ycombinator.com/rss) ships a description containing nothing
+// but a "Comments" link for every item, so an empty body or that dangling link
+// means the post text has not been captured yet.
+func hnContentIsMissing(content string) bool {
+	plain := strings.TrimSpace(stripHTMLTags(content))
+	return plain == "" || strings.EqualFold(plain, "comments")
+}
+
+// applyHNPostText stores the post body served by the HN API on the item, but
+// only when the item has no usable body of its own. Text posts (Ask HN, Show
+// HN, and text-only stories) carry their body in the API's text field, which
+// the RSS feed never includes. Link stories have no text and are left
+// untouched so content extraction can still fill them from the linked page.
+func applyHNPostText(item *store.Item, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" || !hnContentIsMissing(item.Content) {
+		return
+	}
+	item.Content = text
 }
 
 func extractHNID(commentURL, itemURL string) int {

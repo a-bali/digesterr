@@ -490,6 +490,11 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 			if si.CommentUrl != "" {
 				item.CommentURL = si.CommentUrl
 			}
+			// The enricher can supply a body the feed payload lacks (HN text
+			// posts: news.ycombinator.com/rss only ships a "Comments" link).
+			if si.Content != "" && si.Content != item.Content {
+				item.Content = si.Content
+			}
 			// Only apply min_score to items the enricher actually scored.
 			// Items the enricher couldn't score (missed or Noop) keep
 			// the RSS value and always pass — unknown scores are not
@@ -659,8 +664,10 @@ func (p *Poller) enrichForPoll(ctx context.Context, feed store.Feed, candidates 
 
 	// Single BulkEnrich for all items.
 	origScores := make(map[string]int64, len(allPtrs))
+	origContent := make(map[string]string, len(allPtrs))
 	for _, si := range allPtrs {
 		origScores[si.Hash] = si.Points
+		origContent[si.Hash] = si.Content
 	}
 	enrichStart := time.Now()
 	if b, ok := enricher.(BulkEnricher); ok {
@@ -710,11 +717,13 @@ func (p *Poller) enrichForPoll(ctx context.Context, feed store.Feed, candidates 
 			CommentsCount: existing[i].CommentsCount,
 			CommentUrl:    existing[i].CommentUrl,
 			Title:         existing[i].Title,
+			Content:       origContent[existing[i].Hash],
 		}
 	}
 	for _, si := range allPtrs {
 		if ei, ok := existingByID[si.ID]; ok {
-			if si.Points == ei.Points && si.CommentsCount == ei.CommentsCount && si.CommentUrl == ei.CommentUrl {
+			contentChanged := si.Content != ei.Content
+			if si.Points == ei.Points && si.CommentsCount == ei.CommentsCount && si.CommentUrl == ei.CommentUrl && !contentChanged {
 				skipped++
 				continue
 			}
@@ -735,6 +744,14 @@ func (p *Poller) enrichForPoll(ctx context.Context, feed store.Feed, candidates 
 				errcount++
 			} else {
 				updated++
+			}
+			if contentChanged {
+				if err := p.queries.UpdateItemContent(ctx, store.UpdateItemContentParams{
+					ID:      si.ID,
+					Content: si.Content,
+				}); err != nil {
+					errcount++
+				}
 			}
 		}
 	}
