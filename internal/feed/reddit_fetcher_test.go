@@ -879,8 +879,10 @@ func TestRedditQuotaSnapshotExposed(t *testing.T) {
 			_, _ = w.Write([]byte(`{"access_token":"tok","expires_in":3600}`))
 			return
 		}
-		w.Header().Set("X-Ratelimit-Used", "120")
-		w.Header().Set("X-Ratelimit-Remaining", "480")
+		// Reddit formats these as floats, e.g. "999.0" (verified against
+		// the live API) — an integer here would not exercise the parser.
+		w.Header().Set("X-Ratelimit-Used", "120.0")
+		w.Header().Set("X-Ratelimit-Remaining", "480.0")
 		w.Header().Set("X-Ratelimit-Reset", "300")
 		_, _ = w.Write([]byte(`{"data":{"children":[]}}`))
 	}))
@@ -925,5 +927,64 @@ func TestRedditQuotaSnapshotExposed(t *testing.T) {
 	}
 	if snap.CheckedAt == nil {
 		t.Error("CheckedAt is nil after a measurement")
+	}
+}
+
+// TestQuotaHeaderInt covers the header formats Reddit actually emits. The
+// float form ("999.0") is the one seen in production; an Atoi-only parser
+// rejected it and left the quota unmeasured forever.
+func TestQuotaHeaderInt(t *testing.T) {
+	cases := []struct {
+		raw   string
+		want  int
+		valid bool
+	}{
+		{"999.0", 999, true},
+		{"480.0", 480, true},
+		{"120", 120, true},
+		{" 999.0 ", 999, true},
+		{"0.0", 0, true},
+		{"", 0, false},
+		{"n/a", 0, false},
+	}
+	for _, c := range cases {
+		got, ok := quotaHeaderInt(c.raw)
+		if ok != c.valid || got != c.want {
+			t.Errorf("quotaHeaderInt(%q) = (%d, %v), want (%d, %v)", c.raw, got, ok, c.want, c.valid)
+		}
+	}
+}
+
+// TestRedditQuotaMeasuredWithFloatHeaders pins the production symptom: with
+// the header values Reddit really sends, the snapshot must be measured.
+func TestRedditQuotaMeasuredWithFloatHeaders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/api/v1/access_token") {
+			_, _ = w.Write([]byte(`{"access_token":"tok","expires_in":3600}`))
+			return
+		}
+		w.Header().Set("X-Ratelimit-Used", "1")
+		w.Header().Set("X-Ratelimit-Remaining", "999.0")
+		w.Header().Set("X-Ratelimit-Reset", "352")
+		_, _ = w.Write([]byte(`{"data":{"children":[]}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	rf := NewRedditFetcher()
+	rf.baseURL = srv.URL
+	rf.apiBaseURL = srv.URL
+	rf.SetCredentials("client-id", "client-secret")
+	rf.SetRateLimiter(nil)
+
+	if _, err := rf.Fetch(t.Context(), "https://www.reddit.com/r/golang"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	snap := rf.QuotaSnapshot(redditQuotaReserve)
+	if !snap.Measured {
+		t.Fatal("Measured = false with Reddit's real float header format")
+	}
+	if snap.Remaining != 999 || snap.Limit != 1000 {
+		t.Errorf("Limit/Remaining = %d/%d, want 1000/999", snap.Limit, snap.Remaining)
 	}
 }

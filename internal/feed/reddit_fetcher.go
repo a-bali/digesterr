@@ -98,17 +98,36 @@ func (f *RedditFetcher) SetLimit(n int) {
 	f.limit = n
 }
 
+// quotaHeaderInt reads an integer-valued rate-limit header that Reddit may
+// format as a float. Reddit really does send X-Ratelimit-Remaining as
+// "999.0"; a plain strconv.Atoi on that fails and silently left the quota
+// unmeasured, so the metrics dialog read "no response observed yet" forever.
+// Parse as a float and truncate when Atoi does not apply.
+func quotaHeaderInt(raw string) (int, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, false
+	}
+	if n, err := strconv.Atoi(raw); err == nil {
+		return n, true
+	}
+	if f, err := strconv.ParseFloat(raw, 64); err == nil {
+		return int(f), true
+	}
+	return 0, false
+}
+
 // recordQuotaHeaders stores the rate-limit headers Reddit returns on every
 // API response. Reddit advertises the remaining budget for the shared OAuth
 // window (x-ratelimit-remaining) alongside the seconds until it resets, so
 // tracking it costs nothing extra. It never reports an absolute limit, so the
 // window size is derived from used + remaining.
 func (f *RedditFetcher) recordQuotaHeaders(h http.Header) {
-	remaining, err := strconv.Atoi(strings.TrimSpace(h.Get("X-Ratelimit-Remaining")))
-	if err != nil {
+	remaining, ok := quotaHeaderInt(h.Get("X-Ratelimit-Remaining"))
+	if !ok {
 		return
 	}
-	used, _ := strconv.Atoi(strings.TrimSpace(h.Get("X-Ratelimit-Used")))
+	used, _ := quotaHeaderInt(h.Get("X-Ratelimit-Used"))
 	resetSeconds, err := strconv.ParseFloat(strings.TrimSpace(h.Get("X-Ratelimit-Reset")), 64)
 	if err != nil || resetSeconds < 0 {
 		resetSeconds = 0
