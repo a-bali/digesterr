@@ -341,4 +341,3 @@ func TestSummarizeItemUsesConfiguredPrompt(t *testing.T) {
 		t.Fatalf("configured prompt was not used with substituted counts, request body: %s", gotBody)
 	}
 }
-

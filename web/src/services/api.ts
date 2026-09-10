@@ -149,10 +149,15 @@ export const itemApi = {
     api<Item>(`/items/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   getItem: (id: number) => api<Item>(`/items/${id}`),
   extract: (id: number) => api<Item>(`/items/${id}/extract`, { method: 'POST' }),
-  summarize: (id: number, opts?: { sentence_count?: number; prompt?: string }) =>
+  summarize: (id: number, opts?: { sentence_count?: number; min_sentences?: number; max_sentences?: number; prompt?: string }) =>
     api<import('../types/api').ItemSummaryResponse>(`/items/${id}/summarize`, {
       method: 'POST',
-      body: JSON.stringify({ sentence_count: opts?.sentence_count, prompt: opts?.prompt }),
+      body: JSON.stringify({
+        sentence_count: opts?.sentence_count,
+        min_sentences: opts?.min_sentences,
+        max_sentences: opts?.max_sentences,
+        prompt: opts?.prompt,
+      }),
     }),
   getComments: (id: number, opts?: { limit?: number; refresh?: boolean }) =>
     api<import('../types/api').ItemCommentsResponse>(`/items/${id}/comments${qs({ limit: opts?.limit, refresh: opts?.refresh ? 'true' : undefined })}`),

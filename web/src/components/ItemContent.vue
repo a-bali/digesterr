@@ -5,7 +5,7 @@ import { itemApi } from '../services/api'
 import { toastError } from '../lib/toast'
 import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
-import Tooltip from './ui/Tooltip.vue'
+import DropdownMenu from './ui/DropdownMenu.vue'
 import Skeleton from './ui/Skeleton.vue'
 import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown, Sparkles, ChevronRight } from 'lucide-vue-next'
 import { absoluteTime } from '../lib/format'
@@ -72,9 +72,35 @@ setItemCommentsScroller(scrollToComments)
 // --- LLM Summary ---
 const summaryLoading = ref(false)
 const summaryData = ref<ItemSummaryResponse | null>(null)
-const summarySentenceCount = ref(5)
 const summaryCollapsed = ref(false)
 let summaryToken = 0
+
+// Summary length is offered as three presets rather than a free slider. Each
+// one is described to the user and to the model as a sentence range.
+type SummaryLength = 'short' | 'medium' | 'long'
+const SUMMARY_LENGTHS: Record<SummaryLength, { min: number; max: number; detail: string }> = {
+  short: { min: 2, max: 3, detail: '2-3 sentences' },
+  medium: { min: 4, max: 5, detail: '4-5 sentences' },
+  long: { min: 10, max: 15, detail: '10-15 sentences' },
+}
+const summaryLength = ref<SummaryLength>('medium')
+
+const summaryLengthItems = computed(() =>
+  (Object.keys(SUMMARY_LENGTHS) as SummaryLength[]).map(key => ({
+    label: key.charAt(0).toUpperCase() + key.slice(1),
+    detail: SUMMARY_LENGTHS[key].detail,
+    checked: summaryLength.value === key,
+    onClick: () => selectSummaryLength(key),
+  })),
+)
+
+// Picking a different length re-runs the summary so the choice takes effect
+// immediately; before the first summary it only sets what will be requested.
+function selectSummaryLength(length: SummaryLength) {
+  if (summaryLength.value === length) return
+  summaryLength.value = length
+  if (summaryData.value) void doSummarize()
+}
 
 async function doSummarize() {
   const item = feedStore.selectedItem
@@ -82,8 +108,11 @@ async function doSummarize() {
   summaryLoading.value = true
   const token = ++summaryToken
   try {
+    const { min, max } = SUMMARY_LENGTHS[summaryLength.value]
     const resp = await itemApi.summarize(item.id, {
-      sentence_count: summarySentenceCount.value,
+      sentence_count: max,
+      min_sentences: min,
+      max_sentences: max,
     })
     if (token !== summaryToken) return
     summaryData.value = resp
@@ -99,16 +128,6 @@ async function doSummarize() {
     if (token === summaryToken) summaryLoading.value = false
   }
 }
-
-// Re-summarize when slider changes (debounced, only if we already have a summary).
-let summaryDebounce: ReturnType<typeof setTimeout> | null = null
-watch(summarySentenceCount, () => {
-  if (!summaryData.value) return
-  if (summaryDebounce) clearTimeout(summaryDebounce)
-  summaryDebounce = setTimeout(() => {
-    doSummarize()
-  }, 500)
-})
 
 // Render comment text: escape HTML, then convert Reddit markdown images and
 // bare image URLs to <img> tags with size constraints.
@@ -313,7 +332,7 @@ watch(
     fetchTopComments()
     // Reset summary state.
     summaryData.value = null
-    summarySentenceCount.value = 5
+    summaryLength.value = 'medium'
     summaryLoading.value = false
     summaryToken++
   },
@@ -322,7 +341,6 @@ watch(
 onUnmounted(() => {
   stopExtractPoll()
   if (commentFetchTimeout) clearTimeout(commentFetchTimeout)
-  if (summaryDebounce) clearTimeout(summaryDebounce)
   // Only unregister if we are still the live pane — a layout switch can
   // unmount this instance after its replacement has already registered.
   clearItemCommentsScroller(scrollToComments)
@@ -399,10 +417,26 @@ onUnmounted(() => {
           <template v-if="extracting"><RefreshCw class="animate-spin" /> Extracting</template>
           <template v-else><Download /> {{ feedStore.selectedItem.extract_status === 'done' ? 'Re-extract' : 'Extract' }}</template>
         </Button>
-        <Button size="sm" variant="outline" :disabled="summaryLoading" @click="doSummarize">
-          <template v-if="summaryLoading"><RefreshCw class="animate-spin" /> Summarizing…</template>
-          <template v-else><Sparkles /> Summarize</template>
-        </Button>
+        <!-- Split button: summarizing runs at the selected length, and the
+             attached chevron opens the length picker. -->
+        <div class="flex items-center">
+          <Button size="sm" variant="outline" class="rounded-r-none" :disabled="summaryLoading" @click="doSummarize">
+            <template v-if="summaryLoading"><RefreshCw class="animate-spin" /> Summarizing…</template>
+            <template v-else><Sparkles /> Summarize</template>
+          </Button>
+          <DropdownMenu :items="summaryLengthItems" data-summary-length-menu>
+            <template #trigger>
+              <button
+                type="button"
+                :disabled="summaryLoading"
+                aria-label="Summary length"
+                class="inline-flex h-8 items-center rounded-r-md border border-l-0 border-border bg-background px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+              >
+                <ChevronDown class="size-3.5" />
+              </button>
+            </template>
+          </DropdownMenu>
+        </div>
       </div>
 
       <!-- LLM Summary -->
@@ -419,25 +453,6 @@ onUnmounted(() => {
           <span>LLM Summary</span>
         </button>
         <template v-if="!summaryCollapsed">
-          <!-- Sentence count slider. The count is surfaced in a popup so it
-               does not occupy a column next to the track. -->
-          <div class="mb-3">
-            <Tooltip>
-              <template #trigger>
-                <input
-                  type="range"
-                  :value="summarySentenceCount"
-                  min="1"
-                  max="20"
-                  step="1"
-                  class="w-full h-1 accent-accent cursor-pointer"
-                  :aria-label="`Summary length: ${summarySentenceCount} sentences`"
-                  @input="summarySentenceCount = +($event.target as HTMLInputElement).value"
-                />
-              </template>
-              {{ summarySentenceCount }} sentences
-            </Tooltip>
-          </div>
           <!-- Loading spinner -->
           <div v-if="summaryLoading" class="flex items-center gap-2 py-4 text-sm text-muted-foreground">
             <RefreshCw class="size-4 animate-spin" />

@@ -116,21 +116,40 @@ func (s *Server) handleExtractItem(w http.ResponseWriter, r *http.Request) {
 type summarizeRequest struct {
 	SentenceCount int    `json:"sentence_count"`
 	Prompt        string `json:"prompt"`
+	// Optional length window. The UI offers presets described as a range
+	// ("10-15 sentences"), and a bare sentence count alone made the model
+	// undershoot, so the range is passed through when it is known.
+	MinSentences int `json:"min_sentences"`
+	MaxSentences int `json:"max_sentences"`
 }
 
 // defaultSummaryPrompt is the built-in system prompt for per-item summaries.
 // Override it with llm.summary_prompt in the config file.
 const defaultSummaryPrompt = "You are a helpful assistant that summarizes articles and their comments. " +
-	"Summarize the content in about {content_sentences} sentences, then separately summarize the comments in about {comment_sentences} sentences. " +
+	"Summarize the content in {content_sentences} sentences, then separately summarize the comments in {comment_sentences} sentences. " +
 	"Format your response as JSON with two fields: \"content_summary\" and \"comments_summary\". " +
 	"Do not include any text outside the JSON."
 
-// renderSummaryPrompt substitutes the sentence-count placeholders.
-func renderSummaryPrompt(tmpl string, contentSentences, commentSentences int) string {
+// renderSummaryPrompt substitutes the length placeholders. Lengths arrive
+// pre-rendered so a range ("2-3") and a single count read the same way in the
+// prompt text.
+func renderSummaryPrompt(tmpl string, contentSentences, commentSentences string) string {
 	return strings.NewReplacer(
-		"{content_sentences}", strconv.Itoa(contentSentences),
-		"{comment_sentences}", strconv.Itoa(commentSentences),
+		"{content_sentences}", contentSentences,
+		"{comment_sentences}", commentSentences,
 	).Replace(tmpl)
+}
+
+// lengthLabel renders a sentence-count window for the prompt. A window wider
+// than one sentence reads as a range, which is how the UI describes the presets.
+func lengthLabel(minSentences, maxSentences int) string {
+	if minSentences > 0 && maxSentences > minSentences {
+		return strconv.Itoa(minSentences) + "-" + strconv.Itoa(maxSentences)
+	}
+	if maxSentences > 0 {
+		return strconv.Itoa(maxSentences)
+	}
+	return strconv.Itoa(minSentences)
 }
 
 type summarizeResponse struct {
@@ -300,6 +319,15 @@ func (s *Server) handleSummarizeItem(w http.ResponseWriter, r *http.Request) {
 		req.SentenceCount = 50
 	}
 
+	// Resolve the length window. A caller that only knows a single count keeps
+	// working: the window collapses to that count.
+	minSentences, maxSentences := req.MinSentences, req.MaxSentences
+	if maxSentences <= 0 || maxSentences > 50 {
+		maxSentences = req.SentenceCount
+	}
+	if minSentences <= 0 || minSentences > maxSentences {
+		minSentences = maxSentences
+	}
 
 	// Build content: prefer extracted content, fall back to original.
 	content := item.ExtractContent
@@ -325,7 +353,9 @@ func (s *Server) handleSummarizeItem(w http.ResponseWriter, r *http.Request) {
 	if systemPrompt == "" {
 		systemPrompt = defaultSummaryPrompt
 	}
-	systemPrompt = renderSummaryPrompt(systemPrompt, req.SentenceCount, max(req.SentenceCount/3, 1))
+	systemPrompt = renderSummaryPrompt(systemPrompt,
+		lengthLabel(minSentences, maxSentences),
+		lengthLabel(max(minSentences/3, 1), max(maxSentences/3, 1)))
 
 	userPrompt := "Content:\n\n" + content
 	if len(comments) > 0 {

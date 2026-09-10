@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'
 import ItemContent from './ItemContent.vue'
@@ -18,6 +18,35 @@ vi.mock('../services/api', () => ({
     updateStatus: vi.fn().mockResolvedValue({}),
   },
 }))
+
+// reka-ui's dropdown content measures itself with ResizeObserver, which jsdom
+// does not provide.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+vi.stubGlobal('ResizeObserver', ResizeObserverStub)
+
+// The menu renders in a portal on document.body, so read the live DOM rather
+// than the wrapper (see AccountMenu.test.ts for the same pattern).
+function summaryLengthItems(): HTMLElement[] {
+  return Array.from(document.body.querySelectorAll('[role="menuitem"]')) as HTMLElement[]
+}
+
+async function openSummaryLengthMenu(wrapper: ReturnType<typeof mount>) {
+  const trigger = wrapper.find('[aria-label="Summary length"]')
+  expect(trigger.exists()).toBe(true)
+  await trigger.trigger('click')
+  await flushPromises()
+}
+
+async function clickSummaryLengthItem(label: string) {
+  const item = summaryLengthItems().find(i => i.textContent?.includes(label))
+  if (!item) throw new Error(`summary length item not found: ${label}`)
+  item.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await flushPromises()
+}
 
 function makeItem(overrides: Partial<Item> = {}): Item {
   return {
@@ -190,6 +219,9 @@ describe('ItemContent scroll-to-comments', () => {
 describe('ItemContent summarize button', () => {
   beforeEach(() => {
     mockSummarize.mockReset()
+    // Dropdown portals from earlier tests survive their wrapper, and a stale
+    // duplicate would swallow clicks meant for the current menu.
+    document.body.innerHTML = ''
   })
 
   it('renders a Summarize button', () => {
@@ -214,7 +246,7 @@ describe('ItemContent summarize button', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    expect(mockSummarize).toHaveBeenCalledWith(1, { sentence_count: 5 })
+    expect(mockSummarize).toHaveBeenCalledWith(1, { sentence_count: 5, min_sentences: 4, max_sentences: 5 })
 
     // The summary section should be visible.
     expect(wrapper.text()).toContain('LLM Summary')
@@ -235,11 +267,8 @@ describe('ItemContent summarize button', () => {
     expect(collapsedState('Original')).toBe('false')
   })
 
-  it('shows sentence count slider in summary section', async () => {
-    mockSummarize.mockResolvedValue({
-      content_summary: 'Summary.',
-      comments_summary: 'Comments.',
-    })
+  it('has no length slider any more', async () => {
+    mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
 
     const wrapper = mountItemContent(makeItem())
     const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))!
@@ -248,15 +277,85 @@ describe('ItemContent summarize button', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    const slider = wrapper.find('input[type="range"]')
-    expect(slider.exists()).toBe(true)
-    expect((slider.element as HTMLInputElement).value).toBe('5')
-    expect((slider.element as HTMLInputElement).min).toBe('1')
-    expect((slider.element as HTMLInputElement).max).toBe('20')
+    expect(wrapper.find('input[type="range"]').exists()).toBe(false)
+  })
 
-    // The count is not rendered inline next to the slider; it lives in the
-    // popup, so the pane text must not carry it.
-    expect(wrapper.text()).not.toContain('5 sentences')
+  it('summarizes at medium length by default', async () => {
+    mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
+
+    const wrapper = mountItemContent(makeItem())
+    const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))!
+    await btn.trigger('click')
+    await flushPromises()
+
+    expect(mockSummarize).toHaveBeenCalledWith(1, { sentence_count: 5, min_sentences: 4, max_sentences: 5 })
+  })
+
+  it('keeps the length choices hidden until the dropdown is opened', async () => {
+    mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
+
+    const wrapper = mountItemContent(makeItem())
+    expect(wrapper.text()).not.toContain('sentences')
+    expect(summaryLengthItems()).toHaveLength(0)
+
+    await openSummaryLengthMenu(wrapper)
+    const items = summaryLengthItems().map(i => i.textContent ?? '')
+    expect(items).toHaveLength(3)
+    expect(items[0]).toContain('Short')
+    expect(items[0]).toContain('2-3 sentences')
+    expect(items[1]).toContain('Medium')
+    expect(items[1]).toContain('4-5 sentences')
+    expect(items[2]).toContain('Long')
+    expect(items[2]).toContain('10-15 sentences')
+  })
+
+  it('marks the selected length only inside the dropdown', async () => {
+    mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
+
+    const wrapper = mountItemContent(makeItem())
+    await openSummaryLengthMenu(wrapper)
+
+    const checked = summaryLengthItems().filter(i => i.hasAttribute('data-checked'))
+    expect(checked).toHaveLength(1)
+    expect(checked[0].textContent).toContain('Medium')
+    // The trigger itself carries no length label.
+    expect(wrapper.findAll('button').find(b => b.text().includes('Summarize'))!.text()).toBe('Summarize')
+  })
+
+  it('re-summarizes at the chosen length when a preset is picked', async () => {
+    mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
+
+    const wrapper = mountItemContent(makeItem())
+    const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))!
+    await btn.trigger('click')
+    await flushPromises()
+    expect(mockSummarize).toHaveBeenCalledTimes(1)
+
+    await openSummaryLengthMenu(wrapper)
+    await clickSummaryLengthItem('Long')
+
+    expect(mockSummarize).toHaveBeenCalledTimes(2)
+    expect(mockSummarize).toHaveBeenLastCalledWith(1, { sentence_count: 15, min_sentences: 10, max_sentences: 15 })
+  })
+
+  it('remembers the picked length for the next summary without refetching before one exists', async () => {
+    mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
+
+    const wrapper = mountItemContent(makeItem())
+    await openSummaryLengthMenu(wrapper)
+    await clickSummaryLengthItem('Short')
+    // No summary yet, so picking a length must not fire a request.
+    expect(mockSummarize).not.toHaveBeenCalled()
+
+    await openSummaryLengthMenu(wrapper)
+    const checked = summaryLengthItems().filter(i => i.hasAttribute('data-checked'))
+    expect(checked).toHaveLength(1)
+    expect(checked[0].textContent).toContain('Short')
+
+    const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))!
+    await btn.trigger('click')
+    await flushPromises()
+    expect(mockSummarize).toHaveBeenCalledWith(1, { sentence_count: 3, min_sentences: 2, max_sentences: 3 })
   })
 
   it('resets summary when item changes', async () => {
