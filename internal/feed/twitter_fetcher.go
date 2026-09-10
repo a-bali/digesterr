@@ -372,6 +372,53 @@ func (f *TwitterFetcher) BudgetLow(threshold int) bool {
 	return f.lastQuota.remaining < threshold
 }
 
+// QuotaSnapshot is a JSON-friendly view of the twitter client's rate-limit
+// state, surfaced through the metrics API so quota exhaustion is visible
+// before it turns into failures.
+type QuotaSnapshot struct {
+	// Configured is false when no twitter client is registered at all.
+	Configured bool `json:"configured"`
+	// Measured is false until a response carrying X-Rate-Limit-* headers has
+	// been seen, so a zero Remaining is not mistaken for an exhausted budget.
+	Measured     bool      `json:"measured"`
+	Limit        int       `json:"limit"`
+	Remaining    int       `json:"remaining"`
+	Reset        time.Time `json:"reset,omitempty"`
+	CheckedAt    time.Time `json:"checked_at,omitempty"`
+	Blocked      bool      `json:"blocked"`
+	BlockedUntil time.Time `json:"blocked_until,omitempty"`
+	// Reserve is the headroom kept for ingestion; BudgetLow is true when the
+	// remaining budget has fallen below it.
+	Reserve   int  `json:"reserve"`
+	BudgetLow bool `json:"budget_low"`
+}
+
+// QuotaSnapshot returns the last observed rate-limit state. reserve is the
+// ingestion headroom used to compute BudgetLow.
+func (f *TwitterFetcher) QuotaSnapshot(reserve int) QuotaSnapshot {
+	f.mu.Lock()
+	q := f.lastQuota
+	blockedUntil := f.blockedUntil
+	f.mu.Unlock()
+
+	s := QuotaSnapshot{
+		Measured:  !q.checkedAt.IsZero(),
+		Limit:     q.limit,
+		Remaining: q.remaining,
+		Reset:     q.reset,
+		CheckedAt: q.checkedAt,
+		Reserve:   reserve,
+	}
+	if !blockedUntil.IsZero() && time.Now().Before(blockedUntil) {
+		s.Blocked = true
+		s.BlockedUntil = blockedUntil
+	}
+	if s.Measured && time.Now().Before(q.reset) {
+		s.BudgetLow = q.remaining < reserve
+	}
+	return s
+}
+
 // Blocked reports whether a 429 has suppressed requests until its reset.
 func (f *TwitterFetcher) Blocked() (time.Time, bool) {
 	f.mu.Lock()

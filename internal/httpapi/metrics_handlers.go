@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"digesterr/internal/feed"
 )
 
 func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
@@ -108,14 +110,25 @@ func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Rate-limit headroom for the twitter client, when configured. Reported
+	// alongside the counters so quota exhaustion is visible before it shows up
+	// as failed polls.
+	var twitterQuota *feed.QuotaSnapshot
+	if s.poller != nil {
+		q := s.poller.TwitterQuota()
+		twitterQuota = &q
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"total_requests": summary.TotalRequests,
-		"total_bytes":    summary.TotalBytes,
-		"success_count":  summary.SuccessCount,
-		"error_count":    summary.ErrorCount,
-		"avg_duration_ms": summary.AvgDurationMs,
-		"groups":         groups,
-		"buckets":        summary.Buckets,
+		"total_requests":      summary.TotalRequests,
+		"total_http_requests": summary.TotalHTTPRequests,
+		"total_bytes":         summary.TotalBytes,
+		"success_count":       summary.SuccessCount,
+		"error_count":         summary.ErrorCount,
+		"avg_duration_ms":     summary.AvgDurationMs,
+		"groups":              groups,
+		"buckets":             summary.Buckets,
+		"twitter_quota":       twitterQuota,
 	})
 }
 

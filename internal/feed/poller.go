@@ -206,6 +206,17 @@ func (p *Poller) consumeCounters() (int64, int) {
 	return p.ConsumeCounters()
 }
 
+// TwitterQuota reports the twitter client's rate-limit state for the metrics
+// API. Configured is false when no twitter fetcher is registered.
+func (p *Poller) TwitterQuota() QuotaSnapshot {
+	if tf, ok := p.enrichers["twitter"].(*TwitterFetcher); ok {
+		s := tf.QuotaSnapshot(twitterQuotaReserve)
+		s.Configured = true
+		return s
+	}
+	return QuotaSnapshot{}
+}
+
 // SetEnrichmentWindow configures how long after insertion items are
 // re-enriched each cycle to track score/comment growth. A zero value
 // means the default of 24 hours.
