@@ -114,6 +114,36 @@ UPDATE digest_results SET status = 'read', updated_at = DATETIME('now') WHERE us
 -- name: MarkDigestConfigRead :exec
 UPDATE digest_results SET status = 'read', updated_at = DATETIME('now') WHERE config_id = ? AND user_id = ? AND status = 'new';
 
+-- name: MarkDigestConfigReadAbove :exec
+-- Mark digest results above (or at) the given result as read, within a config.
+UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
+WHERE config_id = @config_id
+  AND user_id = @user_id
+  AND status = 'new'
+  AND created_at >= @boundary_created_at;
+
+-- name: MarkDigestConfigReadBelow :exec
+-- Mark digest results below the given result as read, within a config.
+UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
+WHERE config_id = @config_id
+  AND user_id = @user_id
+  AND status = 'new'
+  AND created_at < @boundary_created_at;
+
+-- name: MarkAllDigestReadAbove :exec
+-- Mark all digest results above (or at) the given result as read.
+UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
+WHERE user_id = @user_id
+  AND status = 'new'
+  AND created_at >= @boundary_created_at;
+
+-- name: MarkAllDigestReadBelow :exec
+-- Mark all digest results below the given result as read.
+UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
+WHERE user_id = @user_id
+  AND status = 'new'
+  AND created_at < @boundary_created_at;
+
 -- name: MarkDigestResultItemsRead :exec
 -- When a digest result is marked read, its linked items transition from
 -- digested to read (spec: item lifecycle). Items in other states are untouched.

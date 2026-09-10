@@ -467,3 +467,72 @@ func TestRedditFetcherRateLimit(t *testing.T) {
 		t.Errorf("requestCount = %d, want 2", requestCount)
 	}
 }
+
+func TestRenderMarkdownTable(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains []string
+		excludes []string
+	}{
+		{
+			name: "basic 3-column table",
+			input: `| Name | Value | Notes |
+| --- | --- | --- |
+| foo | bar | baz |
+| one | two | three |`,
+			contains: []string{"<table>", "<thead>", "<th>Name</th>", "<th>Value</th>", "<td>foo</td>", "<td>bar</td>", "<td>one</td>", "</table>"},
+		},
+		{
+			name: "table without leading pipes",
+			input: `Col A | Col B
+--- | ---
+x | y`,
+			contains: []string{"<table>", "<th>Col A</th>", "<td>x</td>", "</table>"},
+		},
+		{
+			name: "separator with colons",
+			input: `| Left | Center | Right |
+| :--- | :---: | ---: |
+| a | b | c |`,
+			contains: []string{"<table>", "<td>a</td>", "<td>c</td>"},
+		},
+		{
+			name: "not a table (no separator row)",
+			input: `This line has | pipes
+but no separator row`,
+			excludes: []string{"<table>"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := renderRedditMarkdown(tt.input)
+			for _, s := range tt.contains {
+				if !strings.Contains(result, s) {
+					t.Errorf("result missing %q\ngot: %s", s, result)
+				}
+			}
+			for _, s := range tt.excludes {
+				if strings.Contains(result, s) {
+					t.Errorf("result unexpectedly contains %q\ngot: %s", s, result)
+				}
+			}
+		})
+	}
+}
+
+func TestIsTableSeparator(t *testing.T) {
+	valid := []string{"---", ":---", ":---:", "---:", "| --- | --- |", "| --- | --- | --- |"}
+	invalid := []string{"", "hello", "abc", "--- not a separator", "| foo | bar |"}
+	for _, s := range valid {
+		if !isTableSeparator(s) {
+			t.Errorf("isTableSeparator(%q) = false, want true", s)
+		}
+	}
+	for _, s := range invalid {
+		if isTableSeparator(s) {
+			t.Errorf("isTableSeparator(%q) = true, want false", s)
+		}
+	}
+}

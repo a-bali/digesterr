@@ -60,6 +60,11 @@ export interface ItemCommentsResponse {
   cached: boolean
 }
 
+export interface ItemSummaryResponse {
+  content_summary: string
+  comments_summary: string
+}
+
 export interface DigestConfig {
   id: number
   user_id: number

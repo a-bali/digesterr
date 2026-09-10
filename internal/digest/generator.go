@@ -610,9 +610,9 @@ var (
 	whiteSpaceRe = regexp.MustCompile(`\s+`)
 )
 
-// cleanContentForLLM strips HTML tags, collapses whitespace, and truncates
+// CleanContentForLLM strips HTML tags, collapses whitespace, and truncates
 // content so the LLM prompt stays manageable.
-func cleanContentForLLM(raw string) string {
+func CleanContentForLLM(raw string) string {
 	s := htmlTagRe.ReplaceAllString(raw, " ")
 	s = whiteSpaceRe.ReplaceAllString(s, " ")
 	s = strings.TrimSpace(s)
@@ -641,9 +641,9 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 		userPrompt += fmt.Sprintf("URL: %s\n", h.Url)
 		userPrompt += fmt.Sprintf("Points: %d | Comments: %d\n", h.Points, h.CommentsCount)
 		if h.ExtractContent != "" && h.ExtractContent != "pending" && h.ExtractContent != "failed" {
-			userPrompt += fmt.Sprintf("Content: %s\n", cleanContentForLLM(h.ExtractContent))
+			userPrompt += fmt.Sprintf("Content: %s\n", CleanContentForLLM(h.ExtractContent))
 		} else if h.Content != "" {
-			userPrompt += fmt.Sprintf("Content: %s\n", cleanContentForLLM(h.Content))
+			userPrompt += fmt.Sprintf("Content: %s\n", CleanContentForLLM(h.Content))
 		}
 		if len(h.FetchedComments) > 0 {
 			userPrompt += "Top comments:\n"

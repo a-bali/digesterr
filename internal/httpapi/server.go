@@ -24,6 +24,7 @@ type Server struct {
 	auth      *auth.Service
 	poller    *feed.Poller
 	generator *digest.Generator
+	llmClient *digest.LLMClient
 	logs      *logbuf.Buffer
 	metrics   *metrics.Recorder
 	// publicBaseURL is the absolute base URL of the digesterr web UI, used to
@@ -66,6 +67,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 			Error:      errMsg,
 		})
 	})
+	s.llmClient = llmClient
 	s.generator = digest.NewGenerator(db, queries, llmClient, s.poller)
 	s.generator.SetRecordFunc(func(rec metrics.Record) {
 		s.metrics.Record(rec)
@@ -134,6 +136,9 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	mux.HandleFunc("GET /api/items/{id}", s.requireAuth(s.handleGetItem))
 	mux.HandleFunc("GET /api/items/{id}/comments", s.requireAuth(s.handleGetItemComments))
 	mux.HandleFunc("POST /api/items/{id}/extract", s.requireAuth(s.handleExtractItem))
+	mux.HandleFunc("POST /api/items/{id}/mark-read-above", s.requireAuth(s.handleMarkItemReadAbove))
+	mux.HandleFunc("POST /api/items/{id}/mark-read-below", s.requireAuth(s.handleMarkItemReadBelow))
+	mux.HandleFunc("POST /api/items/{id}/summarize", s.requireAuth(s.handleSummarizeItem))
 	mux.HandleFunc("GET /api/items/multi", s.requireAuth(s.handleListMultiFeedItems))
 
 	mux.HandleFunc("GET /api/digest-configs", s.requireAuth(s.handleListDigestConfigs))
@@ -151,6 +156,8 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	mux.HandleFunc("DELETE /api/digest-results/{id}", s.requireAuth(s.handleDeleteDigestResult))
 	mux.HandleFunc("GET /api/digest-results/{id}/items", s.requireAuth(s.handleListDigestResultItemsWithData))
 	mux.HandleFunc("POST /api/digest-results/mark-read", s.requireAuth(s.handleMarkDigestResultsRead))
+	mux.HandleFunc("POST /api/digest-results/{id}/mark-read-above", s.requireAuth(s.handleMarkDigestReadAbove))
+	mux.HandleFunc("POST /api/digest-results/{id}/mark-read-below", s.requireAuth(s.handleMarkDigestReadBelow))
 
 	mux.HandleFunc("GET /api/logs", s.requireAuth(s.handleListLogs))
 	mux.HandleFunc("GET /api/metrics", s.requireAuth(s.handleGetMetrics))

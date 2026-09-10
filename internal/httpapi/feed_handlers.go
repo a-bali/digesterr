@@ -769,6 +769,115 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// handleMarkItemReadAbove marks all items above (or at) the given item as read.
+func (s *Server) handleMarkItemReadAbove(w http.ResponseWriter, r *http.Request) {
+	s.handleMarkItemRelative(w, r, "above")
+}
+
+func (s *Server) handleMarkItemReadBelow(w http.ResponseWriter, r *http.Request) {
+	s.handleMarkItemRelative(w, r, "below")
+}
+
+func (s *Server) handleMarkItemRelative(w http.ResponseWriter, r *http.Request, direction string) {
+	userID := authedUserID(r)
+	itemID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	// Parse scope from request body.
+	var body struct {
+		Category *string `json:"category"`
+		FeedIDs  *string `json:"feed_ids"` // comma-separated, for "Feeds" section
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+
+	// Look up the item to get boundary values.
+	item, err := s.queries.GetItemWithFeedOwner(r.Context(), store.GetItemWithFeedOwnerParams{ID: itemID, UserID: userID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "item not found")
+		return
+	}
+
+	// Try single-feed scope first (no category, no feed_ids = single feed view).
+	if body.Category == nil && body.FeedIDs == nil {
+		if direction == "above" {
+			err = s.queries.MarkFeedReadAbove(r.Context(), store.MarkFeedReadAboveParams{
+				FeedID:              item.FeedID,
+				BoundaryPublishedAt: item.PublishedAt,
+				BoundaryCreatedAt:   item.CreatedAt,
+			})
+		} else {
+			err = s.queries.MarkFeedReadBelow(r.Context(), store.MarkFeedReadBelowParams{
+				FeedID:              item.FeedID,
+				BoundaryPublishedAt: item.PublishedAt,
+				BoundaryCreatedAt:   item.CreatedAt,
+			})
+		}
+		if err != nil {
+			writeServerError(w, "failed to mark items read", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"message": "items marked read"})
+		return
+	}
+
+	// Dynamic SQL for multi-feed/category views (sqlc can't handle the IN subquery
+	// due to column ambiguity with the feeds table).
+	var feedIDClause string
+	var args []interface{}
+
+	if body.Category != nil && *body.Category != "" {
+		feedIDClause = "feed_id IN (SELECT id FROM feeds WHERE user_id = ? AND category = ?)"
+		args = append(args, userID, *body.Category)
+	} else if body.FeedIDs != nil && *body.FeedIDs != "" {
+		parts := strings.Split(*body.FeedIDs, ",")
+		placeholders := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			v, err := strconv.ParseInt(p, 10, 64)
+			if err != nil {
+				continue
+			}
+			placeholders = append(placeholders, "?")
+			args = append(args, v)
+		}
+		if len(placeholders) == 0 {
+			writeError(w, http.StatusBadRequest, "no valid feed_ids")
+			return
+		}
+		feedIDClause = fmt.Sprintf("feed_id IN (%s)", strings.Join(placeholders, ","))
+	} else {
+		// All feeds: all feeds belonging to the user.
+		feedIDClause = "feed_id IN (SELECT id FROM feeds WHERE user_id = ?)"
+		args = append(args, userID)
+	}
+
+	op := ">="
+	if direction == "below" {
+		op = "<"
+	}
+
+	queryStr := fmt.Sprintf(
+		"UPDATE items SET status = 'read', updated_at = DATETIME('now') WHERE %s AND status = 'unread' AND (published_at > ? OR (published_at = ? AND created_at %s ?))",
+		feedIDClause, op,
+	)
+	args = append(args, item.PublishedAt, item.PublishedAt, item.CreatedAt)
+
+	_, err = s.db.ExecContext(r.Context(), queryStr, args...)
+	if err != nil {
+		writeServerError(w, "failed to mark items read", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "items marked read"})
+}
+
 // colInt64 extracts an int64 from a scanned column value.
 func colInt64(v interface{}) int64 {
 	switch val := v.(type) {
