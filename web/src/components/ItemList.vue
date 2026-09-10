@@ -230,7 +230,8 @@ async function markBelowRead(item: any) {
         <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ decodeHTMLEntities(item.title) }}</p>
         <!-- Top right corner: the publish time gives way to the mark-read
              chevrons on hover. Every row gets them, whatever its status, so
-             the action is in the same place on every item. -->
+             the action is in the same place on every item. Neither chevron
+             marks the row being hovered — only the rows beyond it. -->
         <span class="shrink-0 mt-0.5 relative flex items-center justify-end h-4">
           <span
             class="text-[10px] text-muted-foreground/70 group-hover:hidden"
@@ -240,8 +241,8 @@ async function markBelowRead(item: any) {
           <span v-if="!props.showingSaved" class="hidden group-hover:flex items-center gap-0.5">
             <button
               class="text-muted-foreground/50 hover:text-accent p-0.5"
-              title="Mark everything above as read"
-              aria-label="Mark everything above as read"
+              title="Mark everything above as read, except this item"
+              aria-label="Mark everything above as read, except this item"
               data-mark-above
               @click.stop="markAboveRead(item)"
             >
@@ -249,8 +250,8 @@ async function markBelowRead(item: any) {
             </button>
             <button
               class="text-muted-foreground/50 hover:text-accent p-0.5"
-              title="Mark everything below as read"
-              aria-label="Mark everything below as read"
+              title="Mark everything below as read, except this item"
+              aria-label="Mark everything below as read, except this item"
               data-mark-below
               @click.stop="markBelowRead(item)"
             >

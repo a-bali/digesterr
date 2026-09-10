@@ -344,11 +344,14 @@ describe('ItemList filter/sort controls', () => {
       }
     })
 
-    it('labels the chevrons for assistive tech', () => {
+    // Both chevrons exclude the row being hovered, so the labels say so.
+    it('labels the chevrons for assistive tech, noting the item is kept', () => {
       const { wrapper } = mountList()
       const row = resultRows(wrapper)[0]
-      expect(row.find('[data-mark-above]').attributes('aria-label')).toBe('Mark everything above as read')
-      expect(row.find('[data-mark-below]').attributes('aria-label')).toBe('Mark everything below as read')
+      expect(row.find('[data-mark-above]').attributes('aria-label')).toBe('Mark everything above as read, except this item')
+      expect(row.find('[data-mark-below]').attributes('aria-label')).toBe('Mark everything below as read, except this item')
+      expect(row.find('[data-mark-above]').attributes('title')).toContain('except this item')
+      expect(row.find('[data-mark-below]').attributes('title')).toContain('except this item')
     })
 
     it('still shows the publish time, so the timestamp is not lost', () => {

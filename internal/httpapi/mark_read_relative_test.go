@@ -99,12 +99,12 @@ func markRelative(t *testing.T, fx markReadFixture, itemID int64, direction stri
 }
 
 // TestMarkReadRelativeSingleFeed is the regression test for the inverted
-// direction and the excluded boundary item.
+// direction.
 //
 // Items are ordered newest-first by the list queries (published_at DESC,
 // created_at DESC). With a 5-item feed and the boundary on the middle item,
-// "above" must mark the boundary and the two newer items, and "below" must mark
-// the two older items.
+// "above" must mark the two newer items and "below" the two older ones. Neither
+// direction marks the boundary item itself.
 func TestMarkReadRelativeSingleFeed(t *testing.T) {
 	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 
@@ -113,7 +113,7 @@ func TestMarkReadRelativeSingleFeed(t *testing.T) {
 		direction string
 		want      []string
 	}{
-		{name: "above marks boundary and newer", direction: "above", want: []string{"t4", "t3", "t2"}},
+		{name: "above marks newer only", direction: "above", want: []string{"t4", "t3"}},
 		{name: "below marks older only", direction: "below", want: []string{"t1", "t0"}},
 	}
 
@@ -134,6 +134,12 @@ func TestMarkReadRelativeSingleFeed(t *testing.T) {
 			got := markedTitles(t, fx.queries, newestFirst)
 			if !equalStrings(got, tt.want) {
 				t.Errorf("marked %v, want %v (all items: t4,t3,t2,t1,t0)", got, tt.want)
+			}
+			if item, err := fx.queries.GetItem(t.Context(), items[2].ID); err != nil {
+				t.Fatalf("get boundary item: %v", err)
+			} else if item.Status != "unread" {
+				t.Errorf("boundary item t2 was marked %q by %q, want unread — both directions exclude the hovered row",
+					item.Status, tt.direction)
 			}
 		})
 	}
@@ -170,8 +176,13 @@ func TestMarkReadRelativeIncludesUndatedItems(t *testing.T) {
 		markRelative(t, fx, undated.ID, "above", map[string]any{})
 
 		got := markedTitles(t, fx.queries, []store.Item{dated2, dated1, undated})
-		if want := []string{"dated2", "dated1", "undated"}; !equalStrings(got, want) {
+		if want := []string{"dated2", "dated1"}; !equalStrings(got, want) {
 			t.Errorf("marked %v, want %v — undated items sort last, so every dated item is above", got, want)
+		}
+		if item, err := fx.queries.GetItem(t.Context(), undated.ID); err != nil {
+			t.Fatalf("get undated item: %v", err)
+		} else if item.Status != "unread" {
+			t.Errorf("undated boundary was marked %q, want unread — the hovered row is excluded", item.Status)
 		}
 	})
 }
@@ -201,12 +212,13 @@ func TestMarkReadRelativeCategorySpansFeeds(t *testing.T) {
 	f1new := addItem(t, fx.queries, feeds[1].ID, "f1new", base.Add(4*time.Hour))
 	untouched := addItem(t, fx.queries, other.ID, "untouched", base.Add(5*time.Hour))
 
-	// Boundary: f0old. Everything newer in the category must be marked, in both
-	// feeds, and nothing in the "news" category.
+	// Boundary: f0old, which is last in the category's newest-first order.
+	// Everything newer must be marked, in both feeds, nothing in the "news"
+	// category, and not the boundary itself.
 	markRelative(t, fx, f0old.ID, "above", map[string]any{"category": "tech"})
 
 	got := markedTitles(t, fx.queries, []store.Item{f0new, f1new, f1old, f0old})
-	if want := []string{"f0new", "f1new", "f1old", "f0old"}; !equalStrings(got, want) {
+	if want := []string{"f0new", "f1new", "f1old"}; !equalStrings(got, want) {
 		t.Errorf("marked %v, want %v", got, want)
 	}
 
@@ -235,7 +247,7 @@ func TestMarkReadRelativeFeedsSectionSpansAllFeeds(t *testing.T) {
 	markRelative(t, fx, f0old.ID, "above", map[string]any{"feed_ids": feedIDs})
 
 	got := markedTitles(t, fx.queries, []store.Item{f1new, f0new, f0old})
-	if want := []string{"f1new", "f0new", "f0old"}; !equalStrings(got, want) {
+	if want := []string{"f1new", "f0new"}; !equalStrings(got, want) {
 		t.Errorf("marked %v, want %v", got, want)
 	}
 }
@@ -254,7 +266,7 @@ func TestMarkReadRelativeSingleFeedIsScopedToOneFeed(t *testing.T) {
 	markRelative(t, fx, boundary.ID, "above", map[string]any{})
 
 	got := markedTitles(t, fx.queries, []store.Item{sameFeed, boundary})
-	if want := []string{"same-newer", "boundary"}; !equalStrings(got, want) {
+	if want := []string{"same-newer"}; !equalStrings(got, want) {
 		t.Errorf("marked %v, want %v within the boundary item's feed", got, want)
 	}
 
@@ -340,8 +352,8 @@ func addItemWithPoints(t *testing.T, queries *store.Queries, feedID int64, title
 // date_desc  (newest first): t4, t3, t2, t1, t0
 // score_desc (highest first): t3, t1, t2, t0, t4
 //
-// With the boundary on t2, "above" is {t3,t1,t2} by score but {t4,t3,t2} by
-// date. A handler that ignored the sort would return the date set either way.
+// With the boundary on t2, "above" is {t3,t1} by score but {t4,t3} by date. A
+// handler that ignored the sort would return the date set either way.
 func TestMarkReadRelativeFollowsScoreSort(t *testing.T) {
 	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	scores := map[string]int64{"t0": 5, "t1": 50, "t2": 10, "t3": 100, "t4": 1}
@@ -353,9 +365,9 @@ func TestMarkReadRelativeFollowsScoreSort(t *testing.T) {
 		below  []string
 	}{
 		{name: "score_desc", sort: "score_desc",
-			above: []string{"t3", "t1", "t2"}, below: []string{"t0", "t4"}},
+			above: []string{"t3", "t1"}, below: []string{"t0", "t4"}},
 		{name: "date_desc", sort: "date_desc",
-			above: []string{"t4", "t3", "t2"}, below: []string{"t1", "t0"}},
+			above: []string{"t4", "t3"}, below: []string{"t1", "t0"}},
 	}
 
 	for _, tt := range tests {
@@ -395,7 +407,7 @@ func TestMarkReadRelativeDateAsc(t *testing.T) {
 		direction string
 		want      []string
 	}{
-		{direction: "above", want: []string{"t0", "t1", "t2"}},
+		{direction: "above", want: []string{"t0", "t1"}},
 		{direction: "below", want: []string{"t3", "t4"}},
 	} {
 		t.Run("date_asc_"+tt.direction, func(t *testing.T) {
@@ -424,7 +436,8 @@ func TestMarkReadRelativeDateAsc(t *testing.T) {
 //
 // list (date_desc): t4, t3, t2, t1, t0  — scores 70, 3, 100, 50, 5
 // with min_score=50 the pane shows only t4, t2, t1, so "above" the boundary t2
-// is {t4, t2}; t3 and t0 are filtered out and must stay unread.
+// is {t4}; t3 and t0 are filtered out and t2 is the hovered row, so all three
+// must stay unread.
 func TestMarkReadRelativeRespectsScoreFilter(t *testing.T) {
 	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	scores := map[string]int64{"t0": 5, "t1": 50, "t2": 100, "t3": 3, "t4": 70}
@@ -441,15 +454,50 @@ func TestMarkReadRelativeRespectsScoreFilter(t *testing.T) {
 	markRelative(t, fx, byTitle["t2"].ID, "above", map[string]any{"min_score": 50})
 
 	all := []store.Item{byTitle["t4"], byTitle["t3"], byTitle["t2"], byTitle["t1"], byTitle["t0"]}
-	if got, want := markedTitles(t, fx.queries, all), []string{"t4", "t2"}; !equalStrings(sortedTitles(got), sortedTitles(want)) {
-		t.Errorf("marked %v, want %v — filtered-out items must not be marked", got, want)
+	if got, want := markedTitles(t, fx.queries, all), []string{"t4"}; !equalStrings(sortedTitles(got), sortedTitles(want)) {
+		t.Errorf("marked %v, want %v — filtered-out items and the hovered row must not be marked", got, want)
 	}
-	for _, title := range []string{"t3", "t0"} {
+	for _, title := range []string{"t3", "t0", "t2"} {
 		if item, err := fx.queries.GetItem(t.Context(), byTitle[title].ID); err != nil {
 			t.Fatalf("get %s: %v", title, err)
 		} else if item.Status != "unread" {
-			t.Errorf("%s has score below min_score and is filtered out of the pane, but was marked %q",
+			t.Errorf("%s was marked %q, want unread (t3/t0 are filtered out; t2 is the hovered row)",
 				title, item.Status)
 		}
+	}
+}
+
+// TestMarkReadRelativeExcludesBoundaryItem pins the contract for both
+// directions: the hovered row is never marked. It also checks the two
+// directions between them cover every OTHER row exactly once, so nothing is
+// unreachable just because the boundary is excluded.
+func TestMarkReadRelativeExcludesBoundaryItem(t *testing.T) {
+	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+
+	for _, sort := range []string{"date_desc", "date_asc", "score_desc", "score_asc"} {
+		t.Run(sort, func(t *testing.T) {
+			fx, feeds := newMarkReadFixture(t, 1)
+
+			var items []store.Item
+			for i := 0; i < 5; i++ {
+				items = append(items, addItemWithPoints(t, fx.queries, feeds[0].ID,
+					fmt.Sprintf("t%d", i), base.Add(time.Duration(i)*time.Hour), int64(i*10)))
+			}
+			boundary := items[2]
+
+			markRelative(t, fx, boundary.ID, "above", map[string]any{"sort": sort})
+
+			if item, err := fx.queries.GetItem(t.Context(), boundary.ID); err != nil {
+				t.Fatalf("get boundary: %v", err)
+			} else if item.Status != "unread" {
+				t.Errorf("sort=%s: boundary marked %q by above, want unread", sort, item.Status)
+			}
+
+			marked := len(markedTitles(t, fx.queries, items))
+			if marked != 2 {
+				t.Errorf("sort=%s: above marked %d of 4 non-boundary items, want 2 (with 5 items the boundary splits them evenly)",
+					sort, marked)
+			}
+		})
 	}
 }

@@ -820,8 +820,9 @@ func (s *Server) handleMarkItemRelative(w http.ResponseWriter, r *http.Request, 
 	// empty category is treated as user-wide too, matching the previous
 	// behaviour.
 	//
-	// The boundary row and its sort key are resolved inside SQL, not bound from
-	// Go — see MarkFeedReadRelativeDateDesc in sql/queries/items.sql.
+	// The boundary row and its sort keys are resolved inside SQL, not bound from
+	// Go — see MarkFeedReadRelativeDateDesc in sql/queries/items.sql. Neither
+	// direction marks the boundary item itself.
 	above := direction == "above"
 	switch {
 	case body.Category != nil && *body.Category != "":
@@ -860,8 +861,9 @@ func normalizeItemSort(sort string) string {
 }
 
 // aboveFlag converts the direction into the SQL flag the Mark*ReadRelative*
-// queries take: 1 covers the boundary item and everything before it, 0 covers
-// everything strictly after it.
+// queries take: 1 is everything strictly before the boundary item in the list
+// order, 0 everything strictly after it. Both exclude the boundary item, so the
+// two directions never overlap and the hovered row is left alone.
 func aboveFlag(above bool) int64 {
 	if above {
 		return 1

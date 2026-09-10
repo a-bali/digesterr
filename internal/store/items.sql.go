@@ -1318,7 +1318,7 @@ WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = ?1)
   AND items.status = 'unread'
   AND (CAST(?2 AS INTEGER) = 0 OR items.points >= CAST(?2 AS INTEGER))
   AND (CASE WHEN CAST(?3 AS INTEGER) THEN
-         ((COALESCE(items.published_at, ''), items.created_at, items.id) <= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
        ELSE
          ((COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
        END) = 1
@@ -1331,7 +1331,7 @@ type MarkAllFeedsReadRelativeDateAscParams struct {
 	BoundaryID int64 `json:"boundary_id"`
 }
 
-// Mark every item above/below the boundary item as read, across every feed the user owns (the "Feeds" section).
+// Mark every item strictly above/below the boundary item as read, across every feed the user owns (the "Feeds" section).
 func (q *Queries) MarkAllFeedsReadRelativeDateAsc(ctx context.Context, arg MarkAllFeedsReadRelativeDateAscParams) error {
 	_, err := q.db.ExecContext(ctx, markAllFeedsReadRelativeDateAsc,
 		arg.UserID,
@@ -1348,7 +1348,7 @@ WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = ?1)
   AND items.status = 'unread'
   AND (CAST(?2 AS INTEGER) = 0 OR items.points >= CAST(?2 AS INTEGER))
   AND (CASE WHEN CAST(?3 AS INTEGER) THEN
-         ((COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
        ELSE
          ((COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
        END) = 1
@@ -1361,7 +1361,7 @@ type MarkAllFeedsReadRelativeDateDescParams struct {
 	BoundaryID int64 `json:"boundary_id"`
 }
 
-// Mark every item above/below the boundary item as read, across every feed the user owns (the "Feeds" section).
+// Mark every item strictly above/below the boundary item as read, across every feed the user owns (the "Feeds" section).
 func (q *Queries) MarkAllFeedsReadRelativeDateDesc(ctx context.Context, arg MarkAllFeedsReadRelativeDateDescParams) error {
 	_, err := q.db.ExecContext(ctx, markAllFeedsReadRelativeDateDesc,
 		arg.UserID,
@@ -1379,7 +1379,7 @@ WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = ?1)
   AND (CAST(?2 AS INTEGER) = 0 OR items.points >= CAST(?2 AS INTEGER))
   AND (CASE WHEN CAST(?3 AS INTEGER) THEN
          (items.points < (SELECT bi.points FROM items bi WHERE bi.id = ?4)
-           OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = ?4) AND (COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4)))
+           OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = ?4) AND (COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4)))
        ELSE
          (items.points > (SELECT bi.points FROM items bi WHERE bi.id = ?4)
            OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = ?4) AND (COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4)))
@@ -1393,7 +1393,7 @@ type MarkAllFeedsReadRelativeScoreAscParams struct {
 	BoundaryID int64 `json:"boundary_id"`
 }
 
-// Mark every item above/below the boundary item as read, across every feed the user owns (the "Feeds" section).
+// Mark every item strictly above/below the boundary item as read, across every feed the user owns (the "Feeds" section).
 func (q *Queries) MarkAllFeedsReadRelativeScoreAsc(ctx context.Context, arg MarkAllFeedsReadRelativeScoreAscParams) error {
 	_, err := q.db.ExecContext(ctx, markAllFeedsReadRelativeScoreAsc,
 		arg.UserID,
@@ -1410,7 +1410,7 @@ WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = ?1)
   AND items.status = 'unread'
   AND (CAST(?2 AS INTEGER) = 0 OR items.points >= CAST(?2 AS INTEGER))
   AND (CASE WHEN CAST(?3 AS INTEGER) THEN
-         ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
+         ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
        ELSE
          ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
        END) = 1
@@ -1423,7 +1423,7 @@ type MarkAllFeedsReadRelativeScoreDescParams struct {
 	BoundaryID int64 `json:"boundary_id"`
 }
 
-// Mark every item above/below the boundary item as read, across every feed the user owns (the "Feeds" section).
+// Mark every item strictly above/below the boundary item as read, across every feed the user owns (the "Feeds" section).
 func (q *Queries) MarkAllFeedsReadRelativeScoreDesc(ctx context.Context, arg MarkAllFeedsReadRelativeScoreDescParams) error {
 	_, err := q.db.ExecContext(ctx, markAllFeedsReadRelativeScoreDesc,
 		arg.UserID,
@@ -1465,7 +1465,7 @@ WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = ?1 AND f.cate
   AND items.status = 'unread'
   AND (CAST(?3 AS INTEGER) = 0 OR items.points >= CAST(?3 AS INTEGER))
   AND (CASE WHEN CAST(?4 AS INTEGER) THEN
-         ((COALESCE(items.published_at, ''), items.created_at, items.id) <= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?5))
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?5))
        ELSE
          ((COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?5))
        END) = 1
@@ -1479,7 +1479,7 @@ type MarkCategoryReadRelativeDateAscParams struct {
 	BoundaryID int64  `json:"boundary_id"`
 }
 
-// Mark every item above/below the boundary item as read, across one feed category.
+// Mark every item strictly above/below the boundary item as read, across one feed category.
 func (q *Queries) MarkCategoryReadRelativeDateAsc(ctx context.Context, arg MarkCategoryReadRelativeDateAscParams) error {
 	_, err := q.db.ExecContext(ctx, markCategoryReadRelativeDateAsc,
 		arg.UserID,
@@ -1497,7 +1497,7 @@ WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = ?1 AND f.cate
   AND items.status = 'unread'
   AND (CAST(?3 AS INTEGER) = 0 OR items.points >= CAST(?3 AS INTEGER))
   AND (CASE WHEN CAST(?4 AS INTEGER) THEN
-         ((COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?5))
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?5))
        ELSE
          ((COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?5))
        END) = 1
@@ -1511,7 +1511,7 @@ type MarkCategoryReadRelativeDateDescParams struct {
 	BoundaryID int64  `json:"boundary_id"`
 }
 
-// Mark every item above/below the boundary item as read, across one feed category.
+// Mark every item strictly above/below the boundary item as read, across one feed category.
 func (q *Queries) MarkCategoryReadRelativeDateDesc(ctx context.Context, arg MarkCategoryReadRelativeDateDescParams) error {
 	_, err := q.db.ExecContext(ctx, markCategoryReadRelativeDateDesc,
 		arg.UserID,
@@ -1530,7 +1530,7 @@ WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = ?1 AND f.cate
   AND (CAST(?3 AS INTEGER) = 0 OR items.points >= CAST(?3 AS INTEGER))
   AND (CASE WHEN CAST(?4 AS INTEGER) THEN
          (items.points < (SELECT bi.points FROM items bi WHERE bi.id = ?5)
-           OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = ?5) AND (COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?5)))
+           OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = ?5) AND (COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?5)))
        ELSE
          (items.points > (SELECT bi.points FROM items bi WHERE bi.id = ?5)
            OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = ?5) AND (COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?5)))
@@ -1545,7 +1545,7 @@ type MarkCategoryReadRelativeScoreAscParams struct {
 	BoundaryID int64  `json:"boundary_id"`
 }
 
-// Mark every item above/below the boundary item as read, across one feed category.
+// Mark every item strictly above/below the boundary item as read, across one feed category.
 func (q *Queries) MarkCategoryReadRelativeScoreAsc(ctx context.Context, arg MarkCategoryReadRelativeScoreAscParams) error {
 	_, err := q.db.ExecContext(ctx, markCategoryReadRelativeScoreAsc,
 		arg.UserID,
@@ -1563,7 +1563,7 @@ WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = ?1 AND f.cate
   AND items.status = 'unread'
   AND (CAST(?3 AS INTEGER) = 0 OR items.points >= CAST(?3 AS INTEGER))
   AND (CASE WHEN CAST(?4 AS INTEGER) THEN
-         ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?5))
+         ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?5))
        ELSE
          ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?5))
        END) = 1
@@ -1577,7 +1577,7 @@ type MarkCategoryReadRelativeScoreDescParams struct {
 	BoundaryID int64  `json:"boundary_id"`
 }
 
-// Mark every item above/below the boundary item as read, across one feed category.
+// Mark every item strictly above/below the boundary item as read, across one feed category.
 func (q *Queries) MarkCategoryReadRelativeScoreDesc(ctx context.Context, arg MarkCategoryReadRelativeScoreDescParams) error {
 	_, err := q.db.ExecContext(ctx, markCategoryReadRelativeScoreDesc,
 		arg.UserID,
@@ -1604,7 +1604,7 @@ WHERE items.feed_id = ?1
   AND items.status = 'unread'
   AND (CAST(?2 AS INTEGER) = 0 OR items.points >= CAST(?2 AS INTEGER))
   AND (CASE WHEN CAST(?3 AS INTEGER) THEN
-         ((COALESCE(items.published_at, ''), items.created_at, items.id) <= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
        ELSE
          ((COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
        END) = 1
@@ -1617,7 +1617,7 @@ type MarkFeedReadRelativeDateAscParams struct {
 	BoundaryID int64 `json:"boundary_id"`
 }
 
-// Mark every item above/below the boundary item as read, within a single feed.
+// Mark every item strictly above/below the boundary item as read, within a single feed.
 func (q *Queries) MarkFeedReadRelativeDateAsc(ctx context.Context, arg MarkFeedReadRelativeDateAscParams) error {
 	_, err := q.db.ExecContext(ctx, markFeedReadRelativeDateAsc,
 		arg.FeedID,
@@ -1635,7 +1635,7 @@ WHERE items.feed_id = ?1
   AND items.status = 'unread'
   AND (CAST(?2 AS INTEGER) = 0 OR items.points >= CAST(?2 AS INTEGER))
   AND (CASE WHEN CAST(?3 AS INTEGER) THEN
-         ((COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
        ELSE
          ((COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
        END) = 1
@@ -1649,13 +1649,17 @@ type MarkFeedReadRelativeDateDescParams struct {
 }
 
 // ---------------------------------------------------------------------------
-// Relative mark-read: mark everything at/above or below a boundary item.
+// Relative mark-read: mark everything above or below a boundary item.
+//
+// Both directions EXCLUDE the boundary item itself: "above" is everything
+// strictly before it in the list order, "below" everything strictly after it.
+// The two therefore do not overlap and the hovered row is left untouched by
+// whichever button is pressed.
 //
 // The boundary row and its ordering keys are read inside SQL rather than bound
 // from Go. SQLite stores published_at/created_at as TEXT in DATETIME('now')
 // layout ("2026-09-10 10:31:06") whereas a Go time.Time binds as RFC3339
-// ("2026-09-10T10:31:06Z"), so a comparison against a bound value never matched
-// and the boundary item itself was never marked.
+// ("2026-09-10T10:31:06Z"), so a comparison against a bound value never matched.
 //
 // "above"/"below" are relative to the ordering the middle pane is showing, so
 // there is one query per (scope, sort). Both the ordering and the pane's score
@@ -1668,18 +1672,17 @@ type MarkFeedReadRelativeDateDescParams struct {
 //	ScoreDesc (points DESC, published_at DESC, created_at DESC, id DESC)
 //	ScoreAsc  (points ASC,  published_at DESC, created_at DESC, id DESC)
 //
-// Row-value comparison expresses the lexicographic "at or before" / "strictly
+// Row-value comparison expresses the lexicographic "strictly before"/"strictly
 // after" test in one expression, apart from ScoreAsc, whose keys mix directions
 // and so has its leading ASC key split off first. Because the id tiebreak is
-// part of both the predicate and the ordering, the two agree on every row:
-// above/below partition the pane exactly, and the boundary lands in "above".
+// part of both the predicate and the ordering, the two agree on every row.
 // COALESCE(published_at, ”) matches SQLite's NULLS FIRST (ASC) / LAST (DESC)
 // placement, which keeps undated items reachable from either direction.
 //
 // @min_score mirrors the pane's score filter and is applied to the rows being
 // updated, so rows the user cannot see are never marked.
 // ---------------------------------------------------------------------------
-// Mark every item above/below the boundary item as read, within a single feed.
+// Mark every item strictly above/below the boundary item as read, within a single feed.
 func (q *Queries) MarkFeedReadRelativeDateDesc(ctx context.Context, arg MarkFeedReadRelativeDateDescParams) error {
 	_, err := q.db.ExecContext(ctx, markFeedReadRelativeDateDesc,
 		arg.FeedID,
@@ -1697,7 +1700,7 @@ WHERE items.feed_id = ?1
   AND (CAST(?2 AS INTEGER) = 0 OR items.points >= CAST(?2 AS INTEGER))
   AND (CASE WHEN CAST(?3 AS INTEGER) THEN
          (items.points < (SELECT bi.points FROM items bi WHERE bi.id = ?4)
-           OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = ?4) AND (COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4)))
+           OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = ?4) AND (COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4)))
        ELSE
          (items.points > (SELECT bi.points FROM items bi WHERE bi.id = ?4)
            OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = ?4) AND (COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4)))
@@ -1711,7 +1714,7 @@ type MarkFeedReadRelativeScoreAscParams struct {
 	BoundaryID int64 `json:"boundary_id"`
 }
 
-// Mark every item above/below the boundary item as read, within a single feed.
+// Mark every item strictly above/below the boundary item as read, within a single feed.
 func (q *Queries) MarkFeedReadRelativeScoreAsc(ctx context.Context, arg MarkFeedReadRelativeScoreAscParams) error {
 	_, err := q.db.ExecContext(ctx, markFeedReadRelativeScoreAsc,
 		arg.FeedID,
@@ -1728,7 +1731,7 @@ WHERE items.feed_id = ?1
   AND items.status = 'unread'
   AND (CAST(?2 AS INTEGER) = 0 OR items.points >= CAST(?2 AS INTEGER))
   AND (CASE WHEN CAST(?3 AS INTEGER) THEN
-         ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
+         ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
        ELSE
          ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = ?4))
        END) = 1
@@ -1741,7 +1744,7 @@ type MarkFeedReadRelativeScoreDescParams struct {
 	BoundaryID int64 `json:"boundary_id"`
 }
 
-// Mark every item above/below the boundary item as read, within a single feed.
+// Mark every item strictly above/below the boundary item as read, within a single feed.
 func (q *Queries) MarkFeedReadRelativeScoreDesc(ctx context.Context, arg MarkFeedReadRelativeScoreDescParams) error {
 	_, err := q.db.ExecContext(ctx, markFeedReadRelativeScoreDesc,
 		arg.FeedID,
