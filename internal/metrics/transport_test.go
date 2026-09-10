@@ -93,3 +93,34 @@ func TestSummaryReportsHTTPRequests(t *testing.T) {
 		t.Errorf("group HTTPRequests — fetch=%d enrichment=%d, want 1 and 44", fetchReqs, enrichReqs)
 	}
 }
+
+// TestResetClearsBothCounters is the regression test for a metrics reset that
+// only zeroed the byte counter: the stale request count then got attributed to
+// the first poll after the reset, over-reporting outbound requests.
+func TestResetClearsBothCounters(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("hello"))
+	}))
+	t.Cleanup(srv.Close)
+
+	rec := New(10)
+	client := &http.Client{Transport: rec.Transport()}
+	if _, err := client.Get(srv.URL); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+
+	rec.Record(Record{Timestamp: time.Now(), StatusCode: 200, Reason: "fetch", Requests: 1})
+
+	rec.Reset()
+
+	if bytes, requests := rec.Transport().Consume(); bytes != 0 || requests != 0 {
+		t.Errorf("after Reset, Consume() = (%d, %d), want (0, 0) — a reset must clear both counters", bytes, requests)
+	}
+
+	// The records are gone too, so a summary right after the reset is empty.
+	sum := rec.Summary(time.Now().Add(-time.Hour), []string{"reason"}, time.Minute)
+	if sum.TotalRequests != 0 || sum.TotalHTTPRequests != 0 {
+		t.Errorf("after Reset, summary = (%d records, %d http requests), want (0, 0)",
+			sum.TotalRequests, sum.TotalHTTPRequests)
+	}
+}

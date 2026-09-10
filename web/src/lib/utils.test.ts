@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { cn, stripContent } from './utils'
+import { describe, it, expect, vi } from 'vitest'
+import { cn, stripContent, decodeHTMLEntities } from './utils'
 
 describe('cn', () => {
   it('merges class names', () => {
@@ -66,5 +66,35 @@ describe('stripContent', () => {
 
   it('trims surrounding whitespace', () => {
     expect(stripContent('  hello  ')).toBe('hello')
+  })
+})
+
+describe('decodeHTMLEntities', () => {
+  it('decodes named and numeric entities', () => {
+    expect(decodeHTMLEntities('Tom &amp; Jerry')).toBe('Tom & Jerry')
+    expect(decodeHTMLEntities('&lt;b&gt;bold&lt;/b&gt;')).toBe('<b>bold</b>')
+    expect(decodeHTMLEntities('caf&#233;')).toBe('café')
+  })
+
+  it('returns an empty string for empty input', () => {
+    expect(decodeHTMLEntities('')).toBe('')
+  })
+
+  it('does not repeat the DOM round-trip for a title it has already decoded', () => {
+    // The list renders one row per item on every scroll, so the decode must not
+    // re-run createElement + innerHTML parse for the same title.
+    const createElement = vi.spyOn(document, 'createElement')
+    const title = 'cached &amp; unique title'
+
+    const first = decodeHTMLEntities(title)
+    const callsAfterFirst = createElement.mock.calls.length
+    const second = decodeHTMLEntities(title)
+
+    expect(first).toBe('cached & unique title')
+    expect(second).toBe(first)
+    expect(createElement.mock.calls.length, 'a cached title must not hit the DOM again')
+      .toBe(callsAfterFirst)
+
+    createElement.mockRestore()
   })
 })

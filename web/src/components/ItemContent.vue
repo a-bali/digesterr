@@ -9,6 +9,7 @@ import Skeleton from './ui/Skeleton.vue'
 import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown, Sparkles, ChevronRight } from 'lucide-vue-next'
 import { absoluteTime } from '../lib/format'
 import { decodeHTMLEntities } from '../lib/utils'
+import { setItemCommentsScroller } from '../lib/itemComments'
 import type { ItemComment, ItemSummaryResponse } from '../types/api'
 
 // Prose styling for raw HTML content.
@@ -64,8 +65,8 @@ function scrollToComments() {
   })
 }
 
-// Expose scrollToComments for keyboard shortcut via a global function.
-;(globalThis as any).__scrollToItemComments = scrollToComments
+// Hand the scroller to the shared handle the HomeView keyboard shortcut reads.
+setItemCommentsScroller(scrollToComments)
 
 // --- LLM Summary ---
 const summaryLoading = ref(false)
@@ -158,9 +159,12 @@ function renderCommentHtml(text: string): string {
   const skipPrefixes = new Set(['"', "'", '>', '/'])
   const withLinks = restored.replace(
     /((?:https?|ftp):\/\/[^\s<>"]+)/g,
-    (match) => {
-      const idx = restored.indexOf(match)
-      if (idx > 0 && skipPrefixes.has(restored[idx - 1])) return match
+    (match: string, _capture: string, offset: number) => {
+      // Use this match's own offset. indexOf(match) returned the FIRST
+      // occurrence in the whole string, so a URL appearing twice was judged
+      // twice by the prefix of its first copy — linking one that sits inside an
+      // attribute, and skipping one that sits in plain text.
+      if (offset > 0 && skipPrefixes.has(restored[offset - 1])) return match
       return '<a href="' + match + '" target="_blank" rel="noopener noreferrer">' + match + '</a>'
     },
   )
@@ -315,7 +319,7 @@ onUnmounted(() => {
   stopExtractPoll()
   if (commentFetchTimeout) clearTimeout(commentFetchTimeout)
   if (summaryDebounce) clearTimeout(summaryDebounce)
-  delete (globalThis as any).__scrollToItemComments
+  setItemCommentsScroller(null)
 })
 </script>
 

@@ -107,7 +107,7 @@ func (r *Recorder) Reset() {
 	r.records = make([]Record, r.size)
 	r.next = 0
 	if r.transport != nil {
-		r.transport.ResetBytes()
+		r.transport.Reset()
 	}
 }
 

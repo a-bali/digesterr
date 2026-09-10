@@ -340,9 +340,8 @@ func (s *Server) handleMarkDigestRelative(w http.ResponseWriter, r *http.Request
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
 
-	// Look up the result to get boundary values.
-	result, err := s.queries.GetDigestResult(r.Context(), store.GetDigestResultParams{ID: resultID, UserID: userID})
-	if err != nil {
+	// Confirm the result exists and belongs to the caller.
+	if _, err := s.queries.GetDigestResult(r.Context(), store.GetDigestResultParams{ID: resultID, UserID: userID}); err != nil {
 		writeError(w, http.StatusNotFound, "digest result not found")
 		return
 	}
@@ -350,27 +349,27 @@ func (s *Server) handleMarkDigestRelative(w http.ResponseWriter, r *http.Request
 	if body.ConfigID != nil {
 		if direction == "above" {
 			err = s.queries.MarkDigestConfigReadAbove(r.Context(), store.MarkDigestConfigReadAboveParams{
-				ConfigID:          *body.ConfigID,
-				UserID:            userID,
-				BoundaryCreatedAt: result.CreatedAt,
+				ConfigID:   *body.ConfigID,
+				UserID:     userID,
+				BoundaryID: resultID,
 			})
 		} else {
 			err = s.queries.MarkDigestConfigReadBelow(r.Context(), store.MarkDigestConfigReadBelowParams{
-				ConfigID:          *body.ConfigID,
-				UserID:            userID,
-				BoundaryCreatedAt: result.CreatedAt,
+				ConfigID:   *body.ConfigID,
+				UserID:     userID,
+				BoundaryID: resultID,
 			})
 		}
 	} else {
 		if direction == "above" {
 			err = s.queries.MarkAllDigestReadAbove(r.Context(), store.MarkAllDigestReadAboveParams{
-				UserID:            userID,
-				BoundaryCreatedAt: result.CreatedAt,
+				UserID:     userID,
+				BoundaryID: resultID,
 			})
 		} else {
 			err = s.queries.MarkAllDigestReadBelow(r.Context(), store.MarkAllDigestReadBelowParams{
-				UserID:            userID,
-				BoundaryCreatedAt: result.CreatedAt,
+				UserID:     userID,
+				BoundaryID: resultID,
 			})
 		}
 	}

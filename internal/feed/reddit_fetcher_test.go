@@ -717,3 +717,154 @@ func TestIsTableSeparator(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderRedditMarkdownEscapesUserContent is the regression test for markup
+// injection through selftext: rendered HTML is inserted with v-html, so any
+// user-derived fragment that reaches a placeholder unescaped becomes live
+// markup. Placeholders are restored *after* the escaping pass, so each fragment
+// must be escaped as it is stashed.
+func TestRenderRedditMarkdownEscapesUserContent(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		excludes []string
+	}{
+		{
+			name:     "link text cannot inject markup",
+			input:    `[<script>alert(1)</script>](http://example.com)`,
+			excludes: []string{"<script>", "</script>"},
+		},
+		{
+			name:     "link URL cannot break out of the attribute",
+			input:    `[click](http://example.com" onmouseover="alert(1))`,
+			excludes: []string{`onmouseover="`, "onmouseover=\"", "<script>"},
+		},
+		{
+			name:     "javascript URL is not linked",
+			input:    `[click](javascript:alert(1))`,
+			excludes: []string{"javascript:", "<a "},
+		},
+		{
+			name:     "mixed-case javascript URL is not linked",
+			input:    `[click](JaVaScRiPt:alert(1))`,
+			excludes: []string{"avascript:", "<a "},
+		},
+		{
+			name:     "data URL is not linked",
+			input:    `[click](data:text/html,<script>alert(1)</script>)`,
+			excludes: []string{"<a ", "href=\"data:", "<script>"},
+		},
+		{
+			name:     "image alt cannot inject markup",
+			input:    `![<script>alert(1)</script>](http://example.com/a.png)`,
+			excludes: []string{"<script>", "</script>"},
+		},
+		{
+			name:     "image src cannot break out of the attribute",
+			input:    `![alt](http://example.com/a.png" onerror="alert(1)`,
+			excludes: []string{`onerror="`, "onerror=\""},
+		},
+		{
+			// Angle brackets must be escaped, so the payload renders as literal
+			// text rather than becoming an <img> element. Asserting on the raw
+			// tag is the meaningful check: an escaped "&lt;img ... onerror=...&gt;"
+			// is inert.
+			name:     "bold inner text cannot inject an element",
+			input:    `**<img src=x onerror=alert(1)>**`,
+			excludes: []string{"<img", "<strong><img"},
+		},
+		{
+			name:     "italic inner text cannot inject an element",
+			input:    `*<iframe src=javascript:alert(1)>*`,
+			excludes: []string{"<iframe"},
+		},
+		{
+			name: "table cells cannot inject markup",
+			input: `| H1 | H2 |
+| --- | --- |
+| <script>alert(1)</script> | b |`,
+			excludes: []string{"<script>", "</script>"},
+		},
+		{
+			name:     "bare URL cannot break out of the attribute",
+			input:    `see http://example.com/?a=1&b=2 for details`,
+			excludes: []string{`href="http://example.com/?a=1&b=2"`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := renderRedditMarkdown(tt.input)
+			for _, s := range tt.excludes {
+				if strings.Contains(got, s) {
+					t.Errorf("rendered output contains %q — user content was not escaped\ninput: %s\ngot:   %s",
+						s, tt.input, got)
+				}
+			}
+		})
+	}
+}
+
+// TestRenderRedditMarkdownKeepsLegitimateMarkup asserts the escaping does not
+// over-correct: ordinary markdown still renders as HTML.
+func TestRenderRedditMarkdownKeepsLegitimateMarkup(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains []string
+	}{
+		{
+			name:     "http link",
+			input:    `[click](http://example.com/a)`,
+			contains: []string{`<a href="http://example.com/a"`, ">click</a>"},
+		},
+		{
+			name:     "https link with query",
+			input:    `[click](https://example.com/a?x=1&y=2)`,
+			contains: []string{`<a href="https://example.com/a?x=1&amp;y=2"`},
+		},
+		{
+			name:     "relative link",
+			input:    `[click](/r/foo)`,
+			contains: []string{`<a href="/r/foo"`},
+		},
+		{
+			name:     "mailto link",
+			input:    `[mail](mailto:a@b.com)`,
+			contains: []string{`<a href="mailto:a@b.com"`},
+		},
+		{
+			name:     "image",
+			input:    `![alt text](https://i.redd.it/a.png)`,
+			contains: []string{`<img src="https://i.redd.it/a.png"`, `alt="alt text"`},
+		},
+		{
+			name:     "bold",
+			input:    `**bold text**`,
+			contains: []string{"<strong>bold text</strong>"},
+		},
+		{
+			name:     "italic",
+			input:    `*italic text*`,
+			contains: []string{"<em>italic text</em>"},
+		},
+		{
+			name: "table",
+			input: `| A | B |
+| --- | --- |
+| 1 | 2 |`,
+			contains: []string{"<table>", "<th>A</th>", "<td>1</td>"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := renderRedditMarkdown(tt.input)
+			for _, s := range tt.contains {
+				if !strings.Contains(got, s) {
+					t.Errorf("rendered output missing %q\ninput: %s\ngot:   %s", s, tt.input, got)
+				}
+			}
+		})
+	}
+}

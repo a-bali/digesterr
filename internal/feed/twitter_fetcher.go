@@ -58,16 +58,19 @@ type TwitterFetcher struct {
 	// per-feed state.
 	mu      sync.Mutex
 	userIDs map[string]twitterUserIDEntry
-	// lastQuota holds the most recent X-Rate-Limit-* values seen, and
-	// blockedUntil suppresses requests after a 429 until the advertised reset.
-	// Both are shared across feeds for the same reason as userIDs: the budget
-	// belongs to the account (our cookies), not to an individual feed.
-	lastQuota    quota
+	// lastQuota holds the most recent X-Rate-Limit-* values seen, keyed by
+	// query hash. X advertises a separate budget per endpoint (per account), so
+	// a single shared value would let a nearly-spent ScreenName lookup suppress
+	// timeline fetches that still have headroom — and vice versa. blockedUntil
+	// suppresses requests after a 429 until the advertised reset; a 429 is
+	// endpoint-specific in X's budget model, so it is tracked globally only as a
+	// conservative backstop.
+	lastQuota    map[string]quota
 	blockedUntil time.Time
 }
 
-// quota records the most recent X rate-limit headers for this client. X
-// advertises its per-endpoint budget on every response, so tracking it is free.
+// quota records the most recent X rate-limit headers for one endpoint. X
+// advertises each endpoint's budget on every response, so tracking it is free.
 type quota struct {
 	limit     int
 	remaining int
@@ -95,6 +98,7 @@ func NewTwitterFetcher() *TwitterFetcher {
 		userAgent: DefaultUserAgent,
 		count:     20,
 		userIDs:   make(map[string]twitterUserIDEntry),
+		lastQuota: make(map[string]quota),
 	}
 }
 
@@ -300,7 +304,7 @@ func (f *TwitterFetcher) gqlGet(ctx context.Context, queryHash string, variables
 	}
 	// X advertises the remaining budget on every response; keep it so the
 	// poller can back off before hitting the ceiling.
-	f.recordQuotaHeaders(resp.Header)
+	f.recordQuotaHeaders(queryHash, resp.Header)
 
 	if resp.StatusCode == http.StatusTooManyRequests {
 		if reset := f.resetTime(resp.Header); reset.After(time.Now()) {
@@ -320,8 +324,9 @@ func (f *TwitterFetcher) gqlGet(ctx context.Context, queryHash string, variables
 	return body, nil
 }
 
-// recordQuotaHeaders stores the most recent X-Rate-Limit-* values.
-func (f *TwitterFetcher) recordQuotaHeaders(h http.Header) {
+// recordQuotaHeaders stores the most recent X-Rate-Limit-* values for one
+// endpoint. queryHash identifies the endpoint the response came from.
+func (f *TwitterFetcher) recordQuotaHeaders(queryHash string, h http.Header) {
 	raw := h.Get("X-Rate-Limit-Limit")
 	if raw == "" {
 		return
@@ -331,13 +336,22 @@ func (f *TwitterFetcher) recordQuotaHeaders(h http.Header) {
 	resetUnix, _ := strconv.ParseInt(h.Get("X-Rate-Limit-Reset"), 10, 64)
 
 	f.mu.Lock()
-	f.lastQuota = quota{
+	f.lastQuota[queryHash] = quota{
 		limit:     limit,
 		remaining: remaining,
 		reset:     time.Unix(resetUnix, 0),
 		checkedAt: time.Now(),
 	}
 	f.mu.Unlock()
+}
+
+// endpointName returns the human-readable endpoint portion of a GraphQL query
+// hash, e.g. "E3opETHurmVJflFsUBVuUQ/UserTweets" -> "UserTweets".
+func endpointName(queryHash string) string {
+	if i := strings.LastIndex(queryHash, "/"); i >= 0 {
+		return queryHash[i+1:]
+	}
+	return queryHash
 }
 
 // resetTime returns the window reset instant, falling back to now+15m when the
@@ -351,25 +365,28 @@ func (f *TwitterFetcher) resetTime(h http.Header) time.Time {
 	return time.Now().Add(15 * time.Minute)
 }
 
-// Quota reports the last observed rate-limit state. A zero limit means no
-// response has carried quota headers yet.
-func (f *TwitterFetcher) Quota() (limit, remaining int, reset time.Time) {
+// Quota reports the last observed rate-limit state for one endpoint. A zero
+// limit means no response from that endpoint has carried quota headers yet.
+func (f *TwitterFetcher) Quota(queryHash string) (limit, remaining int, reset time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.lastQuota.limit, f.lastQuota.remaining, f.lastQuota.reset
+	q := f.lastQuota[queryHash]
+	return q.limit, q.remaining, q.reset
 }
 
-// BudgetLow reports whether the remaining quota observed for the last-called
+// BudgetLow reports whether the remaining budget advertised by the given
 // endpoint is below threshold, meaning opportunistic (non-authoritative) calls
-// should be skipped. It returns false when there is no measurement yet or the
-// window has already rolled over, so an unmeasured client is never suppressed.
-func (f *TwitterFetcher) BudgetLow(threshold int) bool {
+// should be skipped. It returns false when that endpoint has not been measured
+// yet or its window has already rolled over, so an unmeasured client is never
+// suppressed.
+func (f *TwitterFetcher) BudgetLow(queryHash string, threshold int) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.lastQuota.checkedAt.IsZero() || time.Now().After(f.lastQuota.reset) {
+	q := f.lastQuota[queryHash]
+	if q.checkedAt.IsZero() || time.Now().After(q.reset) {
 		return false
 	}
-	return f.lastQuota.remaining < threshold
+	return q.remaining < threshold
 }
 
 // QuotaSnapshot is a JSON-friendly view of the twitter client's rate-limit
@@ -380,24 +397,42 @@ type QuotaSnapshot struct {
 	Configured bool `json:"configured"`
 	// Measured is false until a response carrying X-Rate-Limit-* headers has
 	// been seen, so a zero Remaining is not mistaken for an exhausted budget.
-	Measured     bool      `json:"measured"`
-	Limit        int       `json:"limit"`
-	Remaining    int       `json:"remaining"`
-	Reset        time.Time `json:"reset,omitempty"`
-	CheckedAt    time.Time `json:"checked_at,omitempty"`
-	Blocked      bool      `json:"blocked"`
-	BlockedUntil time.Time `json:"blocked_until,omitempty"`
+	Measured  bool `json:"measured"`
+	Limit     int  `json:"limit"`
+	Remaining int  `json:"remaining"`
+	// Reset and CheckedAt are pointers so omitempty actually omits them:
+	// omitempty has no effect on a time.Time, which would otherwise serialise
+	// as the year-1 zero time before anything has been measured.
+	Reset     *time.Time `json:"reset,omitempty"`
+	CheckedAt *time.Time `json:"checked_at,omitempty"`
+	// Endpoint is the GraphQL endpoint the reported budget belongs to. The
+	// timeline budget is reported because it governs whether feeds keep
+	// updating; per-endpoint budgets otherwise differ.
+	Endpoint string `json:"endpoint,omitempty"`
+	// Blocked is set when a 429 has suppressed requests until its reset.
+	Blocked      bool       `json:"blocked"`
+	BlockedUntil *time.Time `json:"blocked_until,omitempty"`
 	// Reserve is the headroom kept for ingestion; BudgetLow is true when the
 	// remaining budget has fallen below it.
 	Reserve   int  `json:"reserve"`
 	BudgetLow bool `json:"budget_low"`
 }
 
-// QuotaSnapshot returns the last observed rate-limit state. reserve is the
-// ingestion headroom used to compute BudgetLow.
+// QuotaSnapshot returns the last observed rate-limit state for the timeline
+// endpoint — the budget that decides whether feeds keep updating. Before the
+// first timeline fetch it falls back to whichever endpoint reported most
+// recently, so the banner is populated as soon as anything has been measured.
+// reserve is the ingestion headroom used to compute BudgetLow.
 func (f *TwitterFetcher) QuotaSnapshot(reserve int) QuotaSnapshot {
 	f.mu.Lock()
-	q := f.lastQuota
+	q, endpoint := f.lastQuota[twitterUserTweetsQuery], twitterUserTweetsQuery
+	if q.checkedAt.IsZero() {
+		for hash, cand := range f.lastQuota {
+			if cand.checkedAt.After(q.checkedAt) {
+				q, endpoint = cand, hash
+			}
+		}
+	}
 	blockedUntil := f.blockedUntil
 	f.mu.Unlock()
 
@@ -405,13 +440,16 @@ func (f *TwitterFetcher) QuotaSnapshot(reserve int) QuotaSnapshot {
 		Measured:  !q.checkedAt.IsZero(),
 		Limit:     q.limit,
 		Remaining: q.remaining,
-		Reset:     q.reset,
-		CheckedAt: q.checkedAt,
 		Reserve:   reserve,
+	}
+	if s.Measured {
+		s.Endpoint = endpointName(endpoint)
+		reset, checkedAt := q.reset, q.checkedAt
+		s.Reset, s.CheckedAt = &reset, &checkedAt
 	}
 	if !blockedUntil.IsZero() && time.Now().Before(blockedUntil) {
 		s.Blocked = true
-		s.BlockedUntil = blockedUntil
+		s.BlockedUntil = &blockedUntil
 	}
 	if s.Measured && time.Now().Before(q.reset) {
 		s.BudgetLow = q.remaining < reserve

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	urlpkg "net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -366,12 +367,51 @@ func (f *RedditFetcher) parseListing(data []byte, subreddit string) ([]Item, err
 	return items, nil
 }
 
-func htmlEscapeText(s string) string {
-	s = strings.ReplaceAll(s, "&", "&amp;")
-	s = strings.ReplaceAll(s, "<", "&lt;")
-	s = strings.ReplaceAll(s, ">", "&gt;")
-	s = strings.ReplaceAll(s, "\n", "<br />")
-	return s
+// redditTextEscape escapes user-derived text for use as HTML element content.
+// It must be applied *before* the fragment is stashed in a placeholder: the
+// escaping pass at the end of renderRedditMarkdown only covers the
+// non-placeholder remainder, so anything already inside a placeholder would
+// otherwise reach the page raw.
+func redditTextEscape(s string) string {
+	return strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+	).Replace(s)
+}
+
+// redditAttrEscape escapes user-derived text for a double-quoted HTML attribute
+// value. Quotes and apostrophes are included so the value cannot close the
+// attribute and inject new markup.
+func redditAttrEscape(s string) string {
+	return strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		`"`, "&quot;",
+		"'", "&#39;",
+	).Replace(s)
+}
+
+// safeMarkdownURL returns the URL when it is safe to place in an href/src
+// attribute, and "" when it is not. Only http, https, mailto and scheme-less
+// (relative) targets are allowed: javascript:, data: and similar would execute
+// in the reader, since this HTML is inserted with v-html.
+func safeMarkdownURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	u, err := urlpkg.Parse(trimmed)
+	if err != nil {
+		return ""
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "", "http", "https", "mailto":
+		return trimmed
+	default:
+		return ""
+	}
 }
 
 // renderRedditMarkdown converts Reddit-flavored selftext to HTML.
@@ -419,20 +459,30 @@ func renderRedditMarkdown(text string) string {
 	reImg := regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
 	s = reImg.ReplaceAllStringFunc(s, func(m string) string {
 		parts := reImg.FindStringSubmatch(m)
-		return ph(`<img src="` + parts[2] + `" alt="` + parts[1] + `" loading="lazy" style="max-width:100%;border-radius:4px" />`)
+		src := safeMarkdownURL(parts[2])
+		if src == "" {
+			// Unsafe scheme: drop the image but keep the alt text readable.
+			return ph(redditTextEscape(parts[1]))
+		}
+		return ph(`<img src="` + redditAttrEscape(src) + `" alt="` + redditAttrEscape(parts[1]) + `" loading="lazy" style="max-width:100%;border-radius:4px" />`)
 	})
 
 	// Markdown links: [text](url)
 	reLink := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 	s = reLink.ReplaceAllStringFunc(s, func(m string) string {
 		parts := reLink.FindStringSubmatch(m)
-		return ph(`<a href="` + parts[2] + `" target="_blank" rel="noopener">` + parts[1] + `</a>`)
+		href := safeMarkdownURL(parts[2])
+		if href == "" {
+			// Unsafe scheme: keep the label as plain text, no link.
+			return ph(redditTextEscape(parts[1]))
+		}
+		return ph(`<a href="` + redditAttrEscape(href) + `" target="_blank" rel="noopener">` + redditTextEscape(parts[1]) + `</a>`)
 	})
 
 	// Bare image URLs (i.redd.it, preview.redd.it)
 	reBareImg := regexp.MustCompile(`https?://(?:i\.redd\.it|preview\.redd\.it)/\S+\.(?:png|jpe?g|gif|webp)(?:\?\S*)?`)
 	s = reBareImg.ReplaceAllStringFunc(s, func(m string) string {
-		return ph(`<img src="` + m + `" loading="lazy" style="max-width:100%;border-radius:4px" />`)
+		return ph(`<img src="` + redditAttrEscape(m) + `" loading="lazy" style="max-width:100%;border-radius:4px" />`)
 	})
 
 	// Bare URLs (http/https, not inside href/src attributes)
@@ -440,21 +490,21 @@ func renderRedditMarkdown(text string) string {
 	s = reURL.ReplaceAllStringFunc(s, func(m string) string {
 		// Skip URLs that look like they're inside an already-processed tag
 		// (preceded by a quote or = which indicates an attribute value)
-		return ph(`<a href="` + m + `" target="_blank" rel="noopener">` + m + `</a>`)
+		return ph(`<a href="` + redditAttrEscape(m) + `" target="_blank" rel="noopener">` + redditTextEscape(m) + `</a>`)
 	})
 
 	// Bold: **text**
 	reBold := regexp.MustCompile(`\*\*([^*]+)\*\*`)
 	s = reBold.ReplaceAllStringFunc(s, func(m string) string {
 		parts := reBold.FindStringSubmatch(m)
-		return ph(`<strong>` + parts[1] + `</strong>`)
+		return ph(`<strong>` + redditTextEscape(parts[1]) + `</strong>`)
 	})
 
 	// Italic: *text* (after bold is processed, remaining single asterisks)
 	reItalic := regexp.MustCompile(`\*([^*\n]+)\*`)
 	s = reItalic.ReplaceAllStringFunc(s, func(m string) string {
 		parts := reItalic.FindStringSubmatch(m)
-		return ph(`<em>` + parts[1] + `</em>`)
+		return ph(`<em>` + redditTextEscape(parts[1]) + `</em>`)
 	})
 
 	// HTML escape everything
@@ -529,7 +579,7 @@ func renderMarkdownTable(block []string, ph func(string) string) string {
 	// Header row.
 	b.WriteString("<thead><tr>")
 	for _, cell := range headerCells {
-		fmt.Fprintf(&b, "<th>%s</th>", cell)
+		fmt.Fprintf(&b, "<th>%s</th>", redditTextEscape(cell))
 	}
 	b.WriteString("</tr></thead>")
 
@@ -543,7 +593,7 @@ func renderMarkdownTable(block []string, ph func(string) string) string {
 			if ci < len(cells) {
 				val = cells[ci]
 			}
-			fmt.Fprintf(&b, "<td>%s</td>", val)
+			fmt.Fprintf(&b, "<td>%s</td>", redditTextEscape(val))
 		}
 		b.WriteString("</tr>")
 	}

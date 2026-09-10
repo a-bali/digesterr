@@ -115,34 +115,60 @@ UPDATE digest_results SET status = 'read', updated_at = DATETIME('now') WHERE us
 UPDATE digest_results SET status = 'read', updated_at = DATETIME('now') WHERE config_id = ? AND user_id = ? AND status = 'new';
 
 -- name: MarkDigestConfigReadAbove :exec
--- Mark digest results above (or at) the given result as read, within a config.
+-- Mark digest results at or above the boundary result as read, within a config.
+--
+-- The boundary row is identified by id and its ordering key is read inside SQL
+-- rather than bound as a timestamp from Go: SQLite stores created_at as TEXT in
+-- DATETIME('now') layout ("2026-09-10 10:31:06") while a Go time.Time binds as
+-- RFC3339 ("2026-09-10T10:31:06Z"), so a bound comparison never matched and the
+-- boundary result itself was never marked. id is the tiebreak, matching the
+-- created_at DESC, id DESC order the list queries use.
 UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
-WHERE config_id = @config_id
-  AND user_id = @user_id
-  AND status = 'new'
-  AND created_at >= @boundary_created_at;
+WHERE digest_results.config_id = @config_id
+  AND digest_results.user_id = @user_id
+  AND digest_results.status = 'new'
+  AND (
+    digest_results.created_at > (SELECT br.created_at FROM digest_results br WHERE br.id = @boundary_id)
+    OR (digest_results.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = @boundary_id)
+        AND digest_results.id >= @boundary_id)
+  );
 
 -- name: MarkDigestConfigReadBelow :exec
--- Mark digest results below the given result as read, within a config.
+-- Mark digest results strictly below the boundary result as read, within a
+-- config. See MarkDigestConfigReadAbove for the boundary rationale.
 UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
-WHERE config_id = @config_id
-  AND user_id = @user_id
-  AND status = 'new'
-  AND created_at < @boundary_created_at;
+WHERE digest_results.config_id = @config_id
+  AND digest_results.user_id = @user_id
+  AND digest_results.status = 'new'
+  AND (
+    digest_results.created_at < (SELECT br.created_at FROM digest_results br WHERE br.id = @boundary_id)
+    OR (digest_results.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = @boundary_id)
+        AND digest_results.id < @boundary_id)
+  );
 
 -- name: MarkAllDigestReadAbove :exec
--- Mark all digest results above (or at) the given result as read.
+-- Mark all digest results at or above the boundary result as read.
+-- See MarkDigestConfigReadAbove for the boundary rationale.
 UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
-WHERE user_id = @user_id
-  AND status = 'new'
-  AND created_at >= @boundary_created_at;
+WHERE digest_results.user_id = @user_id
+  AND digest_results.status = 'new'
+  AND (
+    digest_results.created_at > (SELECT br.created_at FROM digest_results br WHERE br.id = @boundary_id)
+    OR (digest_results.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = @boundary_id)
+        AND digest_results.id >= @boundary_id)
+  );
 
 -- name: MarkAllDigestReadBelow :exec
--- Mark all digest results below the given result as read.
+-- Mark all digest results strictly below the boundary result as read.
+-- See MarkDigestConfigReadAbove for the boundary rationale.
 UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
-WHERE user_id = @user_id
-  AND status = 'new'
-  AND created_at < @boundary_created_at;
+WHERE digest_results.user_id = @user_id
+  AND digest_results.status = 'new'
+  AND (
+    digest_results.created_at < (SELECT br.created_at FROM digest_results br WHERE br.id = @boundary_id)
+    OR (digest_results.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = @boundary_id)
+        AND digest_results.id < @boundary_id)
+  );
 
 -- name: MarkDigestResultItemsRead :exec
 -- When a digest result is marked read, its linked items transition from

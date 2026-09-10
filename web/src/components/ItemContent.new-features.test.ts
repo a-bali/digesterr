@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'
 import ItemContent from './ItemContent.vue'
+import { scrollToItemComments } from '../lib/itemComments'
 import { useFeedStore } from '../stores/feed'
 import type { Feed, Item } from '../types/api'
 
@@ -106,17 +107,57 @@ describe('ItemContent scroll-to-comments', () => {
     expect(scrollBtn.exists()).toBe(false)
   })
 
-  it('registers the global scrollToItemComments function', () => {
+  it('exposes scroll-to-comments via the shared handle, and clears it on unmount', async () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+
     const wrapper = mountItemContent(makeItem())
-    expect(typeof (globalThis as any).__scrollToItemComments).toBe('function')
+    await wrapper.vm.$nextTick()
+
+    scrollToItemComments()
+    await wrapper.vm.$nextTick()
+    expect(scrollIntoView).toHaveBeenCalled()
+
     wrapper.unmount()
-    expect((globalThis as any).__scrollToItemComments).toBeUndefined()
+    scrollIntoView.mockClear()
+    scrollToItemComments()
+    await wrapper.vm.$nextTick()
+    expect(scrollIntoView, 'an unmounted pane must not be scrolled').not.toHaveBeenCalled()
   })
 
   it('renders the comments section with data-comments-section attribute', () => {
     const wrapper = mountItemContent(makeItem())
     const section = wrapper.find('[data-comments-section]')
     expect(section.exists()).toBe(true)
+  })
+
+  it('judges each URL occurrence by its own preceding character', async () => {
+    // Regression: the skip-if-already-in-an-attribute check used
+    // restored.indexOf(match) — the FIRST occurrence of the URL in the whole
+    // string. The same URL appearing twice was therefore judged twice by the
+    // prefix of its first copy, so the bare second mention was left unlinked.
+    const url = 'https://example.com/article'
+    const wrapper = mountItemContent(makeItem({ comment_url: 'https://example.com/c' }))
+    const vm = wrapper.vm as any
+    vm.topComments = [
+      {
+        author: 'alice',
+        // Apostrophes survive the escaping pass, so they still count as a
+        // "already inside an attribute" prefix. The quoted mention is skipped;
+        // the bare mention after it must be linked.
+        text: `'${url}' and again ${url}`,
+        points: 5,
+        valid_points: true,
+        url: '',
+      },
+    ]
+    await wrapper.vm.$nextTick()
+
+    const links = wrapper.findAll(`a[href="${url}"]`)
+    expect(links.length, 'the bare second mention should be linked exactly once').toBe(1)
+
+    // The anchor wraps the bare mention, not the quoted one.
+    expect(wrapper.html()).toContain(`and again <a href="${url}"`)
   })
 })
 

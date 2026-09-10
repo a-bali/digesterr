@@ -56,14 +56,12 @@ func (t *Transport) Consume() (respBytes, requests int64) {
 	return t.respBytes.Swap(0), t.requests.Swap(0)
 }
 
-// ResetBytes atomically resets the byte counter and returns the value.
-func (t *Transport) ResetBytes() int64 {
-	return t.respBytes.Swap(0)
-}
-
-// BytesSnapshot returns the current byte count.
-func (t *Transport) BytesSnapshot() int64 {
-	return t.respBytes.Load()
+// Reset atomically clears both counters. Resetting only the byte counter
+// would leave a stale request count behind, and the next poll would then report
+// the previous window's requests as its own.
+func (t *Transport) Reset() {
+	t.respBytes.Store(0)
+	t.requests.Store(0)
 }
 
 // RequestsSnapshot returns the current outbound request count.

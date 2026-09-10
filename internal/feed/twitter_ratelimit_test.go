@@ -110,14 +110,14 @@ func TestTwitterRecordsQuota(t *testing.T) {
 	if _, err := f.userID(context.Background(), "testuser"); err != nil {
 		t.Fatalf("userID: %v", err)
 	}
-	limit, remaining, gotReset := f.Quota()
+	limit, remaining, gotReset := f.Quota(twitterUserByScreenNameQuery)
 	if limit != 50 || remaining != 40 {
 		t.Errorf("Quota() = (%d, %d), want (50, 40)", limit, remaining)
 	}
 	if gotReset.IsZero() {
 		t.Error("Quota() reset is zero, want the header value")
 	}
-	if f.BudgetLow(10) {
+	if f.BudgetLow(twitterUserByScreenNameQuery, 10) {
 		t.Error("BudgetLow(10) = true with 40 remaining, want false")
 	}
 
@@ -126,7 +126,7 @@ func TestTwitterRecordsQuota(t *testing.T) {
 	if _, err := low.userID(context.Background(), "testuser"); err != nil {
 		t.Fatalf("userID: %v", err)
 	}
-	if !low.BudgetLow(10) {
+	if !low.BudgetLow(twitterUserByScreenNameQuery, 10) {
 		t.Error("BudgetLow(10) = false with 2 remaining, want true")
 	}
 }
@@ -134,8 +134,61 @@ func TestTwitterRecordsQuota(t *testing.T) {
 // TestTwitterBudgetLowWithoutData asserts an unmeasured client is never
 // suppressed: absence of quota data must not block enrichment.
 func TestTwitterBudgetLowWithoutData(t *testing.T) {
-	if NewTwitterFetcher().BudgetLow(10) {
+	if NewTwitterFetcher().BudgetLow(twitterUserTweetsQuery, 10) {
 		t.Error("BudgetLow on a client with no quota data = true, want false")
+	}
+}
+
+// TestTwitterQuotaIsTrackedPerEndpoint asserts each endpoint's budget is kept
+// separately. X allocates the budget per endpoint, so a nearly-spent lookup
+// must not make the timeline budget look exhausted (or the reverse) — gating on
+// the wrong endpoint's number silently stops or wastes enrichment.
+func TestTwitterQuotaIsTrackedPerEndpoint(t *testing.T) {
+	reset := time.Now().Add(10 * time.Minute)
+
+	f := newBareTwitterFetcher(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Rate-Limit-Limit", "50")
+		w.Header().Set("X-Rate-Limit-Reset", strconv.FormatInt(reset.Unix(), 10))
+		switch {
+		case strings.Contains(r.URL.Path, "UserByScreenName"):
+			// The lookup budget is healthy.
+			w.Header().Set("X-Rate-Limit-Remaining", "40")
+			_, _ = w.Write(userByResponse("4444"))
+		case strings.Contains(r.URL.Path, "UserTweets"):
+			// The timeline budget is nearly spent, and this response lands last.
+			w.Header().Set("X-Rate-Limit-Remaining", "1")
+			_, _ = w.Write(buildTimeline(20))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	// One fetch measures both endpoints, ending on the timeline response.
+	if _, err := f.Fetch(context.Background(), "https://x.com/testuser"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	// The healthy lookup budget must not inherit the timeline's exhaustion.
+	if f.BudgetLow(twitterUserByScreenNameQuery, 10) {
+		t.Error("ScreenName budget reported low (remaining 40) after a timeline response with remaining 1 — " +
+			"endpoint budgets are not tracked separately")
+	}
+	if !f.BudgetLow(twitterUserTweetsQuery, 10) {
+		t.Error("timeline budget not reported low with remaining 1")
+	}
+
+	// The reported banner state is the timeline budget, not whichever endpoint
+	// happened to respond last.
+	snap := f.QuotaSnapshot(10)
+	if snap.Endpoint != "UserTweets" {
+		t.Errorf("snapshot endpoint = %q, want UserTweets", snap.Endpoint)
+	}
+	if snap.Remaining != 1 {
+		t.Errorf("snapshot remaining = %d, want 1 (timeline budget)", snap.Remaining)
+	}
+	if !snap.BudgetLow {
+		t.Error("snapshot BudgetLow = false with timeline remaining 1 and reserve 10")
 	}
 }
 

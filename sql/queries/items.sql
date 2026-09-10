@@ -154,24 +154,88 @@ WHERE feed_id IN (SELECT id FROM feeds WHERE user_id = @user_id AND category = @
   AND status = 'unread';
 
 -- name: MarkFeedReadAbove :exec
--- Mark items above (or at) the given item as read, within a single feed.
--- Boundary values are looked up by the handler to avoid correlated subqueries.
+-- Mark items at or above the boundary item as read, within a single feed.
+--
+-- The boundary row is identified by id and its ordering key is read inside SQL
+-- rather than bound as a timestamp from Go. SQLite stores these columns as TEXT
+-- and a Go time.Time binds in a different text layout
+-- ("2026-09-10 10:31:06+00:00") than the stored value ("2026-09-10T10:31:06Z"),
+-- so comparing against a bound time matched nothing and the boundary item was
+-- never included.
+--
+-- Ordering matches the item list: COALESCE(published_at, '') DESC, id DESC. The
+-- '' stand-in keeps undated items (published_at IS NULL) reachable instead of
+-- dropping them out of both directions, and id replaces created_at as the
+-- tiebreak so the comparison never crosses timestamp layouts.
 UPDATE items SET status = 'read', updated_at = DATETIME('now')
-WHERE feed_id = @feed_id
-  AND status = 'unread'
+WHERE items.feed_id = @feed_id
+  AND items.status = 'unread'
   AND (
-    published_at > @boundary_published_at
-    OR (published_at = @boundary_published_at AND created_at >= @boundary_created_at)
+    COALESCE(items.published_at, '') > (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
+    OR (COALESCE(items.published_at, '') = (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
+        AND items.id >= @boundary_id)
   );
 
 -- name: MarkFeedReadBelow :exec
--- Mark items below (but not at) the given item as read, within a single feed.
+-- Mark items strictly below the boundary item as read, within a single feed.
+-- See MarkFeedReadAbove for the boundary/ordering rationale.
 UPDATE items SET status = 'read', updated_at = DATETIME('now')
-WHERE feed_id = @feed_id
-  AND status = 'unread'
+WHERE items.feed_id = @feed_id
+  AND items.status = 'unread'
   AND (
-    published_at < @boundary_published_at
-    OR (published_at = @boundary_published_at AND created_at < @boundary_created_at)
+    COALESCE(items.published_at, '') < (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
+    OR (COALESCE(items.published_at, '') = (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
+        AND items.id < @boundary_id)
+  );
+
+-- name: MarkCategoryReadAbove :exec
+-- Mark items at or above the boundary item as read, across a feed category.
+-- See MarkFeedReadAbove for the boundary/ordering rationale.
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = @user_id AND f.category = @category)
+  AND items.status = 'unread'
+  AND (
+    COALESCE(items.published_at, '') > (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
+    OR (COALESCE(items.published_at, '') = (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
+        AND items.id >= @boundary_id)
+  );
+
+-- name: MarkCategoryReadBelow :exec
+-- Mark items strictly below the boundary item as read, across a feed category.
+-- See MarkFeedReadAbove for the boundary/ordering rationale.
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = @user_id AND f.category = @category)
+  AND items.status = 'unread'
+  AND (
+    COALESCE(items.published_at, '') < (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
+    OR (COALESCE(items.published_at, '') = (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
+        AND items.id < @boundary_id)
+  );
+
+-- name: MarkAllFeedsReadAbove :exec
+-- Mark items at or above the boundary item as read, across every feed the user
+-- owns (the "Feeds" section view).
+-- See MarkFeedReadAbove for the boundary/ordering rationale.
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = @user_id)
+  AND items.status = 'unread'
+  AND (
+    COALESCE(items.published_at, '') > (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
+    OR (COALESCE(items.published_at, '') = (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
+        AND items.id >= @boundary_id)
+  );
+
+-- name: MarkAllFeedsReadBelow :exec
+-- Mark items strictly below the boundary item as read, across every feed the
+-- user owns (the "Feeds" section view).
+-- See MarkFeedReadAbove for the boundary/ordering rationale.
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = @user_id)
+  AND items.status = 'unread'
+  AND (
+    COALESCE(items.published_at, '') < (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
+    OR (COALESCE(items.published_at, '') = (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
+        AND items.id < @boundary_id)
   );
 
 -- name: ListItemsByUserStatus :many

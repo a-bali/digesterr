@@ -25,6 +25,7 @@ import { useBreakpoints } from '../composables/useMediaQuery'
 import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts'
 import { useSwipeGesture } from '../composables/useSwipeGesture'
 import { usePageTitle, digestResultTitle } from '../composables/usePageTitle'
+import { scrollToItemComments } from '../lib/itemComments'
 import { Newspaper, Menu, ArrowLeft, CircleHelp } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -95,10 +96,7 @@ useKeyboardShortcuts({
     themeStore.mode = themeStore.mode === 'dark' ? 'light' : 'dark'
   },
   openHelp: () => { showShortcuts.value = true },
-  scrollToComments: () => {
-    const fn = (globalThis as any).__scrollToItemComments
-    if (fn) fn()
-  },
+  scrollToComments: () => scrollToItemComments(),
 })
 
 // ---- Lifecycle ----

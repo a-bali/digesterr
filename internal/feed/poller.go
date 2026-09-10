@@ -195,17 +195,6 @@ func (p *Poller) ConsumeCounters() (respBytes int64, requests int) {
 	return 0, 0
 }
 
-// ConsumeBytes reads and resets the shared transport byte counter.
-func (p *Poller) ConsumeBytes() int64 {
-	b, _ := p.ConsumeCounters()
-	return b
-}
-
-// consumeCounters reads and resets the shared transport counters.
-func (p *Poller) consumeCounters() (int64, int) {
-	return p.ConsumeCounters()
-}
-
 // TwitterQuota reports the twitter client's rate-limit state for the metrics
 // API. Configured is false when no twitter fetcher is registered.
 func (p *Poller) TwitterQuota() QuotaSnapshot {
@@ -432,7 +421,7 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 
 	items, err := fetcher.Fetch(ctx, feed.Url)
 	fetchDur := time.Since(start)
-	fetchBytes, fetchReqs := p.consumeCounters()
+	fetchBytes, fetchReqs := p.ConsumeCounters()
 		// Derive host from feed URL.
 		fetchHost := hostFromURL(feed.Url)
 		if p.recordFn != nil {
@@ -696,7 +685,7 @@ func (p *Poller) enrichForPoll(ctx context.Context, feed store.Feed, candidates 
 	enrichStart := time.Now()
 	if b, ok := enricher.(BulkEnricher); ok {
 		bulkErr := b.BulkEnrich(ctx, allPtrs)
-		enrichBytes, enrichReqs := p.consumeCounters()
+		enrichBytes, enrichReqs := p.ConsumeCounters()
 		enrichHost := hostFromURL(feed.Url)
 		p.recordEnrich(enrichStart, feed, enrichHost, enrichBytes, enrichReqs, bulkErr)
 		if bulkErr != nil {
@@ -880,7 +869,7 @@ func (p *Poller) extractSingleItem(ctx context.Context, client *http.Client, ite
 	}
 
 	content, err := ExtractContent(ctx, item.Url, client, logger)
-	extractBytes, extractReqs := p.consumeCounters()
+	extractBytes, extractReqs := p.ConsumeCounters()
 	// Record extraction metrics.
 	if p.recordFn != nil {
 		errStr := ""
@@ -976,8 +965,8 @@ func (p *Poller) enrichTwitterItems(ctx context.Context, feed store.Feed, tf *Tw
 	// This pass only refreshes scores for items already stored, so losing it
 	// costs staleness and nothing else — whereas losing Fetch loses posts.
 	// When X's advertised budget runs low, spend what is left on ingestion.
-	if tf.BudgetLow(twitterQuotaReserve) {
-		limit, remaining, reset := tf.Quota()
+	if tf.BudgetLow(twitterUserTweetsQuery, twitterQuotaReserve) {
+		limit, remaining, reset := tf.Quota(twitterUserTweetsQuery)
 		logger.Info("skipping twitter enrichment: rate-limit budget low",
 			"limit", limit, "remaining", remaining, "reset", reset.UTC().Format(time.RFC3339))
 		return
@@ -1022,7 +1011,7 @@ func (p *Poller) enrichTwitterItems(ctx context.Context, feed store.Feed, tf *Tw
 	}
 	enrichStart := time.Now()
 	twErr := tf.EnrichFeed(ctx, feed.Url, ptrs)
-	twBytes, twReqs := p.consumeCounters()
+	twBytes, twReqs := p.ConsumeCounters()
 	twHost := hostFromURL(feed.Url)
 	p.recordEnrich(enrichStart, feed, twHost, twBytes, twReqs, twErr)
 	if twErr != nil {

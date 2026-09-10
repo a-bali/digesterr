@@ -802,80 +802,78 @@ func (s *Server) handleMarkItemRelative(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	// Try single-feed scope first (no category, no feed_ids = single feed view).
-	if body.Category == nil && body.FeedIDs == nil {
-		if direction == "above" {
-			err = s.queries.MarkFeedReadAbove(r.Context(), store.MarkFeedReadAboveParams{
-				FeedID:              item.FeedID,
-				BoundaryPublishedAt: item.PublishedAt,
-				BoundaryCreatedAt:   item.CreatedAt,
-			})
-		} else {
-			err = s.queries.MarkFeedReadBelow(r.Context(), store.MarkFeedReadBelowParams{
-				FeedID:              item.FeedID,
-				BoundaryPublishedAt: item.PublishedAt,
-				BoundaryCreatedAt:   item.CreatedAt,
-			})
-		}
-		if err != nil {
-			writeServerError(w, "failed to mark items read", err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"message": "items marked read"})
-		return
+	// The section the client is viewing decides the scope:
+	//   label        -> every feed in that category
+	//   "Feeds" list -> every feed the user owns
+	//   neither      -> the item's own feed
+	//
+	// feed_ids is still accepted so the "Feeds" section is recognised, but it is
+	// no longer parsed: the client always sends its complete feed list, so a
+	// supplied list can never narrow the update below the user-wide scope. An
+	// empty category is treated as user-wide too, matching the previous
+	// behaviour.
+	//
+	// The boundary row and its sort key are resolved inside SQL, not bound from
+	// Go — see MarkFeedReadAbove in sql/queries/items.sql.
+	above := direction == "above"
+	switch {
+	case body.Category != nil && *body.Category != "":
+		err = s.markRelativeByCategory(r.Context(), userID, *body.Category, itemID, above)
+	case body.Category != nil || body.FeedIDs != nil:
+		err = s.markRelativeByUser(r.Context(), userID, itemID, above)
+	default:
+		err = s.markRelativeByFeed(r.Context(), item.FeedID, itemID, above)
 	}
-
-	// Dynamic SQL for multi-feed/category views (sqlc can't handle the IN subquery
-	// due to column ambiguity with the feeds table).
-	var feedIDClause string
-	var args []interface{}
-
-	if body.Category != nil && *body.Category != "" {
-		feedIDClause = "feed_id IN (SELECT id FROM feeds WHERE user_id = ? AND category = ?)"
-		args = append(args, userID, *body.Category)
-	} else if body.FeedIDs != nil && *body.FeedIDs != "" {
-		parts := strings.Split(*body.FeedIDs, ",")
-		placeholders := make([]string, 0, len(parts))
-		for _, p := range parts {
-			p = strings.TrimSpace(p)
-			if p == "" {
-				continue
-			}
-			v, err := strconv.ParseInt(p, 10, 64)
-			if err != nil {
-				continue
-			}
-			placeholders = append(placeholders, "?")
-			args = append(args, v)
-		}
-		if len(placeholders) == 0 {
-			writeError(w, http.StatusBadRequest, "no valid feed_ids")
-			return
-		}
-		feedIDClause = fmt.Sprintf("feed_id IN (%s)", strings.Join(placeholders, ","))
-	} else {
-		// All feeds: all feeds belonging to the user.
-		feedIDClause = "feed_id IN (SELECT id FROM feeds WHERE user_id = ?)"
-		args = append(args, userID)
-	}
-
-	op := ">="
-	if direction == "below" {
-		op = "<"
-	}
-
-	queryStr := fmt.Sprintf(
-		"UPDATE items SET status = 'read', updated_at = DATETIME('now') WHERE %s AND status = 'unread' AND (published_at > ? OR (published_at = ? AND created_at %s ?))",
-		feedIDClause, op,
-	)
-	args = append(args, item.PublishedAt, item.PublishedAt, item.CreatedAt)
-
-	_, err = s.db.ExecContext(r.Context(), queryStr, args...)
 	if err != nil {
 		writeServerError(w, "failed to mark items read", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "items marked read"})
+}
+
+// markRelativeByFeed marks items in a single feed at/above or below the
+// boundary item.
+func (s *Server) markRelativeByFeed(ctx context.Context, feedID, boundaryID int64, above bool) error {
+	if above {
+		return s.queries.MarkFeedReadAbove(ctx, store.MarkFeedReadAboveParams{
+			FeedID:     feedID,
+			BoundaryID: boundaryID,
+		})
+	}
+	return s.queries.MarkFeedReadBelow(ctx, store.MarkFeedReadBelowParams{
+		FeedID:     feedID,
+		BoundaryID: boundaryID,
+	})
+}
+
+// markRelativeByCategory marks items across every feed in one category.
+func (s *Server) markRelativeByCategory(ctx context.Context, userID int64, category string, boundaryID int64, above bool) error {
+	if above {
+		return s.queries.MarkCategoryReadAbove(ctx, store.MarkCategoryReadAboveParams{
+			UserID:     userID,
+			Category:   category,
+			BoundaryID: boundaryID,
+		})
+	}
+	return s.queries.MarkCategoryReadBelow(ctx, store.MarkCategoryReadBelowParams{
+		UserID:     userID,
+		Category:   category,
+		BoundaryID: boundaryID,
+	})
+}
+
+// markRelativeByUser marks items across every feed the user owns.
+func (s *Server) markRelativeByUser(ctx context.Context, userID, boundaryID int64, above bool) error {
+	if above {
+		return s.queries.MarkAllFeedsReadAbove(ctx, store.MarkAllFeedsReadAboveParams{
+			UserID:     userID,
+			BoundaryID: boundaryID,
+		})
+	}
+	return s.queries.MarkAllFeedsReadBelow(ctx, store.MarkAllFeedsReadBelowParams{
+		UserID:     userID,
+		BoundaryID: boundaryID,
+	})
 }
 
 // colInt64 extracts an int64 from a scanned column value.
