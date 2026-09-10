@@ -270,6 +270,30 @@ export const useDigestStore = defineStore('digest', () => {
     }
   }
 
+  async function markReadAbove(result: DigestResult) {
+    const opts: { config_id?: number } = {}
+    if (activeConfigId.value) opts.config_id = activeConfigId.value
+    await digestApi.markReadAbove(result.id, opts)
+    await fetchUnreadCounts()
+    if (activeConfigId.value) {
+      await setActiveConfig(activeConfigId.value)
+    } else if (showingAllDigests.value) {
+      await loadAllResults(true)
+    }
+  }
+
+  async function markReadBelow(result: DigestResult) {
+    const opts: { config_id?: number } = {}
+    if (activeConfigId.value) opts.config_id = activeConfigId.value
+    await digestApi.markReadBelow(result.id, opts)
+    await fetchUnreadCounts()
+    if (activeConfigId.value) {
+      await setActiveConfig(activeConfigId.value)
+    } else if (showingAllDigests.value) {
+      await loadAllResults(true)
+    }
+  }
+
   async function updateResultStatus(resultId: number, status: string) {
     try {
       const updated = normalize(await digestApi.updateResultStatus(resultId, status))
@@ -299,6 +323,6 @@ export const useDigestStore = defineStore('digest', () => {
     fetchConfigs, createConfig, updateConfig, deleteConfig,
     setActiveConfig, selectResult, generateNow, markResultRead, deleteResult,
     updateResultStatus, silentRefresh, fetchUnreadCounts, fetchMoreResults,
-    loadAllResults, enterAllDigestsMode, exitAllDigestsMode, markAllRead,
+    loadAllResults, enterAllDigestsMode, exitAllDigestsMode, markAllRead, markReadAbove, markReadBelow,
   }
 })

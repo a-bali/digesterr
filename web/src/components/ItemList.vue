@@ -4,8 +4,8 @@ import { useFeedStore, type FeedSort, type FeedStatusFilter } from '../stores/fe
 import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
-import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, LoaderCircle, CheckCircle2 } from 'lucide-vue-next'
-import { stripContent } from '../lib/utils'
+import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, LoaderCircle, CheckCircle2, ChevronsUp, ChevronsDown, MoreHorizontal } from 'lucide-vue-next'
+import { stripContent, decodeHTMLEntities } from '../lib/utils'
 import { feedIcon } from '../lib/format'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { usePullToRefresh } from '../composables/usePullToRefresh'
@@ -163,6 +163,27 @@ function commentsTitle(val: number): string {
   return `${val} comments (${sign}${diff})`
 }
 
+// Hover action menu: track which item has its mark-read-above/below menu open.
+const openMenuId = ref<number | null>(null)
+
+function toggleMenu(itemId: number) {
+  openMenuId.value = openMenuId.value === itemId ? null : itemId
+}
+
+function closeMenu() {
+  openMenuId.value = null
+}
+
+async function markAboveRead(item: any) {
+  closeMenu()
+  await feedStore.markReadAbove(item)
+}
+
+async function markBelowRead(item: any) {
+  closeMenu()
+  await feedStore.markReadBelow(item)
+}
+
 </script>
 
 <template>
@@ -205,7 +226,7 @@ function commentsTitle(val: number): string {
       <TransitionGroup name="item-enter" tag="div">
       <div v-for="item in displayItems" :key="item.id"
       role="button" tabindex="0"
-      class="w-full text-left p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
+      class="group w-full text-left p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
       :class="[feedStore.isMultiView ? 'min-h-[5.5rem]' : 'h-20', { 'bg-accent/10': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved', 'opacity-50 transition-opacity': feedStore.loading }]"
       :data-selected-item="item.id === feedStore.selectedItem?.id ? '' : undefined"
       @click="onRowClick($event, item)"
@@ -219,6 +240,33 @@ function commentsTitle(val: number): string {
         <span v-if="item.status === 'saved'" class="text-accent shrink-0 mt-0.5"><Check class="size-3" /></span>
         <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ item.title }}</p>
         <span class="text-[10px] text-muted-foreground/70 shrink-0 mt-0.5" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
+        <!-- Hover action: mark read above/below -->
+        <span class="shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity relative">
+          <button
+            v-if="item.status === 'unread' && !props.showingSaved"
+            class="text-muted-foreground/50 hover:text-muted-foreground p-0.5 -mr-0.5"
+            @click.stop="toggleMenu(item.id)"
+          >
+            <MoreHorizontal class="size-3" />
+          </button>
+          <div
+            v-if="openMenuId === item.id"
+            class="absolute right-0 top-6 z-50 bg-popover border rounded-md shadow-md flex gap-1 p-1"
+          >
+            <button
+              class="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-accent/10 rounded transition-colors whitespace-nowrap"
+              @click.stop="markAboveRead(item)"
+            >
+              <ChevronsUp class="size-3" /> Above
+            </button>
+            <button
+              class="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-accent/10 rounded transition-colors whitespace-nowrap"
+              @click.stop="markBelowRead(item)"
+            >
+              <ChevronsDown class="size-3" /> Below
+            </button>
+          </div>
+        </span>
       </div>
       <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0" :class="feedStore.isMultiView ? '' : 'pr-16'">{{ stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</p>
       <!-- Multi-view bottom: feed name + score/comments on same line -->
