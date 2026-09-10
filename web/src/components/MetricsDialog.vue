@@ -5,7 +5,7 @@ import Button from './ui/Button.vue'
 import Skeleton from './ui/Skeleton.vue'
 import { metricsApi } from '../services/api'
 import { toastError } from '../lib/toast'
-import type { MetricsSummary, MetricsGroup, MetricsBucket } from '../types/api'
+import type { MetricsSummary, MetricsGroup, MetricsBucket, ProviderQuota } from '../types/api'
 import { BarChart3, RefreshCw } from 'lucide-vue-next'
 
 const open = ref(false)
@@ -117,14 +117,18 @@ function statusClass(s: string): string {
   return 'bg-red-500/15 text-red-400'
 }
 
-// quotaClass colours the twitter quota banner by how close to exhaustion it is.
-const quotaClass = computed(() => {
-  const q = data.value?.twitter_quota
-  if (!q?.configured) return ''
+// Display names for providers that advertise a rate-limit budget.
+const QUOTA_LABELS: Record<string, string> = {
+  twitter: 'X / Twitter',
+  reddit: 'Reddit',
+}
+
+// quotaClass colours a quota banner by how close to exhaustion it is.
+function quotaClass(q: ProviderQuota): string {
   if (q.blocked) return 'border-red-500/40 bg-red-500/5 text-red-400'
   if (q.budget_low) return 'border-amber-500/40 bg-amber-500/5 text-amber-400'
   return 'border-border bg-muted/20 text-muted-foreground'
-})
+}
 
 function fmtReset(iso?: string): string {
   if (!iso) return ''
@@ -231,21 +235,22 @@ function onDimensionToggle() {
           </div>
         </div>
 
-        <!-- Twitter rate-limit headroom -->
-        <div v-if="data.twitter_quota?.configured"
+        <!-- Rate-limit headroom, one banner per provider that advertises one -->
+        <div v-for="q in data.quotas ?? []" :key="q.provider"
           class="rounded-lg border px-3 py-2 text-xs flex items-center gap-3 flex-wrap"
-          :class="quotaClass"
-          data-twitter-quota>
-          <span class="font-semibold">X / Twitter quota</span>
-          <template v-if="data.twitter_quota.measured">
-            <span>limit {{ data.twitter_quota.limit }}</span>
-            <span>remaining <span class="font-semibold">{{ data.twitter_quota.remaining }}</span></span>
-            <span>reserve {{ data.twitter_quota.reserve }}</span>
-            <span v-if="data.twitter_quota.reset">{{ fmtReset(data.twitter_quota.reset) }}</span>
-            <span v-if="data.twitter_quota.blocked" class="font-semibold">
-              blocked until {{ fmtReset(data.twitter_quota.blocked_until) || data.twitter_quota.blocked_until }}
+          :class="quotaClass(q)"
+          :data-quota="q.provider">
+          <span class="font-semibold">{{ QUOTA_LABELS[q.provider] ?? q.provider }} quota</span>
+          <template v-if="q.measured">
+            <span v-if="q.endpoint" class="text-muted-foreground/70">{{ q.endpoint }}</span>
+            <span>limit {{ q.limit }}</span>
+            <span>remaining <span class="font-semibold">{{ q.remaining }}</span></span>
+            <span v-if="q.reserve">reserve {{ q.reserve }}</span>
+            <span v-if="q.reset">{{ fmtReset(q.reset) }}</span>
+            <span v-if="q.blocked" class="font-semibold">
+              blocked until {{ fmtReset(q.blocked_until) || q.blocked_until }}
             </span>
-            <span v-else-if="data.twitter_quota.budget_low" class="font-semibold">
+            <span v-else-if="q.budget_low" class="font-semibold">
               headroom low — enrichment paused
             </span>
           </template>

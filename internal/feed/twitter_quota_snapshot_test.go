@@ -10,6 +10,19 @@ import (
 	"time"
 )
 
+// quotaFor returns the snapshot a poller reports for one provider, failing the
+// test when the provider advertises no budget at all.
+func quotaFor(t *testing.T, poller *Poller, provider string) QuotaSnapshot {
+	t.Helper()
+	for _, q := range poller.Quotas() {
+		if q.Provider == provider {
+			return q
+		}
+	}
+	t.Fatalf("no quota reported for provider %q (got %+v)", provider, poller.Quotas())
+	return QuotaSnapshot{}
+}
+
 // TestTwitterQuotaSnapshotExposed asserts the metrics API can see the twitter
 // client's rate-limit headroom, so quota exhaustion is diagnosable from the
 // API instead of only from the absence of traffic.
@@ -26,10 +39,7 @@ func TestTwitterQuotaSnapshotExposed(t *testing.T) {
 	poller := NewPoller(nil)
 	// A freshly constructed poller registers a twitter client but has not yet
 	// observed any response, so it must report configured-but-unmeasured.
-	snap := poller.TwitterQuota()
-	if !snap.Configured {
-		t.Fatal("Configured = false with the default twitter fetcher registered")
-	}
+	snap := quotaFor(t, poller, "twitter")
 	if snap.Measured {
 		t.Error("Measured = true before any response was seen")
 	}
@@ -39,12 +49,12 @@ func TestTwitterQuotaSnapshotExposed(t *testing.T) {
 
 	// Register the mock-backed client, then observe a real response so the
 	// X-Rate-Limit-* headers get parsed.
-	poller.enrichers["twitter"] = tf
+	poller.fetchers["twitter"] = tf
 	if _, err := tf.userID(t.Context(), "testuser"); err != nil {
 		t.Fatalf("userID: %v", err)
 	}
 
-	snap = poller.TwitterQuota()
+	snap = quotaFor(t, poller, "twitter")
 	if !snap.Measured {
 		t.Fatal("Measured = false after a response carrying quota headers")
 	}
@@ -63,7 +73,7 @@ func TestTwitterQuotaSnapshotExposed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	for _, want := range []string{`"configured":true`, `"measured":true`, `"remaining":3`, `"budget_low":true`} {
+	for _, want := range []string{`"provider":"twitter"`, `"measured":true`, `"remaining":3`, `"budget_low":true`} {
 		if !strings.Contains(string(blob), want) {
 			t.Errorf("snapshot JSON %s missing %s", blob, want)
 		}
@@ -94,11 +104,11 @@ func TestTwitterQuotaSnapshotBlocked(t *testing.T) {
 	tf.SetRateLimiter(nil)
 
 	poller := NewPoller(nil)
-	poller.enrichers["twitter"] = tf
+	poller.fetchers["twitter"] = tf
 
 	_, _ = tf.Fetch(t.Context(), "https://x.com/testuser")
 
-	snap := poller.TwitterQuota()
+	snap := quotaFor(t, poller, "twitter")
 	if !snap.Blocked {
 		t.Fatal("Blocked = false after a 429")
 	}

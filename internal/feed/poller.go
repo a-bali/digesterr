@@ -195,15 +195,20 @@ func (p *Poller) ConsumeCounters() (respBytes int64, requests int) {
 	return 0, 0
 }
 
-// TwitterQuota reports the twitter client's rate-limit state for the metrics
-// API. Configured is false when no twitter fetcher is registered.
-func (p *Poller) TwitterQuota() QuotaSnapshot {
-	if tf, ok := p.enrichers["twitter"].(*TwitterFetcher); ok {
-		s := tf.QuotaSnapshot(twitterQuotaReserve)
-		s.Configured = true
-		return s
+// Quotas reports the rate-limit state of every provider that advertises a
+// budget. Providers whose client is not registered are omitted, so an
+// instance with no quota-bound feeds reports nothing rather than a banner of
+// zeroes. Providers that publish no rate-limit headers (RSS, Hacker News,
+// Lobsters) never appear.
+func (p *Poller) Quotas() []QuotaSnapshot {
+	quotas := make([]QuotaSnapshot, 0, 2)
+	if tf, ok := p.fetchers["twitter"].(*TwitterFetcher); ok {
+		quotas = append(quotas, tf.QuotaSnapshot(twitterQuotaReserve))
 	}
-	return QuotaSnapshot{}
+	if rf, ok := p.fetchers["reddit"].(*RedditFetcher); ok {
+		quotas = append(quotas, rf.QuotaSnapshot(redditQuotaReserve))
+	}
+	return quotas
 }
 
 // SetEnrichmentWindow configures how long after insertion items are

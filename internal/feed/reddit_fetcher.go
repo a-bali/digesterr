@@ -11,6 +11,7 @@ import (
 	urlpkg "net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -54,6 +55,14 @@ type RedditFetcher struct {
 	limiter      *rate.Limiter
 	userAgent    string
 	limit        int // posts per subreddit fetch
+	// quotaMu guards the last rate-limit headers Reddit advertised. Reddit
+	// meters the OAuth client process-wide over a shared window, so this is
+	// intentionally shared across every subreddit feed.
+	quotaMu        sync.Mutex
+	quotaUsed      int
+	quotaRemaining int
+	quotaReset     time.Time
+	quotaCheckedAt time.Time
 }
 
 func NewRedditFetcher() *RedditFetcher {
@@ -89,6 +98,55 @@ func (f *RedditFetcher) SetLimit(n int) {
 	f.limit = n
 }
 
+// recordQuotaHeaders stores the rate-limit headers Reddit returns on every
+// API response. Reddit advertises the remaining budget for the shared OAuth
+// window (x-ratelimit-remaining) alongside the seconds until it resets, so
+// tracking it costs nothing extra. It never reports an absolute limit, so the
+// window size is derived from used + remaining.
+func (f *RedditFetcher) recordQuotaHeaders(h http.Header) {
+	remaining, err := strconv.Atoi(strings.TrimSpace(h.Get("X-Ratelimit-Remaining")))
+	if err != nil {
+		return
+	}
+	used, _ := strconv.Atoi(strings.TrimSpace(h.Get("X-Ratelimit-Used")))
+	resetSeconds, err := strconv.ParseFloat(strings.TrimSpace(h.Get("X-Ratelimit-Reset")), 64)
+	if err != nil || resetSeconds < 0 {
+		resetSeconds = 0
+	}
+
+	f.quotaMu.Lock()
+	f.quotaUsed = used
+	f.quotaRemaining = remaining
+	if resetSeconds > 0 {
+		f.quotaReset = time.Now().Add(time.Duration(resetSeconds * float64(time.Second)))
+	}
+	f.quotaCheckedAt = time.Now()
+	f.quotaMu.Unlock()
+}
+
+// QuotaSnapshot reports the last observed Reddit rate-limit state for the
+// metrics API. reserve is the headroom kept for ingestion; BudgetLow is true
+// once the remaining budget falls below it.
+func (f *RedditFetcher) QuotaSnapshot(reserve int) QuotaSnapshot {
+	f.quotaMu.Lock()
+	used, remaining := f.quotaUsed, f.quotaRemaining
+	reset, checkedAt := f.quotaReset, f.quotaCheckedAt
+	f.quotaMu.Unlock()
+
+	s := QuotaSnapshot{
+		Provider:  "reddit",
+		Measured:  !checkedAt.IsZero(),
+		Limit:     used + remaining,
+		Remaining: remaining,
+		Reserve:   reserve,
+	}
+	if s.Measured {
+		s.Reset, s.CheckedAt = &reset, &checkedAt
+		s.BudgetLow = reserve > 0 && remaining <= reserve
+	}
+	return s
+}
+
 // ensureToken obtains or refreshes the OAuth bearer token.
 func (f *RedditFetcher) ensureToken(ctx context.Context) error {
 	f.tokenMu.Lock()
@@ -117,6 +175,7 @@ func (f *RedditFetcher) ensureToken(ctx context.Context) error {
 		return fmt.Errorf("fetching Reddit access token: %w", err)
 	}
 	defer resp.Body.Close()
+	f.recordQuotaHeaders(resp.Header)
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -189,6 +248,7 @@ func (f *RedditFetcher) Fetch(ctx context.Context, feedURL string) ([]Item, erro
 		return nil, fmt.Errorf("fetching subreddit %s: %w", subreddit, err)
 	}
 	defer resp.Body.Close()
+	f.recordQuotaHeaders(resp.Header)
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)

@@ -25,6 +25,11 @@ const (
 	// feed needs ~2 requests per cycle — so a reserve of 10 leaves ample room
 	// for ingestion (authoritative) plus manual retries.
 	twitterQuotaReserve = 10
+	// redditQuotaReserve is how much of Reddit's observed OAuth budget must
+	// remain before opportunistic reddit enrichment may run. Reddit allows 600
+	// requests per 600s window for the whole client, shared by every subreddit
+	// feed, so a reserve of 50 leaves ample room for ingestion.
+	redditQuotaReserve = 50
 )
 
 // waitLimiter blocks until the limiter allows the next call. A nil limiter

@@ -110,13 +110,12 @@ func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Rate-limit headroom for the twitter client, when configured. Reported
-	// alongside the counters so quota exhaustion is visible before it shows up
-	// as failed polls.
-	var twitterQuota *feed.QuotaSnapshot
+	// Rate-limit headroom per provider, reported alongside the counters so
+	// quota exhaustion is visible before it shows up as failed polls. Only
+	// providers that actually advertise a budget are listed.
+	var quotas []feed.QuotaSnapshot
 	if s.poller != nil {
-		q := s.poller.TwitterQuota()
-		twitterQuota = &q
+		quotas = s.poller.Quotas()
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -128,7 +127,7 @@ func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
 		"avg_duration_ms":     summary.AvgDurationMs,
 		"groups":              groups,
 		"buckets":             summary.Buckets,
-		"twitter_quota":       twitterQuota,
+		"quotas":              quotas,
 	})
 }
 

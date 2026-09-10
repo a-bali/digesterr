@@ -123,17 +123,20 @@ export interface MetricsBucket {
   errors: number
 }
 
-/** Last observed X GraphQL rate-limit state. */
-export interface TwitterQuota {
-  /** False when no twitter client is registered at all. */
-  configured: boolean
-  /** False until a response carrying X-Rate-Limit-* headers has been seen, so
-   * a zero remaining is not mistaken for an exhausted budget. */
+/** Last observed rate-limit state for one provider that advertises a budget. */
+export interface ProviderQuota {
+  /** Feed type the budget belongs to, e.g. "twitter" or "reddit". */
+  provider: string
+  /** False until a response carrying rate-limit headers has been seen, so a
+   * zero remaining is not mistaken for an exhausted budget. */
   measured: boolean
   limit: number
   remaining: number
   reset?: string
   checked_at?: string
+  /** Narrows the budget to the call that governs feed updates, for providers
+   * that meter each endpoint separately. */
+  endpoint?: string
   blocked: boolean
   blocked_until?: string
   /** Headroom kept for ingestion; budget_low is true when below it. */
@@ -151,7 +154,9 @@ export interface MetricsSummary {
   avg_duration_ms: number
   groups: MetricsGroup[]
   buckets: MetricsBucket[]
-  twitter_quota?: TwitterQuota | null
+  /** One entry per provider with a registered client; providers that
+   * publish no rate-limit headers never appear. */
+  quotas?: ProviderQuota[]
 }
 
 export interface DigestResultItemWithData {

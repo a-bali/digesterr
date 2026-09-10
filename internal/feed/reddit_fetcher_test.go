@@ -868,3 +868,62 @@ func TestRenderRedditMarkdownKeepsLegitimateMarkup(t *testing.T) {
 		})
 	}
 }
+
+// TestRedditQuotaSnapshotExposed asserts the metrics API surfaces Reddit's
+// rate-limit headroom, so a client running out of budget is diagnosable from
+// the API rather than only from the absence of new posts.
+func TestRedditQuotaSnapshotExposed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/api/v1/access_token") {
+			_, _ = w.Write([]byte(`{"access_token":"tok","expires_in":3600}`))
+			return
+		}
+		w.Header().Set("X-Ratelimit-Used", "120")
+		w.Header().Set("X-Ratelimit-Remaining", "480")
+		w.Header().Set("X-Ratelimit-Reset", "300")
+		_, _ = w.Write([]byte(`{"data":{"children":[]}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	rf := NewRedditFetcher()
+	rf.baseURL = srv.URL
+	rf.apiBaseURL = srv.URL
+	rf.SetCredentials("client-id", "client-secret")
+	rf.SetRateLimiter(nil)
+
+	poller := NewPoller(nil)
+	poller.fetchers["reddit"] = rf
+
+	// A freshly constructed client has observed nothing yet, so it must not
+	// look exhausted.
+	if snap := quotaFor(t, poller, "reddit"); snap.Measured {
+		t.Error("Measured = true before any response was seen")
+	}
+
+	if _, err := rf.Fetch(t.Context(), "https://www.reddit.com/r/golang"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	snap := quotaFor(t, poller, "reddit")
+	if !snap.Measured {
+		t.Fatal("Measured = false after a response carrying X-Ratelimit-* headers")
+	}
+	// Reddit never advertises an absolute limit, so it is derived from
+	// used + remaining (120 + 480 for a 600-request OAuth window).
+	if snap.Limit != 600 || snap.Remaining != 480 {
+		t.Errorf("Limit/Remaining = %d/%d, want 600/480", snap.Limit, snap.Remaining)
+	}
+	if snap.Reserve != redditQuotaReserve {
+		t.Errorf("Reserve = %d, want %d", snap.Reserve, redditQuotaReserve)
+	}
+	if snap.BudgetLow {
+		t.Error("BudgetLow = true with 480 requests remaining")
+	}
+	if snap.Reset == nil {
+		t.Fatal("Reset is nil; the API consumer needs the window reset time")
+	}
+	if snap.CheckedAt == nil {
+		t.Error("CheckedAt is nil after a measurement")
+	}
+}

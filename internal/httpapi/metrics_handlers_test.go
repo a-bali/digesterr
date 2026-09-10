@@ -43,28 +43,38 @@ func TestMetricsAPIShape(t *testing.T) {
 		}
 	}
 
-	// A poller always registers a twitter client, so quota state is reported
-	// even before any response has been observed.
-	quotaRaw, ok := body["twitter_quota"]
+	// Every provider with a registered client is reported, even before any
+	// response has been observed, so both twitter and reddit must be present.
+	quotasRaw, ok := body["quotas"]
 	if !ok {
-		t.Fatalf("response missing twitter_quota; got keys %v", keysOf(body))
+		t.Fatalf("response missing quotas; got keys %v", keysOf(body))
 	}
-	quota, ok := quotaRaw.(map[string]any)
+	quotas, ok := quotasRaw.([]any)
 	if !ok {
-		t.Fatalf("twitter_quota is %T, want an object", quotaRaw)
+		t.Fatalf("quotas is %T, want an array", quotasRaw)
 	}
-	if quota["configured"] != true {
-		t.Errorf("twitter_quota.configured = %v, want true", quota["configured"])
+	byProvider := map[string]map[string]any{}
+	for _, raw := range quotas {
+		q, _ := raw.(map[string]any)
+		if name, _ := q["provider"].(string); name != "" {
+			byProvider[name] = q
+		}
 	}
-	if quota["measured"] != false {
-		t.Errorf("twitter_quota.measured = %v, want false before any response", quota["measured"])
-	}
-	if quota["budget_low"] != false {
-		t.Errorf("twitter_quota.budget_low = %v, want false without a measurement", quota["budget_low"])
-	}
-	for _, key := range []string{"limit", "remaining", "reserve", "blocked"} {
-		if _, ok := quota[key]; !ok {
-			t.Errorf("twitter_quota missing %q; got %v", key, quota)
+	for _, provider := range []string{"twitter", "reddit"} {
+		quota, ok := byProvider[provider]
+		if !ok {
+			t.Fatalf("no %s entry in quotas: %v", provider, quotas)
+		}
+		if quota["measured"] != false {
+			t.Errorf("%s.measured = %v, want false before any response", provider, quota["measured"])
+		}
+		if quota["budget_low"] != false {
+			t.Errorf("%s.budget_low = %v, want false without a measurement", provider, quota["budget_low"])
+		}
+		for _, key := range []string{"limit", "remaining", "reserve", "blocked"} {
+			if _, ok := quota[key]; !ok {
+				t.Errorf("%s missing %q; got %v", provider, key, quota)
+			}
 		}
 	}
 }

@@ -30,8 +30,8 @@ function summary(overrides: Partial<MetricsSummary> = {}): MetricsSummary {
       { time: '2026-09-10T09:00:00Z', count: 5, bytes: 1024, http_requests: 205, errors: 1 },
       { time: '2026-09-10T09:15:00Z', count: 5, bytes: 1024, http_requests: 205, errors: 1 },
     ],
-    twitter_quota: {
-      configured: true,
+    quotas: [{
+      provider: 'twitter',
       measured: true,
       limit: 50,
       remaining: 3,
@@ -39,7 +39,7 @@ function summary(overrides: Partial<MetricsSummary> = {}): MetricsSummary {
       blocked: false,
       reserve: 10,
       budget_low: true,
-    },
+    }],
     ...overrides,
   }
 }
@@ -109,7 +109,7 @@ describe('MetricsDialog', () => {
     const wrapper = mount(MetricsDialog)
     await openDialog(wrapper)
 
-    const banner = document.body.querySelector('[data-twitter-quota]') as HTMLElement
+    const banner = document.body.querySelector('[data-quota="twitter"]') as HTMLElement
     expect(banner, 'quota banner not rendered').toBeTruthy()
     expect(banner.textContent).toContain('X / Twitter quota')
     expect(banner.textContent).toContain('remaining')
@@ -122,8 +122,8 @@ describe('MetricsDialog', () => {
 
   it('shows an exhausted quota as blocked with its reset time', async () => {
     mockedGet.mockResolvedValue(summary({
-      twitter_quota: {
-        configured: true,
+      quotas: [{
+        provider: 'twitter',
         measured: true,
         limit: 50,
         remaining: 0,
@@ -132,34 +132,52 @@ describe('MetricsDialog', () => {
         blocked_until: new Date(Date.now() + 300000).toISOString(),
         reserve: 10,
         budget_low: true,
-      },
+      }],
     }))
     const wrapper = mount(MetricsDialog)
     await openDialog(wrapper)
 
-    const banner = document.body.querySelector('[data-twitter-quota]') as HTMLElement
+    const banner = document.body.querySelector('[data-quota="twitter"]') as HTMLElement
     expect(banner.textContent).toContain('blocked until')
     expect(banner.className).toContain('text-red-400')
   })
 
   it('does not claim a quota problem before any response is seen', async () => {
     mockedGet.mockResolvedValue(summary({
-      twitter_quota: {
-        configured: true,
+      quotas: [{
+        provider: 'twitter',
         measured: false,
         limit: 0,
         remaining: 0,
         blocked: false,
         reserve: 10,
         budget_low: false,
-      },
+      }],
     }))
     const wrapper = mount(MetricsDialog)
     await openDialog(wrapper)
 
-    const banner = document.body.querySelector('[data-twitter-quota]') as HTMLElement
+    const banner = document.body.querySelector('[data-quota="twitter"]') as HTMLElement
     expect(banner.textContent).toContain('no response observed yet')
     expect(banner.className).not.toContain('text-red-400')
     expect(banner.className).not.toContain('text-amber-400')
+  })
+
+  it('renders one banner per provider that advertises a budget', async () => {
+    mockedGet.mockResolvedValue(summary({
+      quotas: [
+        { provider: 'twitter', measured: true, limit: 50, remaining: 45, blocked: false, reserve: 10, budget_low: false },
+        { provider: 'reddit', measured: true, limit: 600, remaining: 100, blocked: false, reserve: 50, budget_low: false },
+      ],
+    }))
+    const wrapper = mount(MetricsDialog)
+    await openDialog(wrapper)
+
+    const twitter = document.body.querySelector('[data-quota="twitter"]') as HTMLElement
+    const reddit = document.body.querySelector('[data-quota="reddit"]') as HTMLElement
+    expect(twitter.textContent).toContain('X / Twitter quota')
+    expect(reddit.textContent).toContain('Reddit quota')
+    expect(reddit.textContent).toContain('limit 600')
+    expect(reddit.textContent).toContain('remaining 100')
   })
 })
