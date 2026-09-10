@@ -6,10 +6,10 @@ import { toastError } from '../lib/toast'
 import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
 import Skeleton from './ui/Skeleton.vue'
-import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown } from 'lucide-vue-next'
+import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown, Sparkles, ChevronRight } from 'lucide-vue-next'
 import { absoluteTime } from '../lib/format'
 import { decodeHTMLEntities } from '../lib/utils'
-import type { ItemComment } from '../types/api'
+import type { ItemComment, ItemSummaryResponse } from '../types/api'
 
 // Prose styling for raw HTML content.
 const proseClass = 'prose prose-sm dark:prose-invert max-w-none [&_a]:text-accent [&_a]:hover:underline'
@@ -52,6 +52,59 @@ const commentsCollapsed = ref(false)
 const commentsCached = ref(false)
 let commentFetchToken = 0
 
+// --- Scroll to comments ---
+const commentsRef = ref<HTMLElement | null>(null)
+function scrollToComments() {
+  nextTick(() => {
+    const el = commentsRef.value
+    if (!el) return
+    // Expand comments if collapsed so the user sees them after scrolling.
+    if (commentsCollapsed.value) commentsCollapsed.value = false
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+}
+
+// Expose scrollToComments for keyboard shortcut via a global function.
+;(globalThis as any).__scrollToItemComments = scrollToComments
+
+// --- LLM Summary ---
+const summaryLoading = ref(false)
+const summaryData = ref<ItemSummaryResponse | null>(null)
+const summarySentenceCount = ref(5)
+const summaryCollapsed = ref(false)
+let summaryToken = 0
+
+async function doSummarize() {
+  const item = feedStore.selectedItem
+  if (!item || summaryLoading.value) return
+  summaryLoading.value = true
+  const token = ++summaryToken
+  try {
+    const resp = await itemApi.summarize(item.id, {
+      sentence_count: summarySentenceCount.value,
+    })
+    if (token !== summaryToken) return
+    summaryData.value = resp
+    summaryCollapsed.value = false
+  } catch (e) {
+    if (token === summaryToken) {
+      toastError(e, 'Failed to generate summary')
+    }
+  } finally {
+    if (token === summaryToken) summaryLoading.value = false
+  }
+}
+
+// Re-summarize when slider changes (debounced, only if we already have a summary).
+let summaryDebounce: ReturnType<typeof setTimeout> | null = null
+watch(summarySentenceCount, () => {
+  if (!summaryData.value) return
+  if (summaryDebounce) clearTimeout(summaryDebounce)
+  summaryDebounce = setTimeout(() => {
+    doSummarize()
+  }, 500)
+})
+
 // Render comment text: escape HTML, then convert Reddit markdown images and
 // bare image URLs to <img> tags with size constraints.
 function renderCommentHtml(text: string): string {
@@ -73,7 +126,7 @@ function renderCommentHtml(text: string): string {
 
   // Bare image URLs from common hosts
   work = work.replace(
-    /https?:\/\/(?:media\d*\.giphy\.com\/\S+\.(?:gif|webp|png|jpg|jpeg)(?:\?\S*)?|giphy\.com\/gifs\/\S+|[^/\s]*\.?(?:i\.redd\.it|preview\.redd\.it|imgur\.com|i\.imgur\.com|files\.catbox\.moe|cdn\.discordapp\.com)\/\S+\.(?:jpg|jpeg|png|gif|webp|svg)(?:\?\S*)?)/g,
+    /https?:\/\/(?:media\d*\.giphy\.com\/\S+\.(?:gif|webp|png|jpg|jpeg)(?:\?\S*)?|giphy\.com\/gifs\/\S+|[^\s]*\.?(?:i\.redd\.it|preview\.redd\.it|imgur\.com|i\.imgur\.com|files\.catbox\.moe|cdn\.discordapp\.com)\/\S+\.(?:jpg|jpeg|png|gif|webp|svg)(?:\?\S*)?)/g,
     (url) => {
       const tag = `<img src="${url}" alt="" style="max-width:400px;max-height:300px;width:auto;height:auto;border-radius:4px;margin:4px 0;display:block" loading="lazy" />`
       placeholders.push(tag)
@@ -238,12 +291,19 @@ watch(
     commentsCollapsed.value = false
     commentsCached.value = false
     fetchTopComments()
+    // Reset summary state.
+    summaryData.value = null
+    summarySentenceCount.value = 5
+    summaryLoading.value = false
+    summaryToken++
   },
 )
 
 onUnmounted(() => {
   stopExtractPoll()
   if (commentFetchTimeout) clearTimeout(commentFetchTimeout)
+  if (summaryDebounce) clearTimeout(summaryDebounce)
+  delete (globalThis as any).__scrollToItemComments
 })
 </script>
 
@@ -262,11 +322,23 @@ onUnmounted(() => {
       </div>
     </div>
     <div v-else>
-      <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank"
-        class="text-xl font-semibold mb-2 block hover:text-accent transition-colors">
-        {{ decodeHTMLEntities(feedStore.selectedItem.title) }}
-      </a>
-      <h1 v-else class="text-xl font-semibold mb-2">{{ decodeHTMLEntities(feedStore.selectedItem.title) }}</h1>
+      <!-- Title row with scroll-to-comments arrow -->
+      <div class="flex items-start justify-between gap-2 mb-2">
+        <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank"
+          class="text-xl font-semibold hover:text-accent transition-colors">
+          {{ decodeHTMLEntities(feedStore.selectedItem.title) }}
+        </a>
+        <h1 v-else class="text-xl font-semibold">{{ decodeHTMLEntities(feedStore.selectedItem.title) }}</h1>
+        <button
+          v-if="topComments.length > 0 || commentsLoading"
+          type="button"
+          class="shrink-0 mt-1 p-1 rounded text-muted-foreground hover:text-accent hover:bg-muted transition-colors"
+          title="Scroll to comments (c)"
+          @click="scrollToComments"
+        >
+          <ChevronDown class="size-4" />
+        </button>
+      </div>
       <div class="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mb-4">
         <span v-if="feedStore.selectedItem.author">By {{ feedStore.selectedItem.author }}</span>
         <span class="text-xs text-muted-foreground">{{ absoluteTime(feedStore.selectedItem.published_at) }}</span>
@@ -305,7 +377,57 @@ onUnmounted(() => {
           <template v-if="extracting"><RefreshCw class="animate-spin" /> Extracting</template>
           <template v-else><Download /> {{ feedStore.selectedItem.extract_status === 'done' ? 'Re-extract' : 'Extract' }}</template>
         </Button>
+        <Button size="sm" variant="outline" :disabled="summaryLoading" @click="doSummarize">
+          <template v-if="summaryLoading"><RefreshCw class="animate-spin" /> Summarizing…</template>
+          <template v-else><Sparkles /> Summarize</template>
+        </Button>
       </div>
+
+      <!-- LLM Summary -->
+      <template v-if="summaryData || summaryLoading">
+        <Separator class="mb-4" />
+        <button
+          type="button"
+          class="flex w-full items-center gap-1.5 text-left text-xs font-semibold text-muted-foreground uppercase mb-2 hover:text-foreground transition-colors"
+          :aria-expanded="!summaryCollapsed"
+          @click="summaryCollapsed = !summaryCollapsed"
+        >
+          <ChevronDown class="size-3.5 shrink-0 transition-transform" :class="summaryCollapsed ? '-rotate-90' : ''" />
+          <Sparkles class="size-3" />
+          <span>LLM Summary</span>
+        </button>
+        <template v-if="!summaryCollapsed">
+          <!-- Sentence count slider -->
+          <div class="flex items-center gap-3 mb-3 text-xs text-muted-foreground">
+            <span class="shrink-0">{{ summarySentenceCount }} sentences</span>
+            <input
+              type="range"
+              :value="summarySentenceCount"
+              min="1"
+              max="20"
+              step="1"
+              class="flex-1 h-1 accent-accent cursor-pointer"
+              @input="summarySentenceCount = +($event.target as HTMLInputElement).value"
+            />
+          </div>
+          <!-- Loading spinner -->
+          <div v-if="summaryLoading" class="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+            <RefreshCw class="size-4 animate-spin" />
+            <span>Generating summary…</span>
+          </div>
+          <!-- Summary content -->
+          <div v-else-if="summaryData" class="space-y-3">
+            <div v-if="summaryData.content_summary">
+              <p class="text-xs font-medium text-muted-foreground mb-1">Content</p>
+              <p class="text-sm leading-relaxed">{{ summaryData.content_summary }}</p>
+            </div>
+            <div v-if="summaryData.comments_summary">
+              <p class="text-xs font-medium text-muted-foreground mb-1">Comments</p>
+              <p class="text-sm leading-relaxed">{{ summaryData.comments_summary }}</p>
+            </div>
+          </div>
+        </template>
+      </template>
 
       <!-- Extracted Content -->
       <template v-if="feedStore.selectedItem.extract_status">
@@ -352,45 +474,47 @@ onUnmounted(() => {
       <div v-else :class="proseClass" v-html="feedStore.selectedItem.content" />
 
       <!-- Top Comments (experimental) -->
-      <template v-if="topComments.length > 0 || commentsLoading">
-        <Separator class="my-4" />
-        <div class="flex items-center gap-1.5 mb-2">
-          <button
-            type="button"
-            class="flex flex-1 items-center gap-1.5 text-left text-xs font-semibold text-muted-foreground uppercase hover:text-foreground transition-colors"
-            :aria-expanded="!commentsCollapsed"
-            @click="commentsCollapsed = !commentsCollapsed"
-          >
-            <ChevronDown class="size-3.5 shrink-0 transition-transform" :class="commentsCollapsed ? '-rotate-90' : ''" />
-            <MessageSquare class="size-3" />
-            <span>Top Comments</span>
-          </button>
-          <button
-            v-if="commentsCached && !commentsLoading"
-            type="button"
-            class="text-muted-foreground/50 hover:text-muted-foreground transition-colors"
-            title="Refresh comments"
-            @click="fetchTopComments(true)"
-          >
-            <RefreshCw class="size-3" />
-          </button>
-        </div>
-        <div v-if="!commentsCollapsed">
-          <div v-if="commentsLoading" class="space-y-2">
-            <Skeleton v-for="i in 3" :key="i" class="h-10 w-full" />
+      <div ref="commentsRef" data-comments-section>
+        <template v-if="topComments.length > 0 || commentsLoading">
+          <Separator class="my-4" />
+          <div class="flex items-center gap-1.5 mb-2">
+            <button
+              type="button"
+              class="flex flex-1 items-center gap-1.5 text-left text-xs font-semibold text-muted-foreground uppercase hover:text-foreground transition-colors"
+              :aria-expanded="!commentsCollapsed"
+              @click="commentsCollapsed = !commentsCollapsed"
+            >
+              <ChevronDown class="size-3.5 shrink-0 transition-transform" :class="commentsCollapsed ? '-rotate-90' : ''" />
+              <MessageSquare class="size-3" />
+              <span>Top Comments</span>
+            </button>
+            <button
+              v-if="commentsCached && !commentsLoading"
+              type="button"
+              class="text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+              title="Refresh comments"
+              @click="fetchTopComments(true)"
+            >
+              <RefreshCw class="size-3" />
+            </button>
           </div>
-          <ul v-else class="space-y-3">
-            <li v-for="(c, i) in topComments" :key="i" class="text-sm border-l-2 border-accent/30 pl-3 py-1">
-              <div class="flex items-center gap-2 mb-0.5">
-                <a v-if="c.url" :href="c.url" target="_blank" class="font-medium text-accent hover:underline">{{ c.author }}</a>
-                <span v-else class="font-medium">{{ c.author }}</span>
-                <span v-if="c.valid_points && c.points > 0" class="text-xs text-muted-foreground">{{ c.points }} pts</span>
-              </div>
-              <p class="text-muted-foreground text-xs leading-relaxed" v-html="renderCommentHtml(c.text)" />
-            </li>
-          </ul>
-        </div>
-      </template>
+          <div v-if="!commentsCollapsed">
+            <div v-if="commentsLoading" class="space-y-2">
+              <Skeleton v-for="i in 3" :key="i" class="h-10 w-full" />
+            </div>
+            <ul v-else class="space-y-3">
+              <li v-for="(c, i) in topComments" :key="i" class="text-sm border-l-2 border-accent/30 pl-3 py-1">
+                <div class="flex items-center gap-2 mb-0.5">
+                  <a v-if="c.url" :href="c.url" target="_blank" class="font-medium text-accent hover:underline">{{ c.author }}</a>
+                  <span v-else class="font-medium">{{ c.author }}</span>
+                  <span v-if="c.valid_points && c.points > 0" class="text-xs text-muted-foreground">{{ c.points }} pts</span>
+                </div>
+                <p class="text-muted-foreground text-xs leading-relaxed" v-html="renderCommentHtml(c.text)" />
+              </li>
+            </ul>
+          </div>
+        </template>
+      </div>
     </div>
   </div>
 </template>

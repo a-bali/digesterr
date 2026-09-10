@@ -96,6 +96,10 @@ useKeyboardShortcuts({
     themeStore.mode = themeStore.mode === 'dark' ? 'light' : 'dark'
   },
   openHelp: () => { showShortcuts.value = true },
+  scrollToComments: () => {
+    const fn = (globalThis as any).__scrollToItemComments
+    if (fn) fn()
+  },
 })
 
 // ---- Lifecycle ----

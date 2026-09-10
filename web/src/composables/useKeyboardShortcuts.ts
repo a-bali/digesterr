@@ -29,6 +29,7 @@ export function useKeyboardShortcuts(ctx: {
   refreshCounts: () => void
   toggleTheme: () => void
   openHelp: () => void
+  scrollToComments: () => void
 }) {
   function scrollSelectedItemIntoView() {
     requestAnimationFrame(() => {
@@ -157,6 +158,9 @@ export function useKeyboardShortcuts(ctx: {
         break
       case 'h':
         if (!item) ctx.openHelp()
+        break
+      case 'c':
+        if (item) ctx.scrollToComments()
         break
     }
   }
