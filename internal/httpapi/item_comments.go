@@ -172,10 +172,9 @@ func (s *Server) fetchTopComments(r *http.Request, item store.Item, limit int, b
 	comments, err := cf.FetchComments(ctx, item, limit)
 	// Record comment fetch metrics with the correct target URL.
 	if s.metrics != nil {
-		statusCode := 200
+		statusCode := metrics.StatusFor(err)
 		errStr := ""
 		if err != nil {
-			statusCode = 500
 			errStr = err.Error()
 		}
 		s.metrics.Record(metrics.Record{

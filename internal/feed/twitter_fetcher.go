@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"digesterr/internal/metrics"
 	"digesterr/internal/store"
 )
 
@@ -307,10 +308,14 @@ func (f *TwitterFetcher) gqlGet(ctx context.Context, queryHash string, variables
 			f.blockedUntil = reset
 			f.mu.Unlock()
 		}
-		return nil, &StatusError{Code: resp.StatusCode, Query: queryHash, Body: truncateForLog(body)}
+		return nil, metrics.StatusErrorf(resp.StatusCode,
+			"Twitter API returned status %d for %s: %s",
+			resp.StatusCode, queryHash, truncateForLog(body))
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, &StatusError{Code: resp.StatusCode, Query: queryHash, Body: truncateForLog(body)}
+		return nil, metrics.StatusErrorf(resp.StatusCode,
+			"Twitter API returned status %d for %s: %s",
+			resp.StatusCode, queryHash, truncateForLog(body))
 	}
 	return body, nil
 }

@@ -148,7 +148,7 @@ func (p *Poller) recordEnrich(start time.Time, feed store.Feed, host string, byt
 	statusCode := 200
 	if err != nil {
 		errStr = err.Error()
-		statusCode = 500
+		statusCode = metrics.StatusFor(err)
 	}
 	p.recordFn(Record{
 		Timestamp:  start,
@@ -419,7 +419,7 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 		statusCode := 200
 		if err != nil {
 			errStr = err.Error()
-			statusCode = 500
+			statusCode = metrics.StatusFor(err)
 		}
 		p.recordFn(Record{
 			Timestamp:  start,
@@ -865,7 +865,7 @@ func (p *Poller) extractSingleItem(ctx context.Context, client *http.Client, ite
 		statusCode := 200
 		if err != nil {
 			errStr = err.Error()
-			statusCode = 500
+			statusCode = metrics.StatusFor(err)
 		}
 		// Derive host from item URL.
 		extractHost := hostFromURL(item.Url)

@@ -400,7 +400,7 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 			statusCode := 200
 			if enrichErr != nil {
 				errStr = enrichErr.Error()
-				statusCode = 500
+				statusCode = metrics.StatusFor(enrichErr)
 			}
 			g.recordFn(metrics.Record{
 				Timestamp:  enrichStart,
@@ -588,7 +588,7 @@ func (g *Generator) fetchCommentsForHighlights(ctx context.Context, highlights [
 			statusCode := 200
 			if err != nil {
 				errStr = err.Error()
-				statusCode = 500
+				statusCode = metrics.StatusFor(err)
 			}
 			g.recordFn(metrics.Record{
 				Timestamp:  fetchStart,

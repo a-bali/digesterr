@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"digesterr/internal/metrics"
 	"digesterr/internal/store"
 )
 
@@ -68,8 +69,8 @@ func TestTwitter429SetsBlockedUntil(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error from the 429 fetch")
 	}
-	if code := StatusCodeOf(err); code != http.StatusTooManyRequests {
-		t.Errorf("StatusCodeOf(err) = %d, want 429 (err: %v)", code, err)
+	if code := metrics.StatusCodeOf(err); code != http.StatusTooManyRequests {
+		t.Errorf("metrics.StatusCodeOf(err) = %d, want 429 (err: %v)", code, err)
 	}
 	until, blocked := f.Blocked()
 	if !blocked {
