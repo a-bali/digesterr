@@ -149,13 +149,19 @@ watch(
       digestStore.resultItems = []
       feedStore.setActiveSection('feeds')
     } else if (category) {
-      // Category view: /feeds/category/:category
+      // Category view: /feeds/category/:category(/:itemId)
       showingSaved.value = false
       digestStore.exitAllDigestsMode()
       digestStore.activeConfigId = null
       digestStore.selectedResult = null
       digestStore.resultItems = []
       if (feedStore.activeCategory !== category) await feedStore.setActiveCategory(category)
+      if (itemId) {
+        // Item selected within category — find in multiItems or wait for load.
+        const item = feedStore.multiItems.find(i => i.id === itemId)
+        if (item && feedStore.selectedItem?.id !== itemId) { feedStore.selectItem(item); pendingItemId.value = null }
+        else if (!item) pendingItemId.value = itemId
+      } else { feedStore.selectedItem = null; pendingItemId.value = null }
     } else if (feedId) {
       // Single feed: /feeds/:feedId(/:itemId)
       showingSaved.value = false
@@ -210,6 +216,16 @@ watch(
   },
 )
 
+watch(
+  () => feedStore.multiItems,
+  (items) => {
+    if (pendingItemId.value != null) {
+      const item = items.find(i => i.id === pendingItemId.value)
+      if (item) { feedStore.selectItem(item); pendingItemId.value = null }
+    }
+  },
+)
+
 // ---- Navigation ----
 function selectFeed(id: number) {
   showingSaved.value = false; sidebarOpen.value = false
@@ -255,7 +271,11 @@ function goBackToList() {
 
 async function selectItem(item: Item) {
   feedStore.selectItem(item)
-  if (feedStore.activeFeedId) router.push({ path: `/feeds/${feedStore.activeFeedId}/${item.id}` })
+  if (feedStore.activeFeedId) {
+    router.push({ path: `/feeds/${feedStore.activeFeedId}/${item.id}` })
+  } else if (feedStore.activeCategory) {
+    router.push({ path: `/feeds/category/${encodeURIComponent(feedStore.activeCategory)}/${item.id}` })
+  }
   if (item.status === 'unread') {
     await feedStore.updateItemStatus(item, 'read')
     const idx = savedItems.value.findIndex(i => i.id === item.id)

@@ -238,7 +238,7 @@ async function markBelowRead(item: any) {
         <span v-else-if="item.status === 'digested'" class="size-3 shrink-0 mt-0.5 inline-flex items-center justify-center text-[10px] leading-none text-muted-foreground/60" title="digested">◐</span>
         <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
         <span v-if="item.status === 'saved'" class="text-accent shrink-0 mt-0.5"><Check class="size-3" /></span>
-        <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ item.title }}</p>
+        <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ decodeHTMLEntities(item.title) }}</p>
         <span class="text-[10px] text-muted-foreground/70 shrink-0 mt-0.5" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
         <!-- Hover action: mark read above/below -->
         <span class="shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity relative">
