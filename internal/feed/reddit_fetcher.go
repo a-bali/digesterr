@@ -318,7 +318,7 @@ func (f *RedditFetcher) parseListing(data []byte, subreddit string) ([]Item, err
 
 		items = append(items, Item{
 			GUID:        "reddit:" + p.ID,
-			Title:       strings.TrimSpace(p.Title),
+			Title:       html.UnescapeString(strings.TrimSpace(p.Title)),
 			URL:         itemURL,
 			Content:     content,
 			CommentURL:  commentURL,
@@ -342,7 +342,7 @@ func htmlEscapeText(s string) string {
 }
 
 // renderRedditMarkdown converts Reddit-flavored selftext to HTML.
-// Handles: markdown images, links, bare URLs, bold, italic, newlines.
+// Handles: markdown tables, images, links, bare URLs, bold, italic, newlines.
 // All HTML-producing elements are extracted to placeholders before escaping,
 // then restored after — so user content in URLs/text stays safe.
 func renderRedditMarkdown(text string) string {
