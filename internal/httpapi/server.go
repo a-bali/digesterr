@@ -86,6 +86,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 			Host:       rec.Host,
 			StatusCode: rec.StatusCode,
 			Bytes:      rec.Bytes,
+			Requests:   rec.Requests,
 			DurationMs: rec.DurationMs,
 			Reason:     rec.Reason,
 			FeedID:     rec.FeedID,

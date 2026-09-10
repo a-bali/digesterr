@@ -19,6 +19,10 @@ type Record struct {
 	Host       string    `json:"host"`
 	StatusCode int       `json:"status_code"`
 	Bytes      int64     `json:"bytes"`
+	// Requests is how many outbound HTTP requests this operation issued.
+	// Usually 1, but a poll can fan out (twitter enrichment fetches a
+	// timeline per item), which is invisible in the record count.
+	Requests   int       `json:"requests"`
 	DurationMs int64     `json:"duration_ms"`
 	Reason     string    `json:"reason"` // "fetch", "enrichment", "extraction", "server"
 	FeedID     int64     `json:"feed_id"`
@@ -38,24 +42,31 @@ type GroupKey struct {
 // GroupStats is an aggregated row for a group.
 type GroupStats struct {
 	GroupKey
-	Count  int64  `json:"count"`
-	Bytes  int64  `json:"bytes"`
-	Errors int64  `json:"errors"`
-	AvgMs  int64  `json:"avg_ms"`
+	Count int64 `json:"count"`
+	Bytes int64 `json:"bytes"`
+	// HTTPRequests sums the real outbound requests behind these records.
+	HTTPRequests int64 `json:"http_requests"`
+	Errors       int64 `json:"errors"`
+	AvgMs        int64 `json:"avg_ms"`
 }
 
 // TimeBucket is a time-bucketed aggregate for the chart.
 type TimeBucket struct {
-	Time   time.Time `json:"time"`
-	Count  int64     `json:"count"`
-	Bytes  int64     `json:"bytes"`
-	Errors int64     `json:"errors"`
+	Time         time.Time `json:"time"`
+	Count        int64     `json:"count"`
+	Bytes        int64     `json:"bytes"`
+	HTTPRequests int64     `json:"http_requests"`
+	Errors       int64     `json:"errors"`
 }
 
 // Summary is the full metrics response.
 type Summary struct {
 	TotalRequests int64        `json:"total_requests"`
-	TotalBytes    int64        `json:"total_bytes"`
+	// TotalHTTPRequests is the sum of Requests across records: the real number
+	// of outbound HTTP requests, as opposed to TotalRequests which counts
+	// recorded operations.
+	TotalHTTPRequests int64   `json:"total_http_requests"`
+	TotalBytes        int64   `json:"total_bytes"`
 	SuccessCount  int64        `json:"success_count"`
 	ErrorCount    int64        `json:"error_count"`
 	AvgDurationMs float64      `json:"avg_duration_ms"`
@@ -145,10 +156,11 @@ func (r *Recorder) Pivot(since time.Time, dims []string) []GroupStats {
 		status string
 	}
 	type agg struct {
-		count   int64
-		bytes   int64
-		errors  int64
-		totalMs int64
+		count    int64
+		bytes    int64
+		requests int64
+		errors   int64
+		totalMs  int64
 	}
 	aggMap := make(map[key]*agg)
 	for _, rec := range records {
@@ -176,6 +188,7 @@ func (r *Recorder) Pivot(since time.Time, dims []string) []GroupStats {
 		}
 		a.count++
 		a.bytes += rec.Bytes
+		a.requests += int64(rec.Requests)
 		a.totalMs += rec.DurationMs
 		if rec.StatusCode >= 400 || rec.Error != "" {
 			a.errors++
@@ -195,10 +208,11 @@ func (r *Recorder) Pivot(since time.Time, dims []string) []GroupStats {
 				Host:   gk.host,
 				Status: gk.status,
 			},
-			Count:  a.count,
-			Bytes:  a.bytes,
-			Errors: a.errors,
-			AvgMs:  avgMs,
+			Count:        a.count,
+			Bytes:        a.bytes,
+			HTTPRequests: a.requests,
+			Errors:       a.errors,
+			AvgMs:        avgMs,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Count > out[j].Count })
@@ -227,6 +241,7 @@ func (r *Recorder) Buckets(since time.Time, interval time.Duration) []TimeBucket
 		}
 		b.Count++
 		b.Bytes += rec.Bytes
+		b.HTTPRequests += int64(rec.Requests)
 		if rec.StatusCode >= 400 || rec.Error != "" {
 			b.Errors++
 		}
@@ -243,10 +258,11 @@ func (r *Recorder) Buckets(since time.Time, interval time.Duration) []TimeBucket
 // Summary aggregates all records since the given time.
 func (r *Recorder) Summary(since time.Time, dims []string, bucketInterval time.Duration) Summary {
 	records := r.Query(since, "")
-	var totalBytes, totalMs, successCount, errorCount int64
+	var totalBytes, totalMs, successCount, errorCount, totalHTTP int64
 	for _, rec := range records {
 		totalBytes += rec.Bytes
 		totalMs += rec.DurationMs
+		totalHTTP += int64(rec.Requests)
 		if rec.StatusCode >= 400 || rec.Error != "" {
 			errorCount++
 		} else {
@@ -258,8 +274,9 @@ func (r *Recorder) Summary(since time.Time, dims []string, bucketInterval time.D
 		avgMs = float64(totalMs / n)
 	}
 	return Summary{
-		TotalRequests: int64(len(records)),
-		TotalBytes:    totalBytes,
+		TotalRequests:     int64(len(records)),
+		TotalHTTPRequests: totalHTTP,
+		TotalBytes:        totalBytes,
 		SuccessCount:  successCount,
 		ErrorCount:    errorCount,
 		AvgDurationMs: avgMs,

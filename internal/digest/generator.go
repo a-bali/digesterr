@@ -384,8 +384,9 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 		// Record enrichment metrics.
 		if g.recordFn != nil && len(feedItems) > 0 {
 			var enrichBytes int64
+			var enrichReqs int
 			if g.extractor != nil {
-				enrichBytes = g.extractor.ConsumeBytes()
+				enrichBytes, enrichReqs = g.extractor.ConsumeCounters()
 			}
 			feedObj, ferr := g.queries.GetFeedByID(ctx, feedItems[0].FeedID)
 			var feedName string
@@ -407,6 +408,7 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 				Host:       enrichHost,
 				StatusCode: statusCode,
 				Bytes:      enrichBytes,
+				Requests:   enrichReqs,
 				DurationMs: time.Since(enrichStart).Milliseconds(),
 				Reason:     "enrichment",
 				FeedID:     feedID,
@@ -579,8 +581,9 @@ func (g *Generator) fetchCommentsForHighlights(ctx context.Context, highlights [
 		fetchStart := time.Now()
 		comments, err := cf.FetchComments(ctx, item.Item, item.Comments)
 		var fetchBytes int64
+		var fetchReqs int
 		if g.extractor != nil {
-			fetchBytes = g.extractor.ConsumeBytes()
+			fetchBytes, fetchReqs = g.extractor.ConsumeCounters()
 		}
 		// Record comment-fetch metrics.
 		if g.recordFn != nil {
@@ -595,6 +598,7 @@ func (g *Generator) fetchCommentsForHighlights(ctx context.Context, highlights [
 				URL:        cf.CommentTargetURL(),
 				StatusCode: statusCode,
 				Bytes:      fetchBytes,
+				Requests:   fetchReqs,
 				DurationMs: time.Since(fetchStart).Milliseconds(),
 				Reason:     "enrichment",
 				FeedID:     feedObj.ID,

@@ -177,10 +177,19 @@ func (s *Server) fetchTopComments(r *http.Request, item store.Item, limit int, b
 		if err != nil {
 			errStr = err.Error()
 		}
+		// Comment fetching goes through the same shared transport as polling,
+		// so take both counters to keep bytes and requests attributed together.
+		var respBytes int64
+		var reqs int
+		if s.poller != nil {
+			respBytes, reqs = s.poller.ConsumeCounters()
+		}
 		s.metrics.Record(metrics.Record{
 			Timestamp:  time.Now(),
 			URL:        cf.CommentTargetURL(),
 			StatusCode: statusCode,
+			Bytes:      respBytes,
+			Requests:   reqs,
 			DurationMs: time.Since(start).Milliseconds(),
 			Reason:     "enrichment",
 			FeedID:     feedObj.ID,

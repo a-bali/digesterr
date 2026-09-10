@@ -140,7 +140,7 @@ func setClientTransport(v interface{}, transport http.RoundTripper) {
 }
 
 // recordEnrich records an enrichment operation.
-func (p *Poller) recordEnrich(start time.Time, feed store.Feed, host string, bytes int64, err error) {
+func (p *Poller) recordEnrich(start time.Time, feed store.Feed, host string, respBytes int64, requests int, err error) {
 	if p.recordFn == nil {
 		return
 	}
@@ -154,7 +154,8 @@ func (p *Poller) recordEnrich(start time.Time, feed store.Feed, host string, byt
 		Timestamp:  start,
 		Host:       host,
 		StatusCode: statusCode,
-		Bytes:      bytes,
+		Bytes:      respBytes,
+		Requests:   requests,
 		DurationMs: time.Since(start).Milliseconds(),
 		Reason:     "enrichment",
 		FeedID:     feed.ID,
@@ -182,18 +183,27 @@ func hostFromURL(raw string) string {
 	return ""
 }
 
-// ConsumeBytes reads and resets the shared transport byte counter.
-// Exported for use by the digest generator after enrichment/comment-fetch operations.
-func (p *Poller) ConsumeBytes() int64 {
-	return p.consumeBytes()
+// ConsumeCounters reads and resets the shared transport counters, returning
+// response bytes and the number of outbound HTTP requests they came from.
+// Exported for use by the digest generator after enrichment/comment-fetch
+// operations.
+func (p *Poller) ConsumeCounters() (respBytes int64, requests int) {
+	if t, ok := p.sharedTransport.(*metrics.Transport); ok {
+		b, r := t.Consume()
+		return b, int(r)
+	}
+	return 0, 0
 }
 
-// consumeBytes reads and resets the shared transport byte counter.
-func (p *Poller) consumeBytes() int64 {
-	if t, ok := p.sharedTransport.(*metrics.Transport); ok {
-		return t.ResetBytes()
-	}
-	return 0
+// ConsumeBytes reads and resets the shared transport byte counter.
+func (p *Poller) ConsumeBytes() int64 {
+	b, _ := p.ConsumeCounters()
+	return b
+}
+
+// consumeCounters reads and resets the shared transport counters.
+func (p *Poller) consumeCounters() (int64, int) {
+	return p.ConsumeCounters()
 }
 
 // SetEnrichmentWindow configures how long after insertion items are
@@ -411,7 +421,7 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 
 	items, err := fetcher.Fetch(ctx, feed.Url)
 	fetchDur := time.Since(start)
-	fetchBytes := p.consumeBytes()
+	fetchBytes, fetchReqs := p.consumeCounters()
 		// Derive host from feed URL.
 		fetchHost := hostFromURL(feed.Url)
 		if p.recordFn != nil {
@@ -426,6 +436,7 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 			URL:        feed.Url,
 			StatusCode: statusCode,
 			Bytes:      fetchBytes,
+			Requests:   fetchReqs,
 			Host:       fetchHost,
 			DurationMs: fetchDur.Milliseconds(),
 			Reason:     "fetch",
@@ -674,9 +685,9 @@ func (p *Poller) enrichForPoll(ctx context.Context, feed store.Feed, candidates 
 	enrichStart := time.Now()
 	if b, ok := enricher.(BulkEnricher); ok {
 		bulkErr := b.BulkEnrich(ctx, allPtrs)
-		enrichBytes := p.consumeBytes()
+		enrichBytes, enrichReqs := p.consumeCounters()
 		enrichHost := hostFromURL(feed.Url)
-		p.recordEnrich(enrichStart, feed, enrichHost, enrichBytes, bulkErr)
+		p.recordEnrich(enrichStart, feed, enrichHost, enrichBytes, enrichReqs, bulkErr)
 		if bulkErr != nil {
 			logger.Warn("bulk enrich failed", "error", bulkErr)
 		}
@@ -858,7 +869,7 @@ func (p *Poller) extractSingleItem(ctx context.Context, client *http.Client, ite
 	}
 
 	content, err := ExtractContent(ctx, item.Url, client, logger)
-	extractBytes := p.consumeBytes()
+	extractBytes, extractReqs := p.consumeCounters()
 	// Record extraction metrics.
 	if p.recordFn != nil {
 		errStr := ""
@@ -874,6 +885,7 @@ func (p *Poller) extractSingleItem(ctx context.Context, client *http.Client, ite
 			URL:        item.Url,
 			StatusCode: statusCode,
 			Bytes:      extractBytes,
+			Requests:   extractReqs,
 			Host:       extractHost,
 			DurationMs: time.Since(start).Milliseconds(),
 			Reason:     "extraction",
@@ -999,14 +1011,13 @@ func (p *Poller) enrichTwitterItems(ctx context.Context, feed store.Feed, tf *Tw
 	}
 	enrichStart := time.Now()
 	twErr := tf.EnrichFeed(ctx, feed.Url, ptrs)
-	twBytes := p.consumeBytes()
+	twBytes, twReqs := p.consumeCounters()
 	twHost := hostFromURL(feed.Url)
-	p.recordEnrich(enrichStart, feed, twHost, twBytes, twErr)
+	p.recordEnrich(enrichStart, feed, twHost, twBytes, twReqs, twErr)
 	if twErr != nil {
 		logger.Debug("twitter enrich failed", "error", twErr)
 	}
 
-	// No BulkEnrich for Twitter — it uses EnrichFeed above.
 	// Update scores for Twitter items.
 	success, skipped, errcount, removed := 0, 0, 0, 0
 	for i := range items {
