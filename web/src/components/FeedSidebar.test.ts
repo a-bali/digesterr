@@ -345,3 +345,107 @@ describe('FeedSidebar section totals', () => {
     wrapper.unmount()
   })
 })
+
+describe('FeedSidebar unread pill and error-icon placement', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    vi.mocked(digestApi.listConfigs).mockResolvedValue([])
+  })
+
+  // True when `b` appears after `a` in document order.
+  function follows(a: Element, b: Element): boolean {
+    return !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+  }
+
+  function spanWithText(root: Element, text: string): HTMLElement {
+    const el = Array.from(root.querySelectorAll('span')).find(s => s.textContent?.trim() === text)
+    if (!el) throw new Error(`no span with text ${text}`)
+    return el as HTMLElement
+  }
+
+  it('places the digest error icon after the config name, matching feeds', async () => {
+    vi.mocked(digestApi.listConfigs).mockResolvedValue([
+      { ...digestConfig, last_error: 'generation failed', last_error_at: '2026-09-10T08:00:00Z' },
+    ])
+    const wrapper = await mountSidebar()
+    const { useDigestStore } = await import('../stores/digest')
+    const digestStore = useDigestStore()
+    digestStore.unreadCounts[digestConfig.id] = 4
+    await flushPromises()
+
+    const root = wrapper.element as HTMLElement
+    const pill = root.querySelector('[data-testid="digest-unread"]') as HTMLElement
+    expect(pill).not.toBeNull()
+    const row = pill.parentElement as HTMLElement
+    const name = spanWithText(row, 'Morning Brief')
+    const errorIcon = row.querySelector('[data-testid="digest-error"]') as SVGElement
+    expect(errorIcon).not.toBeNull()
+
+    // name first, then the error icon — the feeds order.
+    expect(follows(name, errorIcon)).toBe(true)
+    // and the pill sits after both, not pushed to the far edge.
+    expect(follows(errorIcon, pill)).toBe(true)
+    expect(pill.className).not.toContain('ml-auto')
+    wrapper.unmount()
+  })
+
+  it('renders the digest pill without an error icon when there is no error', async () => {
+    vi.mocked(digestApi.listConfigs).mockResolvedValue([digestConfig])
+    const wrapper = await mountSidebar()
+    const { useDigestStore } = await import('../stores/digest')
+    const digestStore = useDigestStore()
+    digestStore.unreadCounts[digestConfig.id] = 2
+    await flushPromises()
+
+    const root = wrapper.element as HTMLElement
+    const pill = root.querySelector('[data-testid="digest-unread"]') as HTMLElement
+    const row = pill.parentElement as HTMLElement
+    const name = spanWithText(row, 'Morning Brief')
+    expect(row.querySelector('[data-testid="digest-error"]')).toBeNull()
+    expect(follows(name, pill)).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('places the category unread pill directly after the category name', async () => {
+    const wrapper = await mountSidebar()
+    const { useFeedStore } = await import('../stores/feed')
+    const feedStore = useFeedStore()
+    feedStore.feeds.push({ ...feed, id: 20, name: 'Tech Feed', category: 'tech' })
+    feedStore.unreadCounts[20] = 3
+    await flushPromises()
+
+    const root = wrapper.element as HTMLElement
+    const pill = root.querySelector('[data-testid="category-unread"]') as HTMLElement
+    expect(pill).not.toBeNull()
+
+    const button = pill.closest('button') as HTMLElement
+    // A `justify-between` button pushes the pill to the opposite edge.
+    expect(button.className).not.toContain('justify-between')
+    const name = spanWithText(button, 'tech')
+    expect(follows(name, pill)).toBe(true)
+    // Pill must be a child of the button row, not in a separate actions column.
+    expect(pill.parentElement).toBe(button)
+    wrapper.unmount()
+  })
+
+  it('places the feed unread pill before the row action buttons', async () => {
+    const wrapper = await mountSidebar()
+    const { useFeedStore } = await import('../stores/feed')
+    const feedStore = useFeedStore()
+    feedStore.feeds.push(feed)
+    feedStore.unreadCounts[feed.id] = 7
+    await flushPromises()
+
+    const root = wrapper.element as HTMLElement
+    const settings = root.querySelector('button[title="Settings"]') as HTMLElement
+    const row = settings.parentElement as HTMLElement
+    const name = spanWithText(row, 'Example Feed')
+    const pill = Array.from(row.querySelectorAll('span')).find(s => s.textContent?.trim() === '7') as HTMLElement
+    expect(pill).toBeDefined()
+    expect(follows(name, pill)).toBe(true)
+    expect(follows(pill, settings)).toBe(true)
+    wrapper.unmount()
+  })
+})
