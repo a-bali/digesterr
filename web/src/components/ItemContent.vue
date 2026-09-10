@@ -100,8 +100,20 @@ function renderCommentHtml(text: string): string {
   // Step 3: Restore image tags.
   const restored = decoded.replace(/\x00IMG(\d+)\x00/g, (_, i: string) => placeholders[parseInt(i)])
 
+  // Step 3b: Convert bare URLs to clickable links. Skip URLs already inside
+  // HTML attributes (preceded by ", ', >, or /) to avoid double-linking.
+  const skipPrefixes = new Set(['"', "'", '>', '/'])
+  const withLinks = restored.replace(
+    /((?:https?|ftp):\/\/[^\s<>"]+)/g,
+    (match) => {
+      const idx = restored.indexOf(match)
+      if (idx > 0 && skipPrefixes.has(restored[idx - 1])) return match
+      return '<a href="' + match + '" target="_blank" rel="noopener noreferrer">' + match + '</a>'
+    },
+  )
+
   // Step 4: Convert plain-text newlines to <br> for visible line breaks.
-  return restored.replace(/\n/g, '<br>')
+  return withLinks.replace(/\n/g, '<br>')
 }
 
 // Per-item scroll memory: reopening the SAME item restores its previous
@@ -331,7 +343,7 @@ onUnmounted(() => {
             <pre class="text-xs text-warning-foreground/80 dark:text-warning/90 whitespace-pre-wrap">{{ feedStore.selectedItem.extract_content }}</pre>
           </div>
           <div v-else-if="feedStore.selectedItem.extract_status === 'done'"
-            :class="proseClass" v-html="feedStore.selectedItem.extract_content" />
+            :class="proseClass" v-html="feedStore.selectedItem.extract_content" v-external-links />
         </template>
       </template>
 
@@ -347,9 +359,9 @@ onUnmounted(() => {
           <ChevronDown class="size-3.5 shrink-0 transition-transform" :class="originalCollapsed ? '-rotate-90' : ''" />
           <span>Original</span>
         </button>
-        <div v-if="!originalCollapsed" :class="proseClass" v-html="feedStore.selectedItem.content" />
+        <div v-if="!originalCollapsed" :class="proseClass" v-html="feedStore.selectedItem.content" v-external-links />
       </template>
-      <div v-else :class="proseClass" v-html="feedStore.selectedItem.content" />
+      <div v-else :class="proseClass" v-html="feedStore.selectedItem.content" v-external-links />
 
       <!-- Top Comments (experimental) -->
       <template v-if="topComments.length > 0 || commentsLoading">
@@ -386,7 +398,7 @@ onUnmounted(() => {
                 <span v-else class="font-medium">{{ c.author }}</span>
                 <span v-if="c.valid_points && c.points > 0" class="text-xs text-muted-foreground">{{ c.points }} pts</span>
               </div>
-              <p class="text-muted-foreground text-xs leading-relaxed" v-html="renderCommentHtml(c.text)" />
+              <p class="text-muted-foreground text-xs leading-relaxed" v-html="renderCommentHtml(c.text)" v-external-links />
             </li>
           </ul>
         </div>
