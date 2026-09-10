@@ -768,7 +768,7 @@ WHERE digest_results.user_id = ?1
   AND (
     digest_results.created_at > (SELECT br.created_at FROM digest_results br WHERE br.id = ?2)
     OR (digest_results.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = ?2)
-        AND digest_results.id >= ?2)
+        AND digest_results.id > ?2)
   )
 `
 
@@ -838,7 +838,7 @@ WHERE digest_results.config_id = ?1
   AND (
     digest_results.created_at > (SELECT br.created_at FROM digest_results br WHERE br.id = ?3)
     OR (digest_results.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = ?3)
-        AND digest_results.id >= ?3)
+        AND digest_results.id > ?3)
   )
 `
 
@@ -854,8 +854,13 @@ type MarkDigestConfigReadAboveParams struct {
 // rather than bound as a timestamp from Go: SQLite stores created_at as TEXT in
 // DATETIME('now') layout ("2026-09-10 10:31:06") while a Go time.Time binds as
 // RFC3339 ("2026-09-10T10:31:06Z"), so a bound comparison never matched and the
-// boundary result itself was never marked. id is the tiebreak, matching the
-// created_at DESC, id DESC order the list queries use.
+// boundary result itself was never marked. The digest list orders by
+// created_at alone, which leaves rows sharing a timestamp in an arbitrary
+// order; id completes the comparison so the split between above and below is
+// deterministic.
+//
+// Both directions EXCLUDE the boundary result, matching the item endpoints:
+// "above" is strictly before it, "below" strictly after it.
 func (q *Queries) MarkDigestConfigReadAbove(ctx context.Context, arg MarkDigestConfigReadAboveParams) error {
 	_, err := q.db.ExecContext(ctx, markDigestConfigReadAbove, arg.ConfigID, arg.UserID, arg.BoundaryID)
 	return err

@@ -123,8 +123,11 @@ UPDATE digest_results SET status = 'read', updated_at = DATETIME('now') WHERE co
 -- RFC3339 ("2026-09-10T10:31:06Z"), so a bound comparison never matched and the
 -- boundary result itself was never marked. The digest list orders by
 -- created_at alone, which leaves rows sharing a timestamp in an arbitrary
--- order; id is added as a deterministic tiebreak so above/below partition the
--- list consistently, and the boundary result lands in "above".
+-- order; id completes the comparison so the split between above and below is
+-- deterministic.
+--
+-- Both directions EXCLUDE the boundary result, matching the item endpoints:
+-- "above" is strictly before it, "below" strictly after it.
 UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
 WHERE digest_results.config_id = @config_id
   AND digest_results.user_id = @user_id
@@ -132,7 +135,7 @@ WHERE digest_results.config_id = @config_id
   AND (
     digest_results.created_at > (SELECT br.created_at FROM digest_results br WHERE br.id = @boundary_id)
     OR (digest_results.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = @boundary_id)
-        AND digest_results.id >= @boundary_id)
+        AND digest_results.id > @boundary_id)
   );
 
 -- name: MarkDigestConfigReadBelow :exec
@@ -157,7 +160,7 @@ WHERE digest_results.user_id = @user_id
   AND (
     digest_results.created_at > (SELECT br.created_at FROM digest_results br WHERE br.id = @boundary_id)
     OR (digest_results.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = @boundary_id)
-        AND digest_results.id >= @boundary_id)
+        AND digest_results.id > @boundary_id)
   );
 
 -- name: MarkAllDigestReadBelow :exec
