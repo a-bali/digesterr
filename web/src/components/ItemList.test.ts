@@ -16,7 +16,7 @@ vi.mock('../services/api', () => ({
     markRead: vi.fn(),
     unreadCounts: vi.fn().mockResolvedValue({}),
   },
-  itemApi: { updateStatus: vi.fn() },
+  itemApi: { updateStatus: vi.fn(), markReadAbove: vi.fn(), markReadBelow: vi.fn() },
   ApiError: class extends Error {
     constructor(public status: number, body: any) { super(body?.error) }
   },
@@ -92,14 +92,14 @@ function makeItem(overrides: Partial<Item> = {}): Item {
   }
 }
 
-function mountList(opts: { savedItems?: Item[]; showingSaved?: boolean; feedType?: string; activeFeedId?: number | null } = {}) {
+function mountList(opts: { savedItems?: Item[]; items?: Item[]; showingSaved?: boolean; feedType?: string; activeFeedId?: number | null } = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const store = useFeedStore()
   store.loading = false
   store.feeds = [makeFeed({ type: opts.feedType ?? 'hn' })]
   store.activeFeedId = opts.activeFeedId !== undefined ? opts.activeFeedId : 1
-  store.items = [
+  store.items = opts.items ?? [
     makeItem(),
     makeItem({ id: 2, title: 'Item 2', published_at: '2026-08-12T09:30:00Z' }),
   ]
@@ -320,6 +320,100 @@ describe('ItemList filter/sort controls', () => {
       await openMenu(wrapper, 'Filter items')
       await clickItem('Saved')
       expect(resultRows(wrapper)).toHaveLength(2)
+    })
+  })
+
+  describe('mark read above/below hover actions', () => {
+    // The action lives in the top right corner of every row: the publish time
+    // gives way to the two chevrons on hover. Rows of any status get them, so
+    // the control is in the same place on every item.
+    it('renders both chevrons on every row regardless of status', () => {
+      const { wrapper } = mountList({
+        items: [
+          makeItem({ id: 1, title: 'Unread', status: 'unread' }),
+          makeItem({ id: 2, title: 'Read', status: 'read' }),
+          makeItem({ id: 3, title: 'Saved', status: 'saved' }),
+          makeItem({ id: 4, title: 'Digested', status: 'digested' }),
+        ],
+      })
+      const rows = resultRows(wrapper)
+      expect(rows).toHaveLength(4)
+      for (const row of rows) {
+        expect(row.find('[data-mark-above]').exists()).toBe(true)
+        expect(row.find('[data-mark-below]').exists()).toBe(true)
+      }
+    })
+
+    it('labels the chevrons for assistive tech', () => {
+      const { wrapper } = mountList()
+      const row = resultRows(wrapper)[0]
+      expect(row.find('[data-mark-above]').attributes('aria-label')).toBe('Mark everything above as read')
+      expect(row.find('[data-mark-below]').attributes('aria-label')).toBe('Mark everything below as read')
+    })
+
+    it('still shows the publish time, so the timestamp is not lost', () => {
+      const { wrapper } = mountList()
+      const row = resultRows(wrapper)[0]
+      // Hovering only hides the time with CSS; it stays in the DOM so the
+      // relative time is still announced and the absolute time stays available.
+      const time = row.find('[data-item-time]')
+      expect(time.exists()).toBe(true)
+      expect(time.text().length).toBeGreaterThan(0)
+      expect(time.attributes('title')).toBeTruthy()
+    })
+
+    // The pane's sort and score filter are forwarded to the server, which
+    // resolves above/below in SQL so rows that are not loaded yet, or are
+    // filtered out, still land on the right side of the boundary.
+    it('marks above with the clicked item and forwards the pane ordering', async () => {
+      const { itemApi } = await import('../services/api')
+      const markAbove = itemApi.markReadAbove as ReturnType<typeof vi.fn>
+      markAbove.mockResolvedValue({ message: 'ok' })
+
+      const { store, wrapper } = mountList()
+      store.sort = 'score_desc'
+      store.minScore = 40
+
+      await resultRows(wrapper)[1].find('[data-mark-above]').trigger('click')
+      await flushPromises()
+
+      expect(markAbove).toHaveBeenCalledTimes(1)
+      const [id, opts] = markAbove.mock.calls[0]
+      expect(id).toBe(2)
+      expect(opts).toMatchObject({ sort: 'score_desc', min_score: 40 })
+    })
+
+    it('marks below with the clicked item and forwards the pane ordering', async () => {
+      const { itemApi } = await import('../services/api')
+      const markBelow = itemApi.markReadBelow as ReturnType<typeof vi.fn>
+      markBelow.mockResolvedValue({ message: 'ok' })
+
+      const { store, wrapper } = mountList()
+      store.sort = 'date_asc'
+      store.minScore = null
+
+      await resultRows(wrapper)[0].find('[data-mark-below]').trigger('click')
+      await flushPromises()
+
+      expect(markBelow).toHaveBeenCalledTimes(1)
+      const [id, opts] = markBelow.mock.calls[0]
+      expect(id).toBe(1)
+      expect(opts).toMatchObject({ sort: 'date_asc', min_score: 0 })
+    })
+
+    it('does not select the row when a chevron is clicked', async () => {
+      const { wrapper } = mountList()
+      const row = resultRows(wrapper)[0]
+      await row.find('[data-mark-above]').trigger('click')
+      expect(wrapper.emitted('selectItem')).toBeFalsy()
+    })
+
+    it('hides the chevrons in the saved view', () => {
+      const saved = [makeItem({ id: 1, title: 'Saved one', status: 'saved' })]
+      const { wrapper } = mountList({ showingSaved: true, savedItems: saved, activeFeedId: null })
+      const row = resultRows(wrapper)[0]
+      expect(row.find('[data-mark-above]').exists()).toBe(false)
+      expect(row.find('[data-mark-below]').exists()).toBe(false)
     })
   })
 })

@@ -662,17 +662,18 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 	whereClause += " AND (i.points >= ? OR ? = 0)"
 	args = append(args, minScore, minScore)
 
-	// Sort clause.
+	// Sort clause. These orderings are mirrored by the Mark*ReadRelative*
+	// queries in sql/queries/items.sql; keep the two in step.
 	var orderClause string
 	switch sort {
-	case "date_asc":
-		orderClause = "i.published_at ASC, i.created_at ASC"
-	case "score_desc":
-		orderClause = "i.points DESC, i.published_at DESC, i.created_at DESC"
-	case "score_asc":
-		orderClause = "i.points ASC, i.published_at DESC, i.created_at DESC"
+	case sortDateAsc:
+		orderClause = "i.published_at ASC, i.created_at ASC, i.id ASC"
+	case sortScoreDesc:
+		orderClause = "i.points DESC, i.published_at DESC, i.created_at DESC, i.id DESC"
+	case sortScoreAsc:
+		orderClause = "i.points ASC, i.published_at DESC, i.created_at DESC, i.id DESC"
 	default:
-		orderClause = "i.published_at DESC, i.created_at DESC"
+		orderClause = "i.published_at DESC, i.created_at DESC, i.id DESC"
 	}
 
 	// Fetch limit+1 to detect has_more. Only select columns needed for the
@@ -786,14 +787,20 @@ func (s *Server) handleMarkItemRelative(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	// Parse scope from request body.
+	// Parse scope and view ordering from the request body.
 	var body struct {
 		Category *string `json:"category"`
 		FeedIDs  *string `json:"feed_ids"` // comma-separated, for "Feeds" section
+		// Sort mirrors the middle pane's ordering and MinScore mirrors its
+		// minimum-score filter, so "above" and "below" mean exactly what the
+		// user is looking at — including items not loaded yet.
+		Sort     string `json:"sort"`
+		MinScore int64  `json:"min_score"`
 	}
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
+	sort := normalizeItemSort(body.Sort)
 
 	// Look up the item to get boundary values.
 	item, err := s.queries.GetItemWithFeedOwner(r.Context(), store.GetItemWithFeedOwnerParams{ID: itemID, UserID: userID})
@@ -814,15 +821,15 @@ func (s *Server) handleMarkItemRelative(w http.ResponseWriter, r *http.Request, 
 	// behaviour.
 	//
 	// The boundary row and its sort key are resolved inside SQL, not bound from
-	// Go — see MarkFeedReadAbove in sql/queries/items.sql.
+	// Go — see MarkFeedReadRelativeDateDesc in sql/queries/items.sql.
 	above := direction == "above"
 	switch {
 	case body.Category != nil && *body.Category != "":
-		err = s.markRelativeByCategory(r.Context(), userID, *body.Category, itemID, above)
+		err = s.markRelativeByCategory(r.Context(), userID, *body.Category, itemID, above, sort, body.MinScore)
 	case body.Category != nil || body.FeedIDs != nil:
-		err = s.markRelativeByUser(r.Context(), userID, itemID, above)
+		err = s.markRelativeByUser(r.Context(), userID, itemID, above, sort, body.MinScore)
 	default:
-		err = s.markRelativeByFeed(r.Context(), item.FeedID, itemID, above)
+		err = s.markRelativeByFeed(r.Context(), item.FeedID, itemID, above, sort, body.MinScore)
 	}
 	if err != nil {
 		writeServerError(w, "failed to mark items read", err)
@@ -831,49 +838,93 @@ func (s *Server) handleMarkItemRelative(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "items marked read"})
 }
 
+// Sort keys accepted by the item list. "above"/"below" are meaningless
+// without one: the range has to follow the ordering the pane is showing, so
+// each scope has a query per sort order.
+const (
+	sortDateDesc  = "date_desc"
+	sortDateAsc   = "date_asc"
+	sortScoreDesc = "score_desc"
+	sortScoreAsc  = "score_asc"
+)
+
+// normalizeItemSort maps an unknown or empty sort onto the default, matching
+// the list endpoint's fallback.
+func normalizeItemSort(sort string) string {
+	switch sort {
+	case sortDateAsc, sortScoreDesc, sortScoreAsc:
+		return sort
+	default:
+		return sortDateDesc
+	}
+}
+
+// aboveFlag converts the direction into the SQL flag the Mark*ReadRelative*
+// queries take: 1 covers the boundary item and everything before it, 0 covers
+// everything strictly after it.
+func aboveFlag(above bool) int64 {
+	if above {
+		return 1
+	}
+	return 0
+}
+
 // markRelativeByFeed marks items in a single feed at/above or below the
 // boundary item.
-func (s *Server) markRelativeByFeed(ctx context.Context, feedID, boundaryID int64, above bool) error {
-	if above {
-		return s.queries.MarkFeedReadAbove(ctx, store.MarkFeedReadAboveParams{
-			FeedID:     feedID,
-			BoundaryID: boundaryID,
-		})
+func (s *Server) markRelativeByFeed(ctx context.Context, feedID, boundaryID int64, above bool, sort string, minScore int64) error {
+	flag := aboveFlag(above)
+	switch sort {
+	case sortDateAsc:
+		return s.queries.MarkFeedReadRelativeDateAsc(ctx, store.MarkFeedReadRelativeDateAscParams{
+			FeedID: feedID, BoundaryID: boundaryID, Above: flag, MinScore: minScore})
+	case sortScoreDesc:
+		return s.queries.MarkFeedReadRelativeScoreDesc(ctx, store.MarkFeedReadRelativeScoreDescParams{
+			FeedID: feedID, BoundaryID: boundaryID, Above: flag, MinScore: minScore})
+	case sortScoreAsc:
+		return s.queries.MarkFeedReadRelativeScoreAsc(ctx, store.MarkFeedReadRelativeScoreAscParams{
+			FeedID: feedID, BoundaryID: boundaryID, Above: flag, MinScore: minScore})
+	default:
+		return s.queries.MarkFeedReadRelativeDateDesc(ctx, store.MarkFeedReadRelativeDateDescParams{
+			FeedID: feedID, BoundaryID: boundaryID, Above: flag, MinScore: minScore})
 	}
-	return s.queries.MarkFeedReadBelow(ctx, store.MarkFeedReadBelowParams{
-		FeedID:     feedID,
-		BoundaryID: boundaryID,
-	})
 }
 
 // markRelativeByCategory marks items across every feed in one category.
-func (s *Server) markRelativeByCategory(ctx context.Context, userID int64, category string, boundaryID int64, above bool) error {
-	if above {
-		return s.queries.MarkCategoryReadAbove(ctx, store.MarkCategoryReadAboveParams{
-			UserID:     userID,
-			Category:   category,
-			BoundaryID: boundaryID,
-		})
+func (s *Server) markRelativeByCategory(ctx context.Context, userID int64, category string, boundaryID int64, above bool, sort string, minScore int64) error {
+	flag := aboveFlag(above)
+	switch sort {
+	case sortDateAsc:
+		return s.queries.MarkCategoryReadRelativeDateAsc(ctx, store.MarkCategoryReadRelativeDateAscParams{
+			UserID: userID, Category: category, BoundaryID: boundaryID, Above: flag, MinScore: minScore})
+	case sortScoreDesc:
+		return s.queries.MarkCategoryReadRelativeScoreDesc(ctx, store.MarkCategoryReadRelativeScoreDescParams{
+			UserID: userID, Category: category, BoundaryID: boundaryID, Above: flag, MinScore: minScore})
+	case sortScoreAsc:
+		return s.queries.MarkCategoryReadRelativeScoreAsc(ctx, store.MarkCategoryReadRelativeScoreAscParams{
+			UserID: userID, Category: category, BoundaryID: boundaryID, Above: flag, MinScore: minScore})
+	default:
+		return s.queries.MarkCategoryReadRelativeDateDesc(ctx, store.MarkCategoryReadRelativeDateDescParams{
+			UserID: userID, Category: category, BoundaryID: boundaryID, Above: flag, MinScore: minScore})
 	}
-	return s.queries.MarkCategoryReadBelow(ctx, store.MarkCategoryReadBelowParams{
-		UserID:     userID,
-		Category:   category,
-		BoundaryID: boundaryID,
-	})
 }
 
 // markRelativeByUser marks items across every feed the user owns.
-func (s *Server) markRelativeByUser(ctx context.Context, userID, boundaryID int64, above bool) error {
-	if above {
-		return s.queries.MarkAllFeedsReadAbove(ctx, store.MarkAllFeedsReadAboveParams{
-			UserID:     userID,
-			BoundaryID: boundaryID,
-		})
+func (s *Server) markRelativeByUser(ctx context.Context, userID, boundaryID int64, above bool, sort string, minScore int64) error {
+	flag := aboveFlag(above)
+	switch sort {
+	case sortDateAsc:
+		return s.queries.MarkAllFeedsReadRelativeDateAsc(ctx, store.MarkAllFeedsReadRelativeDateAscParams{
+			UserID: userID, BoundaryID: boundaryID, Above: flag, MinScore: minScore})
+	case sortScoreDesc:
+		return s.queries.MarkAllFeedsReadRelativeScoreDesc(ctx, store.MarkAllFeedsReadRelativeScoreDescParams{
+			UserID: userID, BoundaryID: boundaryID, Above: flag, MinScore: minScore})
+	case sortScoreAsc:
+		return s.queries.MarkAllFeedsReadRelativeScoreAsc(ctx, store.MarkAllFeedsReadRelativeScoreAscParams{
+			UserID: userID, BoundaryID: boundaryID, Above: flag, MinScore: minScore})
+	default:
+		return s.queries.MarkAllFeedsReadRelativeDateDesc(ctx, store.MarkAllFeedsReadRelativeDateDescParams{
+			UserID: userID, BoundaryID: boundaryID, Above: flag, MinScore: minScore})
 	}
-	return s.queries.MarkAllFeedsReadBelow(ctx, store.MarkAllFeedsReadBelowParams{
-		UserID:     userID,
-		BoundaryID: boundaryID,
-	})
 }
 
 // colInt64 extracts an int64 from a scanned column value.

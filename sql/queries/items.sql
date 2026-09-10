@@ -94,7 +94,7 @@ FROM items i
 WHERE feed_id = sqlc.arg(feed_id)
   AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
   AND (points >= sqlc.arg(min_score) OR sqlc.arg(min_score) = 0)
-ORDER BY published_at DESC, created_at DESC
+ORDER BY published_at DESC, created_at DESC, id DESC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: ListItemsByFeedSortedDateAsc :many
@@ -105,7 +105,7 @@ FROM items i
 WHERE feed_id = sqlc.arg(feed_id)
   AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
   AND (points >= sqlc.arg(min_score) OR sqlc.arg(min_score) = 0)
-ORDER BY published_at ASC, created_at ASC
+ORDER BY published_at ASC, created_at ASC, id ASC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: ListItemsByFeedSortedScoreDesc :many
@@ -116,7 +116,7 @@ FROM items i
 WHERE feed_id = sqlc.arg(feed_id)
   AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
   AND (points >= sqlc.arg(min_score) OR sqlc.arg(min_score) = 0)
-ORDER BY points DESC, published_at DESC, created_at DESC
+ORDER BY points DESC, published_at DESC, created_at DESC, id DESC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: ListItemsByFeedSortedScoreAsc :many
@@ -127,7 +127,7 @@ FROM items i
 WHERE feed_id = sqlc.arg(feed_id)
   AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
   AND (points >= sqlc.arg(min_score) OR sqlc.arg(min_score) = 0)
-ORDER BY points ASC, published_at DESC, created_at DESC
+ORDER BY points ASC, published_at DESC, created_at DESC, id DESC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: CountItemsByFeed :one
@@ -153,90 +153,199 @@ UPDATE items SET status = 'read', updated_at = DATETIME('now')
 WHERE feed_id IN (SELECT id FROM feeds WHERE user_id = @user_id AND category = @category)
   AND status = 'unread';
 
--- name: MarkFeedReadAbove :exec
--- Mark items at or above the boundary item as read, within a single feed.
+-- ---------------------------------------------------------------------------
+-- Relative mark-read: mark everything at/above or below a boundary item.
 --
--- The boundary row is identified by id and its ordering key is read inside SQL
--- rather than bound as a timestamp from Go. SQLite stores these columns as TEXT
--- and a Go time.Time binds in a different text layout
--- ("2026-09-10 10:31:06+00:00") than the stored value ("2026-09-10T10:31:06Z"),
--- so comparing against a bound time matched nothing and the boundary item was
--- never included.
+-- The boundary row and its ordering keys are read inside SQL rather than bound
+-- from Go. SQLite stores published_at/created_at as TEXT in DATETIME('now')
+-- layout ("2026-09-10 10:31:06") whereas a Go time.Time binds as RFC3339
+-- ("2026-09-10T10:31:06Z"), so a comparison against a bound value never matched
+-- and the boundary item itself was never marked.
 --
--- Ordering matches the item list: COALESCE(published_at, '') DESC, id DESC. The
--- '' stand-in keeps undated items (published_at IS NULL) reachable instead of
--- dropping them out of both directions, and id replaces created_at as the
--- tiebreak so the comparison never crosses timestamp layouts.
-UPDATE items SET status = 'read', updated_at = DATETIME('now')
-WHERE items.feed_id = @feed_id
-  AND items.status = 'unread'
-  AND (
-    COALESCE(items.published_at, '') > (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
-    OR (COALESCE(items.published_at, '') = (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
-        AND items.id >= @boundary_id)
-  );
+-- "above"/"below" are relative to the ordering the middle pane is showing, so
+-- there is one query per (scope, sort). Both the ordering and the pane's score
+-- filter live in SQL so rows that are not loaded yet, or are filtered out, are
+-- still resolved correctly. The predicates mirror the list ORDER BY exactly,
+-- including its id tiebreak:
+--
+--   DateDesc  (published_at DESC, created_at DESC, id DESC)
+--   DateAsc   (published_at ASC,  created_at ASC,  id ASC)
+--   ScoreDesc (points DESC, published_at DESC, created_at DESC, id DESC)
+--   ScoreAsc  (points ASC,  published_at DESC, created_at DESC, id DESC)
+--
+-- Row-value comparison expresses the lexicographic "at or before" / "strictly
+-- after" test in one expression, apart from ScoreAsc, whose keys mix directions
+-- and so has its leading ASC key split off first. Because the id tiebreak is
+-- part of both the predicate and the ordering, the two agree on every row:
+-- above/below partition the pane exactly, and the boundary lands in "above".
+-- COALESCE(published_at, '') matches SQLite's NULLS FIRST (ASC) / LAST (DESC)
+-- placement, which keeps undated items reachable from either direction.
+--
+-- @min_score mirrors the pane's score filter and is applied to the rows being
+-- updated, so rows the user cannot see are never marked.
+-- ---------------------------------------------------------------------------
 
--- name: MarkFeedReadBelow :exec
--- Mark items strictly below the boundary item as read, within a single feed.
--- See MarkFeedReadAbove for the boundary/ordering rationale.
+-- name: MarkFeedReadRelativeDateDesc :exec
+-- Mark every item above/below the boundary item as read, within a single feed.
+--
 UPDATE items SET status = 'read', updated_at = DATETIME('now')
-WHERE items.feed_id = @feed_id
+WHERE items.feed_id = sqlc.arg(feed_id)
   AND items.status = 'unread'
-  AND (
-    COALESCE(items.published_at, '') < (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
-    OR (COALESCE(items.published_at, '') = (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
-        AND items.id < @boundary_id)
-  );
+  AND (CAST(sqlc.arg(min_score) AS INTEGER) = 0 OR items.points >= CAST(sqlc.arg(min_score) AS INTEGER))
+  AND (CASE WHEN CAST(sqlc.arg(above) AS INTEGER) THEN
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       ELSE
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       END) = 1;
 
--- name: MarkCategoryReadAbove :exec
--- Mark items at or above the boundary item as read, across a feed category.
--- See MarkFeedReadAbove for the boundary/ordering rationale.
+-- name: MarkFeedReadRelativeDateAsc :exec
+-- Mark every item above/below the boundary item as read, within a single feed.
+--
 UPDATE items SET status = 'read', updated_at = DATETIME('now')
-WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = @user_id AND f.category = @category)
+WHERE items.feed_id = sqlc.arg(feed_id)
   AND items.status = 'unread'
-  AND (
-    COALESCE(items.published_at, '') > (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
-    OR (COALESCE(items.published_at, '') = (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
-        AND items.id >= @boundary_id)
-  );
+  AND (CAST(sqlc.arg(min_score) AS INTEGER) = 0 OR items.points >= CAST(sqlc.arg(min_score) AS INTEGER))
+  AND (CASE WHEN CAST(sqlc.arg(above) AS INTEGER) THEN
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) <= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       ELSE
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       END) = 1;
 
--- name: MarkCategoryReadBelow :exec
--- Mark items strictly below the boundary item as read, across a feed category.
--- See MarkFeedReadAbove for the boundary/ordering rationale.
+-- name: MarkFeedReadRelativeScoreDesc :exec
+-- Mark every item above/below the boundary item as read, within a single feed.
+--
 UPDATE items SET status = 'read', updated_at = DATETIME('now')
-WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = @user_id AND f.category = @category)
+WHERE items.feed_id = sqlc.arg(feed_id)
   AND items.status = 'unread'
-  AND (
-    COALESCE(items.published_at, '') < (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
-    OR (COALESCE(items.published_at, '') = (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
-        AND items.id < @boundary_id)
-  );
+  AND (CAST(sqlc.arg(min_score) AS INTEGER) = 0 OR items.points >= CAST(sqlc.arg(min_score) AS INTEGER))
+  AND (CASE WHEN CAST(sqlc.arg(above) AS INTEGER) THEN
+         ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       ELSE
+         ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       END) = 1;
 
--- name: MarkAllFeedsReadAbove :exec
--- Mark items at or above the boundary item as read, across every feed the user
--- owns (the "Feeds" section view).
--- See MarkFeedReadAbove for the boundary/ordering rationale.
+-- name: MarkFeedReadRelativeScoreAsc :exec
+-- Mark every item above/below the boundary item as read, within a single feed.
+--
 UPDATE items SET status = 'read', updated_at = DATETIME('now')
-WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = @user_id)
+WHERE items.feed_id = sqlc.arg(feed_id)
   AND items.status = 'unread'
-  AND (
-    COALESCE(items.published_at, '') > (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
-    OR (COALESCE(items.published_at, '') = (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
-        AND items.id >= @boundary_id)
-  );
+  AND (CAST(sqlc.arg(min_score) AS INTEGER) = 0 OR items.points >= CAST(sqlc.arg(min_score) AS INTEGER))
+  AND (CASE WHEN CAST(sqlc.arg(above) AS INTEGER) THEN
+         (items.points < (SELECT bi.points FROM items bi WHERE bi.id = sqlc.arg(boundary_id))
+           OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = sqlc.arg(boundary_id)) AND (COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id))))
+       ELSE
+         (items.points > (SELECT bi.points FROM items bi WHERE bi.id = sqlc.arg(boundary_id))
+           OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = sqlc.arg(boundary_id)) AND (COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id))))
+       END) = 1;
 
--- name: MarkAllFeedsReadBelow :exec
--- Mark items strictly below the boundary item as read, across every feed the
--- user owns (the "Feeds" section view).
--- See MarkFeedReadAbove for the boundary/ordering rationale.
+-- name: MarkCategoryReadRelativeDateDesc :exec
+-- Mark every item above/below the boundary item as read, across one feed category.
+--
 UPDATE items SET status = 'read', updated_at = DATETIME('now')
-WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = @user_id)
+WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = sqlc.arg(user_id) AND f.category = sqlc.arg(category))
   AND items.status = 'unread'
-  AND (
-    COALESCE(items.published_at, '') < (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
-    OR (COALESCE(items.published_at, '') = (SELECT COALESCE(bi.published_at, '') FROM items bi WHERE bi.id = @boundary_id)
-        AND items.id < @boundary_id)
-  );
+  AND (CAST(sqlc.arg(min_score) AS INTEGER) = 0 OR items.points >= CAST(sqlc.arg(min_score) AS INTEGER))
+  AND (CASE WHEN CAST(sqlc.arg(above) AS INTEGER) THEN
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       ELSE
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       END) = 1;
+
+-- name: MarkCategoryReadRelativeDateAsc :exec
+-- Mark every item above/below the boundary item as read, across one feed category.
+--
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = sqlc.arg(user_id) AND f.category = sqlc.arg(category))
+  AND items.status = 'unread'
+  AND (CAST(sqlc.arg(min_score) AS INTEGER) = 0 OR items.points >= CAST(sqlc.arg(min_score) AS INTEGER))
+  AND (CASE WHEN CAST(sqlc.arg(above) AS INTEGER) THEN
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) <= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       ELSE
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       END) = 1;
+
+-- name: MarkCategoryReadRelativeScoreDesc :exec
+-- Mark every item above/below the boundary item as read, across one feed category.
+--
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = sqlc.arg(user_id) AND f.category = sqlc.arg(category))
+  AND items.status = 'unread'
+  AND (CAST(sqlc.arg(min_score) AS INTEGER) = 0 OR items.points >= CAST(sqlc.arg(min_score) AS INTEGER))
+  AND (CASE WHEN CAST(sqlc.arg(above) AS INTEGER) THEN
+         ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       ELSE
+         ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       END) = 1;
+
+-- name: MarkCategoryReadRelativeScoreAsc :exec
+-- Mark every item above/below the boundary item as read, across one feed category.
+--
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = sqlc.arg(user_id) AND f.category = sqlc.arg(category))
+  AND items.status = 'unread'
+  AND (CAST(sqlc.arg(min_score) AS INTEGER) = 0 OR items.points >= CAST(sqlc.arg(min_score) AS INTEGER))
+  AND (CASE WHEN CAST(sqlc.arg(above) AS INTEGER) THEN
+         (items.points < (SELECT bi.points FROM items bi WHERE bi.id = sqlc.arg(boundary_id))
+           OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = sqlc.arg(boundary_id)) AND (COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id))))
+       ELSE
+         (items.points > (SELECT bi.points FROM items bi WHERE bi.id = sqlc.arg(boundary_id))
+           OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = sqlc.arg(boundary_id)) AND (COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id))))
+       END) = 1;
+
+-- name: MarkAllFeedsReadRelativeDateDesc :exec
+-- Mark every item above/below the boundary item as read, across every feed the user owns (the "Feeds" section).
+--
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = sqlc.arg(user_id))
+  AND items.status = 'unread'
+  AND (CAST(sqlc.arg(min_score) AS INTEGER) = 0 OR items.points >= CAST(sqlc.arg(min_score) AS INTEGER))
+  AND (CASE WHEN CAST(sqlc.arg(above) AS INTEGER) THEN
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       ELSE
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       END) = 1;
+
+-- name: MarkAllFeedsReadRelativeDateAsc :exec
+-- Mark every item above/below the boundary item as read, across every feed the user owns (the "Feeds" section).
+--
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = sqlc.arg(user_id))
+  AND items.status = 'unread'
+  AND (CAST(sqlc.arg(min_score) AS INTEGER) = 0 OR items.points >= CAST(sqlc.arg(min_score) AS INTEGER))
+  AND (CASE WHEN CAST(sqlc.arg(above) AS INTEGER) THEN
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) <= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       ELSE
+         ((COALESCE(items.published_at, ''), items.created_at, items.id) > (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       END) = 1;
+
+-- name: MarkAllFeedsReadRelativeScoreDesc :exec
+-- Mark every item above/below the boundary item as read, across every feed the user owns (the "Feeds" section).
+--
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = sqlc.arg(user_id))
+  AND items.status = 'unread'
+  AND (CAST(sqlc.arg(min_score) AS INTEGER) = 0 OR items.points >= CAST(sqlc.arg(min_score) AS INTEGER))
+  AND (CASE WHEN CAST(sqlc.arg(above) AS INTEGER) THEN
+         ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       ELSE
+         ((items.points, COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT bi.points, COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id)))
+       END) = 1;
+
+-- name: MarkAllFeedsReadRelativeScoreAsc :exec
+-- Mark every item above/below the boundary item as read, across every feed the user owns (the "Feeds" section).
+--
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE items.feed_id IN (SELECT f.id FROM feeds f WHERE f.user_id = sqlc.arg(user_id))
+  AND items.status = 'unread'
+  AND (CAST(sqlc.arg(min_score) AS INTEGER) = 0 OR items.points >= CAST(sqlc.arg(min_score) AS INTEGER))
+  AND (CASE WHEN CAST(sqlc.arg(above) AS INTEGER) THEN
+         (items.points < (SELECT bi.points FROM items bi WHERE bi.id = sqlc.arg(boundary_id))
+           OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = sqlc.arg(boundary_id)) AND (COALESCE(items.published_at, ''), items.created_at, items.id) >= (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id))))
+       ELSE
+         (items.points > (SELECT bi.points FROM items bi WHERE bi.id = sqlc.arg(boundary_id))
+           OR (items.points = (SELECT bi.points FROM items bi WHERE bi.id = sqlc.arg(boundary_id)) AND (COALESCE(items.published_at, ''), items.created_at, items.id) < (SELECT COALESCE(bi.published_at, ''), bi.created_at, bi.id FROM items bi WHERE bi.id = sqlc.arg(boundary_id))))
+       END) = 1;
 
 -- name: ListItemsByUserStatus :many
 SELECT i.* FROM items i

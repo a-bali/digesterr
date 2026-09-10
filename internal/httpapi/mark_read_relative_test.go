@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"sort"
 	"testing"
 	"time"
 
@@ -304,5 +305,151 @@ func TestMarkReadRelativeRejectsOtherUsersItem(t *testing.T) {
 	}
 	if item.Status != "unread" {
 		t.Errorf("foreign item status = %q, want unread", item.Status)
+	}
+}
+
+// sortedTitles returns a sorted copy of titles, letting an assertion compare
+// sets without depending on the order items happen to be traversed in.
+func sortedTitles(titles []string) []string {
+	out := append([]string(nil), titles...)
+	sort.Strings(out)
+	return out
+}
+
+// addItemWithPoints inserts an unread item with a score, so tests can order a
+// feed by score independently of its publish dates.
+func addItemWithPoints(t *testing.T, queries *store.Queries, feedID int64, title string, published time.Time, points int64) store.Item {
+	t.Helper()
+	item := addItem(t, queries, feedID, title, published)
+	if _, err := queries.UpdateItemPointsAndComments(t.Context(), store.UpdateItemPointsAndCommentsParams{
+		Points:        points,
+		CommentsCount: 0,
+		CommentUrl:    "",
+		ID:            item.ID,
+	}); err != nil {
+		t.Fatalf("set points for %q: %v", title, err)
+	}
+	return item
+}
+
+// TestMarkReadRelativeFollowsScoreSort covers the ordering the pane is actually
+// showing. The scores below are deliberately anti-correlated with the publish
+// dates, so score order and date order disagree; the same boundary item must
+// produce different sets for the two sorts.
+//
+// date_desc  (newest first): t4, t3, t2, t1, t0
+// score_desc (highest first): t3, t1, t2, t0, t4
+//
+// With the boundary on t2, "above" is {t3,t1,t2} by score but {t4,t3,t2} by
+// date. A handler that ignored the sort would return the date set either way.
+func TestMarkReadRelativeFollowsScoreSort(t *testing.T) {
+	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	scores := map[string]int64{"t0": 5, "t1": 50, "t2": 10, "t3": 100, "t4": 1}
+
+	tests := []struct {
+		name   string
+		sort   string
+		above  []string
+		below  []string
+	}{
+		{name: "score_desc", sort: "score_desc",
+			above: []string{"t3", "t1", "t2"}, below: []string{"t0", "t4"}},
+		{name: "date_desc", sort: "date_desc",
+			above: []string{"t4", "t3", "t2"}, below: []string{"t1", "t0"}},
+	}
+
+	for _, tt := range tests {
+		for _, dir := range []string{"above", "below"} {
+			t.Run(tt.name+"_"+dir, func(t *testing.T) {
+				fx, feeds := newMarkReadFixture(t, 1)
+
+				byTitle := map[string]store.Item{}
+				for i := 0; i < 5; i++ {
+					title := fmt.Sprintf("t%d", i)
+					byTitle[title] = addItemWithPoints(t, fx.queries, feeds[0].ID, title,
+						base.Add(time.Duration(i)*time.Hour), scores[title])
+				}
+				all := []store.Item{byTitle["t4"], byTitle["t3"], byTitle["t2"], byTitle["t1"], byTitle["t0"]}
+
+				markRelative(t, fx, byTitle["t2"].ID, dir, map[string]any{"sort": tt.sort})
+
+				want := tt.above
+				if dir == "below" {
+					want = tt.below
+				}
+				got := markedTitles(t, fx.queries, all)
+				if !equalStrings(sortedTitles(got), sortedTitles(want)) {
+					t.Errorf("sort=%s %s marked %v, want %v", tt.sort, dir, got, want)
+				}
+			})
+		}
+	}
+}
+
+// TestMarkReadRelativeDateAsc checks the ascending ordering, where "above" is
+// the older half of the list rather than the newer one.
+func TestMarkReadRelativeDateAsc(t *testing.T) {
+	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+
+	for _, tt := range []struct {
+		direction string
+		want      []string
+	}{
+		{direction: "above", want: []string{"t0", "t1", "t2"}},
+		{direction: "below", want: []string{"t3", "t4"}},
+	} {
+		t.Run("date_asc_"+tt.direction, func(t *testing.T) {
+			fx, feeds := newMarkReadFixture(t, 1)
+
+			var items []store.Item
+			for i := 0; i < 5; i++ {
+				items = append(items, addItem(t, fx.queries, feeds[0].ID,
+					fmt.Sprintf("t%d", i), base.Add(time.Duration(i)*time.Hour)))
+			}
+
+			markRelative(t, fx, items[2].ID, tt.direction, map[string]any{"sort": "date_asc"})
+
+			got := markedTitles(t, fx.queries, items)
+			if !equalStrings(got, tt.want) {
+				t.Errorf("date_asc %s marked %v, want %v (oldest first: t0,t1,t2,t3,t4)",
+					tt.direction, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMarkReadRelativeRespectsScoreFilter checks that rows hidden by the pane's
+// minimum-score filter are never marked, even when they sit on the "above" side
+// of the boundary.
+//
+// list (date_desc): t4, t3, t2, t1, t0  — scores 70, 3, 100, 50, 5
+// with min_score=50 the pane shows only t4, t2, t1, so "above" the boundary t2
+// is {t4, t2}; t3 and t0 are filtered out and must stay unread.
+func TestMarkReadRelativeRespectsScoreFilter(t *testing.T) {
+	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	scores := map[string]int64{"t0": 5, "t1": 50, "t2": 100, "t3": 3, "t4": 70}
+
+	fx, feeds := newMarkReadFixture(t, 1)
+
+	byTitle := map[string]store.Item{}
+	for i := 0; i < 5; i++ {
+		title := fmt.Sprintf("t%d", i)
+		byTitle[title] = addItemWithPoints(t, fx.queries, feeds[0].ID, title,
+			base.Add(time.Duration(i)*time.Hour), scores[title])
+	}
+
+	markRelative(t, fx, byTitle["t2"].ID, "above", map[string]any{"min_score": 50})
+
+	all := []store.Item{byTitle["t4"], byTitle["t3"], byTitle["t2"], byTitle["t1"], byTitle["t0"]}
+	if got, want := markedTitles(t, fx.queries, all), []string{"t4", "t2"}; !equalStrings(sortedTitles(got), sortedTitles(want)) {
+		t.Errorf("marked %v, want %v — filtered-out items must not be marked", got, want)
+	}
+	for _, title := range []string{"t3", "t0"} {
+		if item, err := fx.queries.GetItem(t.Context(), byTitle[title].ID); err != nil {
+			t.Fatalf("get %s: %v", title, err)
+		} else if item.Status != "unread" {
+			t.Errorf("%s has score below min_score and is filtered out of the pane, but was marked %q",
+				title, item.Status)
+		}
 	}
 }

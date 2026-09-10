@@ -121,8 +121,10 @@ UPDATE digest_results SET status = 'read', updated_at = DATETIME('now') WHERE co
 -- rather than bound as a timestamp from Go: SQLite stores created_at as TEXT in
 -- DATETIME('now') layout ("2026-09-10 10:31:06") while a Go time.Time binds as
 -- RFC3339 ("2026-09-10T10:31:06Z"), so a bound comparison never matched and the
--- boundary result itself was never marked. id is the tiebreak, matching the
--- created_at DESC, id DESC order the list queries use.
+-- boundary result itself was never marked. The digest list orders by
+-- created_at alone, which leaves rows sharing a timestamp in an arbitrary
+-- order; id is added as a deterministic tiebreak so above/below partition the
+-- list consistently, and the boundary result lands in "above".
 UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
 WHERE digest_results.config_id = @config_id
   AND digest_results.user_id = @user_id

@@ -1,4 +1,4 @@
-import type { AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, Item, LogsResponse, MultiFeedItemsResponse, AllDigestResultsResponse, MetricsSummary } from '../types/api'
+import type { AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, Item, LogsResponse, MarkRelativeOptions, MultiFeedItemsResponse, AllDigestResultsResponse, MetricsSummary } from '../types/api'
 
 const TOKEN_KEY = 'digesterr-token'
 
@@ -156,12 +156,12 @@ export const itemApi = {
     }),
   getComments: (id: number, opts?: { limit?: number; refresh?: boolean }) =>
     api<import('../types/api').ItemCommentsResponse>(`/items/${id}/comments${qs({ limit: opts?.limit, refresh: opts?.refresh ? 'true' : undefined })}`),
-  markReadAbove: (id: number, opts?: { category?: string; feed_ids?: string }) =>
+  markReadAbove: (id: number, opts?: MarkRelativeOptions) =>
     api<{ message: string }>(`/items/${id}/mark-read-above`, {
       method: 'POST',
       body: JSON.stringify(opts ?? {}),
     }),
-  markReadBelow: (id: number, opts?: { category?: string; feed_ids?: string }) =>
+  markReadBelow: (id: number, opts?: MarkRelativeOptions) =>
     api<{ message: string }>(`/items/${id}/mark-read-below`, {
       method: 'POST',
       body: JSON.stringify(opts ?? {}),

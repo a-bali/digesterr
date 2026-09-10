@@ -4,7 +4,7 @@ import { useFeedStore, type FeedSort, type FeedStatusFilter } from '../stores/fe
 import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
-import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, LoaderCircle, CheckCircle2, ChevronsUp, ChevronsDown, MoreHorizontal } from 'lucide-vue-next'
+import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, LoaderCircle, CheckCircle2, ChevronsUp, ChevronsDown } from 'lucide-vue-next'
 import { stripContent, decodeHTMLEntities } from '../lib/utils'
 import { feedIcon } from '../lib/format'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
@@ -163,24 +163,13 @@ function commentsTitle(val: number): string {
   return `${val} comments (${sign}${diff})`
 }
 
-// Hover action menu: track which item has its mark-read-above/below menu open.
-const openMenuId = ref<number | null>(null)
-
-function toggleMenu(itemId: number) {
-  openMenuId.value = openMenuId.value === itemId ? null : itemId
-}
-
-function closeMenu() {
-  openMenuId.value = null
-}
-
+// Hover actions: the two chevrons in the top right corner mark everything
+// above or below a row as read, using the pane's current sort and filter.
 async function markAboveRead(item: any) {
-  closeMenu()
   await feedStore.markReadAbove(item)
 }
 
 async function markBelowRead(item: any) {
-  closeMenu()
   await feedStore.markReadBelow(item)
 }
 
@@ -239,33 +228,35 @@ async function markBelowRead(item: any) {
         <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
         <span v-if="item.status === 'saved'" class="text-accent shrink-0 mt-0.5"><Check class="size-3" /></span>
         <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ decodeHTMLEntities(item.title) }}</p>
-        <span class="text-[10px] text-muted-foreground/70 shrink-0 mt-0.5" :title="absoluteTime(item.published_at)">{{ relativeTime(item.published_at) }}</span>
-        <!-- Hover action: mark read above/below -->
-        <span class="shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity relative">
-          <button
-            v-if="item.status === 'unread' && !props.showingSaved"
-            class="text-muted-foreground/50 hover:text-muted-foreground p-0.5 -mr-0.5"
-            @click.stop="toggleMenu(item.id)"
-          >
-            <MoreHorizontal class="size-3" />
-          </button>
-          <div
-            v-if="openMenuId === item.id"
-            class="absolute right-0 top-6 z-50 bg-popover border rounded-md shadow-md flex gap-1 p-1"
-          >
+        <!-- Top right corner: the publish time gives way to the mark-read
+             chevrons on hover. Every row gets them, whatever its status, so
+             the action is in the same place on every item. -->
+        <span class="shrink-0 mt-0.5 relative flex items-center justify-end h-4">
+          <span
+            class="text-[10px] text-muted-foreground/70 group-hover:hidden"
+            data-item-time
+            :title="absoluteTime(item.published_at)"
+          >{{ relativeTime(item.published_at) }}</span>
+          <span v-if="!props.showingSaved" class="hidden group-hover:flex items-center gap-0.5">
             <button
-              class="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-accent/10 rounded transition-colors whitespace-nowrap"
+              class="text-muted-foreground/50 hover:text-accent p-0.5"
+              title="Mark everything above as read"
+              aria-label="Mark everything above as read"
+              data-mark-above
               @click.stop="markAboveRead(item)"
             >
-              <ChevronsUp class="size-3" /> Above
+              <ChevronsUp class="size-3.5" />
             </button>
             <button
-              class="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-accent/10 rounded transition-colors whitespace-nowrap"
+              class="text-muted-foreground/50 hover:text-accent p-0.5"
+              title="Mark everything below as read"
+              aria-label="Mark everything below as read"
+              data-mark-below
               @click.stop="markBelowRead(item)"
             >
-              <ChevronsDown class="size-3" /> Below
+              <ChevronsDown class="size-3.5" />
             </button>
-          </div>
+          </span>
         </span>
       </div>
       <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0" :class="feedStore.isMultiView ? '' : 'pr-16'">{{ stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</p>

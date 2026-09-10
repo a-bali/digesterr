@@ -65,6 +65,28 @@ export interface ItemSummaryResponse {
   comments_summary: string
 }
 
+/** Ordering keys accepted by the item list. Must match the server's. */
+export type ItemSort = 'date_desc' | 'date_asc' | 'score_desc' | 'score_asc'
+
+/**
+ * Scope plus view ordering for a relative mark-read request.
+ *
+ * `sort` and `min_score` mirror the middle pane as rendered: the server
+ * resolves "above"/"below" in SQL against the same ordering and filter, so
+ * rows that are filtered out or not yet lazily loaded still land on the
+ * correct side of the boundary.
+ */
+export interface MarkRelativeOptions {
+  /** Restricts the update to one category. */
+  category?: string
+  /** Marks the "Feeds" section as the scope; the value itself is not parsed. */
+  feed_ids?: string
+  /** Middle-pane sort key. */
+  sort?: ItemSort
+  /** Middle-pane minimum-score filter; 0 means no filter. */
+  min_score?: number
+}
+
 export interface DigestConfig {
   id: number
   user_id: number

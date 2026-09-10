@@ -1,14 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { feedApi, itemApi } from '../services/api'
-import type { Feed, Item, MultiItem } from '../types/api'
+import type { Feed, Item, MultiItem, ItemSort, MarkRelativeOptions } from '../types/api'
 import { toastError } from '../lib/toast'
 import { SCORE_FEED_TYPES } from '../lib/feeds'
 
 const PAGE_SIZE = 50
 const FILTER_KEY = 'digesterr-filter'
 
-export type FeedSort = 'date_desc' | 'date_asc' | 'score_desc' | 'score_asc'
+export type FeedSort = ItemSort
 export type FeedStatusFilter = 'all' | 'unread' | 'read' | 'digested' | 'saved'
 
 function loadFilter(): 'all' | 'unread' | 'read' | 'digested' | 'saved' {
@@ -380,20 +380,24 @@ export const useFeedStore = defineStore('feed', () => {
     await fetchUnreadCounts()
   }
 
-  async function markReadAbove(item: any) {
-    const opts: { category?: string; feed_ids?: string } = {}
+  // The server resolves "above"/"below" in SQL, so it needs the ordering and
+  // filter the middle pane is showing to include rows the client has not
+  // lazily loaded yet.
+  function markRelativeOptions(): MarkRelativeOptions {
+    const opts: MarkRelativeOptions = { sort: sort.value, min_score: minScore.value ?? 0 }
     if (activeCategory.value) opts.category = activeCategory.value
     else if (activeSection.value === 'feeds') opts.feed_ids = feeds.value.map(f => f.id).join(',')
-    await itemApi.markReadAbove(item.id, opts)
+    return opts
+  }
+
+  async function markReadAbove(item: any) {
+    await itemApi.markReadAbove(item.id, markRelativeOptions())
     await fetchFirstPage()
     await fetchUnreadCounts()
   }
 
   async function markReadBelow(item: any) {
-    const opts: { category?: string; feed_ids?: string } = {}
-    if (activeCategory.value) opts.category = activeCategory.value
-    else if (activeSection.value === 'feeds') opts.feed_ids = feeds.value.map(f => f.id).join(',')
-    await itemApi.markReadBelow(item.id, opts)
+    await itemApi.markReadBelow(item.id, markRelativeOptions())
     await fetchFirstPage()
     await fetchUnreadCounts()
   }
