@@ -159,6 +159,32 @@ describe('ItemContent scroll-to-comments', () => {
     // The anchor wraps the bare mention, not the quoted one.
     expect(wrapper.html()).toContain(`and again <a href="${url}"`)
   })
+
+  // Regression: HomeView swaps between the desktop and tablet/mobile layout
+  // branches, which mounts the replacement ItemContent before unmounting the
+  // outgoing one. The outgoing instance's cleanup used to clear the shared
+  // scroll handle unconditionally, which left `c` dead while a pane was
+  // visibly on screen.
+  it('keeps the c shortcut working after a stale pane unmounts', async () => {
+    const scrollSpy = vi.fn()
+    ;(HTMLElement.prototype as any).scrollIntoView = scrollSpy
+
+    const outgoing = mountItemContent(makeItem({ id: 1 }))
+    const live = mountItemContent(makeItem({ id: 2 }))
+    await live.vm.$nextTick()
+
+    outgoing.unmount()
+    scrollSpy.mockClear()
+
+    scrollToItemComments()
+    await live.vm.$nextTick()
+    await live.vm.$nextTick()
+
+    expect(scrollSpy, 'the surviving pane must still scroll after a stale unmount').toHaveBeenCalled()
+
+    live.unmount()
+    delete (HTMLElement.prototype as any).scrollIntoView
+  })
 })
 
 describe('ItemContent summarize button', () => {

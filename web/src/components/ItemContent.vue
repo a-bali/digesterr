@@ -9,7 +9,7 @@ import Skeleton from './ui/Skeleton.vue'
 import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown, Sparkles, ChevronRight } from 'lucide-vue-next'
 import { absoluteTime } from '../lib/format'
 import { decodeHTMLEntities } from '../lib/utils'
-import { setItemCommentsScroller } from '../lib/itemComments'
+import { setItemCommentsScroller, clearItemCommentsScroller } from '../lib/itemComments'
 import type { ItemComment, ItemSummaryResponse } from '../types/api'
 
 // Prose styling for raw HTML content.
@@ -319,7 +319,9 @@ onUnmounted(() => {
   stopExtractPoll()
   if (commentFetchTimeout) clearTimeout(commentFetchTimeout)
   if (summaryDebounce) clearTimeout(summaryDebounce)
-  setItemCommentsScroller(null)
+  // Only unregister if we are still the live pane — a layout switch can
+  // unmount this instance after its replacement has already registered.
+  clearItemCommentsScroller(scrollToComments)
 })
 </script>
 
