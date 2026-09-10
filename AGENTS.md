@@ -116,6 +116,36 @@ NetNewsWire, …) can read digesterr.
   `rename-tag`, `disable-tag`).
 - Feed add/remove is intentionally not supported (stubbed as no-ops).
 
+## Twitter/X rate limits
+
+X's internal GraphQL enforces **per-endpoint** budgets in 15-minute windows and
+advertises them on every response (`X-Rate-Limit-Limit`, `-Remaining`, `-Reset`).
+Measured against live endpoints on 2026-09-10:
+
+| Endpoint | Budget | Window |
+| --- | --- | --- |
+| `UserTweets` | 50 | 15 min |
+| `UserByScreenName` | 150 | 15 min |
+
+`UserTweets` is the binding constraint.
+
+Rules that keep ingestion inside the budget:
+
+- **One timeline fetch per feed per poll.** `TwitterFetcher` must implement
+  `BulkEnrich`; without it `Poller.enrichForPoll` falls back to per-item
+  `Enrich`, which re-resolves the user and re-fetches the whole timeline once
+  per item — `2N + 4` requests per poll (44 for a 20-item timeline). This was
+  the cause of the production 429s.
+- **Screen-name → user ID is cached** for the process lifetime.
+- **Score refresh yields to ingestion.** When remaining budget is low,
+  opportunistic enrichment is skipped and only ingestion runs.
+- On 429 the client blocks until `X-Rate-Limit-Reset` and raises a typed
+  `metrics.StatusError` carrying 429, so the failure is recorded as `4xx`
+  (not `500`) and is attributable to the feed in `GET /api/metrics`.
+
+`GET /api/metrics` reports live `twitter_quota` state (limit, remaining,
+reserve, blocked, measured).
+
 ## Development
 
 - After changing `sql/queries/*.sql` or `internal/schema/schema.sql`, run `make generate`

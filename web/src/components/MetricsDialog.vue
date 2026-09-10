@@ -14,7 +14,7 @@ const loading = ref(false)
 const error = ref('')
 const timespan = ref('6h')
 const activeDims = ref(new Set(['reason', 'status']))
-const sortCol = ref<'count' | 'bytes' | 'errors' | 'avg_ms'>('count')
+const sortCol = ref<'count' | 'http_requests' | 'bytes' | 'errors' | 'avg_ms'>('count')
 const sortAsc = ref(false)
 const showResetConfirm = ref(false)
 const resetting = ref(false)
@@ -108,6 +108,32 @@ const chartPath = computed(() => {
   return { success: success.trim(), errors: errors.trim(), dots }
 })
 
+// Response-code chip colouring: 4xx is amber, not red — a rate limit or auth
+// problem is a different failure from a genuine 5xx outage.
+function statusClass(s: string): string {
+  if (s.startsWith('2') || s === '2xx') return 'bg-green-500/15 text-green-400'
+  if (s.startsWith('3') || s === '3xx') return 'bg-sky-500/15 text-sky-400'
+  if (s.startsWith('4') || s === '4xx') return 'bg-amber-500/15 text-amber-400'
+  return 'bg-red-500/15 text-red-400'
+}
+
+// quotaClass colours the twitter quota banner by how close to exhaustion it is.
+const quotaClass = computed(() => {
+  const q = data.value?.twitter_quota
+  if (!q?.configured) return ''
+  if (q.blocked) return 'border-red-500/40 bg-red-500/5 text-red-400'
+  if (q.budget_low) return 'border-amber-500/40 bg-amber-500/5 text-amber-400'
+  return 'border-border bg-muted/20 text-muted-foreground'
+})
+
+function fmtReset(iso?: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const mins = Math.max(0, Math.round((d.getTime() - Date.now()) / 60000))
+  return mins > 0 ? `resets in ${mins}m` : 'resetting'
+}
+
 function fmtBytes(b: number): string {
   if (b < 1024) return b + ' B'
   if (b < 1048576) return (b / 1024).toFixed(1) + ' KB'
@@ -186,8 +212,9 @@ function onDimensionToggle() {
         <!-- Summary cards — 2 cols on mobile, 4 on sm+ -->
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div class="rounded-lg border bg-card p-3">
-            <div class="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Requests</div>
-            <div class="text-xl font-bold">{{ data.total_requests.toLocaleString() }}</div>
+            <div class="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">HTTP Requests</div>
+            <div class="text-xl font-bold">{{ (data.total_http_requests ?? data.total_requests).toLocaleString() }}</div>
+            <div class="text-[10px] text-muted-foreground">{{ data.total_requests.toLocaleString() }} ops</div>
           </div>
           <div class="rounded-lg border bg-card p-3">
             <div class="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Bytes Recv</div>
@@ -204,10 +231,31 @@ function onDimensionToggle() {
           </div>
         </div>
 
+        <!-- Twitter rate-limit headroom -->
+        <div v-if="data.twitter_quota?.configured"
+          class="rounded-lg border px-3 py-2 text-xs flex items-center gap-3 flex-wrap"
+          :class="quotaClass"
+          data-twitter-quota>
+          <span class="font-semibold">X / Twitter quota</span>
+          <template v-if="data.twitter_quota.measured">
+            <span>limit {{ data.twitter_quota.limit }}</span>
+            <span>remaining <span class="font-semibold">{{ data.twitter_quota.remaining }}</span></span>
+            <span>reserve {{ data.twitter_quota.reserve }}</span>
+            <span v-if="data.twitter_quota.reset">{{ fmtReset(data.twitter_quota.reset) }}</span>
+            <span v-if="data.twitter_quota.blocked" class="font-semibold">
+              blocked until {{ fmtReset(data.twitter_quota.blocked_until) || data.twitter_quota.blocked_until }}
+            </span>
+            <span v-else-if="data.twitter_quota.budget_low" class="font-semibold">
+              headroom low — enrichment paused
+            </span>
+          </template>
+          <span v-else>no response observed yet</span>
+        </div>
+
         <!-- Chart -->
         <div class="rounded-lg border bg-card p-4" v-if="data.buckets.length">
           <div class="text-xs font-semibold mb-3 flex items-center gap-3">
-            Requests over time
+            Operations over time
             <span class="flex gap-3 font-normal text-muted-foreground">
               <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full bg-accent" /> success</span>
               <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full bg-destructive" /> errors</span>
@@ -241,11 +289,11 @@ function onDimensionToggle() {
                 <th v-for="d in DIMENSIONS" :key="d" v-show="activeDims.has(d)"
                   class="text-left px-3 py-2 bg-muted/30 text-muted-foreground font-medium uppercase tracking-wider text-[10px]"
                 >{{ d }}</th>
-                <th v-for="col in (['count','bytes','errors','avg_ms'] as const)" :key="col"
+                <th v-for="col in (['count','http_requests','bytes','errors','avg_ms'] as const)" :key="col"
                   class="text-right px-3 py-2 bg-muted/30 text-muted-foreground font-medium uppercase tracking-wider text-[10px] cursor-pointer hover:text-foreground select-none"
                   :class="{ 'text-accent': sortCol === col }"
                   @click="toggleSort(col)"
-                >{{ col === 'avg_ms' ? 'ms' : col === 'bytes' ? 'recv' : col }} <span class="opacity-40">{{ sortCol === col ? (sortAsc ? '▲' : '▼') : '▲' }}</span></th>
+                >{{ col === 'avg_ms' ? 'ms' : col === 'bytes' ? 'recv' : col === 'http_requests' ? 'reqs' : col }} <span class="opacity-40">{{ sortCol === col ? (sortAsc ? '▲' : '▼') : '▲' }}</span></th>
               </tr>
             </thead>
             <tbody>
@@ -264,10 +312,11 @@ function onDimensionToggle() {
                 <td v-show="activeDims.has('host')" class="px-3 py-1.5">{{ g.host }}</td>
                 <td v-show="activeDims.has('status')" class="px-3 py-1.5">
                   <span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium"
-                    :class="g.status.startsWith('2') || g.status === '2xx' ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'"
+                    :class="statusClass(g.status)"
                   >{{ g.status }}</span>
                 </td>
                 <td class="text-right px-3 py-1.5 font-variant-numeric tabular-nums">{{ g.count.toLocaleString() }}</td>
+                <td class="text-right px-3 py-1.5 font-variant-numeric tabular-nums">{{ (g.http_requests ?? 0).toLocaleString() }}</td>
                 <td class="text-right px-3 py-1.5 font-variant-numeric tabular-nums">{{ fmtBytes(g.bytes) }}</td>
                 <td class="text-right px-3 py-1.5 font-variant-numeric tabular-nums" :class="g.errors > 0 ? 'text-red-400' : ''">{{ g.errors }}</td>
                 <td class="text-right px-3 py-1.5 font-variant-numeric tabular-nums">{{ g.avg_ms }}</td>

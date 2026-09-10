@@ -105,8 +105,11 @@ export interface MetricsGroup {
   feed: string
   host: string
   status: string
+  /** Recorded operations, not HTTP requests — see http_requests. */
   count: number
   bytes: number
+  /** Outbound HTTP requests behind these operations (a poll can fan out). */
+  http_requests: number
   errors: number
   avg_ms: number
   pct_total: number
@@ -116,17 +119,39 @@ export interface MetricsBucket {
   time: string
   count: number
   bytes: number
+  http_requests: number
   errors: number
 }
 
+/** Last observed X GraphQL rate-limit state. */
+export interface TwitterQuota {
+  /** False when no twitter client is registered at all. */
+  configured: boolean
+  /** False until a response carrying X-Rate-Limit-* headers has been seen, so
+   * a zero remaining is not mistaken for an exhausted budget. */
+  measured: boolean
+  limit: number
+  remaining: number
+  reset?: string
+  checked_at?: string
+  blocked: boolean
+  blocked_until?: string
+  /** Headroom kept for ingestion; budget_low is true when below it. */
+  reserve: number
+  budget_low: boolean
+}
+
 export interface MetricsSummary {
+  /** Recorded operations, not HTTP requests — see total_http_requests. */
   total_requests: number
+  total_http_requests: number
   total_bytes: number
   success_count: number
   error_count: number
   avg_duration_ms: number
   groups: MetricsGroup[]
   buckets: MetricsBucket[]
+  twitter_quota?: TwitterQuota | null
 }
 
 export interface DigestResultItemWithData {

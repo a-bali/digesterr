@@ -26,6 +26,9 @@ type Record struct {
 	Host       string
 	StatusCode int
 	Bytes      int64
+	// Requests is how many outbound HTTP requests the operation issued.
+	// Usually 1; a poll can fan out, which the record count alone hides.
+	Requests   int
 	DurationMs int64
 	Reason     string // "fetch", "enrichment", "extraction"
 	FeedID     int64
