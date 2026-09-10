@@ -9,6 +9,7 @@ import { stripContent, decodeHTMLEntities } from '../lib/utils'
 import { feedIcon } from '../lib/format'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { usePullToRefresh } from '../composables/usePullToRefresh'
+import { useRowSwipeReveal } from '../composables/useRowSwipeReveal'
 import { relativeTime, absoluteTime } from '../lib/format'
 
 const props = defineProps<{
@@ -40,6 +41,25 @@ const { pull: pullDistance, refreshing: pullRefreshing } = usePullToRefresh(
   scrollEl,
   () => feedStore.refreshItems({ silent: true, replace: true }),
 )
+
+// Touch devices have no hover, so the row chevrons are revealed by swiping the
+// row leftward instead. Desktop hover behaviour is unchanged.
+const {
+  revealedId,
+  onTouchStart: onRowTouchStart,
+  onTouchMove: onRowTouchMove,
+  onTouchEnd: onRowTouchEnd,
+  dismiss: dismissReveal,
+  shouldSuppressClick,
+} = useRowSwipeReveal()
+
+// Collapse an open reveal when the list scrolls under the finger. The event
+// must be forwarded: useInfiniteScroll reads scrollTop/scrollHeight off
+// e.target.
+function onListScroll(e: Event) {
+  onScroll(e)
+  dismissReveal()
+}
 
 // ---- Filter / sort controls (delegated to FilterBar) ----
 
@@ -145,6 +165,10 @@ function accentStyle(val: number, max: number): string {
 // selection moves elsewhere (e.g. j/k navigation). Keyboard activation keeps
 // focus for accessibility.
 function onRowClick(e: MouseEvent, item: any) {
+  // A swipe that revealed the row's actions must not also open the item: the
+  // browser still fires a click once the drag ends.
+  if (shouldSuppressClick()) return
+  dismissReveal()
   ;(e.currentTarget as HTMLElement).blur()
   emit('selectItem', item)
 }
@@ -176,7 +200,7 @@ async function markBelowRead(item: any) {
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto overflow-x-hidden overscroll-contain" ref="scrollEl" @scroll="onScroll">
+  <div class="h-full overflow-y-auto overflow-x-hidden overscroll-contain" ref="scrollEl" @scroll="onListScroll">
     <FilterBar
       :status-filter="(feedStore.filter as FilterStatus)"
       :sort-value="(SCORE_MAP_REV[feedStore.sort] ?? 'newest') as FilterSort"
@@ -215,10 +239,15 @@ async function markBelowRead(item: any) {
       <TransitionGroup name="item-enter" tag="div">
       <div v-for="item in displayItems" :key="item.id"
       role="button" tabindex="0"
-      class="group w-full text-left p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
+      class="group w-full text-left p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer [touch-action:pan-y_pinch-zoom]"
       :class="[feedStore.isMultiView ? 'min-h-[5.5rem]' : 'h-20', { 'bg-accent/10': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved', 'opacity-50 transition-opacity': feedStore.loading }]"
       :data-selected-item="item.id === feedStore.selectedItem?.id ? '' : undefined"
+      :data-revealed="revealedId === item.id ? '' : undefined"
       @click="onRowClick($event, item)"
+      @touchstart="onRowTouchStart($event, item.id)"
+      @touchmove="onRowTouchMove($event)"
+      @touchend="onRowTouchEnd"
+      @touchcancel="onRowTouchEnd"
       @keydown.enter.prevent="emit('selectItem', item)"
       @keydown.space.prevent="emit('selectItem', item)">
       <div class="flex items-start gap-1 min-w-0">
@@ -234,17 +263,23 @@ async function markBelowRead(item: any) {
              marks the row being hovered — only the rows beyond it. -->
         <span class="shrink-0 mt-0.5 relative flex items-center justify-end h-4">
           <span
-            class="text-[10px] text-muted-foreground/70 group-hover:hidden"
+            class="text-[10px] text-muted-foreground/70"
+            :class="revealedId === item.id ? 'hidden' : 'group-hover:hidden'"
             data-item-time
             :title="absoluteTime(item.published_at)"
           >{{ relativeTime(item.published_at) }}</span>
-          <span v-if="!props.showingSaved" class="hidden group-hover:flex items-center gap-0.5">
+          <span
+            v-if="!props.showingSaved"
+            class="items-center gap-0.5"
+            :class="revealedId === item.id ? 'flex' : 'hidden group-hover:flex'"
+            data-mark-actions
+          >
             <button
               class="text-muted-foreground/50 hover:text-accent p-0.5"
               title="Mark everything above as read, except this item"
               aria-label="Mark everything above as read, except this item"
               data-mark-above
-              @click.stop="markAboveRead(item)"
+              @click.stop="markAboveRead(item); dismissReveal()"
             >
               <ChevronsUp class="size-3.5" />
             </button>
@@ -253,7 +288,7 @@ async function markBelowRead(item: any) {
               title="Mark everything below as read, except this item"
               aria-label="Mark everything below as read, except this item"
               data-mark-below
-              @click.stop="markBelowRead(item)"
+              @click.stop="markBelowRead(item); dismissReveal()"
             >
               <ChevronsDown class="size-3.5" />
             </button>

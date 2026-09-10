@@ -420,3 +420,112 @@ describe('ItemList filter/sort controls', () => {
     })
   })
 })
+
+// Touch devices have no hover, so the row's mark-above/below chevrons are
+// revealed by swiping the row leftward instead. See useRowSwipeReveal.
+describe('ItemList swipe-to-reveal row actions', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
+
+  /** Swipe a row leftward by `dx` px (negative = left). */
+  async function swipe(row: ReturnType<typeof resultRows>[number], dx: number, dy = 0) {
+    await row.trigger('touchstart', { touches: [{ clientX: 300, clientY: 100 }] })
+    await row.trigger('touchmove', { touches: [{ clientX: 300 + dx, clientY: 100 + dy }] })
+    await row.trigger('touchend', { changedTouches: [{ clientX: 300 + dx, clientY: 100 + dy }] })
+    await flushPromises()
+  }
+
+  it('keeps the chevrons hidden until the row is swiped', () => {
+    const { wrapper } = mountList()
+    const actions = resultRows(wrapper)[0].find('[data-mark-actions]')
+    expect(actions.exists()).toBe(true)
+    expect(actions.classes()).toContain('hidden')
+    expect(actions.classes()).not.toContain('flex')
+  })
+
+  it('reveals the chevrons on a leftward swipe, in place of the timestamp', async () => {
+    const { wrapper } = mountList()
+    const rows = resultRows(wrapper)
+    await swipe(rows[1], -60)
+
+    expect(rows[1].element.hasAttribute('data-revealed')).toBe(true)
+    expect(rows[1].find('[data-mark-actions]').classes()).toContain('flex')
+    expect(rows[1].find('[data-item-time]').classes()).toContain('hidden')
+    // Only the swiped row opens.
+    expect(rows[0].element.hasAttribute('data-revealed')).toBe(false)
+    expect(rows[0].find('[data-mark-actions]').classes()).toContain('hidden')
+  })
+
+  it('does not reveal on a short swipe or a vertical drag', async () => {
+    const { wrapper } = mountList()
+    const rows = resultRows(wrapper)
+
+    await swipe(rows[0], -10)
+    expect(rows[0].element.hasAttribute('data-revealed')).toBe(false)
+
+    // 60px left but 50px down: not clearly horizontal, so the list keeps scrolling.
+    await swipe(rows[0], -60, 50)
+    expect(rows[0].element.hasAttribute('data-revealed')).toBe(false)
+  })
+
+  it('does not open the item when the revealing swipe ends', async () => {
+    const { wrapper } = mountList()
+    await swipe(resultRows(wrapper)[0], -60)
+
+    // The browser fires a click after the drag; it must not select the row.
+    await resultRows(wrapper)[0].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('selectItem')).toBeFalsy()
+  })
+
+  it('hides the reveal again when the revealed row is swiped left once more', async () => {
+    const { wrapper } = mountList()
+    const row = resultRows(wrapper)[0]
+
+    await swipe(row, -60)
+    expect(row.element.hasAttribute('data-revealed')).toBe(true)
+
+    await swipe(row, -60)
+    expect(row.element.hasAttribute('data-revealed')).toBe(false)
+  })
+
+  it('dismisses the reveal when the list scrolls', async () => {
+    const { wrapper } = mountList()
+    const row = resultRows(wrapper)[0]
+    await swipe(row, -60)
+    expect(row.element.hasAttribute('data-revealed')).toBe(true)
+
+    await wrapper.find('.overflow-y-auto').trigger('scroll')
+    await flushPromises()
+
+    expect(row.element.hasAttribute('data-revealed')).toBe(false)
+  })
+
+  it('closes the reveal after a chevron is used', async () => {
+    const { itemApi } = await import('../services/api')
+    ;(itemApi.markReadAbove as ReturnType<typeof vi.fn>).mockResolvedValue({ message: 'ok' })
+
+    const { wrapper } = mountList()
+    const row = resultRows(wrapper)[0]
+    await swipe(row, -60)
+
+    await row.find('[data-mark-above]').trigger('click')
+    await flushPromises()
+
+    expect(row.element.hasAttribute('data-revealed')).toBe(false)
+    expect(itemApi.markReadAbove).toHaveBeenCalled()
+  })
+
+  it('still selects the row on a plain tap while nothing is revealed', async () => {
+    const { wrapper } = mountList()
+    await resultRows(wrapper)[0].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('selectItem')).toBeTruthy()
+  })
+})
