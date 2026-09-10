@@ -19,7 +19,7 @@ import GoogleReaderApiDialog from '../components/GoogleReaderApiDialog.vue'
 import { useFeedStore } from '../stores/feed'
 import { useDigestStore } from '../stores/digest'
 import { useThemeStore } from '../stores/theme'
-import { feedApi } from '../services/api'
+import { feedApi, itemApi } from '../services/api'
 import type { Item } from '../types/api'
 import { useBreakpoints } from '../composables/useMediaQuery'
 import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts'
@@ -51,7 +51,6 @@ useSwipeGesture(canSwipe, () => {
   }
 })
 
-const pendingItemId = ref<number | null>(null)
 const showChangePassword = ref(false)
 const readerApiOpen = ref(false)
 const showShortcuts = ref(false)
@@ -133,6 +132,29 @@ function onVisibilityChange() {
   digestStore.fetchUnreadCounts()
 }
 
+// Resolve the item referenced by the URL and select it. The list only holds the
+// first page (50) of the active feed/category under the current filter, so a
+// linked item is often not loaded — an older item, or one hidden by a persisted
+// status filter. GET /items/{id} is id-based, so fetch it directly instead of
+// searching only the loaded page.
+let resolveSeq = 0
+async function resolveItemById(itemId: number, loaded: Item[]) {
+  const hit = loaded.find(i => i.id === itemId)
+  if (hit) {
+    if (feedStore.selectedItem?.id !== itemId) feedStore.selectItem(hit)
+    return
+  }
+  const seq = ++resolveSeq
+  try {
+    const full = await itemApi.getItem(itemId)
+    // Drop stale responses: a later navigation (or a click) supersedes this one.
+    if (seq !== resolveSeq || Number(route.params.itemId) !== itemId) return
+    feedStore.selectedItem = full
+  } catch {
+    // Not owned or since deleted — leave the content pane empty.
+  }
+}
+
 // ---- URL → state sync ----
 watch(
   () => route.fullPath,
@@ -160,12 +182,8 @@ watch(
       digestStore.selectedResult = null
       digestStore.resultItems = []
       if (feedStore.activeCategory !== category) await feedStore.setActiveCategory(category)
-      if (itemId) {
-        // Item selected within category — find in multiItems or wait for load.
-        const item = feedStore.multiItems.find(i => i.id === itemId)
-        if (item && feedStore.selectedItem?.id !== itemId) { feedStore.selectItem(item); pendingItemId.value = null }
-        else if (!item) pendingItemId.value = itemId
-      } else { feedStore.selectedItem = null; pendingItemId.value = null }
+      if (itemId) await resolveItemById(itemId, feedStore.multiItems)
+      else feedStore.selectedItem = null
     } else if (feedId) {
       // Single feed: /feeds/:feedId(/:itemId)
       showingSaved.value = false
@@ -173,11 +191,8 @@ watch(
       digestStore.activeConfigId = null
       digestStore.selectedResult = null
       if (feedStore.activeFeedId !== feedId) await feedStore.setActiveFeed(feedId)
-      if (itemId) {
-        const item = feedStore.items.find(i => i.id === itemId)
-        if (item && feedStore.selectedItem?.id !== itemId) { feedStore.selectItem(item); pendingItemId.value = null }
-        else if (!item) pendingItemId.value = itemId
-      } else { feedStore.selectedItem = null; pendingItemId.value = null }
+      if (itemId) await resolveItemById(itemId, feedStore.items)
+      else feedStore.selectedItem = null
     } else if (path === '/digests' && !configId) {
       // All digests section view
       showingSaved.value = false
@@ -204,30 +219,9 @@ watch(
       feedStore.clearActiveView()
       digestStore.exitAllDigestsMode()
       digestStore.activeConfigId = null
-      pendingItemId.value = null
     }
   },
   { immediate: true },
-)
-
-watch(
-  () => feedStore.items,
-  (items) => {
-    if (pendingItemId.value != null) {
-      const item = items.find(i => i.id === pendingItemId.value)
-      if (item) { feedStore.selectItem(item); pendingItemId.value = null }
-    }
-  },
-)
-
-watch(
-  () => feedStore.multiItems,
-  (items) => {
-    if (pendingItemId.value != null) {
-      const item = items.find(i => i.id === pendingItemId.value)
-      if (item) { feedStore.selectItem(item); pendingItemId.value = null }
-    }
-  },
 )
 
 // ---- Navigation ----

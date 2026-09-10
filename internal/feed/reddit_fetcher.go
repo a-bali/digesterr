@@ -246,6 +246,55 @@ func renderGalleryContent(p redditPostData) string {
 	return b.String()
 }
 
+// renderPostContent renders a post's own payload: inline media (gallery, video,
+// or image) followed by any selftext. mediaURL supplies the video/image URL —
+// the post's own URL, or the parent's URL when rendering a crosspost. Returns
+// "" when the post carries nothing renderable, letting the caller pick a fallback.
+func renderPostContent(p redditPostData, mediaURL string) string {
+	var content string
+	// Media always renders inline regardless of selftext — the media IS the content.
+	if p.IsGallery {
+		content = renderGalleryContent(p)
+	}
+	if content == "" && isRedditVideoURL(mediaURL) {
+		videoURL := mediaURL
+		if p.IsVideo && p.Media.RedditVideo != nil && p.Media.RedditVideo.FallbackURL != "" {
+			videoURL = p.Media.RedditVideo.FallbackURL
+		}
+		content = `<p><video src="` + videoURL + `" controls style="max-width:100%;border-radius:4px"><a href="` + mediaURL + `" target="_blank" rel="noopener">Watch video ↗</a></video></p>`
+	}
+	if content == "" && isRedditImageURL(mediaURL) {
+		content = `<p><img src="` + mediaURL + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
+	}
+	// Append selftext after any media — posts often include explanatory text
+	// that must not be silently dropped.
+	if p.Selftext != "" {
+		content += "<p>" + renderRedditMarkdown(p.Selftext) + "</p>"
+	}
+	return content
+}
+
+// crosspostParent returns the post a crosspost points at. Reddit ships it in
+// crosspost_parent_list; the list is absent for ordinary posts.
+func crosspostParent(p redditPostData) (redditPostData, bool) {
+	if len(p.CrosspostParentList) == 0 {
+		return redditPostData{}, false
+	}
+	return p.CrosspostParentList[0], true
+}
+
+// absoluteRedditURL resolves a possibly-relative Reddit path to an absolute URL.
+func absoluteRedditURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "/") {
+		return "https://www.reddit.com" + raw
+	}
+	return raw
+}
+
 func (f *RedditFetcher) parseListing(data []byte, subreddit string) ([]Item, error) {
 	var listing redditListing
 	if err := json.Unmarshal(data, &listing); err != nil {
@@ -267,46 +316,31 @@ func (f *RedditFetcher) parseListing(data []byte, subreddit string) ([]Item, err
 			itemURL = "https://www.reddit.com" + p.Permalink
 		}
 		// Ensure absolute URL — some posts have relative paths
-		if strings.HasPrefix(itemURL, "/") {
-			itemURL = "https://www.reddit.com" + itemURL
-		}
+		itemURL = absoluteRedditURL(itemURL)
 
 		commentURL := "https://www.reddit.com" + p.Permalink
 
-		content := ""
-		// Reddit media (images, videos, galleries) always renders inline
-		// regardless of selftext — the media IS the content.
-		if p.IsGallery {
-			if gallery := renderGalleryContent(p); gallery != "" {
-				content = gallery
+		content := renderPostContent(p, itemURL)
+		linkURL := itemURL
+		// A crosspost's own payload is a stub — selftext is empty and the
+		// gallery/media keys are simply absent; the shared content lives on the
+		// parent post. Render the parent's payload too, so the item shows what
+		// was crossposted instead of degrading to a bare link to the parent.
+		// Any text the crossposter added is kept ahead of it.
+		if parent, ok := crosspostParent(p); ok {
+			parentURL := absoluteRedditURL(parent.URL)
+			if parentURL == "" {
+				parentURL = itemURL
 			}
+			content += renderPostContent(parent, parentURL)
+			linkURL = parentURL
 		}
-		if content == "" && isRedditVideoURL(itemURL) {
-			videoURL := itemURL
-			if p.IsVideo && p.Media.RedditVideo != nil && p.Media.RedditVideo.FallbackURL != "" {
-				videoURL = p.Media.RedditVideo.FallbackURL
-			}
-			content = `<p><video src="` + videoURL + `" controls style="max-width:100%;border-radius:4px"><a href="` + itemURL + `" target="_blank" rel="noopener">Watch video ↗</a></video></p>`
-		}
-		if content == "" && isRedditImageURL(itemURL) {
-			content = `<p><img src="` + itemURL + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
-		}
-		// Append selftext after any media — gallery posts often include
-		// explanatory text that should not be silently dropped.
-		if p.Selftext != "" {
-			selftextHTML := "<p>" + renderRedditMarkdown(p.Selftext) + "</p>"
-			if content == "" {
-				content = selftextHTML
+		// Still nothing renderable (e.g. a plain link post): fall back to a link.
+		if content == "" && !p.IsSelf && linkURL != "" {
+			if isRedditImageURL(linkURL) {
+				content = `<p><img src="` + linkURL + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
 			} else {
-				content += selftextHTML
-			}
-		}
-		// External images/links
-		if content == "" && !p.IsSelf && itemURL != "" {
-			if isRedditImageURL(itemURL) {
-				content = `<p><img src="` + itemURL + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
-			} else {
-				content = `<p><a href="` + itemURL + `" target="_blank" rel="noopener">` + itemURL + `</a></p>`
+				content = `<p><a href="` + linkURL + `" target="_blank" rel="noopener">` + linkURL + `</a></p>`
 			}
 		}
 

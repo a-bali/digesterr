@@ -93,6 +93,10 @@ type redditPostData struct {
 	GalleryData  struct {
 		Items []redditGalleryItem `json:"items"`
 	} `json:"gallery_data"`
+	// CrosspostParentList carries the POST being crossposted. A crosspost's own
+	// payload is a stub (empty selftext, no media keys); the renderable body
+	// lives here. Only populated for crossposts, so it is a no-op elsewhere.
+	CrosspostParentList []redditPostData `json:"crosspost_parent_list"`
 }
 
 type redditChild struct {

@@ -373,6 +373,187 @@ func TestParseListingSelftextOnly(t *testing.T) {
 	}
 }
 
+func TestParseListingCrosspost(t *testing.T) {
+	// A crosspost's own payload is a stub: selftext is empty and the
+	// gallery/media keys are absent entirely — the shared content lives in
+	// crosspost_parent_list[0]. Before the fix these items were stored as a
+	// single bare link to the parent's gallery and rendered as an empty post.
+	// JSON below mirrors the real r/hungary post 1wbr8ey -> r/magyar 1wbr3af.
+	listingJSON := `{
+		"data": {
+			"children": [{
+				"kind": "t3",
+				"data": {
+					"id": "1wbr8ey",
+					"title": "KERESSÜK! Eltünt a nagymamám!",
+					"author": "someone",
+					"url": "https://www.reddit.com/gallery/1wbr3af",
+					"permalink": "/r/hungary/comments/1wbr8ey/keressuk_eltunt_a_nagymamam/",
+					"selftext": "",
+					"score": 591,
+					"num_comments": 105,
+					"created_utc": 1788972970.0,
+					"is_self": false,
+					"over_18": false,
+					"stickied": false,
+					"crosspost_parent": "t3_1wbr3af",
+					"crosspost_parent_list": [{
+						"id": "1wbr3af",
+						"title": "KERESSÜK! Eltünt a nagymamám!",
+						"author": "someone",
+						"url": "https://www.reddit.com/gallery/1wbr3af",
+						"permalink": "/r/magyar/comments/1wbr3af/keressuk_eltunt_a_nagymamam/",
+						"selftext": "Tegnap délután 5 óra körül nagymamám elindult az Interspárba.",
+						"score": 12,
+						"num_comments": 3,
+						"created_utc": 1788971000.0,
+						"is_self": false,
+						"is_gallery": true,
+						"over_18": false,
+						"stickied": false,
+						"gallery_data": {"items": [{"media_id": "img1"}, {"media_id": "img2"}]},
+						"media_metadata": {
+							"img1": {"status": "valid", "e": "Image", "m": "image/jpg", "s": {"u": "https://preview.redd.it/bvil45owxioh1.jpg?width=1080"}},
+							"img2": {"status": "valid", "e": "Image", "m": "image/jpg", "s": {"u": "https://preview.redd.it/second.jpg?width=1080"}}
+						}
+					}]
+				}
+			}]
+		}
+	}`
+
+	f := &RedditFetcher{}
+	items, err := f.parseListing([]byte(listingJSON), "hungary")
+	if err != nil {
+		t.Fatalf("parseListing: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+	item := items[0]
+
+	// The parent's gallery images must be rendered inline.
+	if !strings.Contains(item.Content, "<img src=\"https://preview.redd.it/bvil45owxioh1.jpg") {
+		t.Errorf("content missing parent gallery image 1: %s", item.Content)
+	}
+	if !strings.Contains(item.Content, "<img src=\"https://preview.redd.it/second.jpg") {
+		t.Errorf("content missing parent gallery image 2: %s", item.Content)
+	}
+	// ...and the parent's selftext must be present.
+	if !strings.Contains(item.Content, "nagymamám elindult az Interspárba") {
+		t.Errorf("content missing parent selftext: %s", item.Content)
+	}
+	// The bare-link degradation is the bug — content must be more than a link.
+	if strings.Count(item.Content, "<a href=") > 0 && !strings.Contains(item.Content, "<img") {
+		t.Errorf("content degraded to a bare link: %s", item.Content)
+	}
+	if strings.Contains(item.Content, `rel="noopener">https://www.reddit.com/gallery/1wbr3af</a>`) {
+		t.Errorf("content is the bare parent gallery link: %s", item.Content)
+	}
+	// The item still points at the crosspost's own target and comment thread.
+	if item.URL != "https://www.reddit.com/gallery/1wbr3af" {
+		t.Errorf("URL = %q", item.URL)
+	}
+	if item.CommentURL != "https://www.reddit.com/r/hungary/comments/1wbr8ey/keressuk_eltunt_a_nagymamam/" {
+		t.Errorf("CommentURL = %q", item.CommentURL)
+	}
+}
+
+func TestParseListingCrosspostKeepsOwnText(t *testing.T) {
+	// A crosspost may carry the crossposter's own commentary in addition to the
+	// shared content — both must survive.
+	listingJSON := `{
+		"data": {
+			"children": [{
+				"kind": "t3",
+				"data": {
+					"id": "cp1",
+					"title": "Crosspost with commentary",
+					"author": "reposter",
+					"url": "https://example.com/article",
+					"permalink": "/r/testsub/comments/cp1/crosspost/",
+					"selftext": "Worth reading, this explains it well.",
+					"score": 5,
+					"num_comments": 1,
+					"created_utc": 1693000000.0,
+					"is_self": false,
+					"over_18": false,
+					"stickied": false,
+					"crosspost_parent_list": [{
+						"id": "op1",
+						"title": "Original article",
+						"author": "op",
+						"url": "https://example.com/article",
+						"permalink": "/r/other/comments/op1/original/",
+						"selftext": "The original post body.",
+						"score": 90,
+						"num_comments": 40,
+						"created_utc": 1692000000.0,
+						"is_self": true,
+						"over_18": false,
+						"stickied": false
+					}]
+				}
+			}]
+		}
+	}`
+
+	f := &RedditFetcher{}
+	items, err := f.parseListing([]byte(listingJSON), "testsub")
+	if err != nil {
+		t.Fatalf("parseListing: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+	content := items[0].Content
+	if !strings.Contains(content, "Worth reading, this explains it well.") {
+		t.Errorf("content missing crossposter commentary: %s", content)
+	}
+	if !strings.Contains(content, "The original post body.") {
+		t.Errorf("content missing parent selftext: %s", content)
+	}
+}
+
+func TestParseListingCrosspostDoesNotAffectNormalPosts(t *testing.T) {
+	// crosspost_parent_list is absent on ordinary posts; their content must be
+	// unchanged by the crosspost handling.
+	listingJSON := `{
+		"data": {
+			"children": [{
+				"kind": "t3",
+				"data": {
+					"id": "plain1",
+					"title": "Plain link post",
+					"author": "user1",
+					"url": "https://example.com/story",
+					"permalink": "/r/testsub/comments/plain1/plain_link_post/",
+					"selftext": "",
+					"score": 3,
+					"num_comments": 0,
+					"created_utc": 1693000000.0,
+					"is_self": false,
+					"over_18": false,
+					"stickied": false
+				}
+			}]
+		}
+	}`
+
+	f := &RedditFetcher{}
+	items, err := f.parseListing([]byte(listingJSON), "testsub")
+	if err != nil {
+		t.Fatalf("parseListing: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+	want := `<p><a href="https://example.com/story" target="_blank" rel="noopener">https://example.com/story</a></p>`
+	if items[0].Content != want {
+		t.Errorf("content = %q, want %q", items[0].Content, want)
+	}
+}
+
 func TestRedditFetcherExtractSubreddit(t *testing.T) {
 	tests := []struct {
 		url  string
