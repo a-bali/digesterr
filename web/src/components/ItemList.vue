@@ -9,7 +9,7 @@ import { stripContent, decodeHTMLEntities } from '../lib/utils'
 import { feedIcon } from '../lib/format'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { usePullToRefresh } from '../composables/usePullToRefresh'
-import { useRowSwipeReveal } from '../composables/useRowSwipeReveal'
+import { useSwipeAction } from '../composables/useSwipeAction'
 import { relativeTime, absoluteTime } from '../lib/format'
 
 const props = defineProps<{
@@ -42,23 +42,43 @@ const { pull: pullDistance, refreshing: pullRefreshing } = usePullToRefresh(
   () => feedStore.refreshItems({ silent: true, replace: true }),
 )
 
-// Touch devices have no hover, so the row chevrons are revealed by swiping the
-// row leftward instead. Desktop hover behaviour is unchanged.
+// Touch devices have no hover, so on a phone the mark-above/below action is
+// reached by swiping the row: right-to-left opens "mark all read below",
+// left-to-right opens "mark all read above", and tapping the opened panel
+// confirms. Desktop keeps the hover chevrons, unchanged.
 const {
-  revealedId,
-  onTouchStart: onRowTouchStart,
-  onTouchMove: onRowTouchMove,
-  onTouchEnd: onRowTouchEnd,
-  dismiss: dismissReveal,
+  onTouchStart: onSwipeStart,
+  onTouchMove: onSwipeMove,
+  onTouchEnd: onSwipeEnd,
+  actionFor: swipeActionFor,
+  close: closeSwipeAction,
   shouldSuppressClick,
-} = useRowSwipeReveal()
+} = useSwipeAction()
 
-// Collapse an open reveal when the list scrolls under the finger. The event
+// The row content shifts aside by exactly the panel's width (w-36 = 9rem in
+// the template above; keep the two in sync).
+const SWIPE_SHIFT = 'translate-x-36'
+
+function swipeShift(item: any): string {
+  const dir = swipeActionFor(item.id)
+  if (dir === 'below') return `-${SWIPE_SHIFT}`
+  if (dir === 'above') return SWIPE_SHIFT
+  return ''
+}
+
+async function confirmSwipeAction(item: any) {
+  const dir = swipeActionFor(item.id)
+  closeSwipeAction()
+  if (dir === 'below') await feedStore.markReadBelow(item)
+  else if (dir === 'above') await feedStore.markReadAbove(item)
+}
+
+// Collapse an open panel when the list scrolls under the finger. The event
 // must be forwarded: useInfiniteScroll reads scrollTop/scrollHeight off
 // e.target.
 function onListScroll(e: Event) {
   onScroll(e)
-  dismissReveal()
+  closeSwipeAction()
 }
 
 // ---- Filter / sort controls (delegated to FilterBar) ----
@@ -165,10 +185,12 @@ function accentStyle(val: number, max: number): string {
 // selection moves elsewhere (e.g. j/k navigation). Keyboard activation keeps
 // focus for accessibility.
 function onRowClick(e: MouseEvent, item: any) {
-  // A swipe that revealed the row's actions must not also open the item: the
-  // browser still fires a click once the drag ends.
+  // The browser fires a click when a swipe drag ends; it must not act on the
+  // row, or the panel that swipe just opened would close again immediately.
   if (shouldSuppressClick()) return
-  dismissReveal()
+  // While a panel is open a tap on the row dismisses it rather than opening the
+  // item. The panel's own button stops propagation and confirms instead.
+  if (swipeActionFor(item.id)) { closeSwipeAction(); return }
   ;(e.currentTarget as HTMLElement).blur()
   emit('selectItem', item)
 }
@@ -242,14 +264,50 @@ async function markBelowRead(item: any) {
       class="group w-full text-left p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer [touch-action:pan-y_pinch-zoom]"
       :class="[feedStore.isMultiView ? 'min-h-[5.5rem]' : 'h-20', { 'bg-accent/10': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved', 'opacity-50 transition-opacity': feedStore.loading }]"
       :data-selected-item="item.id === feedStore.selectedItem?.id ? '' : undefined"
-      :data-revealed="revealedId === item.id ? '' : undefined"
+      :data-swipe-action="swipeActionFor(item.id) ?? undefined"
       @click="onRowClick($event, item)"
-      @touchstart="onRowTouchStart($event, item.id)"
-      @touchmove="onRowTouchMove($event)"
-      @touchend="onRowTouchEnd"
-      @touchcancel="onRowTouchEnd"
+      @touchstart="onSwipeStart($event, item.id)"
+      @touchmove="onSwipeMove($event)"
+      @touchend="onSwipeEnd"
+      @touchcancel="onSwipeEnd"
       @keydown.enter.prevent="emit('selectItem', item)"
       @keydown.space.prevent="emit('selectItem', item)">
+
+      <!-- Swipe action panels. Both are always mounted and parked off-screen so
+           they can slide in when the row is swiped; the inactive one stays out
+           of the a11y tree and the tab order. Tapping a panel confirms; tapping
+           the row instead puts it away. -->
+      <template v-if="!props.showingSaved">
+        <button
+          type="button"
+          class="absolute inset-y-0 right-0 w-36 flex items-center justify-center gap-1 px-2 text-[11px] font-medium bg-accent text-accent-foreground transition-transform duration-150"
+          :class="swipeActionFor(item.id) === 'below' ? 'translate-x-0' : 'translate-x-full'"
+          data-swipe-below
+          aria-label="Mark all items below as read"
+          :aria-hidden="swipeActionFor(item.id) === 'below' ? undefined : 'true'"
+          :tabindex="swipeActionFor(item.id) === 'below' ? undefined : -1"
+          @click.stop="confirmSwipeAction(item)"
+        >
+          <ChevronsDown class="size-3.5 shrink-0" />
+          <span class="leading-tight">Mark all read below</span>
+        </button>
+        <button
+          type="button"
+          class="absolute inset-y-0 left-0 w-36 flex items-center justify-center gap-1 px-2 text-[11px] font-medium bg-accent text-accent-foreground transition-transform duration-150"
+          :class="swipeActionFor(item.id) === 'above' ? 'translate-x-0' : '-translate-x-full'"
+          data-swipe-above
+          aria-label="Mark all items above as read"
+          :aria-hidden="swipeActionFor(item.id) === 'above' ? undefined : 'true'"
+          :tabindex="swipeActionFor(item.id) === 'above' ? undefined : -1"
+          @click.stop="confirmSwipeAction(item)"
+        >
+          <ChevronsUp class="size-3.5 shrink-0" />
+          <span class="leading-tight">Mark all read above</span>
+        </button>
+      </template>
+
+      <!-- Row content, shifted aside while the panel is open. -->
+      <div class="transition-transform duration-150" :class="swipeShift(item)" data-row-content>
       <div class="flex items-start gap-1 min-w-0">
         <CircleDot v-if="item.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
         <CircleCheck v-else-if="item.status === 'saved'" class="size-3 shrink-0 mt-0.5 text-accent" />
@@ -263,23 +321,17 @@ async function markBelowRead(item: any) {
              marks the row being hovered — only the rows beyond it. -->
         <span class="shrink-0 mt-0.5 relative flex items-center justify-end h-4">
           <span
-            class="text-[10px] text-muted-foreground/70"
-            :class="revealedId === item.id ? 'hidden' : 'group-hover:hidden'"
+            class="text-[10px] text-muted-foreground/70 group-hover:hidden"
             data-item-time
             :title="absoluteTime(item.published_at)"
           >{{ relativeTime(item.published_at) }}</span>
-          <span
-            v-if="!props.showingSaved"
-            class="items-center gap-0.5"
-            :class="revealedId === item.id ? 'flex' : 'hidden group-hover:flex'"
-            data-mark-actions
-          >
+          <span v-if="!props.showingSaved" class="hidden group-hover:flex items-center gap-0.5" data-mark-actions>
             <button
               class="text-muted-foreground/50 hover:text-accent p-0.5"
               title="Mark everything above as read, except this item"
               aria-label="Mark everything above as read, except this item"
               data-mark-above
-              @click.stop="markAboveRead(item); dismissReveal()"
+              @click.stop="markAboveRead(item)"
             >
               <ChevronsUp class="size-3.5" />
             </button>
@@ -288,7 +340,7 @@ async function markBelowRead(item: any) {
               title="Mark everything below as read, except this item"
               aria-label="Mark everything below as read, except this item"
               data-mark-below
-              @click.stop="markBelowRead(item); dismissReveal()"
+              @click.stop="markBelowRead(item)"
             >
               <ChevronsDown class="size-3.5" />
             </button>
@@ -340,6 +392,7 @@ async function markBelowRead(item: any) {
           </template>
           <template v-if="item.comments_count > 0">{{ commentsTitle(item.comments_count) }}</template>
         </Tooltip>
+      </div>
       </div>
       </div>
     </TransitionGroup>

@@ -421,9 +421,12 @@ describe('ItemList filter/sort controls', () => {
   })
 })
 
-// Touch devices have no hover, so the row's mark-above/below chevrons are
-// revealed by swiping the row leftward instead. See useRowSwipeReveal.
-describe('ItemList swipe-to-reveal row actions', () => {
+
+// Touch devices have no hover, so on a phone the mark-above/below action is
+// reached by swiping the row: right-to-left opens "mark all read below",
+// left-to-right opens "mark all read above", and tapping the panel confirms.
+// See useSwipeAction.
+describe('ItemList swipe action panels', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
     setActivePinia(createPinia())
@@ -431,7 +434,7 @@ describe('ItemList swipe-to-reveal row actions', () => {
     localStorage.clear()
   })
 
-  /** Swipe a row leftward by `dx` px (negative = left). */
+  /** One full swipe gesture over `row`, starting at x=300 and moving by `dx`. */
   async function swipe(row: ReturnType<typeof resultRows>[number], dx: number, dy = 0) {
     await row.trigger('touchstart', { touches: [{ clientX: 300, clientY: 100 }] })
     await row.trigger('touchmove', { touches: [{ clientX: 300 + dx, clientY: 100 + dy }] })
@@ -439,89 +442,214 @@ describe('ItemList swipe-to-reveal row actions', () => {
     await flushPromises()
   }
 
-  it('keeps the chevrons hidden until the row is swiped', () => {
+  it('keeps both panels parked off-screen until the row is swiped', () => {
     const { wrapper } = mountList()
-    const actions = resultRows(wrapper)[0].find('[data-mark-actions]')
-    expect(actions.exists()).toBe(true)
-    expect(actions.classes()).toContain('hidden')
-    expect(actions.classes()).not.toContain('flex')
+    const row = resultRows(wrapper)[0]
+
+    expect(row.element.hasAttribute('data-swipe-action')).toBe(false)
+    expect(row.find('[data-swipe-below]').classes()).toContain('translate-x-full')
+    expect(row.find('[data-swipe-above]').classes()).toContain('-translate-x-full')
+    // Parked panels stay out of the tab order.
+    expect(row.find('[data-swipe-below]').attributes('tabindex')).toBe('-1')
   })
 
-  it('reveals the chevrons on a leftward swipe, in place of the timestamp', async () => {
+  it('opens the "below" panel on a right-to-left swipe and slides it in from the right', async () => {
     const { wrapper } = mountList()
-    const rows = resultRows(wrapper)
-    await swipe(rows[1], -60)
+    const row = resultRows(wrapper)[0]
+    await swipe(row, -60)
 
-    expect(rows[1].element.hasAttribute('data-revealed')).toBe(true)
-    expect(rows[1].find('[data-mark-actions]').classes()).toContain('flex')
-    expect(rows[1].find('[data-item-time]').classes()).toContain('hidden')
-    // Only the swiped row opens.
-    expect(rows[0].element.hasAttribute('data-revealed')).toBe(false)
-    expect(rows[0].find('[data-mark-actions]').classes()).toContain('hidden')
+    expect(row.attributes('data-swipe-action')).toBe('below')
+    expect(row.find('[data-swipe-below]').classes()).toContain('translate-x-0')
+    expect(row.find('[data-swipe-below]').classes()).toContain('right-0')
+    expect(row.find('[data-swipe-below]').text()).toContain('Mark all read below')
+    expect(row.find('[data-swipe-above]').classes()).toContain('-translate-x-full')
   })
 
-  it('does not reveal on a short swipe or a vertical drag', async () => {
+  it('opens the "above" panel on a left-to-right swipe and slides it in from the left', async () => {
     const { wrapper } = mountList()
-    const rows = resultRows(wrapper)
+    const row = resultRows(wrapper)[0]
+    await swipe(row, 60)
 
-    await swipe(rows[0], -10)
-    expect(rows[0].element.hasAttribute('data-revealed')).toBe(false)
+    expect(row.attributes('data-swipe-action')).toBe('above')
+    expect(row.find('[data-swipe-above]').classes()).toContain('translate-x-0')
+    expect(row.find('[data-swipe-above]').classes()).toContain('left-0')
+    expect(row.find('[data-swipe-above]').text()).toContain('Mark all read above')
+  })
+
+  it('shifts the row content aside by the panel width while open', async () => {
+    const { wrapper } = mountList()
+    const row = resultRows(wrapper)[0]
+    const content = row.find('[data-row-content]')
+
+    expect(content.classes()).not.toContain('-translate-x-36')
+    await swipe(row, -60)
+    expect(content.classes()).toContain('-translate-x-36')
+  })
+
+  it('leaves the panel open after the swipe, and does not commit', async () => {
+    const { itemApi } = await import('../services/api')
+    const { wrapper } = mountList()
+    const row = resultRows(wrapper)[0]
+    await swipe(row, -60)
+
+    // Two-step by design: the gesture only opens the panel.
+    expect(row.attributes('data-swipe-action')).toBe('below')
+    expect(itemApi.markReadBelow).not.toHaveBeenCalled()
+    expect(itemApi.markReadAbove).not.toHaveBeenCalled()
+  })
+
+  it('does not open on a short swipe or a vertical drag', async () => {
+    const { wrapper } = mountList()
+    const row = resultRows(wrapper)[0]
+
+    await swipe(row, -10)
+    expect(row.element.hasAttribute('data-swipe-action')).toBe(false)
 
     // 60px left but 50px down: not clearly horizontal, so the list keeps scrolling.
-    await swipe(rows[0], -60, 50)
-    expect(rows[0].element.hasAttribute('data-revealed')).toBe(false)
+    await swipe(row, -60, 50)
+    expect(row.element.hasAttribute('data-swipe-action')).toBe(false)
   })
 
-  it('does not open the item when the revealing swipe ends', async () => {
+  it('does not open the item when the swipe ends', async () => {
     const { wrapper } = mountList()
-    await swipe(resultRows(wrapper)[0], -60)
+    const row = resultRows(wrapper)[0]
+    await swipe(row, -60)
 
-    // The browser fires a click after the drag; it must not select the row.
-    await resultRows(wrapper)[0].trigger('click')
+    // The browser fires a click when the drag ends; it must not select the row.
+    await row.trigger('click')
     await flushPromises()
 
     expect(wrapper.emitted('selectItem')).toBeFalsy()
+    expect(row.attributes('data-swipe-action')).toBe('below')
   })
 
-  it('hides the reveal again when the revealed row is swiped left once more', async () => {
+  it('marks everything below when the "below" panel is tapped', async () => {
+    const { itemApi } = await import('../services/api')
+    const markBelow = itemApi.markReadBelow as ReturnType<typeof vi.fn>
+    const markAbove = itemApi.markReadAbove as ReturnType<typeof vi.fn>
+    markBelow.mockResolvedValue({ message: 'ok' })
+    markAbove.mockResolvedValue({ message: 'ok' })
+
     const { wrapper } = mountList()
-    const row = resultRows(wrapper)[0]
-
+    const row = resultRows(wrapper)[1]
     await swipe(row, -60)
-    expect(row.element.hasAttribute('data-revealed')).toBe(true)
+    await row.find('[data-swipe-below]').trigger('click')
+    await flushPromises()
 
-    await swipe(row, -60)
-    expect(row.element.hasAttribute('data-revealed')).toBe(false)
+    expect(markBelow).toHaveBeenCalledTimes(1)
+    expect(markAbove).not.toHaveBeenCalled()
+    expect(markBelow.mock.calls[0][0]).toBe(2)
+    // The panel closes once it has been used.
+    expect(row.element.hasAttribute('data-swipe-action')).toBe(false)
   })
 
-  it('dismisses the reveal when the list scrolls', async () => {
+  it('marks everything above when the "above" panel is tapped', async () => {
+    const { itemApi } = await import('../services/api')
+    const markAbove = itemApi.markReadAbove as ReturnType<typeof vi.fn>
+    const markBelow = itemApi.markReadBelow as ReturnType<typeof vi.fn>
+    markAbove.mockResolvedValue({ message: 'ok' })
+    markBelow.mockResolvedValue({ message: 'ok' })
+
+    const { wrapper } = mountList()
+    const row = resultRows(wrapper)[0]
+    await swipe(row, 60)
+    await row.find('[data-swipe-above]').trigger('click')
+    await flushPromises()
+
+    expect(markAbove).toHaveBeenCalledTimes(1)
+    expect(markBelow).not.toHaveBeenCalled()
+  })
+
+  it('forwards the pane ordering with the confirmation', async () => {
+    const { itemApi } = await import('../services/api')
+    const markBelow = itemApi.markReadBelow as ReturnType<typeof vi.fn>
+    markBelow.mockResolvedValue({ message: 'ok' })
+
+    const { store, wrapper } = mountList()
+    store.sort = 'score_desc'
+    store.minScore = 40
+
+    const row = resultRows(wrapper)[0]
+    await swipe(row, -60)
+    await row.find('[data-swipe-below]').trigger('click')
+    await flushPromises()
+
+    expect(markBelow.mock.calls[0][1]).toMatchObject({ sort: 'score_desc', min_score: 40 })
+  })
+
+  it('closes the panel when the row is tapped instead of the panel', async () => {
     const { wrapper } = mountList()
     const row = resultRows(wrapper)[0]
     await swipe(row, -60)
-    expect(row.element.hasAttribute('data-revealed')).toBe(true)
+    expect(row.attributes('data-swipe-action')).toBe('below')
+
+    // First click is the browser's synthetic one, fired as the drag ended —
+    // it must be swallowed or the panel would close the instant it opened.
+    await row.trigger('click')
+    await flushPromises()
+    expect(row.attributes('data-swipe-action')).toBe('below')
+
+    // The next tap is a real one: it dismisses the panel.
+    await row.trigger('click')
+    await flushPromises()
+
+    expect(row.element.hasAttribute('data-swipe-action')).toBe(false)
+    // A dismissing tap must not also open the item.
+    expect(wrapper.emitted('selectItem')).toBeFalsy()
+  })
+
+  it('toggles the panel away when the same row is swiped the same way again', async () => {
+    const { wrapper } = mountList()
+    const row = resultRows(wrapper)[0]
+    await swipe(row, -60)
+    expect(row.attributes('data-swipe-action')).toBe('below')
+
+    await swipe(row, -60)
+    expect(row.element.hasAttribute('data-swipe-action')).toBe(false)
+  })
+
+  it('switches panels when the row is swiped the other way', async () => {
+    const { wrapper } = mountList()
+    const row = resultRows(wrapper)[0]
+    await swipe(row, -60)
+    expect(row.attributes('data-swipe-action')).toBe('below')
+
+    await swipe(row, 60)
+    expect(row.attributes('data-swipe-action')).toBe('above')
+  })
+
+  it('keeps only one row open at a time', async () => {
+    const { wrapper } = mountList()
+    const rows = resultRows(wrapper)
+    await swipe(rows[0], -60)
+    await swipe(rows[1], -60)
+
+    expect(rows[1].attributes('data-swipe-action')).toBe('below')
+    expect(rows[0].element.hasAttribute('data-swipe-action')).toBe(false)
+  })
+
+  it('closes the panel when the list scrolls', async () => {
+    const { wrapper } = mountList()
+    const row = resultRows(wrapper)[0]
+    await swipe(row, -60)
+    expect(row.attributes('data-swipe-action')).toBe('below')
 
     await wrapper.find('.overflow-y-auto').trigger('scroll')
     await flushPromises()
 
-    expect(row.element.hasAttribute('data-revealed')).toBe(false)
+    expect(row.element.hasAttribute('data-swipe-action')).toBe(false)
   })
 
-  it('closes the reveal after a chevron is used', async () => {
-    const { itemApi } = await import('../services/api')
-    ;(itemApi.markReadAbove as ReturnType<typeof vi.fn>).mockResolvedValue({ message: 'ok' })
-
-    const { wrapper } = mountList()
+  it('has no swipe panels in the saved view', () => {
+    const saved = [makeItem({ id: 1, title: 'Saved one', status: 'saved' })]
+    const { wrapper } = mountList({ showingSaved: true, savedItems: saved, activeFeedId: null })
     const row = resultRows(wrapper)[0]
-    await swipe(row, -60)
 
-    await row.find('[data-mark-above]').trigger('click')
-    await flushPromises()
-
-    expect(row.element.hasAttribute('data-revealed')).toBe(false)
-    expect(itemApi.markReadAbove).toHaveBeenCalled()
+    expect(row.find('[data-swipe-below]').exists()).toBe(false)
+    expect(row.find('[data-swipe-above]').exists()).toBe(false)
   })
 
-  it('still selects the row on a plain tap while nothing is revealed', async () => {
+  it('still selects the row on a plain tap while no panel is open', async () => {
     const { wrapper } = mountList()
     await resultRows(wrapper)[0].trigger('click')
     await flushPromises()
