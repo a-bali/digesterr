@@ -220,8 +220,19 @@ describe('ItemContent summarize button', () => {
     expect(wrapper.text()).toContain('LLM Summary')
     expect(wrapper.text()).toContain('This is the content summary.')
     expect(wrapper.text()).toContain('These are the comment summaries.')
-    expect(wrapper.text()).toContain('Content')
-    expect(wrapper.text()).toContain('Comments')
+    // No per-section subtitles any more: the summaries render as two plain
+    // paragraphs.
+    const paras = wrapper.findAll('p').map(p => p.text())
+    expect(paras).toContain('This is the content summary.')
+    expect(paras).toContain('These are the comment summaries.')
+    expect(paras).not.toContain('Content')
+    expect(paras).not.toContain('Comments')
+
+    // The bodies the summary was built from fold away automatically.
+    const collapsedState = (label: string) =>
+      wrapper.findAll('button').find(b => b.text().startsWith(label))?.attributes('aria-expanded')
+    expect(collapsedState('Extracted')).toBe('false')
+    expect(collapsedState('Original')).toBe('false')
   })
 
   it('shows sentence count slider in summary section', async () => {
@@ -242,6 +253,10 @@ describe('ItemContent summarize button', () => {
     expect((slider.element as HTMLInputElement).value).toBe('5')
     expect((slider.element as HTMLInputElement).min).toBe('1')
     expect((slider.element as HTMLInputElement).max).toBe('20')
+
+    // The count is not rendered inline next to the slider; it lives in the
+    // popup, so the pane text must not carry it.
+    expect(wrapper.text()).not.toContain('5 sentences')
   })
 
   it('resets summary when item changes', async () => {

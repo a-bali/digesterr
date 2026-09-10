@@ -114,6 +114,11 @@ type LLMConfig struct {
 	Endpoint string `yaml:"endpoint"`
 	APIKey   string `yaml:"api_key"`
 	Model    string `yaml:"model"`
+	// SummaryPrompt overrides the system prompt used by the per-item summary
+	// endpoint. It may use the {content_sentences} and {comment_sentences}
+	// placeholders, which are replaced with the requested counts. Empty means
+	// a built-in default.
+	SummaryPrompt string `yaml:"summary_prompt"`
 }
 
 // FeedConfig holds feed polling and data retention settings.
@@ -330,6 +335,7 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 	setString(&cfg.LLM.Endpoint, "LLM_ENDPOINT", "")
 	setString(&cfg.LLM.APIKey, "LLM_API_KEY", "")
 	setString(&cfg.LLM.Model, "LLM_MODEL", "")
+	setString(&cfg.LLM.SummaryPrompt, "LLM_SUMMARY_PROMPT", "")
 
 	setDuration(&cfg.Feed.SyncInterval, "FEED_SYNC_INTERVAL")
 	setDuration(&cfg.Feed.ExpireItems, "FEED_EXPIRE_ITEMS")

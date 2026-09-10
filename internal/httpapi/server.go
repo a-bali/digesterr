@@ -38,6 +38,9 @@ type Server struct {
 	commentCache *commentCache
 	// schedulerTimezone is the IANA timezone name for digest cron schedules.
 	schedulerTimezone string
+	// summaryPrompt is the configured system prompt for per-item summaries.
+	// Empty means the built-in default.
+	summaryPrompt string
 }
 
 func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffer, cfg config.Config) *Server {
@@ -53,6 +56,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 		topComments:       cfg.Feed.TopComments,
 		commentCache:      newCommentCache(cfg.Feed.CommentCacheTTL.Duration()),
 		schedulerTimezone: cfg.Digest.SchedulerTimezone,
+		summaryPrompt:     cfg.LLM.SummaryPrompt,
 	}
 
 	llmClient := digest.NewLLMClient(cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model)

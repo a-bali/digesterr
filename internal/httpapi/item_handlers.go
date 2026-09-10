@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"digesterr/internal/digest"
@@ -117,6 +118,21 @@ type summarizeRequest struct {
 	Prompt        string `json:"prompt"`
 }
 
+// defaultSummaryPrompt is the built-in system prompt for per-item summaries.
+// Override it with llm.summary_prompt in the config file.
+const defaultSummaryPrompt = "You are a helpful assistant that summarizes articles and their comments. " +
+	"Summarize the content in about {content_sentences} sentences, then separately summarize the comments in about {comment_sentences} sentences. " +
+	"Format your response as JSON with two fields: \"content_summary\" and \"comments_summary\". " +
+	"Do not include any text outside the JSON."
+
+// renderSummaryPrompt substitutes the sentence-count placeholders.
+func renderSummaryPrompt(tmpl string, contentSentences, commentSentences int) string {
+	return strings.NewReplacer(
+		"{content_sentences}", strconv.Itoa(contentSentences),
+		"{comment_sentences}", strconv.Itoa(commentSentences),
+	).Replace(tmpl)
+}
+
 type summarizeResponse struct {
 	ContentSummary  string `json:"content_summary"`
 	CommentsSummary string `json:"comments_summary"`
@@ -170,18 +186,17 @@ func (s *Server) handleSummarizeItem(w http.ResponseWriter, r *http.Request) {
 	// Fetch top comments for inclusion in summary.
 	comments, _ := s.fetchTopComments(r, item, 5, false)
 
-	// Build prompt with configurable sentence count and prompt text.
+	// Prompt precedence: explicit request override > llm.summary_prompt from
+	// the config file > built-in default. Placeholders are substituted for all
+	// of them, so a custom prompt can still react to the sentence slider.
 	systemPrompt := req.Prompt
 	if systemPrompt == "" {
-		systemPrompt = fmt.Sprintf(
-			"You are a helpful assistant that summarizes articles and their comments. "+
-				"Summarize the content in about %d sentences, then separately summarize the comments in about %d sentences. "+
-				"Format your response as JSON with two fields: \"content_summary\" and \"comments_summary\". "+
-				"Do not include any text outside the JSON.",
-			req.SentenceCount,
-			max(req.SentenceCount/3, 1),
-		)
+		systemPrompt = s.summaryPrompt
 	}
+	if systemPrompt == "" {
+		systemPrompt = defaultSummaryPrompt
+	}
+	systemPrompt = renderSummaryPrompt(systemPrompt, req.SentenceCount, max(req.SentenceCount/3, 1))
 
 	userPrompt := "Content:\n\n" + content
 	if len(comments) > 0 {

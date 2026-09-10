@@ -5,6 +5,7 @@ import { itemApi } from '../services/api'
 import { toastError } from '../lib/toast'
 import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
+import Tooltip from './ui/Tooltip.vue'
 import Skeleton from './ui/Skeleton.vue'
 import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown, Sparkles, ChevronRight } from 'lucide-vue-next'
 import { absoluteTime } from '../lib/format'
@@ -87,6 +88,9 @@ async function doSummarize() {
     if (token !== summaryToken) return
     summaryData.value = resp
     summaryCollapsed.value = false
+    // The summary replaces the bodies it was built from, so fold them away.
+    extractedCollapsed.value = true
+    originalCollapsed.value = true
   } catch (e) {
     if (token === summaryToken) {
       toastError(e, 'Failed to generate summary')
@@ -415,18 +419,24 @@ onUnmounted(() => {
           <span>LLM Summary</span>
         </button>
         <template v-if="!summaryCollapsed">
-          <!-- Sentence count slider -->
-          <div class="flex items-center gap-3 mb-3 text-xs text-muted-foreground">
-            <span class="shrink-0">{{ summarySentenceCount }} sentences</span>
-            <input
-              type="range"
-              :value="summarySentenceCount"
-              min="1"
-              max="20"
-              step="1"
-              class="flex-1 h-1 accent-accent cursor-pointer"
-              @input="summarySentenceCount = +($event.target as HTMLInputElement).value"
-            />
+          <!-- Sentence count slider. The count is surfaced in a popup so it
+               does not occupy a column next to the track. -->
+          <div class="mb-3">
+            <Tooltip>
+              <template #trigger>
+                <input
+                  type="range"
+                  :value="summarySentenceCount"
+                  min="1"
+                  max="20"
+                  step="1"
+                  class="w-full h-1 accent-accent cursor-pointer"
+                  :aria-label="`Summary length: ${summarySentenceCount} sentences`"
+                  @input="summarySentenceCount = +($event.target as HTMLInputElement).value"
+                />
+              </template>
+              {{ summarySentenceCount }} sentences
+            </Tooltip>
           </div>
           <!-- Loading spinner -->
           <div v-if="summaryLoading" class="flex items-center gap-2 py-4 text-sm text-muted-foreground">
@@ -435,14 +445,8 @@ onUnmounted(() => {
           </div>
           <!-- Summary content -->
           <div v-else-if="summaryData" class="space-y-3">
-            <div v-if="summaryData.content_summary">
-              <p class="text-xs font-medium text-muted-foreground mb-1">Content</p>
-              <p class="text-sm leading-relaxed">{{ summaryData.content_summary }}</p>
-            </div>
-            <div v-if="summaryData.comments_summary">
-              <p class="text-xs font-medium text-muted-foreground mb-1">Comments</p>
-              <p class="text-sm leading-relaxed">{{ summaryData.comments_summary }}</p>
-            </div>
+            <p v-if="summaryData.content_summary" class="text-sm leading-relaxed">{{ summaryData.content_summary }}</p>
+            <p v-if="summaryData.comments_summary" class="text-sm leading-relaxed">{{ summaryData.comments_summary }}</p>
           </div>
         </template>
       </template>

@@ -42,6 +42,11 @@ llm:
   api_key: ""
   # Model name used for digest summaries.              [LLM_MODEL]
   model: gpt-4o-mini
+  # System prompt for per-item summaries. {content_sentences} and
+  # {comment_sentences} are replaced with the requested counts, so a custom
+  # prompt still follows the sentence slider. Empty means a built-in default.
+  #                                             [LLM_SUMMARY_PROMPT]
+  summary_prompt: ""
 
 feed:
   # How often feeds are polled for new items. Durations accept Go syntax

@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"digesterr/internal/auth"
@@ -278,3 +280,65 @@ func TestSummarizeItemCustomPrompt(t *testing.T) {
 		t.Fatalf("expected custom prompt summary, got %q", resp.ContentSummary)
 	}
 }
+
+// The system prompt is configurable through llm.summary_prompt, and the
+// sentence placeholders must still be substituted so a custom prompt keeps
+// following the sentence slider.
+func TestSummarizeItemUsesConfiguredPrompt(t *testing.T) {
+	var gotBody string
+
+	db, queries := setupTestDB(t)
+	authSvc := auth.NewService("test-jwt-secret-for-testing", queries, db)
+	cfg := config.Default()
+	cfg.LLM.SummaryPrompt = "Custom prompt: {content_sentences} sentences of content, {comment_sentences} of comments."
+	server := NewServer(db, queries, authSvc, logbuf.New(100), cfg)
+
+	mockLLM := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]string{"content": `{"content_summary":"a","comments_summary":"b"}`}},
+			},
+		})
+	}))
+	t.Cleanup(mockLLM.Close)
+	server.llmClient = digest.NewLLMClient(mockLLM.URL, "test-key", "test-model")
+
+	user := createTestUser(t, queries, "summarize-configured-prompt@example.com", "password123")
+	token := getTestToken(t, server.auth, &user)
+
+	feed, err := queries.CreateFeed(t.Context(), store.CreateFeedParams{
+		UserID: user.ID,
+		Type:   "rss",
+		Name:   "Test Feed",
+		Url:    "https://example.com/feed",
+	})
+	if err != nil {
+		t.Fatalf("failed to create feed: %v", err)
+	}
+
+	item, err := queries.CreateItem(t.Context(), store.CreateItemParams{
+		FeedID:  feed.ID,
+		Hash:    "test-hash-configured-prompt",
+		Title:   "Configured prompt",
+		Url:     "https://example.com/configured",
+		Content: "<p>Body text used for the summary request.</p>",
+	})
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
+
+	w := makeRequest(server, http.MethodPost, "/api/items/"+itoa(item.ID)+"/summarize",
+		map[string]any{"sentence_count": 9}, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 9 content sentences -> floor(9/3)=3 comment sentences.
+	if !strings.Contains(gotBody, "Custom prompt: 9 sentences of content, 3 of comments.") {
+		t.Fatalf("configured prompt was not used with substituted counts, request body: %s", gotBody)
+	}
+}
+
