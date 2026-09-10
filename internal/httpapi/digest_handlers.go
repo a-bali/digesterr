@@ -315,6 +315,86 @@ func (s *Server) handleMarkDigestResultsRead(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]string{"message": "digest results marked read"})
 }
 
+// handleMarkDigestReadAbove marks all digest results above (or at) the given result as read.
+func (s *Server) handleMarkDigestReadAbove(w http.ResponseWriter, r *http.Request) {
+	s.handleMarkDigestRelative(w, r, "above")
+}
+
+func (s *Server) handleMarkDigestReadBelow(w http.ResponseWriter, r *http.Request) {
+	s.handleMarkDigestRelative(w, r, "below")
+}
+
+func (s *Server) handleMarkDigestRelative(w http.ResponseWriter, r *http.Request, direction string) {
+	userID := authedUserID(r)
+	resultID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	// Parse scope from request body.
+	var body struct {
+		ConfigID *int64 `json:"config_id"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+
+	// Look up the result to get boundary values.
+	result, err := s.queries.GetDigestResult(r.Context(), store.GetDigestResultParams{ID: resultID, UserID: userID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "digest result not found")
+		return
+	}
+
+	if body.ConfigID != nil {
+		if direction == "above" {
+			err = s.queries.MarkDigestConfigReadAbove(r.Context(), store.MarkDigestConfigReadAboveParams{
+				ConfigID:          *body.ConfigID,
+				UserID:            userID,
+				BoundaryCreatedAt: result.CreatedAt,
+			})
+		} else {
+			err = s.queries.MarkDigestConfigReadBelow(r.Context(), store.MarkDigestConfigReadBelowParams{
+				ConfigID:          *body.ConfigID,
+				UserID:            userID,
+				BoundaryCreatedAt: result.CreatedAt,
+			})
+		}
+	} else {
+		if direction == "above" {
+			err = s.queries.MarkAllDigestReadAbove(r.Context(), store.MarkAllDigestReadAboveParams{
+				UserID:            userID,
+				BoundaryCreatedAt: result.CreatedAt,
+			})
+		} else {
+			err = s.queries.MarkAllDigestReadBelow(r.Context(), store.MarkAllDigestReadBelowParams{
+				UserID:            userID,
+				BoundaryCreatedAt: result.CreatedAt,
+			})
+		}
+	}
+	if err != nil {
+		writeServerError(w, "failed to mark digest results read", err)
+		return
+	}
+
+	// Cascade: flip digested items for the newly read results.
+	if body.ConfigID != nil {
+		_, _ = s.queries.MarkDigestConfigResultItemsRead(r.Context(), store.MarkDigestConfigResultItemsReadParams{
+			UserID:  userID,
+			Column2: body.ConfigID,
+		})
+	} else {
+		_, _ = s.queries.MarkDigestConfigResultItemsRead(r.Context(), store.MarkDigestConfigResultItemsReadParams{
+			UserID:  userID,
+			Column2: nil,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "digest results marked read"})
+}
+
 func (s *Server) handleGenerateDigest(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
 	configID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)

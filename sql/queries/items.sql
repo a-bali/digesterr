@@ -153,6 +153,27 @@ UPDATE items SET status = 'read', updated_at = DATETIME('now')
 WHERE feed_id IN (SELECT id FROM feeds WHERE user_id = @user_id AND category = @category)
   AND status = 'unread';
 
+-- name: MarkFeedReadAbove :exec
+-- Mark items above (or at) the given item as read, within a single feed.
+-- Boundary values are looked up by the handler to avoid correlated subqueries.
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE feed_id = @feed_id
+  AND status = 'unread'
+  AND (
+    published_at > @boundary_published_at
+    OR (published_at = @boundary_published_at AND created_at >= @boundary_created_at)
+  );
+
+-- name: MarkFeedReadBelow :exec
+-- Mark items below (but not at) the given item as read, within a single feed.
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE feed_id = @feed_id
+  AND status = 'unread'
+  AND (
+    published_at < @boundary_published_at
+    OR (published_at = @boundary_published_at AND created_at < @boundary_created_at)
+  );
+
 -- name: ListItemsByUserStatus :many
 SELECT i.* FROM items i
 JOIN feeds f ON f.id = i.feed_id

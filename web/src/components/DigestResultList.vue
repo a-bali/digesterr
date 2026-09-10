@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useDigestStore } from '../stores/digest'
 import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
-import { Circle, CircleDot, LoaderCircle, CheckCircle2 } from 'lucide-vue-next'
+import { Circle, CircleDot, LoaderCircle, CheckCircle2, ChevronsUp, ChevronsDown, MoreHorizontal } from 'lucide-vue-next'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { absoluteTime } from '../lib/format'
 import type { DigestResult, DigestResultWithConfigName } from '../types/api'
@@ -68,6 +68,23 @@ const showMarkAllRead = computed(() =>
   visibleResults.value.some(r => r.status !== 'read')
 )
 
+// Hover action menu
+const openMenuId = ref<number | null>(null)
+
+function toggleMenu(resultId: number) {
+  openMenuId.value = openMenuId.value === resultId ? null : resultId
+}
+
+async function markAboveRead(result: DigestResult) {
+  openMenuId.value = null
+  await digestStore.markReadAbove(result)
+}
+
+async function markBelowRead(result: DigestResult) {
+  openMenuId.value = null
+  await digestStore.markReadBelow(result)
+}
+
 function onSelect(e: MouseEvent, result: DigestResult) {
   // Blur on mouse click so no focus outline lingers after selection moves.
   ;(e.currentTarget as HTMLElement).blur()
@@ -98,7 +115,7 @@ function onSelect(e: MouseEvent, result: DigestResult) {
     <div v-else>
       <div v-for="result in visibleResults" :key="result.id"
         role="button" tabindex="0"
-        class="w-full text-left p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
+        class="group w-full text-left p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
         :class="[showingAll ? 'min-h-[5.5rem]' : 'h-20', { 'bg-accent/10': isSelected(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read', 'opacity-50': digestStore.loadingMore }]"
         @click="onSelect($event, result)"
         @keydown.enter.prevent="onSelect($event, result)"
@@ -111,6 +128,33 @@ function onSelect(e: MouseEvent, result: DigestResult) {
             <p class="text-sm font-semibold truncate">{{ resultTitle(result) }}</p>
             <p class="text-xs text-muted-foreground truncate">{{ absoluteTime(result.created_at) }} · {{ result.item_count }} items</p>
           </div>
+          <!-- Hover action: mark read above/below -->
+          <span class="shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity relative">
+            <button
+              v-if="result.status !== 'read'"
+              class="text-muted-foreground/50 hover:text-muted-foreground p-0.5"
+              @click.stop="toggleMenu(result.id)"
+            >
+              <MoreHorizontal class="size-3" />
+            </button>
+            <div
+              v-if="openMenuId === result.id"
+              class="absolute right-0 top-6 z-50 bg-popover border rounded-md shadow-md flex gap-1 p-1"
+            >
+              <button
+                class="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-accent/10 rounded transition-colors whitespace-nowrap"
+                @click.stop="markAboveRead(result)"
+              >
+                <ChevronsUp class="size-3" /> Above
+              </button>
+              <button
+                class="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-accent/10 rounded transition-colors whitespace-nowrap"
+                @click.stop="markBelowRead(result)"
+              >
+                <ChevronsDown class="size-3" /> Below
+              </button>
+            </div>
+          </span>
         </div>
         <div v-if="showingAll && result.config_name" class="flex items-center justify-between mt-2">
           <span class="text-[10px] text-accent/70 truncate">{{ result.config_name }}</span>
