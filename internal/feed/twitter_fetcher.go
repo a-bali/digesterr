@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +57,21 @@ type TwitterFetcher struct {
 	// per-feed state.
 	mu      sync.Mutex
 	userIDs map[string]twitterUserIDEntry
+	// lastQuota holds the most recent X-Rate-Limit-* values seen, and
+	// blockedUntil suppresses requests after a 429 until the advertised reset.
+	// Both are shared across feeds for the same reason as userIDs: the budget
+	// belongs to the account (our cookies), not to an individual feed.
+	lastQuota    quota
+	blockedUntil time.Time
+}
+
+// quota records the most recent X rate-limit headers for this client. X
+// advertises its per-endpoint budget on every response, so tracking it is free.
+type quota struct {
+	limit     int
+	remaining int
+	reset     time.Time
+	checkedAt time.Time
 }
 
 // twitterUserIDEntry caches a resolved screen name -> numeric user ID.
@@ -246,6 +262,13 @@ func extractTwitterScreenName(raw string) string {
 
 // gqlGet performs an authenticated GET against the GraphQL endpoint.
 func (f *TwitterFetcher) gqlGet(ctx context.Context, queryHash string, variables string) ([]byte, error) {
+	// A 429 means this endpoint's budget for the account is spent. Issuing more
+	// requests before the advertised reset only burns the next window on doomed
+	// calls, so refuse until then.
+	if until, blocked := f.Blocked(); blocked {
+		return nil, fmt.Errorf("twitter rate limited until %s, skipping request to preserve quota",
+			until.UTC().Format(time.RFC3339))
+	}
 	if err := waitLimiter(ctx, f.limiter); err != nil {
 		return nil, fmt.Errorf("rate limiter: %w", err)
 	}
@@ -274,10 +297,84 @@ func (f *TwitterFetcher) gqlGet(ctx context.Context, queryHash string, variables
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
+	// X advertises the remaining budget on every response; keep it so the
+	// poller can back off before hitting the ceiling.
+	f.recordQuotaHeaders(resp.Header)
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		if reset := f.resetTime(resp.Header); reset.After(time.Now()) {
+			f.mu.Lock()
+			f.blockedUntil = reset
+			f.mu.Unlock()
+		}
+		return nil, &StatusError{Code: resp.StatusCode, Query: queryHash, Body: truncateForLog(body)}
+	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Twitter API returned status %d for %s: %s", resp.StatusCode, queryHash, truncateForLog(body))
+		return nil, &StatusError{Code: resp.StatusCode, Query: queryHash, Body: truncateForLog(body)}
 	}
 	return body, nil
+}
+
+// recordQuotaHeaders stores the most recent X-Rate-Limit-* values.
+func (f *TwitterFetcher) recordQuotaHeaders(h http.Header) {
+	raw := h.Get("X-Rate-Limit-Limit")
+	if raw == "" {
+		return
+	}
+	limit, _ := strconv.Atoi(raw)
+	remaining, _ := strconv.Atoi(h.Get("X-Rate-Limit-Remaining"))
+	resetUnix, _ := strconv.ParseInt(h.Get("X-Rate-Limit-Reset"), 10, 64)
+
+	f.mu.Lock()
+	f.lastQuota = quota{
+		limit:     limit,
+		remaining: remaining,
+		reset:     time.Unix(resetUnix, 0),
+		checkedAt: time.Now(),
+	}
+	f.mu.Unlock()
+}
+
+// resetTime returns the window reset instant, falling back to now+15m when the
+// header is missing or unparseable. X's windows are 15 minutes.
+func (f *TwitterFetcher) resetTime(h http.Header) time.Time {
+	if v := h.Get("X-Rate-Limit-Reset"); v != "" {
+		if unix, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return time.Unix(unix, 0)
+		}
+	}
+	return time.Now().Add(15 * time.Minute)
+}
+
+// Quota reports the last observed rate-limit state. A zero limit means no
+// response has carried quota headers yet.
+func (f *TwitterFetcher) Quota() (limit, remaining int, reset time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastQuota.limit, f.lastQuota.remaining, f.lastQuota.reset
+}
+
+// BudgetLow reports whether the remaining quota observed for the last-called
+// endpoint is below threshold, meaning opportunistic (non-authoritative) calls
+// should be skipped. It returns false when there is no measurement yet or the
+// window has already rolled over, so an unmeasured client is never suppressed.
+func (f *TwitterFetcher) BudgetLow(threshold int) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.lastQuota.checkedAt.IsZero() || time.Now().After(f.lastQuota.reset) {
+		return false
+	}
+	return f.lastQuota.remaining < threshold
+}
+
+// Blocked reports whether a 429 has suppressed requests until its reset.
+func (f *TwitterFetcher) Blocked() (time.Time, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.blockedUntil.IsZero() || !time.Now().Before(f.blockedUntil) {
+		return time.Time{}, false
+	}
+	return f.blockedUntil, true
 }
 
 func truncateForLog(b []byte) string {
