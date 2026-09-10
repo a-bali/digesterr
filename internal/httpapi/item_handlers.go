@@ -138,6 +138,134 @@ type summarizeResponse struct {
 	CommentsSummary string `json:"comments_summary"`
 }
 
+// decodeSummary reads the two expected fields out of a JSON object. Values are
+// accepted as strings; a model that nests the object one level deeper is
+// unwrapped rather than thrown away.
+func decodeSummary(raw string) (summarizeResponse, bool) {
+	var parsed summarizeResponse
+	if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
+		if parsed.ContentSummary != "" || parsed.CommentsSummary != "" {
+			return parsed, true
+		}
+		return summarizeResponse{}, false
+	}
+
+	// The values were not plain strings — coerce whatever came back, so a
+	// nested or non-string field does not push the whole reply to raw text.
+	var generic map[string]any
+	if err := json.Unmarshal([]byte(raw), &generic); err != nil {
+		return summarizeResponse{}, false
+	}
+	var out summarizeResponse
+	if v, ok := stringField(generic["content_summary"]); ok {
+		out.ContentSummary = v
+	}
+	if v, ok := stringField(generic["comments_summary"]); ok {
+		out.CommentsSummary = v
+	}
+	if out.ContentSummary == "" && out.CommentsSummary == "" {
+		return summarizeResponse{}, false
+	}
+	return out, true
+}
+
+// stringField coerces a decoded JSON value into display text.
+func stringField(v any) (string, bool) {
+	switch val := v.(type) {
+	case string:
+		if strings.TrimSpace(val) == "" {
+			return "", false
+		}
+		return val, true
+	case []any:
+		// A list of sentences/paragraphs reads fine joined by blank lines.
+		var parts []string
+		for _, e := range val {
+			if s, ok := stringField(e); ok {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) == 0 {
+			return "", false
+		}
+		return strings.Join(parts, "\n\n"), true
+	case map[string]any:
+		// Try the obvious keys, then fall back to the first usable string.
+		for _, key := range []string{"text", "summary", "content", "value"} {
+			if s, ok := stringField(val[key]); ok {
+				return s, true
+			}
+		}
+		return "", false
+	default:
+		return "", false
+	}
+}
+
+// firstJSONObject returns the outermost {...} span in s, ignoring braces inside
+// quoted strings so a brace in a summary does not end the scan early.
+func firstJSONObject(s string) (string, bool) {
+	start := strings.IndexByte(s, '{')
+	if start < 0 {
+		return "", false
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[start : i+1], true
+			}
+		}
+	}
+	return "", false
+}
+
+// parseSummaryResponse turns the model's reply into the two summary fields.
+//
+// The prompt asks for bare JSON, but models routinely wrap it in a markdown
+// code fence (```json ... ```) or add a sentence before or after it. Sending
+// that straight back made the UI render raw JSON where the summary should be,
+// so the JSON is located and unwrapped first. A reply with no usable object is
+// kept verbatim as the content summary rather than dropped — plain prose is a
+// legitimate answer and losing it would be worse than showing it.
+func parseSummaryResponse(raw string) summarizeResponse {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return summarizeResponse{}
+	}
+
+	if parsed, ok := decodeSummary(text); ok {
+		return parsed
+	}
+	if obj, ok := firstJSONObject(text); ok {
+		if parsed, ok := decodeSummary(obj); ok {
+			return parsed
+		}
+	}
+	return summarizeResponse{ContentSummary: text}
+}
+
+
 func (s *Server) handleSummarizeItem(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -171,6 +299,7 @@ func (s *Server) handleSummarizeItem(w http.ResponseWriter, r *http.Request) {
 	if req.SentenceCount > 50 {
 		req.SentenceCount = 50
 	}
+
 
 	// Build content: prefer extracted content, fall back to original.
 	content := item.ExtractContent
@@ -220,13 +349,7 @@ func (s *Server) handleSummarizeItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse JSON response from LLM, fall back to plain text if parsing fails.
-	var parsed summarizeResponse
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		parsed = summarizeResponse{ContentSummary: result}
-	}
-
-	writeJSON(w, http.StatusOK, parsed)
+	writeJSON(w, http.StatusOK, parseSummaryResponse(result))
 }
 
 func (s *Server) doExtractItem(itemID int64, url string) {
