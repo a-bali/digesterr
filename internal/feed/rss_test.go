@@ -243,6 +243,93 @@ func TestRSSContentWithEncoded(t *testing.T) {
 	}
 }
 
+func TestRSSTitleStripsHTML(t *testing.T) {
+	xml := `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>HTML Title Feed</title>
+    <link>https://example.com</link>
+    <description>desc</description>
+    <item>
+      <title><![CDATA[<b>Bold</b> title with <a href="https://example.com">link</a>]]></title>
+      <link>https://example.com/html1</link>
+      <guid>html-1</guid>
+      <pubDate>Mon, 01 Jan 2024 12:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>`
+
+	f := &RSSFetcher{}
+	items, err := f.parse([]byte(xml))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Title != "Bold title with link" {
+		t.Fatalf("expected title 'Bold title with link', got %q", items[0].Title)
+	}
+}
+
+func TestRSSTitleWithHTMLEntities(t *testing.T) {
+	xml := `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Entity Feed</title>
+    <link>https://example.com</link>
+    <description>desc</description>
+    <item>
+      <title>AT&amp;T announces &lt;new&gt; product</title>
+      <link>https://example.com/ent1</link>
+      <guid>ent-1</guid>
+      <pubDate>Mon, 01 Jan 2024 12:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>`
+
+	f := &RSSFetcher{}
+	items, err := f.parse([]byte(xml))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Title != "AT&T announces  product" {
+		t.Fatalf("expected decoded title, got %q", items[0].Title)
+	}
+}
+
+func TestAtomTitleStripsHTML(t *testing.T) {
+	xml := `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Atom HTML Feed</title>
+  <id>urn:uuid:atom-html</id>
+  <link href="https://example.com" rel="alternate"/>
+  <updated>2024-01-01T00:00:00Z</updated>
+  <entry>
+    <title type="html">&lt;i&gt;Italic&lt;/i&gt; title</title>
+    <id>urn:uuid:atom-html-1</id>
+    <link href="https://example.com/atom-html/1" rel="alternate"/>
+    <summary>Summary</summary>
+    <published>2024-01-01T00:00:00Z</published>
+  </entry>
+</feed>`
+
+	f := &RSSFetcher{}
+	items, err := f.parse([]byte(xml))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Title != "Italic title" {
+		t.Fatalf("expected title 'Italic title', got %q", items[0].Title)
+	}
+}
+
 func TestRSSGUIDValue(t *testing.T) {
 	xml := `<?xml version="1.0"?>
 <rss version="2.0">

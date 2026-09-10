@@ -71,7 +71,7 @@ func (f *RSSFetcher) parseRSS(data []byte) ([]Item, error) {
 	var items []Item
 	for _, rssItem := range feed.Items {
 		item := Item{
-			Title:   strings.TrimSpace(rssItem.Title),
+			Title:   stripHTMLTags(strings.TrimSpace(rssItem.Title)),
 			URL:     strings.TrimSpace(rssItem.Link),
 			Content: rssContent(rssItem),
 			Author:  rssAuthor(rssItem),
@@ -109,7 +109,7 @@ func (f *RSSFetcher) parseAtom(data []byte) ([]Item, error) {
 	var items []Item
 	for _, entry := range feed.Entries {
 		item := Item{
-			Title:   strings.TrimSpace(entry.Title),
+			Title:   stripHTMLTags(strings.TrimSpace(entry.Title)),
 			Content: atomContent(entry),
 			Author:  atomAuthor(entry),
 		}
