@@ -44,8 +44,10 @@ llm:
   model: gpt-4o-mini
   # System prompt for per-item summaries. {content_sentences} and
   # {comment_sentences} are replaced with the requested length, either a single
-  # count ("9") or a range ("10-15"), so a custom prompt still follows the
-  # length chosen in the UI. Empty means a built-in default.
+  # count ("9") or a range ("12-18"), and {style} with the character of the
+  # chosen preset (a one-line gist / a balanced summary / a detailed summary),
+  # so a custom prompt still follows the length picked in the UI.
+  # Empty means a built-in default.
   #                                             [LLM_SUMMARY_PROMPT]
   summary_prompt: ""
 

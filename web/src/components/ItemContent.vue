@@ -76,12 +76,15 @@ const summaryCollapsed = ref(false)
 let summaryToken = 0
 
 // Summary length is offered as three presets rather than a free slider. Each
-// one is described to the user and to the model as a sentence range.
+// one is described to the user as a sentence range and to the model as both a
+// range and a character (`detail`) — the presets used to differ only in length,
+// which made them read alike, just longer.
 type SummaryLength = 'short' | 'medium' | 'long'
-const SUMMARY_LENGTHS: Record<SummaryLength, { min: number; max: number; detail: string }> = {
-  short: { min: 2, max: 3, detail: '2-3 sentences' },
-  medium: { min: 4, max: 5, detail: '4-5 sentences' },
-  long: { min: 10, max: 15, detail: '10-15 sentences' },
+type SummaryDetail = 'gist' | 'balanced' | 'detailed'
+const SUMMARY_LENGTHS: Record<SummaryLength, { min: number; max: number; detail: string; level: SummaryDetail }> = {
+  short: { min: 1, max: 2, detail: '1-2 sentences', level: 'gist' },
+  medium: { min: 5, max: 7, detail: '5-7 sentences', level: 'balanced' },
+  long: { min: 12, max: 18, detail: '12-18 sentences', level: 'detailed' },
 }
 const summaryLength = ref<SummaryLength>('medium')
 
@@ -108,11 +111,12 @@ async function doSummarize() {
   summaryLoading.value = true
   const token = ++summaryToken
   try {
-    const { min, max } = SUMMARY_LENGTHS[summaryLength.value]
+    const { min, max, level } = SUMMARY_LENGTHS[summaryLength.value]
     const resp = await itemApi.summarize(item.id, {
       sentence_count: max,
       min_sentences: min,
       max_sentences: max,
+      detail: level,
     })
     if (token !== summaryToken) return
     summaryData.value = resp

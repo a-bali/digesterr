@@ -121,20 +121,66 @@ type summarizeRequest struct {
 	// undershoot, so the range is passed through when it is known.
 	MinSentences int `json:"min_sentences"`
 	MaxSentences int `json:"max_sentences"`
+	// Detail names the character of the summary — "gist", "balanced" or
+	// "detailed". Length alone was not enough to tell the presets apart: they
+	// differed only in sentence count, so all three read the same way. Optional;
+	// when absent it is derived from the length window.
+	Detail string `json:"detail"`
 }
 
 // defaultSummaryPrompt is the built-in system prompt for per-item summaries.
 // Override it with llm.summary_prompt in the config file.
 const defaultSummaryPrompt = "You are a helpful assistant that summarizes articles and their comments. " +
 	"Summarize the content in {content_sentences} sentences, then separately summarize the comments in {comment_sentences} sentences. " +
+	"Aim for {style}. " +
 	"Format your response as JSON with two fields: \"content_summary\" and \"comments_summary\". " +
 	"Do not include any text outside the JSON."
 
-// renderSummaryPrompt substitutes the length placeholders. Lengths arrive
-// pre-rendered so a range ("2-3") and a single count read the same way in the
-// prompt text.
-func renderSummaryPrompt(tmpl string, contentSentences, commentSentences string) string {
+// Summary detail levels. The presets are defined by length, but length alone
+// made them read the same way — just longer — so each level also carries a
+// character the prompt asks for.
+const (
+	detailGist     = "gist"
+	detailBalanced = "balanced"
+	detailDetailed = "detailed"
+)
+
+// normalizeDetail resolves the requested detail level, deriving it from the
+// length window when the caller did not name one. The thresholds line up with
+// the UI presets (1-2 / 5-7 / 12-18 sentences).
+func normalizeDetail(requested string, maxSentences int) string {
+	switch d := strings.ToLower(strings.TrimSpace(requested)); d {
+	case detailGist, detailBalanced, detailDetailed:
+		return d
+	}
+	switch {
+	case maxSentences <= 3:
+		return detailGist
+	case maxSentences <= 9:
+		return detailBalanced
+	default:
+		return detailDetailed
+	}
+}
+
+// detailStyle renders a detail level's character for the prompt.
+func detailStyle(detail string) string {
+	switch detail {
+	case detailGist:
+		return "a one-line gist: only the single most important takeaway, with no supporting detail"
+	case detailDetailed:
+		return "a detailed summary: the full argument with its supporting context, figures and nuance"
+	default:
+		return "a balanced summary: the key points and enough context to see why they matter, without minor detail"
+	}
+}
+
+// renderSummaryPrompt substitutes the prompt placeholders. Lengths and the
+// style text arrive pre-rendered, so a range ("2-3") and a single count read
+// the same way, and a caller with a custom prompt can use {style} too.
+func renderSummaryPrompt(tmpl, style, contentSentences, commentSentences string) string {
 	return strings.NewReplacer(
+		"{style}", style,
 		"{content_sentences}", contentSentences,
 		"{comment_sentences}", commentSentences,
 	).Replace(tmpl)
@@ -396,6 +442,7 @@ func (s *Server) handleSummarizeItem(w http.ResponseWriter, r *http.Request) {
 		systemPrompt = defaultSummaryPrompt
 	}
 	systemPrompt = renderSummaryPrompt(systemPrompt,
+		detailStyle(normalizeDetail(req.Detail, maxSentences)),
 		lengthLabel(minSentences, maxSentences),
 		lengthLabel(max(minSentences/3, 1), max(maxSentences/3, 1)))
 

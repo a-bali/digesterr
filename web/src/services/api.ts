@@ -149,13 +149,14 @@ export const itemApi = {
     api<Item>(`/items/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   getItem: (id: number) => api<Item>(`/items/${id}`),
   extract: (id: number) => api<Item>(`/items/${id}/extract`, { method: 'POST' }),
-  summarize: (id: number, opts?: { sentence_count?: number; min_sentences?: number; max_sentences?: number; prompt?: string }) =>
+  summarize: (id: number, opts?: { sentence_count?: number; min_sentences?: number; max_sentences?: number; detail?: string; prompt?: string }) =>
     api<import('../types/api').ItemSummaryResponse>(`/items/${id}/summarize`, {
       method: 'POST',
       body: JSON.stringify({
         sentence_count: opts?.sentence_count,
         min_sentences: opts?.min_sentences,
         max_sentences: opts?.max_sentences,
+        detail: opts?.detail,
         prompt: opts?.prompt,
       }),
     }),

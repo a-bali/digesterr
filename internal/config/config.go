@@ -117,7 +117,8 @@ type LLMConfig struct {
 	// SummaryPrompt overrides the system prompt used by the per-item summary
 	// endpoint. It may use the {content_sentences} and {comment_sentences}
 	// placeholders, which are replaced with the requested length — a single
-	// count ("9") or a range ("10-15"). Empty means a built-in default.
+	// count ("9") or a range ("12-18") — and {style}, replaced with the
+	// character of the chosen preset. Empty means a built-in default.
 	SummaryPrompt string `yaml:"summary_prompt"`
 }
 

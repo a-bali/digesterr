@@ -246,7 +246,7 @@ describe('ItemContent summarize button', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    expect(mockSummarize).toHaveBeenCalledWith(1, { sentence_count: 5, min_sentences: 4, max_sentences: 5 })
+    expect(mockSummarize).toHaveBeenCalledWith(1, { sentence_count: 7, min_sentences: 5, max_sentences: 7, detail: 'balanced' })
 
     // The summary section should be visible.
     expect(wrapper.text()).toContain('LLM Summary')
@@ -288,7 +288,7 @@ describe('ItemContent summarize button', () => {
     await btn.trigger('click')
     await flushPromises()
 
-    expect(mockSummarize).toHaveBeenCalledWith(1, { sentence_count: 5, min_sentences: 4, max_sentences: 5 })
+    expect(mockSummarize).toHaveBeenCalledWith(1, { sentence_count: 7, min_sentences: 5, max_sentences: 7, detail: 'balanced' })
   })
 
   it('keeps the length choices hidden until the dropdown is opened', async () => {
@@ -302,11 +302,40 @@ describe('ItemContent summarize button', () => {
     const items = summaryLengthItems().map(i => i.textContent ?? '')
     expect(items).toHaveLength(3)
     expect(items[0]).toContain('Short')
-    expect(items[0]).toContain('2-3 sentences')
+    expect(items[0]).toContain('1-2 sentences')
     expect(items[1]).toContain('Medium')
-    expect(items[1]).toContain('4-5 sentences')
+    expect(items[1]).toContain('5-7 sentences')
     expect(items[2]).toContain('Long')
-    expect(items[2]).toContain('10-15 sentences')
+    expect(items[2]).toContain('12-18 sentences')
+  })
+
+  // The point of the presets: each asks for a different kind of summary, not
+  // the same one at three lengths. If two levels ever send the same detail, the
+  // three choices stop meaning anything.
+  it('sends a distinct detail level for each preset', async () => {
+    mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
+
+    const levels: Record<string, unknown> = {}
+    for (const label of ['Short', 'Medium', 'Long']) {
+      mockSummarize.mockClear()
+      const wrapper = mountItemContent(makeItem())
+      await openSummaryLengthMenu(wrapper)
+      clickSummaryLengthItem(label)
+      await flushPromises()
+      const btn = wrapper.findAll('button').find(b => (b.text() || '') === 'Summarize')
+      await btn!.trigger('click')
+      await flushPromises()
+      const calls = mockSummarize.mock.calls
+      const opts = (calls[calls.length - 1]?.[1] ?? {}) as Record<string, unknown>
+      levels[label] = opts
+    }
+
+    const details = Object.values(levels).map(o => (o as { detail?: string }).detail)
+    expect(details).toEqual(['gist', 'balanced', 'detailed'])
+    // Ranges must be strictly increasing, so Short < Medium < Long holds.
+    const maxes = Object.values(levels).map(o => (o as { max_sentences: number }).max_sentences)
+    expect(maxes[0]).toBeLessThan(maxes[1])
+    expect(maxes[1]).toBeLessThan(maxes[2])
   })
 
   it('marks the selected length only inside the dropdown', async () => {
@@ -335,7 +364,7 @@ describe('ItemContent summarize button', () => {
     await clickSummaryLengthItem('Long')
 
     expect(mockSummarize).toHaveBeenCalledTimes(2)
-    expect(mockSummarize).toHaveBeenLastCalledWith(1, { sentence_count: 15, min_sentences: 10, max_sentences: 15 })
+    expect(mockSummarize).toHaveBeenLastCalledWith(1, { sentence_count: 18, min_sentences: 12, max_sentences: 18, detail: 'detailed' })
   })
 
   it('remembers the picked length for the next summary without refetching before one exists', async () => {
@@ -355,7 +384,7 @@ describe('ItemContent summarize button', () => {
     const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))!
     await btn.trigger('click')
     await flushPromises()
-    expect(mockSummarize).toHaveBeenCalledWith(1, { sentence_count: 3, min_sentences: 2, max_sentences: 3 })
+    expect(mockSummarize).toHaveBeenCalledWith(1, { sentence_count: 2, min_sentences: 1, max_sentences: 2, detail: 'gist' })
   })
 
   it('resets summary when item changes', async () => {
