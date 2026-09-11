@@ -119,7 +119,12 @@ func main() {
 
 	handler := spaHandler(server, staticFileSystem())
 
-	slog.Info("starting digesterr", "port", cfg.Server.Port, "log_level", resolveLogLevel(cfg.Logging.Level).String(), "config", path)
+	// Log the effective LLM model. Environment variables override the config
+	// file (applyEnv runs last), so the value the binary actually uses is not
+	// necessarily the one written in the YAML — without this line there is no
+	// way to tell which model is in effect. The API key is never logged.
+	slog.Info("starting digesterr", "port", cfg.Server.Port, "log_level", resolveLogLevel(cfg.Logging.Level).String(), "config", path,
+		"llm_model", cfg.LLM.Model, "llm_configured", cfg.LLM.APIKey != "")
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", cfg.Server.Port), handler); err != nil {
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
