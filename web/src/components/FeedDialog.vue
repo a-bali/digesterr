@@ -6,6 +6,7 @@ import Input from './ui/Input.vue'
 import Select from './ui/Select.vue'
 import Button from './ui/Button.vue'
 import { SCORE_FEED_TYPES, feedUrlFor } from '../lib/feeds'
+import { feedApi } from '../services/api'
 import type { Feed } from '../types/api'
 
 const props = defineProps<{ feed: Feed | null }>()
@@ -41,22 +42,65 @@ const typeLabel = (t: string) => ({ rss: 'RSS / Atom', hn: 'Hacker News', lobste
 // tweets already carry their full content from the API.
 const extractionSupported = computed(() => form.type !== 'twitter')
 
+// True while the name in the field came from the lookup rather than the user.
+// It lets a new URL replace an auto-filled name, while a typed name is never
+// overwritten.
+const nameFromLookup = ref(false)
+
 function onTypeChange(type: string) {
   form.type = type
   form.url = ''
+  // A name that came from the lookup belongs to the old type's URL, so it is
+  // dropped with it; a name the user typed is left alone.
+  if (nameFromLookup.value) {
+    form.name = ''
+    nameFromLookup.value = false
+  }
   // The minimum-score field is disabled for non-score feed types, so the
   // value is reset when switching away from a score-capable type.
   if (!SCORE_FEED_TYPES.has(type)) form.min_score = 0
   // Extraction is unsupported for twitter; never leave a stale flag on.
   if (!extractionSupported.value) form.extract_content = 0
   // Fixed URLs for the built-in score feed types (shared with FeedSidebar).
-  if (type === 'hn' || type === 'lobsters') form.url = feedUrlFor(type, '')
+  if (type === 'hn' || type === 'lobsters') {
+    form.url = feedUrlFor(type, '')
+    // The URL is known the moment the type is picked, so there is no field to
+    // leave — look the name up right away.
+    void prefillName()
+  }
+}
+
+// prefillName asks the backend for the name the feed declares for itself and
+// fills the name field with it — but only when the field is still empty (or
+// holds a previous lookup result). Any failure is silent: the user types the
+// name themselves, which is the pre-existing behaviour.
+async function prefillName() {
+  if (props.feed) return // editing keeps the existing name
+  if (form.name.trim() !== '' && !nameFromLookup.value) return
+  const type = form.type
+  const raw = form.url.trim()
+  if (!raw) return
+  const url = feedUrlFor(type, raw)
+  if (!url) return
+  try {
+    const { name } = await feedApi.discover(type, url)
+    // Drop a stale answer: the user may have changed the type or URL while the
+    // lookup was in flight, or started typing a name.
+    if (!name) return
+    if (form.type !== type || form.url.trim() !== raw) return
+    if (form.name.trim() !== '' && !nameFromLookup.value) return
+    form.name = name
+    nameFromLookup.value = true
+  } catch {
+    /* lookup failed — leave the name for the user to type */
+  }
 }
 
 watch(
   () => props.feed,
   () => {
     confirmDelete.value = false
+    nameFromLookup.value = false
     if (props.feed) {
       const feed = props.feed
       form.type = feed.type
@@ -110,7 +154,7 @@ const dialogId = Math.random().toString(36).slice(2)
       </div>
       <div class="space-y-1">
         <label class="text-sm font-medium">Name</label>
-        <Input v-model="form.name" placeholder="Feed name" required />
+        <Input v-model="form.name" placeholder="Feed name" required @input="nameFromLookup = false" />
       </div>
       <div v-if="form.type === 'hn' || form.type === 'lobsters'" class="space-y-1">
         <label class="text-sm font-medium">URL</label>
@@ -120,19 +164,19 @@ const dialogId = Math.random().toString(36).slice(2)
         <label class="text-sm font-medium">URL</label>
         <div class="flex items-center gap-0">
           <span class="text-xs text-muted-foreground bg-muted rounded-l-md px-2 py-1.5 border border-border border-r-0 whitespace-nowrap">https://www.reddit.com/r/</span>
-          <Input v-model="form.url" placeholder="subreddit" required />
+          <Input v-model="form.url" placeholder="subreddit" required @blur="prefillName" />
         </div>
       </div>
       <div v-else-if="form.type === 'twitter'" class="space-y-1">
         <label class="text-sm font-medium">URL</label>
         <div class="flex items-center gap-0">
           <span class="text-xs text-muted-foreground bg-muted rounded-l-md px-2 py-1.5 border border-border border-r-0 whitespace-nowrap">https://x.com/</span>
-          <Input v-model="form.url" placeholder="username" required class="rounded-none" />
+          <Input v-model="form.url" placeholder="username" required class="rounded-none" @blur="prefillName" />
         </div>
       </div>
       <div v-else class="space-y-1">
         <label class="text-sm font-medium">URL</label>
-        <Input v-model="form.url" placeholder="Feed URL" required />
+        <Input v-model="form.url" placeholder="Feed URL" required @blur="prefillName" />
       </div>
       <label class="flex items-center gap-2 text-sm" :class="extractionSupported ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'">
         <input

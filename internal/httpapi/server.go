@@ -126,6 +126,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 
 	mux.HandleFunc("GET /api/feeds", s.requireAuth(s.handleListFeeds))
 	mux.HandleFunc("POST /api/feeds", s.requireAuth(s.handleCreateFeed))
+	mux.HandleFunc("POST /api/feeds/discover", s.requireAuth(s.handleDiscoverFeed))
 	mux.HandleFunc("GET /api/feeds/{id}", s.requireAuth(s.handleGetFeed))
 	mux.HandleFunc("PATCH /api/feeds/{id}", s.requireAuth(s.handleUpdateFeed))
 	mux.HandleFunc("DELETE /api/feeds/{id}", s.requireAuth(s.handleDeleteFeed))

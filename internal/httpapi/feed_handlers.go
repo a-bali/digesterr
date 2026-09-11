@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"digesterr/internal/store"
 )
@@ -57,6 +58,42 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, feed)
+}
+
+// discoverFeedRequest asks for the name a feed declares for itself, so the
+// add-feed form can prefill the name field from the URL alone.
+type discoverFeedRequest struct {
+	Type string `json:"type"`
+	URL  string `json:"url"`
+}
+
+// discoverTimeout bounds the upstream fetch behind name discovery.
+const discoverTimeout = 20 * time.Second
+
+// handleDiscoverFeed returns the name a feed gives itself ({type, url} ->
+// {name}). Discovery is a convenience for the add-feed form, so an unreachable
+// feed or a type without configured credentials answers with an empty name
+// rather than an error — the user simply types the name.
+func (s *Server) handleDiscoverFeed(w http.ResponseWriter, r *http.Request) {
+	var req discoverFeedRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.Type = strings.TrimSpace(req.Type)
+	req.URL = strings.TrimSpace(req.URL)
+	if req.Type == "" || req.URL == "" {
+		writeError(w, http.StatusBadRequest, "type and url are required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), discoverTimeout)
+	defer cancel()
+	name, err := s.poller.DiscoverFeedName(ctx, req.Type, req.URL)
+	if err != nil {
+		slog.Debug("feed name discovery failed", "type", req.Type, "url", req.URL, "error", err)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": name})
 }
 
 func (s *Server) handleListFeeds(w http.ResponseWriter, r *http.Request) {

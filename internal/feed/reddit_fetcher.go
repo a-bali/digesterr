@@ -282,6 +282,68 @@ func (f *RedditFetcher) Fetch(ctx context.Context, feedURL string) ([]Item, erro
 	return f.parseListing(body, subreddit)
 }
 
+// SubredditName resolves a subreddit feed URL to its display name in the
+// "r/<name>" form (e.g. "r/golang"), taken from Reddit's own about endpoint.
+// Used to prefill a feed's name when the user only supplies the subreddit.
+func (f *RedditFetcher) SubredditName(ctx context.Context, feedURL string) (string, error) {
+	subreddit := extractSubreddit(feedURL)
+	if subreddit == "" {
+		return "", fmt.Errorf("could not extract subreddit from %q", feedURL)
+	}
+
+	if err := f.ensureToken(ctx); err != nil {
+		return "", fmt.Errorf("auth: %w", err)
+	}
+
+	if err := waitLimiter(ctx, f.limiter); err != nil {
+		return "", fmt.Errorf("rate limit: %w", err)
+	}
+
+	// raw_json=1 keeps the name unescaped (no &amp; etc. in display_name).
+	apiURL := fmt.Sprintf("%s/r/%s/about.json?raw_json=1", f.apiBaseURL, subreddit)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+f.token)
+	req.Header.Set("User-Agent", f.userAgent)
+
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetching subreddit %s: %w", subreddit, err)
+	}
+	defer resp.Body.Close()
+	f.recordQuotaHeaders(resp.Header)
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("Reddit API returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return "", fmt.Errorf("reading response: %w", err)
+	}
+
+	var about struct {
+		Data struct {
+			DisplayNamePrefixed string `json:"display_name_prefixed"`
+			DisplayName         string `json:"display_name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &about); err != nil {
+		return "", fmt.Errorf("decoding subreddit about response: %w", err)
+	}
+	name := strings.TrimSpace(about.Data.DisplayNamePrefixed)
+	if name == "" && about.Data.DisplayName != "" {
+		name = "r/" + strings.TrimSpace(about.Data.DisplayName)
+	}
+	if name == "" {
+		return "", fmt.Errorf("subreddit %q has no display name", subreddit)
+	}
+	return name, nil
+}
+
 // galleryMediaURL picks the best URL from a media source, preferring
 // the static image (s.u), then GIF (s.gif), then MP4 (s.mp4). Animated
 // images from Reddit use gif/mp4 instead of u.

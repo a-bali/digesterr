@@ -121,6 +121,10 @@ export const feedApi = {
   list: () => api<Feed[]>('/feeds'),
   create: (data: { category?: string; type: string; name: string; url: string; extract_content?: number; min_score?: number }) =>
     api<Feed>('/feeds', { method: 'POST', body: JSON.stringify(data) }),
+  // Resolve the name a feed declares for itself, used to prefill the name
+  // field in the add-feed dialog when the user only supplies a URL.
+  discover: (type: string, url: string) =>
+    api<{ name: string }>('/feeds/discover', { method: 'POST', body: JSON.stringify({ type, url }) }),
   update: (id: number, data: Partial<Feed>) =>
     api<Feed>(`/feeds/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   delete: (id: number) => api<void>(`/feeds/${id}`, { method: 'DELETE' }),

@@ -29,6 +29,15 @@ func NewRSSFetcher() *RSSFetcher {
 }
 
 func (f *RSSFetcher) Fetch(ctx context.Context, feedURL string) ([]Item, error) {
+	body, err := f.fetchBody(ctx, feedURL)
+	if err != nil {
+		return nil, err
+	}
+	return f.parse(body)
+}
+
+// fetchBody performs the HTTP GET shared by Fetch and FeedTitle.
+func (f *RSSFetcher) fetchBody(ctx context.Context, feedURL string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feedURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
@@ -41,12 +50,41 @@ func (f *RSSFetcher) Fetch(ctx context.Context, feedURL string) ([]Item, error) 
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("feed returned status %d", resp.StatusCode)
+	}
+
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
+	return body, nil
+}
 
-	return f.parse(body)
+// FeedTitle fetches the feed and returns the title it declares for itself:
+// the RSS channel title or the Atom feed title. Callers use it to prefill a
+// feed's name when the user only supplied a URL.
+func (f *RSSFetcher) FeedTitle(ctx context.Context, feedURL string) (string, error) {
+	body, err := f.fetchBody(ctx, feedURL)
+	if err != nil {
+		return "", err
+	}
+	switch detectFeedFormat(body) {
+	case "rss":
+		feed, err := (&rss.Parser{}).Parse(bytes.NewReader(body))
+		if err != nil {
+			return "", fmt.Errorf("parsing RSS: %w", err)
+		}
+		return stripHTMLTags(strings.TrimSpace(feed.Title)), nil
+	case "atom":
+		feed, err := (&atom.Parser{}).Parse(bytes.NewReader(body))
+		if err != nil {
+			return "", fmt.Errorf("parsing Atom: %w", err)
+		}
+		return stripHTMLTags(strings.TrimSpace(feed.Title)), nil
+	default:
+		return "", fmt.Errorf("unsupported feed format: %s", detectFeedFormat(body))
+	}
 }
 
 func (f *RSSFetcher) parse(data []byte) ([]Item, error) {

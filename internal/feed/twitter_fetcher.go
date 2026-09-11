@@ -490,10 +490,50 @@ func (f *TwitterFetcher) userID(ctx context.Context, screenName string) (string,
 	}
 	f.mu.Unlock()
 
+	u, err := f.userByScreenName(ctx, screenName)
+	if err != nil {
+		return "", err
+	}
+	f.mu.Lock()
+	f.userIDs[screenName] = twitterUserIDEntry{id: u.ID, fetched: time.Now()}
+	f.mu.Unlock()
+	return u.ID, nil
+}
+
+// UserDisplayName resolves a user's profile display name (e.g. "Elon Musk")
+// from a feed URL like https://x.com/elonmusk. Used to prefill a feed's name
+// when the user only supplies the handle.
+func (f *TwitterFetcher) UserDisplayName(ctx context.Context, feedURL string) (string, error) {
+	screenName := extractTwitterScreenName(feedURL)
+	if screenName == "" {
+		return "", fmt.Errorf("could not extract Twitter screen name from %q", feedURL)
+	}
+	u, err := f.userByScreenName(ctx, screenName)
+	if err != nil {
+		return "", err
+	}
+	name := u.Name
+	if name == "" {
+		name = screenName
+	}
+	return name, nil
+}
+
+// twitterUserByScreenName is the decoded subset of a UserByScreenName
+// response the fetcher needs: the numeric id and the profile's display name.
+type twitterUserByScreenName struct {
+	ID         string
+	Name       string
+	ScreenName string
+}
+
+// userByScreenName performs the UserByScreenName GraphQL request and returns
+// the account's id, display name, and handle.
+func (f *TwitterFetcher) userByScreenName(ctx context.Context, screenName string) (twitterUserByScreenName, error) {
 	variables := fmt.Sprintf(`{"screen_name":%q,"withGrokTranslatedBio":false}`, screenName)
 	body, err := f.gqlGet(ctx, twitterUserByScreenNameQuery, variables)
 	if err != nil {
-		return "", err
+		return twitterUserByScreenName{}, err
 	}
 	var resp struct {
 		Data struct {
@@ -501,6 +541,7 @@ func (f *TwitterFetcher) userID(ctx context.Context, screenName string) (string,
 				Result struct {
 					ID     string `json:"rest_id"`
 					Legacy struct {
+						Name       string `json:"name"`
 						ScreenName string `json:"screen_name"`
 					} `json:"legacy"`
 				} `json:"result"`
@@ -508,15 +549,16 @@ func (f *TwitterFetcher) userID(ctx context.Context, screenName string) (string,
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", fmt.Errorf("decoding UserByScreenName response: %w", err)
+		return twitterUserByScreenName{}, fmt.Errorf("decoding UserByScreenName response: %w", err)
 	}
 	if resp.Data.User.Result.ID == "" {
-		return "", fmt.Errorf("Twitter user %q not found", screenName)
+		return twitterUserByScreenName{}, fmt.Errorf("Twitter user %q not found", screenName)
 	}
-	f.mu.Lock()
-	f.userIDs[screenName] = twitterUserIDEntry{id: resp.Data.User.Result.ID, fetched: time.Now()}
-	f.mu.Unlock()
-	return resp.Data.User.Result.ID, nil
+	return twitterUserByScreenName{
+		ID:         resp.Data.User.Result.ID,
+		Name:       strings.TrimSpace(resp.Data.User.Result.Legacy.Name),
+		ScreenName: resp.Data.User.Result.Legacy.ScreenName,
+	}, nil
 }
 
 // twitterTweetResult mirrors the subset of a TweetResults GraphQL node the
