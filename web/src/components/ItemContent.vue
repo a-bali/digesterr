@@ -462,6 +462,11 @@ onUnmounted(() => {
           <div v-else-if="summaryData" class="space-y-3">
             <p v-if="summaryData.content_summary" class="text-sm leading-relaxed">{{ summaryData.content_summary }}</p>
             <p v-if="summaryData.comments_summary" class="text-sm leading-relaxed">{{ summaryData.comments_summary }}</p>
+            <!-- The reply was unusable (undecodable JSON is dropped rather than
+                 rendered), so say so instead of showing an empty section. -->
+            <p v-if="!summaryData.content_summary && !summaryData.comments_summary" data-summary-empty class="text-sm text-muted-foreground">
+              The model did not return a usable summary. Try again.
+            </p>
           </div>
         </template>
       </template>

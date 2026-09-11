@@ -157,6 +157,21 @@ type summarizeResponse struct {
 	CommentsSummary string `json:"comments_summary"`
 }
 
+// unwrapJSONString handles a model that double-encodes its answer: the reply is
+// a JSON string whose value is the object we actually asked for
+// ("{\"content_summary\": ...}"). One Unmarshal yields that inner document.
+func unwrapJSONString(raw string) (string, bool) {
+	var s string
+	if err := json.Unmarshal([]byte(raw), &s); err != nil {
+		return "", false
+	}
+	s = strings.TrimSpace(s)
+	if s == "" || !strings.Contains(s, "{") {
+		return "", false
+	}
+	return s, true
+}
+
 // decodeSummary reads the two expected fields out of a JSON object. Values are
 // accepted as strings; a model that nests the object one level deeper is
 // unwrapped rather than thrown away.
@@ -262,11 +277,11 @@ func firstJSONObject(s string) (string, bool) {
 // parseSummaryResponse turns the model's reply into the two summary fields.
 //
 // The prompt asks for bare JSON, but models routinely wrap it in a markdown
-// code fence (```json ... ```) or add a sentence before or after it. Sending
-// that straight back made the UI render raw JSON where the summary should be,
-// so the JSON is located and unwrapped first. A reply with no usable object is
-// kept verbatim as the content summary rather than dropped — plain prose is a
-// legitimate answer and losing it would be worse than showing it.
+// code fence (```json ... ```), surround it with prose, or double-encode it as
+// a JSON string. Each shape is unwrapped in turn. Anything left that still
+// looks like JSON is dropped rather than rendered — passing it through is how
+// raw JSON ended up in the pane — while prose, which is a legitimate answer, is
+// kept verbatim.
 func parseSummaryResponse(raw string) summarizeResponse {
 	text := strings.TrimSpace(raw)
 	if text == "" {
@@ -276,12 +291,39 @@ func parseSummaryResponse(raw string) summarizeResponse {
 	if parsed, ok := decodeSummary(text); ok {
 		return parsed
 	}
+	// A fence or surrounding prose: take the outermost object in the reply.
 	if obj, ok := firstJSONObject(text); ok {
 		if parsed, ok := decodeSummary(obj); ok {
 			return parsed
 		}
 	}
+	// A double-encoded reply: the whole thing is a JSON string, so unwrap it
+	// first and then look for the object inside.
+	if inner, ok := unwrapJSONString(text); ok {
+		if obj, ok := firstJSONObject(inner); ok {
+			if parsed, ok := decodeSummary(obj); ok {
+				return parsed
+			}
+		}
+	}
+	// Everything above failed, so the reply is not decodable JSON. Handing it
+	// back verbatim is how the pane ended up rendering raw JSON, so JSON-looking
+	// text is dropped instead. Plain prose is still a legitimate answer and is
+	// kept — losing it would be worse than showing it.
+	if looksLikeJSON(text) {
+		return summarizeResponse{}
+	}
 	return summarizeResponse{ContentSummary: text}
+}
+
+// looksLikeJSON reports whether a reply is JSON that we failed to decode, as
+// opposed to prose that merely happens to be the model's answer.
+func looksLikeJSON(text string) bool {
+	t := strings.TrimSpace(text)
+	if strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") {
+		return true
+	}
+	return strings.Contains(t, `"content_summary"`) || strings.Contains(t, `"comments_summary"`)
 }
 
 

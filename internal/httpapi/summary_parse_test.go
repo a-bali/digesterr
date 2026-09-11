@@ -78,9 +78,29 @@ func TestParseSummaryResponse(t *testing.T) {
 			want:  summarizeResponse{},
 		},
 		{
-			name:  "unrelated JSON is kept verbatim rather than dropped",
+			// Changed deliberately: JSON that carries none of our keys cannot be
+			// a usable summary, and passing it through is precisely how raw JSON
+			// reached the pane. Prose is still kept (see the case above).
+			name:  "undecodable JSON is dropped rather than rendered",
 			reply: `{"unexpected":"value"}`,
-			want:  summarizeResponse{ContentSummary: `{"unexpected":"value"}`},
+			want:  summarizeResponse{},
+		},
+		{
+			// Some models double-encode: the reply is a JSON string whose value
+			// is the object we asked for.
+			name:  "JSON string wrapping the object",
+			reply: `"{\"content_summary\":\"Wrapped summary.\",\"comments_summary\":\"Wrapped comments.\"}"`,
+			want:  summarizeResponse{ContentSummary: "Wrapped summary.", CommentsSummary: "Wrapped comments."},
+		},
+		{
+			name:  "JSON string wrapping a fenced object",
+			reply: "\"```json\\n{\\\"content_summary\\\":\\\"Fenced and wrapped.\\\"}\\n```\"",
+			want:  summarizeResponse{ContentSummary: "Fenced and wrapped."},
+		},
+		{
+			name:  "truncated JSON is dropped, not shown",
+			reply: `{"content_summary":"The article argues that ADAS reduces crashe`,
+			want:  summarizeResponse{},
 		},
 	}
 
