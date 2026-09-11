@@ -77,13 +77,7 @@ useKeyboardShortcuts({
     if (item.status === 'saved') unsaveItem(item)
     else feedStore.updateItemStatus(item, 'saved')
   },
-  markAllRead: () => {
-    if (feedStore.activeFeedId) {
-      requestMarkFeedRead(feedStore.activeFeedId)
-    } else if (feedStore.isMultiView) {
-      feedStore.markAllRead(feedStore.activeCategory ?? undefined)
-    }
-  },
+  markAllRead: markAllReadInCurrentView,
   markAllReadDialogOpen,
   toggleShowRead: () => {
     feedStore.changeFilter(feedStore.filter === 'unread' ? 'all' : 'unread')
@@ -325,6 +319,18 @@ function markAllReadDialogOpen() {
   return sidebarRef.value?.markAllReadDialogOpen ?? false
 }
 
+// "Mark all as read" for whatever the middle pane is showing. The keyboard
+// shortcut and the pane's own button both come through here so they cannot
+// disagree on scope. A category marks that category, the "Feeds" section marks
+// every feed; a single feed still asks for confirmation first.
+function markAllReadInCurrentView() {
+  if (feedStore.isMultiView) {
+    feedStore.markAllRead(feedStore.activeCategory ?? undefined)
+  } else if (feedStore.activeFeedId) {
+    requestMarkFeedRead(feedStore.activeFeedId)
+  }
+}
+
 // ---- Page title ----
 const totalUnread = computed(() => {
   let n = 0
@@ -430,8 +436,8 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
 
           <SplitterPanel :default-size="30" :min-size="20" :max-size="50">
-            <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="border-r" @select="onSelectDigestResult" @mark-all-read="digestStore.markAllRead()" />
-            <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="requestMarkFeedRead(feedStore.activeFeedId!)" />
+            <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="border-r" @select="onSelectDigestResult" @mark-all-read="digestStore.markAllRead(digestStore.activeConfigId ?? undefined)" />
+            <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="markAllReadInCurrentView" />
           </SplitterPanel>
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
 
@@ -469,8 +475,8 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
             class="absolute inset-0 flex flex-col transition-transform duration-200"
             :class="!isTablet && showContentPane ? '-translate-x-full pointer-events-none' : 'static w-full h-full'"
           >
-              <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="flex-1 min-h-0" @select="onSelectDigestResult" @mark-all-read="digestStore.markAllRead()" />
-              <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="requestMarkFeedRead(feedStore.activeFeedId!)" />
+              <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="flex-1 min-h-0" @select="onSelectDigestResult" @mark-all-read="digestStore.markAllRead(digestStore.activeConfigId ?? undefined)" />
+              <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="markAllReadInCurrentView" />
           </div>
         </div>
 
