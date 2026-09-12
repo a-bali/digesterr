@@ -324,7 +324,11 @@ function fetchTopComments(refresh = false) {
   }, delay)
 }
 
-// Cancel in-flight extraction poll when a different item is selected.
+// Reset per-item state and debounce-fetch comments for the newly selected item.
+// immediate: below the lg breakpoint HomeView wraps this pane in a keyed
+// <Transition>, so selecting an item remounts the component — the item arrives
+// as the watcher's initial value rather than a change, and without this the
+// comments were never fetched for the item the pane was mounted with.
 watch(
   () => feedStore.selectedItem?.id,
   () => {
@@ -340,6 +344,7 @@ watch(
     summaryLoading.value = false
     summaryToken++
   },
+  { immediate: true },
 )
 
 onUnmounted(() => {

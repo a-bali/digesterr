@@ -9,12 +9,13 @@ import type { Feed, Item } from '../types/api'
 
 // Mock the itemApi module so summarize calls go through our mock.
 const mockSummarize = vi.fn()
+const mockGetComments = vi.fn()
 vi.mock('../services/api', () => ({
   itemApi: {
     getItem: vi.fn().mockResolvedValue({}),
     extract: vi.fn().mockResolvedValue({}),
     summarize: (...args: any[]) => mockSummarize(...args),
-    getComments: vi.fn().mockResolvedValue({ comments: [], cached: false }),
+    getComments: (...args: any[]) => mockGetComments(...args),
     updateStatus: vi.fn().mockResolvedValue({}),
   },
 }))
@@ -168,6 +169,10 @@ describe('ItemContent scroll-to-comments', () => {
     const url = 'https://example.com/article'
     const wrapper = mountItemContent(makeItem({ comment_url: 'https://example.com/c' }))
     const vm = wrapper.vm as any
+    // Mounting with a comment-bearing item now starts the on-demand fetch, whose
+    // in-flight state renders skeletons in place of the list. Clear it so the
+    // injected comments are what gets rendered.
+    vm.commentsLoading = false
     vm.topComments = [
       {
         author: 'alice',
@@ -435,5 +440,49 @@ describe('ItemContent summarize button', () => {
     expect(wrapper.text()).not.toContain('The summary text.')
     // Header should still be visible.
     expect(wrapper.text()).toContain('LLM Summary')
+  })
+})
+
+describe('ItemContent comment fetch on mount', () => {
+  // HomeView's tablet/mobile branch wraps this pane in a keyed <Transition>,
+  // so selecting an item mounts a NEW instance with the item already selected.
+  // The watcher therefore sees the item as its initial value, never as a change.
+  const commentUrl = 'https://www.reddit.com/r/hu/comments/1we9rs8/slug/'
+
+  beforeEach(() => {
+    mockGetComments.mockReset()
+    mockGetComments.mockResolvedValue({
+      comments: [{ author: 'alice', text: 'Great post!', points: 3, valid_points: true, url: '' }],
+      cached: false,
+    })
+  })
+
+  it('fetches comments for the item the pane is mounted with', async () => {
+    const wrapper = mountItemContent(makeItem({ id: 42, comment_url: commentUrl, comments_count: 7 }))
+
+    await vi.waitFor(() => expect(mockGetComments).toHaveBeenCalled())
+    expect(mockGetComments).toHaveBeenCalledWith(42, { limit: 5, refresh: false })
+    expect(wrapper.text()).toContain('alice')
+  })
+
+  it('still fetches when the selection changes after mount', async () => {
+    const wrapper = mountItemContent(makeItem({ id: 42, comment_url: commentUrl, comments_count: 7 }))
+    await vi.waitFor(() => expect(mockGetComments).toHaveBeenCalledTimes(1))
+
+    useFeedStore().selectedItem = makeItem({ id: 43, comment_url: commentUrl, comments_count: 9 })
+    await vi.waitFor(() => expect(mockGetComments).toHaveBeenCalledTimes(2))
+    expect(mockGetComments).toHaveBeenLastCalledWith(43, { limit: 5, refresh: false })
+    expect(wrapper.text()).toContain('alice')
+  })
+
+  it('does not fetch when mounted with no selection', async () => {
+    const wrapper = mountItemContent(null)
+
+    // Give the mount-time path longer than its 200ms debounce to fire.
+    await new Promise(resolve => setTimeout(resolve, 300))
+    await flushPromises()
+
+    expect(mockGetComments).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Select an item')
   })
 })
