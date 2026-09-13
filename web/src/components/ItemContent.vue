@@ -300,7 +300,15 @@ let commentFetchTimeout: ReturnType<typeof setTimeout> | null = null
 function fetchTopComments(refresh = false) {
   const item = feedStore.selectedItem
   if (!item || !item.comment_url && item.comments_count <= 0) {
+    // No comments to fetch: drop any request still in flight for the previous
+    // item (its response would otherwise land here and render that item's
+    // comments) and clear the loading flag, or the new item shows a skeleton
+    // that never resolves.
+    commentFetchToken++
+    if (commentFetchTimeout) clearTimeout(commentFetchTimeout)
+    commentFetchTimeout = null
     topComments.value = []
+    commentsLoading.value = false
     return
   }
   const token = ++commentFetchToken
@@ -338,11 +346,17 @@ watch(
     commentsCollapsed.value = false
     commentsCached.value = false
     fetchTopComments()
-    // Reset summary state.
+    // Reset summary state, including the block-collapse flags the summary
+    // action set. Those flags are per-item UI state: summarizing folds the
+    // Extracted/Original bodies away, and without resetting them here the
+    // *next* item opened with both bodies already collapsed.
     summaryData.value = null
     summaryLength.value = 'medium'
+    summaryCollapsed.value = false
     summaryLoading.value = false
     summaryToken++
+    extractedCollapsed.value = false
+    originalCollapsed.value = false
   },
   { immediate: true },
 )

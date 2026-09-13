@@ -415,6 +415,43 @@ describe('ItemContent summarize button', () => {
     expect(wrapper.text()).not.toContain('LLM Summary')
   })
 
+  // Summarizing folds the bodies it was built from away. That folding is
+  // per-item state: it must not follow the reader to the next item.
+  it('does not carry the summary collapse into the next item', async () => {
+    mockSummarize.mockResolvedValue({
+      content_summary: 'Summary.',
+      comments_summary: 'Comments.',
+    })
+
+    const wrapper = mountItemContent(makeItem({ id: 1 }))
+    const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))!
+    await btn.trigger('click')
+    await vi.dynamicImportSettled()
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    // Summarizing folded both bodies on the item it summarized.
+    expect(wrapper.text()).not.toContain('Extracted body')
+    expect(wrapper.text()).not.toContain('Original body')
+
+    useFeedStore().selectedItem = makeItem({
+      id: 2,
+      title: 'Other',
+      content: '<p>Other original body</p>',
+      extract_content: '<p>Other extracted body</p>',
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    // The new item's bodies are visible without any manual expanding.
+    expect(wrapper.text()).toContain('Other extracted body')
+    expect(wrapper.text()).toContain('Other original body')
+    const collapsedState = (label: string) =>
+      wrapper.findAll('button').find(b => b.text().startsWith(label))?.attributes('aria-expanded')
+    expect(collapsedState('Extracted')).toBe('true')
+    expect(collapsedState('Original')).toBe('true')
+  })
+
   it('collapses summary section on toggle', async () => {
     mockSummarize.mockResolvedValue({
       content_summary: 'The summary text.',
@@ -484,5 +521,39 @@ describe('ItemContent comment fetch on mount', () => {
 
     expect(mockGetComments).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('Select an item')
+  })
+
+  // Per-item comment state again: switching to an item that has no comments
+  // must both cancel the in-flight request for the previous item and clear the
+  // loading flag, or the new item inherits a stale skeleton (and, once the old
+  // response lands, the old item's comments).
+  it('clears in-flight comments when switching to an item without any', async () => {
+    let resolvePrevious: (value: any) => void = () => {}
+    mockGetComments.mockReturnValueOnce(
+      new Promise(resolve => { resolvePrevious = resolve }),
+    )
+
+    const wrapper = mountItemContent(makeItem({ id: 42, comment_url: commentUrl, comments_count: 7 }))
+    // Let the debounce fire so the request is genuinely in flight.
+    await new Promise(resolve => setTimeout(resolve, 300))
+    await flushPromises()
+    expect(mockGetComments).toHaveBeenCalledTimes(1)
+
+    // Switch to an item with no comment source at all.
+    useFeedStore().selectedItem = makeItem({ id: 43, comment_url: '', comments_count: 0 })
+    await flushPromises()
+
+    // No skeleton section left behind.
+    expect(wrapper.text()).not.toContain('Top Comments')
+
+    // And the late response for the previous item must not render here.
+    resolvePrevious({
+      comments: [{ author: 'alice', text: 'Great post!', points: 3, valid_points: true, url: '' }],
+      cached: false,
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('alice')
+    expect(wrapper.text()).not.toContain('Top Comments')
   })
 })
