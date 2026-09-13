@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"digesterr/internal/digest"
+	"digesterr/internal/llmjson"
 	"digesterr/internal/logging"
 	"digesterr/internal/store"
 )
@@ -203,21 +204,6 @@ type summarizeResponse struct {
 	CommentsSummary string `json:"comments_summary"`
 }
 
-// unwrapJSONString handles a model that double-encodes its answer: the reply is
-// a JSON string whose value is the object we actually asked for
-// ("{\"content_summary\": ...}"). One Unmarshal yields that inner document.
-func unwrapJSONString(raw string) (string, bool) {
-	var s string
-	if err := json.Unmarshal([]byte(raw), &s); err != nil {
-		return "", false
-	}
-	s = strings.TrimSpace(s)
-	if s == "" || !strings.Contains(s, "{") {
-		return "", false
-	}
-	return s, true
-}
-
 // decodeSummary reads the two expected fields out of a JSON object. Values are
 // accepted as strings; a model that nests the object one level deeper is
 // unwrapped rather than thrown away.
@@ -282,44 +268,6 @@ func stringField(v any) (string, bool) {
 	}
 }
 
-// firstJSONObject returns the outermost {...} span in s, ignoring braces inside
-// quoted strings so a brace in a summary does not end the scan early.
-func firstJSONObject(s string) (string, bool) {
-	start := strings.IndexByte(s, '{')
-	if start < 0 {
-		return "", false
-	}
-	depth := 0
-	inString := false
-	escaped := false
-	for i := start; i < len(s); i++ {
-		c := s[i]
-		if inString {
-			switch {
-			case escaped:
-				escaped = false
-			case c == '\\':
-				escaped = true
-			case c == '"':
-				inString = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inString = true
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return s[start : i+1], true
-			}
-		}
-	}
-	return "", false
-}
-
 // parseSummaryResponse turns the model's reply into the two summary fields.
 //
 // The prompt asks for bare JSON, but models routinely wrap it in a markdown
@@ -338,15 +286,15 @@ func parseSummaryResponse(raw string) summarizeResponse {
 		return parsed
 	}
 	// A fence or surrounding prose: take the outermost object in the reply.
-	if obj, ok := firstJSONObject(text); ok {
+	if obj, ok := llmjson.FirstObject(text); ok {
 		if parsed, ok := decodeSummary(obj); ok {
 			return parsed
 		}
 	}
 	// A double-encoded reply: the whole thing is a JSON string, so unwrap it
 	// first and then look for the object inside.
-	if inner, ok := unwrapJSONString(text); ok {
-		if obj, ok := firstJSONObject(inner); ok {
+	if inner, ok := llmjson.UnwrapString(text); ok {
+		if obj, ok := llmjson.FirstObject(inner); ok {
 			if parsed, ok := decodeSummary(obj); ok {
 				return parsed
 			}

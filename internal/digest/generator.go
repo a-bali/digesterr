@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"digesterr/internal/feed"
+	"digesterr/internal/llmjson"
 	"digesterr/internal/metrics"
 	"digesterr/internal/store"
 )
@@ -122,6 +123,50 @@ type digestItemRef struct {
 	ExtractedContent string       `json:"extracted_content,omitempty"`
 	LLMSummary       string       `json:"llm_summary,omitempty"`
 	TopComments      []commentRef `json:"top_comments,omitempty"`
+}
+
+// llmDigestOutput is the shape the digest prompt asks the model for.
+type llmDigestOutput struct {
+	Title      string `json:"title"`
+	Summary    string `json:"summary"`
+	Highlights []struct {
+		Title   string `json:"title"`
+		Summary string `json:"summary"`
+	} `json:"highlights"`
+}
+
+// decodeDigestOutput decodes the model's reply into llmDigestOutput, tolerating
+// the shapes models actually return: a bare object, a fenced code block, prose
+// wrapped around the object, or a double-encoded JSON string. The first shape
+// that yields an object wins; the returned error is the failure of the last
+// candidate, which is the one that describes why nothing decoded.
+func decodeDigestOutput(reply string) (llmDigestOutput, error) {
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" {
+		return llmDigestOutput{}, fmt.Errorf("empty reply")
+	}
+
+	candidates := []string{trimmed}
+	if obj, ok := llmjson.FirstObject(trimmed); ok {
+		candidates = append(candidates, obj)
+	}
+	if inner, ok := llmjson.UnwrapString(trimmed); ok {
+		candidates = append(candidates, inner)
+		if obj, ok := llmjson.FirstObject(inner); ok {
+			candidates = append(candidates, obj)
+		}
+	}
+
+	var err error
+	for _, candidate := range candidates {
+		var output llmDigestOutput
+		if unmarshalErr := json.Unmarshal([]byte(candidate), &output); unmarshalErr != nil {
+			err = unmarshalErr
+			continue
+		}
+		return output, nil
+	}
+	return llmDigestOutput{}, err
 }
 
 func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*store.DigestResult, error) {
@@ -700,27 +745,26 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 	}
 	genLogger.Info("LLM digest response received", "output_bytes", len(llmResponse), "duration", time.Since(llmStart))
 
-	type llmOutput struct {
-		Title      string `json:"title"`
-		Summary    string `json:"summary"`
-		Highlights []struct {
-			Title   string `json:"title"`
-			Summary string `json:"summary"`
-		} `json:"highlights"`
-	}
-	cleaned := strings.TrimSpace(llmResponse)
-	cleaned = strings.TrimPrefix(cleaned, "```json\n")
-	cleaned = strings.TrimPrefix(cleaned, "```json")
-	cleaned = strings.TrimPrefix(cleaned, "```\n")
-	cleaned = strings.TrimPrefix(cleaned, "```")
-	cleaned = strings.TrimSuffix(cleaned, "\n```")
-	cleaned = strings.TrimSuffix(cleaned, "```")
-	cleaned = strings.TrimSpace(cleaned)
-
-	var output llmOutput
-	if err := json.Unmarshal([]byte(cleaned), &output); err != nil {
-		genLogger.Error("failed to parse LLM response", "error", err, "output_bytes", len(llmResponse))
-		return nil, fmt.Errorf("parsing LLM response: %w", err)
+	output, err := decodeDigestOutput(llmResponse)
+	if err != nil {
+		// One corrective retry. Models that wrap, fence, or corrupt their JSON
+		// on the first attempt usually comply when the failure is quoted back;
+		// without this, a single stray token costs the whole digest run.
+		genLogger.Warn("LLM digest response was not valid JSON, retrying",
+			"error", err, "output_bytes", len(llmResponse), "response", llmjson.Excerpt(llmResponse, 500))
+		retryPrompt := userPrompt + "\n\nYour previous reply could not be parsed as JSON:\n  " + err.Error() +
+			"\nReply again with only the JSON object described above — no prose, no markdown code fences, no extra words."
+		retried, retryErr := g.llm.Chat(ctx, systemPrompt, retryPrompt)
+		if retryErr != nil {
+			return nil, fmt.Errorf("LLM chat failed on retry: %w", retryErr)
+		}
+		genLogger.Info("LLM digest response received on retry", "output_bytes", len(retried))
+		output, err = decodeDigestOutput(retried)
+		if err != nil {
+			genLogger.Error("failed to parse LLM response", "error", err,
+				"output_bytes", len(retried), "response", llmjson.Excerpt(retried, 500))
+			return nil, fmt.Errorf("parsing LLM response: %w (reply began: %s)", err, llmjson.Excerpt(retried, 500))
+		}
 	}
 	content.Title = output.Title
 	content.Summary = output.Summary
