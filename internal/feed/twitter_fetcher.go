@@ -1123,10 +1123,43 @@ func (t *twitterTweetResult) mediaHTML() string {
 	return b.String()
 }
 
+// twitterTextEntities matches the HTML entities X emits inside the text fields
+// of some tweets. X is inconsistent: most tweets arrive with a plain "&", but
+// some (verified live on x.com/OpenRouter) arrive carrying a literal "&amp;"
+// in legacy.full_text. Escaping that again produced "&amp;amp;", which the
+// reader renders literally as "&amp;".
+var twitterTextEntities = strings.NewReplacer(
+	"&amp;", "&",
+	"&lt;", "<",
+	"&gt;", ">",
+	"&quot;", `"`,
+	"&#39;", "'",
+	"&#x27;", "'",
+)
+
+// decodeTwitterEntities normalizes X's text fields to plain text, so the one
+// escaping pass in textToHTML produces exactly one level of entities.
+//
+// Critically this runs BEFORE t.co expansion: the entity-escaped form makes
+// X's own URL entities fail to match, so expanding first left the tweet's
+// real link markup inside the placeholders and dropped such links from the
+// body. Decoding first also means a "&amp;" that was really part of a URL
+// query string round-trips back to "&" and re-escapes correctly to "&amp;".
+//
+// Only the five HTML metacharacters are touched, and decoding happens once,
+// so this cannot be used to smuggle markup: textToHTML escapes everything
+// afterwards.
+func decodeTwitterEntities(s string) string { return twitterTextEntities.Replace(s) }
+
 // text returns the best available body text: long-form note tweets win over
 // the truncated legacy full_text; retweets resolve to the original tweet's
 // text with an "RT @author:" prefix preserved from full_text.
 func (t *twitterTweetResult) text() string {
+	return decodeTwitterEntities(t.rawText())
+}
+
+// rawText is text() before entity normalization.
+func (t *twitterTweetResult) rawText() string {
 	if t.Note != nil && t.Note.NoteTweet.Text != "" {
 		return t.Note.NoteTweet.Text
 	}
@@ -1136,11 +1169,13 @@ func (t *twitterTweetResult) text() string {
 // displayText is text() with t.co links expanded to their real destinations
 // (and media links dropped when the media itself is embedded).
 func (t *twitterTweetResult) displayText(embedMedia bool) string {
+	// Decode before expansion so X's URL entities still match (see
+	// decodeTwitterEntities).
 	if t.Note != nil && t.Note.NoteTweet.Text != "" {
 		// Note tweets keep their full text; still expand any t.co links.
-		return expandLinks(t.Note.NoteTweet.Text, &t.Legacy, embedMedia)
+		return expandLinks(decodeTwitterEntities(t.Note.NoteTweet.Text), &t.Legacy, embedMedia)
 	}
-	return expandLinks(t.Legacy.FullText, &t.Legacy, embedMedia)
+	return expandLinks(decodeTwitterEntities(t.Legacy.FullText), &t.Legacy, embedMedia)
 }
 
 // htmlEscaped escapes plain text for safe inclusion in HTML content.

@@ -114,6 +114,11 @@ func TestRedditEnricherEnrich(t *testing.T) {
 		if got := r.URL.Path; got != "/comments/1tlh5aj.json" {
 			t.Fatalf("expected path /comments/1tlh5aj.json, got %s", got)
 		}
+		// raw_json=1 keeps string fields unescaped; without it an ampersand
+		// in the URL arrives as "&amp;" and ends up corrupted in storage.
+		if r.URL.Query().Get("raw_json") != "1" {
+			t.Errorf("expected raw_json=1, got %q", r.URL.Query().Get("raw_json"))
+		}
 		w.Write(respBody)
 	}))
 	defer server.Close()
@@ -239,6 +244,11 @@ func TestRedditEnricherFetchComments(t *testing.T) {
 		if q.Get("limit") != "100" {
 			t.Errorf("expected limit=100, got %q", q.Get("limit"))
 		}
+		// Without raw_json=1 Reddit HTML-escapes bodies, so a literal "&"
+		// arrives as "&amp;" and the reader shows "&amp;". Verified live.
+		if q.Get("raw_json") != "1" {
+			t.Errorf("expected raw_json=1, got %q", q.Get("raw_json"))
+		}
 		w.Write(respBody)
 	}))
 	defer server.Close()
@@ -323,5 +333,42 @@ func TestRedditCredentialsMissingLogsError(t *testing.T) {
 	}
 	if rec.Level != slog.LevelError {
 		t.Errorf("missing-credentials record level = %v, want error", rec.Level)
+	}
+}
+
+// TestRedditEnricherBulkEnrichRequestsRawJSON covers the bulk path, which
+// shares the /api/info.json endpoint: without raw_json=1 Reddit escapes the
+// title/url fields and the escaping compounds downstream.
+func TestRedditEnricherBulkEnrichRequestsRawJSON(t *testing.T) {
+	db, err := testutil.OpenTestDB()
+	if err != nil {
+		t.Fatalf("failed to open test db: %v", err)
+	}
+	defer db.Close()
+	queries := store.New(db)
+
+	retrieved := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/api/info.json" {
+			t.Errorf("expected path /api/info.json, got %s", got)
+		}
+		if got := r.URL.Query().Get("raw_json"); got != "1" {
+			t.Errorf("expected raw_json=1, got %q", got)
+		}
+		retrieved = true
+		w.Write([]byte(`{"data":{"children":[{"kind":"t3","data":{"id":"abc","score":9,"num_comments":3}}]}}`))
+	}))
+	defer server.Close()
+
+	e := &RedditEnricher{client: server.Client(), apiBaseURL: server.URL, queries: queries}
+	items := []*store.Item{{ID: 1, Hash: "t3_abc", Url: "https://www.reddit.com/r/x/comments/abc/"}}
+	if err := e.BulkEnrich(context.Background(), items); err != nil {
+		t.Fatalf("BulkEnrich failed: %v", err)
+	}
+	if !retrieved {
+		t.Fatal("bulk info endpoint was never called")
+	}
+	if items[0].Points != 9 {
+		t.Errorf("Points = %d, want 9 (enrichment did not apply)", items[0].Points)
 	}
 }

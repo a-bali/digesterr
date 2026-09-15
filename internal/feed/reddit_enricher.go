@@ -215,7 +215,10 @@ func (e *RedditEnricher) Enrich(ctx context.Context, item *store.Item) error {
 		return fmt.Errorf("auth: %w", err)
 	}
 
-	apiURL := fmt.Sprintf("%s/comments/%s.json?limit=1", e.apiBaseURL, postID)
+	// raw_json=1 keeps string fields unescaped. Without it Reddit
+	// HTML-escapes the payload, so an ampersand in a title or URL arrives as
+	// &amp; and every later escape pass corrupts it further.
+	apiURL := fmt.Sprintf("%s/comments/%s.json?limit=1&raw_json=1", e.apiBaseURL, postID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return fmt.Errorf("creating Reddit API request: %w", err)
@@ -296,7 +299,7 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 		return fmt.Errorf("rate limiter: %w", err)
 	}
 
-	apiURL := fmt.Sprintf("%s/api/info.json?id=%s", e.apiBaseURL, strings.Join(ids, ","))
+	apiURL := fmt.Sprintf("%s/api/info.json?id=%s&raw_json=1", e.apiBaseURL, strings.Join(ids, ","))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return fmt.Errorf("creating Reddit API request: %w", err)
@@ -381,7 +384,10 @@ func (e *RedditEnricher) FetchComments(ctx context.Context, item store.Item, max
 	// hiding real vote counts. The public endpoint returns real scores but may
 	// be blocked from datacenter IPs.
 	commentsURL := func(base string) string {
-		return fmt.Sprintf("%s/comments/%s.json?sort=top&threaded=true&limit=%d", base, postID, redditCommentFetchLimit)
+		// raw_json=1 keeps comment bodies unescaped: without it Reddit sends
+		// &amp; inside bodies, which the reader then escapes again and
+		// displays literally as "&amp;" (verified live on r/stocks threads).
+		return fmt.Sprintf("%s/comments/%s.json?sort=top&threaded=true&limit=%d&raw_json=1", base, postID, redditCommentFetchLimit)
 	}
 	for _, attempt := range []struct {
 		url  string

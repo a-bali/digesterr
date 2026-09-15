@@ -645,3 +645,92 @@ func TestTwitterAuthHeadersSent(t *testing.T) {
 func storeItemForTwitter(guidOrURL string) store.Item {
 	return store.Item{ID: 1, Hash: guidOrURL, CommentUrl: guidOrURL, Url: guidOrURL}
 }
+
+// TestTwitterEntityEscaping pins the production bug: X serves some tweets with
+// HTML entities already in the text fields (verified live on x.com/OpenRouter,
+// where the payload contained \u0026amp; for a literal "&"). Escaping that text
+// again produced "&amp;amp;", which the reader renders literally as "&amp;".
+//
+// The decode must happen before t.co expansion, otherwise entity-escaped URLs
+// fail to match and the tweet's own links are dropped from the body.
+func TestTwitterEntityEscaping(t *testing.T) {
+	// Case 1: X pre-escaped the ampersand. Must render exactly one level.
+	pre := &twitterTweetResult{}
+	raw, _ := json.Marshal(map[string]any{
+		"rest_id": "1",
+		"legacy": map[string]any{
+			"full_text": "largest AI marketplace &amp; gateway",
+		},
+	})
+	json.Unmarshal(raw, pre)
+	content := pre.item("openrouter").Content
+	if strings.Contains(content, "&amp;amp;") {
+		t.Errorf("content carries a double-escaped entity: %q", content)
+	}
+	if !strings.Contains(content, "marketplace &amp; gateway") {
+		t.Errorf("content = %q, want a single-escaped ampersand", content)
+	}
+
+	// Case 2: the common shape — plain "&" must behave identically.
+	plain := &twitterTweetResult{}
+	raw, _ = json.Marshal(map[string]any{
+		"rest_id": "2",
+		"legacy": map[string]any{
+			"full_text": "largest AI marketplace & gateway",
+		},
+	})
+	json.Unmarshal(raw, plain)
+	if got := plain.item("openrouter").Content; !strings.Contains(got, "marketplace &amp; gateway") {
+		t.Errorf("plain-ampersand content = %q, want a single-escaped ampersand", got)
+	}
+
+	// Case 3: an escaped link inside entity-escaped text must still expand and
+	// must not leave the raw entity form in the output.
+	linked := &twitterTweetResult{}
+	raw, _ = json.Marshal(map[string]any{
+		"rest_id": "3",
+		"legacy": map[string]any{
+			"full_text": "read this &amp; that https://t.co/abc123",
+			"entities": map[string]any{
+				"urls": []any{
+					map[string]any{"url": "https://t.co/abc123", "expanded_url": "https://example.com/a?x=1&y=2", "display_url": "example.com/a"},
+				},
+			},
+		},
+	})
+	json.Unmarshal(raw, linked)
+	out := linked.item("openrouter").Content
+	if strings.Contains(out, "&amp;amp;") {
+		t.Errorf("linked content double-escaped: %q", out)
+	}
+	if !strings.Contains(out, `href="https://example.com/a?x=1&amp;y=2"`) {
+		t.Errorf("expanded link missing or mis-escaped: %q", out)
+	}
+	if !strings.Contains(out, "read this &amp; that") {
+		t.Errorf("body text lost or mis-escaped: %q", out)
+	}
+}
+
+// TestTwitterEntityDecodeStaysEscaped guards the injection boundary: decoded
+// entities must not let markup through, since the content is rendered with
+// v-html in the reader.
+func TestTwitterEntityDecodeStaysEscaped(t *testing.T) {
+	tw := &twitterTweetResult{}
+	raw, _ := json.Marshal(map[string]any{
+		"rest_id": "1",
+		"legacy": map[string]any{
+			"full_text": `&lt;img src=x onerror=alert(1)&gt; &amp; &lt;script&gt;bad()&lt;/script&gt;`,
+		},
+	})
+	json.Unmarshal(raw, tw)
+	content := tw.item("openrouter").Content
+	// No unescaped tag may survive. ("onerror=" appearing inside &lt;...&gt;
+	// text is inert, so assert on control characters that would start a real
+	// tag rather than on substrings of the escaped payload.)
+	if strings.Contains(content, "<img") || strings.Contains(content, "<script") {
+		t.Errorf("content leaked a live tag: %q", content)
+	}
+	if !strings.Contains(content, "&lt;img") || !strings.Contains(content, "&lt;script&gt;") {
+		t.Errorf("expected the markup to be re-escaped, got %q", content)
+	}
+}
