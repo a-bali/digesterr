@@ -254,7 +254,7 @@ func (f *RedditFetcher) Fetch(ctx context.Context, feedURL string) ([]Item, erro
 		return nil, fmt.Errorf("rate limit: %w", err)
 	}
 
-	apiURL := fmt.Sprintf("%s/r/%s/new.json?limit=%d", f.apiBaseURL, subreddit, f.limit)
+	apiURL := fmt.Sprintf("%s/r/%s/new.json?limit=%d&raw_json=1", f.apiBaseURL, subreddit, f.limit)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)

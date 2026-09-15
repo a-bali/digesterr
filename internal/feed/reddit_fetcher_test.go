@@ -275,6 +275,93 @@ func TestRedditFetcherFetch(t *testing.T) {
 	}
 }
 
+// TestRedditFetcherRequestsRawJSON pins the production bug behind the broken
+// inline images on a self post (r/hermesagent 1wg6zqc, Sept 2026): without
+// raw_json=1 Reddit HTML-escapes the listing, so the selftext arrived with
+// &amp; inside the preview.redd.it URLs and the rendered <img> srcs carried
+// &amp;amp; — dead images. Verified against the live API the same day: the
+// default listing escapes, the raw_json=1 listing does not.
+func TestRedditFetcherRequestsRawJSON(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "mock-token",
+			"expires_in":   3600,
+		})
+	}))
+	defer tokenServer.Close()
+
+	var gotRawJSON string
+	selftext := "https://preview.redd.it/gpfbx2j2aiph1.png?width=3002&format=png&auto=webp&s=deadbeef\n\nSkill deck text."
+	listingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRawJSON = r.URL.Query().Get("raw_json")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"children": []map[string]any{
+					{
+						"kind": "t3",
+						"data": map[string]any{
+							"id":            "1wg6zqc",
+							"title":         "Skill deck post",
+							"author":        "skilluser",
+							"url":           "https://www.reddit.com/r/hermesagent/comments/1wg6zqc/slug/",
+							"permalink":     "/r/hermesagent/comments/1wg6zqc/slug/",
+							"selftext":      selftext,
+							"score":         95,
+							"num_comments":  21,
+							"created_utc":   1789400603.0,
+							"is_self":       true,
+							"is_video":      false,
+							"over_18":       false,
+							"stickied":      false,
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer listingServer.Close()
+
+	fetcher := &RedditFetcher{
+		client:       &http.Client{},
+		baseURL:      tokenServer.URL,
+		apiBaseURL:   listingServer.URL,
+		clientID:     "testid",
+		clientSecret: "testsecret",
+	}
+
+	items, err := fetcher.Fetch(context.Background(), "https://www.reddit.com/r/hermesagent")
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	if gotRawJSON != "1" {
+		t.Errorf("listing request raw_json = %q, want \"1\"", gotRawJSON)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	// The full query string must survive into the rendered <img> intact.
+	if want := `src="https://preview.redd.it/gpfbx2j2aiph1.png?width=3002&amp;format=png&amp;auto=webp&amp;s=deadbeef"`; !strings.Contains(items[0].Content, want) {
+		t.Errorf("content missing intact image URL %q, got: %q", want, items[0].Content)
+	}
+	if strings.Contains(items[0].Content, "&amp;amp;") {
+		t.Errorf("content carries double-escaped entities, got: %q", items[0].Content)
+	}
+}
+
+// TestRedditFetcherLegacyEscapedSelftext documents what the pre-fix fetches
+// stored: an entity-escaped selftext (what Reddit sends without raw_json=1)
+// renders <img> srcs with &amp;amp; — broken images. Kept as the repro for
+// the r/hermesagent 1wg6zqc report; production no longer takes this path.
+func TestRedditFetcherLegacyEscapedSelftext(t *testing.T) {
+	escaped := "https://preview.redd.it/gpfbx2j2aiph1.png?width=3002&amp;format=png&amp;auto=webp&amp;s=deadbeef"
+	out := renderRedditMarkdown(escaped)
+	if !strings.Contains(out, "&amp;amp;") {
+		t.Fatalf("expected legacy double-escaping repro, got: %q", out)
+	}
+}
+
 func TestParseListingGalleryWithSelftext(t *testing.T) {
 	// Gallery posts that also have selftext (e.g. user explains the images)
 	// must include both the gallery images AND the selftext in content.
