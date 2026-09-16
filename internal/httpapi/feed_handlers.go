@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"digesterr/internal/feed"
 	"digesterr/internal/store"
 )
 
@@ -41,6 +42,24 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Config == "" {
 		req.Config = "{}"
+	}
+	// Email feeds carry a plus-address in a namespace shared by every user
+	// (the AgentMail inbox is instance-wide), so the address is normalised and
+	// checked before it reaches the database.
+	if req.Type == "email" {
+		addr, err := s.normalizeEmailFeedURL(req.URL)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		req.URL = addr
+		if taken, err := s.emailAddressTaken(req.URL, 0); err != nil {
+			writeServerError(w, "failed to check email address", err)
+			return
+		} else if taken {
+			writeError(w, http.StatusBadRequest, "address already in use")
+			return
+		}
 	}
 	feed, err := s.queries.CreateFeed(r.Context(), store.CreateFeedParams{
 		UserID:         userID,
@@ -89,11 +108,64 @@ func (s *Server) handleDiscoverFeed(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), discoverTimeout)
 	defer cancel()
+	// An email feed's name comes from its own suffix, with no network call:
+	// AgentMail has no "name this address" endpoint, and a lookup that could
+	// time out would present as a broken form. Discovery here is a pure
+	// convenience, matching the contract that a failed lookup returns "".
+	if req.Type == "email" {
+		if suffix, ok := feed.EmailSplitAddress(req.URL, s.emailInbox); ok {
+			writeJSON(w, http.StatusOK, map[string]string{"name": feed.EmailSuffixToName(suffix)})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"name": ""})
+		return
+	}
 	name, err := s.poller.DiscoverFeedName(ctx, req.Type, req.URL)
 	if err != nil {
 		slog.Debug("feed name discovery failed", "type", req.Type, "url", req.URL, "error", err)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"name": name})
+}
+
+// normalizeEmailFeedURL validates and canonicalises an email feed's address.
+//
+// The UI sends the full address it composed from the configured prefix and the
+// user's suffix, so this is the boundary where a bad address must be caught:
+// a wrong suffix is not a harmless typo (there is no catch-all on AgentMail), it
+// is a feed that silently never receives anything.
+func (s *Server) normalizeEmailFeedURL(raw string) (string, error) {
+	if !s.emailConfigured {
+		return "", fmt.Errorf("email feeds are not configured on this server")
+	}
+	suffix, ok := feed.EmailSplitAddress(raw, s.emailInbox)
+	if !ok {
+		return "", fmt.Errorf("invalid email feed address: it must be %s<suffix>%s with a suffix of letters, digits, dots, dashes or underscores",
+			feed.EmailInboxPrefix(s.emailInbox), s.emailDomain)
+	}
+	return feed.EmailBuildAddress(s.emailInbox, suffix), nil
+}
+
+// emailAddressTaken reports whether another feed already claims this address.
+//
+// The namespace is INSTANCE-WIDE, not per-user, because one AgentMail inbox and
+// API key serve the whole instance: two feeds on one address would both read the
+// same mail, and if they belong to different users, one user would read the
+// other's subscription. The caller must not reveal WHICH feed holds the address
+// — it may belong to someone else — so the response is a bare "already in use".
+//
+// excludeID skips a feed's own row so re-saving an unchanged address is not a
+// conflict with itself.
+func (s *Server) emailAddressTaken(url string, excludeID int64) (bool, error) {
+	feeds, err := s.queries.ListEmailFeedURLs(context.Background())
+	if err != nil {
+		return false, err
+	}
+	for _, f := range feeds {
+		if f.Url == url && f.ID != excludeID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Server) handleListFeeds(w http.ResponseWriter, r *http.Request) {
@@ -169,6 +241,24 @@ func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
 	config := existing.Config
 	if req.Config != nil {
 		config = *req.Config
+	}
+	// Re-normalise an email feed's address on update, and re-check uniqueness
+	// when it changed. The check ignores this feed's own row so saving without
+	// touching the address is not a conflict with itself.
+	if existing.Type == "email" {
+		addr, err := s.normalizeEmailFeedURL(url)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		url = addr
+		if taken, err := s.emailAddressTaken(url, existing.ID); err != nil {
+			writeServerError(w, "failed to check email address", err)
+			return
+		} else if taken {
+			writeError(w, http.StatusBadRequest, "address already in use")
+			return
+		}
 	}
 	category := existing.Category
 	if req.Category != nil {
@@ -273,7 +363,7 @@ func (s *Server) pruneDigestConfigSources(ctx context.Context, userID int64, fee
 	updated := 0
 	for _, cfg := range configs {
 		var parsed struct {
-			Feeds      []struct {
+			Feeds []struct {
 				ID         int `json:"id"`
 				Highlights int `json:"highlights"`
 				Comments   int `json:"comments"`
@@ -441,16 +531,24 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 	switch rows := rawItems.(type) {
 	case []store.ListItemsByFeedSortedDateDescRow:
 		items = make([]itemPreview, len(rows))
-		for i, r := range rows { items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl} }
+		for i, r := range rows {
+			items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
+		}
 	case []store.ListItemsByFeedSortedDateAscRow:
 		items = make([]itemPreview, len(rows))
-		for i, r := range rows { items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl} }
+		for i, r := range rows {
+			items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
+		}
 	case []store.ListItemsByFeedSortedScoreDescRow:
 		items = make([]itemPreview, len(rows))
-		for i, r := range rows { items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl} }
+		for i, r := range rows {
+			items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
+		}
 	case []store.ListItemsByFeedSortedScoreAscRow:
 		items = make([]itemPreview, len(rows))
-		for i, r := range rows { items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl} }
+		for i, r := range rows {
+			items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
+		}
 	}
 	if err != nil {
 		writeServerError(w, "failed to list items", err)

@@ -41,6 +41,16 @@ type Server struct {
 	// summaryPrompt is the configured system prompt for per-item summaries.
 	// Empty means the built-in default.
 	summaryPrompt string
+	// emailInbox is the configured AgentMail mailbox for the email feed type,
+	// empty when unconfigured. It is the source of both the plus-address prefix
+	// and the domain the UI renders as fixed context, so the frontend never has
+	// to guess the address shape.
+	emailInbox string
+	// emailConfigured reports whether the email feed type can operate at all.
+	emailConfigured bool
+	// emailDomain is the AgentMail domain, used to validate an inbound message's
+	// recipient against the configured inbox.
+	emailDomain string
 }
 
 func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffer, cfg config.Config) *Server {
@@ -57,6 +67,9 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 		commentCache:      newCommentCache(cfg.Feed.CommentCacheTTL.Duration()),
 		schedulerTimezone: cfg.Digest.SchedulerTimezone,
 		summaryPrompt:     cfg.LLM.SummaryPrompt,
+		emailInbox:        cfg.Email.InboxID,
+		emailConfigured:   cfg.Email.EmailConfigured(),
+		emailDomain:       feed.EmailInboxDomain(cfg.Email.InboxID),
 	}
 
 	llmClient := digest.NewLLMClient(cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model, cfg.LLM.Timeout.Duration())
@@ -102,6 +115,11 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	s.poller.SetTransport(s.metrics.Transport())
 	s.poller.SetRedditCredentials(cfg.Reddit.ClientID, cfg.Reddit.ClientSecret)
 	s.poller.SetTwitterCredentials(cfg.Twitter.Ct0, cfg.Twitter.AuthToken)
+	// Email feed type: the sync stage owns all AgentMail I/O. NewAgentMailClient
+	// returns nil when unconfigured, and a nil sync is inert, so an instance
+	// without credentials simply has no email fetcher registered.
+	s.poller.SetEmailSync(feed.NewEmailSync(
+		feed.NewAgentMailClient(cfg.Email.APIKey, cfg.Email.InboxID), queries))
 	s.poller.SetUserAgent(cfg.Feed.UserAgent)
 	s.poller.SetTwitterCount(cfg.Feed.TwitterCount)
 	s.poller.SetRedditCount(cfg.Feed.RedditCount)
