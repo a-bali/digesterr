@@ -118,6 +118,30 @@ func NewAgentMailClient(apiKey, inboxID string) *AgentMailClient {
 // InboxID returns the mailbox this client reads.
 func (c *AgentMailClient) InboxID() string { return c.inboxID }
 
+// BaseURL returns the API base, used for the sync's metrics record.
+func (c *AgentMailClient) BaseURL() string { return c.baseURL }
+
+// Host returns the API host, so the sync's traffic is attributable in
+// GET /api/metrics the same way a feed's is.
+func (c *AgentMailClient) Host() string {
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
+// consumeCounters reads and resets the shared metrics transport counters. The
+// sync uses this so its traffic is reported as its own instead of being left
+// for the next feed's ConsumeCounters to claim.
+func (c *AgentMailClient) consumeCounters() (int64, int) {
+	if t, ok := c.client.Transport.(*metrics.Transport); ok {
+		b, r := t.Consume()
+		return b, int(r)
+	}
+	return 0, 0
+}
+
 // setTransport implements the transportSetter interface Poller.SetTransport
 // type-asserts, so the shared metrics transport reaches this client. Without it
 // the email feed's requests are invisible in GET /api/metrics — the same blind

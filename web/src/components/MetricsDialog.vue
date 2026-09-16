@@ -310,6 +310,7 @@ function onDimensionToggle() {
                       'bg-purple-500/15 text-purple-400': g.reason === 'enrichment',
                       'bg-yellow-500/15 text-yellow-400': g.reason === 'extraction',
                       'bg-pink-500/15 text-pink-400': g.reason === 'llm',
+                      'bg-teal-500/15 text-teal-400': g.reason === 'email_sync',
                       'bg-muted text-muted-foreground': g.reason === 'server',
                     }">{{ g.reason }}</span>
                 </td>

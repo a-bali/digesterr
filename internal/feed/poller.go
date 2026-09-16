@@ -433,10 +433,13 @@ func (p *Poller) PollAll(ctx context.Context) {
 	// re-download the whole mailbox once per email feed: several feeds share
 	// one inbox, so the fan-out is N-fold. A sync failure is recorded on the
 	// inbox and does not stop the other feeds from polling.
+	//
+	// RunEmailSync (not Run) so the sync's HTTP traffic is consumed and
+	// recorded as `email_sync` here: the first pollFeed below reads the shared
+	// transport counters immediately after its Fetch, so whatever the sync
+	// leaves behind is reported as that feed's own traffic.
 	if p.emailSync != nil {
-		if err := p.emailSync.Run(ctx); err != nil {
-			slog.Warn("email mailbox sync failed", "error", err)
-		}
+		p.emailSync.RunEmailSync(ctx, p.recordFn)
 	}
 
 	for _, feed := range feeds {
@@ -453,6 +456,13 @@ func (p *Poller) PollAll(ctx context.Context) {
 }
 
 func (p *Poller) PollFeed(ctx context.Context, feed store.Feed) error {
+	// An email feed's Fetch only reads the staging table, so the mailbox must be
+	// drained first or a per-feed poll always returns zero new items. This is
+	// the path the UI's refresh button and the post-create auto-fetch take; the
+	// 15-minute PollAll cycle would otherwise be the only thing that ever
+	// delivered new mail, making "Refresh" look broken for email feeds.
+	p.PollEmailFeed(ctx, feed)
+
 	fetcher, ok := p.fetchers[feed.Type]
 	if !ok {
 		return fmt.Errorf("no fetcher for feed type: %s", feed.Type)
