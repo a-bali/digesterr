@@ -36,6 +36,9 @@ type Poller struct {
 	// enrichmentWindow bounds how long after insertion an item stays
 	// eligible for periodic score re-enrichment. Zero means 24h.
 	enrichmentWindow time.Duration
+	// emailSync drains the AgentMail inbox into email_messages once per poll
+	// cycle. Nil when the email feed type is not configured.
+	emailSync *EmailSync
 }
 
 // fetchedCandidate pairs a freshly fetched item with its duplicate-detection
@@ -82,6 +85,29 @@ func NewPoller(queries *store.Queries) *Poller {
 	}
 }
 
+// SetEmailSync attaches the AgentMail sync stage and registers the email
+// fetcher. Until this is called, email feeds have no fetcher and are skipped
+// with the usual "no fetcher for feed type" warning.
+func (p *Poller) SetEmailSync(s *EmailSync) {
+	p.emailSync = s
+	if s == nil || !s.Configured() {
+		return
+	}
+	inbox := s.client.InboxID()
+	// Read-only over the staging table: no client needed, so Fetch cannot
+	// accidentally gain I/O (see EmailFetcher's doc comment).
+	p.fetchers["email"] = NewEmailFetcher(p.queries, inbox)
+	p.enrichers["email"] = &NoopEnricher{}
+	p.commentFetchers["email"] = &NoopEnricher{}
+	// The sync (not the fetcher) issues the HTTP requests, so the metrics
+	// transport has to be handed to it directly: SetTransport's type assertion
+	// only walks the fetcher/enricher/commentFetcher maps, and without this the
+	// email feed is invisible in GET /api/metrics.
+	if p.sharedTransport != nil {
+		s.setTransport(p.sharedTransport)
+	}
+}
+
 func (p *Poller) Enrichers() map[string]Enricher {
 	return p.enrichers
 }
@@ -111,6 +137,11 @@ func (p *Poller) SetTransport(transport http.RoundTripper) {
 	}
 	for _, cf := range p.commentFetchers {
 		setClientTransport(cf, transport)
+	}
+	// The email sync is not in any of those maps (it is a stage, not a
+	// fetcher) but it is what actually issues the AgentMail requests.
+	if p.emailSync != nil {
+		p.emailSync.setTransport(transport)
 	}
 }
 
@@ -398,6 +429,16 @@ func (p *Poller) PollAll(ctx context.Context) {
 	slog.Info("polling feeds", "count", len(feeds))
 	start := time.Now()
 
+	// Drain the mailbox once, before the feed loop. Doing it per feed would
+	// re-download the whole mailbox once per email feed: several feeds share
+	// one inbox, so the fan-out is N-fold. A sync failure is recorded on the
+	// inbox and does not stop the other feeds from polling.
+	if p.emailSync != nil {
+		if err := p.emailSync.Run(ctx); err != nil {
+			slog.Warn("email mailbox sync failed", "error", err)
+		}
+	}
+
 	for _, feed := range feeds {
 		fetcher, ok := p.fetchers[feed.Type]
 		if !ok {
@@ -427,9 +468,9 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	items, err := fetcher.Fetch(ctx, feed.Url)
 	fetchDur := time.Since(start)
 	fetchBytes, fetchReqs := p.ConsumeCounters()
-		// Derive host from feed URL.
-		fetchHost := hostFromURL(feed.Url)
-		if p.recordFn != nil {
+	// Derive host from feed URL.
+	fetchHost := hostFromURL(feed.Url)
+	if p.recordFn != nil {
 		errStr := ""
 		statusCode := 200
 		if err != nil {
@@ -758,7 +799,7 @@ func (p *Poller) enrichForPoll(ctx context.Context, feed store.Feed, candidates 
 				Points:        si.Points,
 				CommentsCount: si.CommentsCount,
 				CommentUrl:    si.CommentUrl,
-				}); err != nil {
+			}); err != nil {
 				errcount++
 			} else {
 				updated++

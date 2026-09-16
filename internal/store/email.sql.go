@@ -226,6 +226,32 @@ func (q *Queries) SetEmailSyncError(ctx context.Context, arg SetEmailSyncErrorPa
 	return err
 }
 
+const updateEmailMessageBody = `-- name: UpdateEmailMessageBody :exec
+UPDATE email_messages
+SET text = ?, html = ?
+WHERE inbox_id = ? AND message_id = ?
+`
+
+type UpdateEmailMessageBodyParams struct {
+	Text      string `json:"text"`
+	Html      string `json:"html"`
+	InboxID   string `json:"inbox_id"`
+	MessageID string `json:"message_id"`
+}
+
+// Attaches the fetched body to an already-staged row. Bodies are fetched in a
+// separate call because the list endpoint does not return them, and batch-get
+// silently drops them; see internal/feed/email_client.go.
+func (q *Queries) UpdateEmailMessageBody(ctx context.Context, arg UpdateEmailMessageBodyParams) error {
+	_, err := q.db.ExecContext(ctx, updateEmailMessageBody,
+		arg.Text,
+		arg.Html,
+		arg.InboxID,
+		arg.MessageID,
+	)
+	return err
+}
+
 const upsertEmailSyncState = `-- name: UpsertEmailSyncState :exec
 INSERT INTO email_sync_state (inbox_id, last_synced_at, last_error, last_error_at, updated_at)
 VALUES (?, ?, '', NULL, DATETIME('now'))

@@ -61,3 +61,11 @@ ON CONFLICT(inbox_id) DO UPDATE SET
 -- name: ListEmailFeedURLs :many
 -- Every email feed address, for reporting which recipients already have a feed.
 SELECT id, user_id, url FROM feeds WHERE type = 'email' AND url != '' ORDER BY url;
+
+-- name: UpdateEmailMessageBody :exec
+-- Attaches the fetched body to an already-staged row. Bodies are fetched in a
+-- separate call because the list endpoint does not return them, and batch-get
+-- silently drops them; see internal/feed/email_client.go.
+UPDATE email_messages
+SET text = ?, html = ?
+WHERE inbox_id = ? AND message_id = ?;
