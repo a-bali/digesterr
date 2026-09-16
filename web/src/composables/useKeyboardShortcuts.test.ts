@@ -22,6 +22,7 @@ function makeCtx(overrides: Partial<Parameters<typeof useKeyboardShortcuts>[0]> 
     toggleShowRead: vi.fn(),
     refreshCounts: vi.fn(),
     toggleTheme: vi.fn(),
+    toggleMaximize: vi.fn(),
     openHelp: vi.fn(),
     ...overrides,
   }
@@ -181,6 +182,26 @@ describe('useKeyboardShortcuts', () => {
     const { press, wrapper } = mountHarness(ctx)
     press({ key: 'D', shiftKey: true })
     expect(ctx.toggleTheme).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('x toggles the maximized content pane', () => {
+    const ctx = makeCtx()
+    const { press, wrapper } = mountHarness(ctx)
+    press({ key: 'x' })
+    expect(ctx.toggleMaximize).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('leaves x to the item actions when it is the selected item\'s key elsewhere', () => {
+    // Guard: 'x' must not have been wired onto an existing binding (e.g. the
+    // read toggle) by accident — pressing it must reach ONLY toggleMaximize.
+    const ctx = makeCtx({ selectedItem: () => ({ id: 1 }) })
+    const { press, wrapper } = mountHarness(ctx)
+    press({ key: 'x' })
+    expect(ctx.toggleMaximize).toHaveBeenCalledTimes(1)
+    expect(ctx.toggleRead).not.toHaveBeenCalled()
+    expect(ctx.toggleSaved).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

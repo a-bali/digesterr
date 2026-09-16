@@ -28,6 +28,7 @@ const groups: { title: string; bindings: [string, string][] }[] = [
     bindings: [
       ['u', 'Toggle unread-only filter'],
       ['Shift+A', 'Mark feed as read'],
+      ['x', 'Maximize content pane'],
       ['r', 'Refresh unread counts'],
       ['Shift+D', 'Toggle dark/light theme'],
       ['?', 'Show this help'],

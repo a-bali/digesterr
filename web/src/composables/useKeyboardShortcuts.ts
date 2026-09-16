@@ -9,6 +9,7 @@ import { onMounted, onUnmounted } from 'vue'
 //   PageUp / PageDown  : scroll content pane by one page
 //   u                  : toggle unread-only filter
 //   Shift+A            : mark active feed read
+//   x                  : maximize / restore the content pane (desktop 3-pane)
 //   r                  : refresh unread counts
 //   Shift+D            : toggle dark/light theme
 //   ? or h             : shortcuts help overlay
@@ -28,6 +29,7 @@ export function useKeyboardShortcuts(ctx: {
   toggleShowRead: () => void
   refreshCounts: () => void
   toggleTheme: () => void
+  toggleMaximize: () => void
   openHelp: () => void
   scrollToComments: () => void
 }) {
@@ -148,6 +150,9 @@ export function useKeyboardShortcuts(ctx: {
       case 'r':
       case 'R':
         ctx.refreshCounts()
+        break
+      case 'x':
+        ctx.toggleMaximize()
         break
       case 'D':
         ctx.toggleTheme()

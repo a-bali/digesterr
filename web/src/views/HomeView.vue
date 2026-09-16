@@ -19,6 +19,7 @@ import GoogleReaderApiDialog from '../components/GoogleReaderApiDialog.vue'
 import { useFeedStore } from '../stores/feed'
 import { useDigestStore } from '../stores/digest'
 import { useThemeStore } from '../stores/theme'
+import { useLayoutStore } from '../stores/layout'
 import { feedApi, itemApi } from '../services/api'
 import type { Item } from '../types/api'
 import { useBreakpoints } from '../composables/useMediaQuery'
@@ -26,13 +27,14 @@ import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts'
 import { useSwipeGesture } from '../composables/useSwipeGesture'
 import { usePageTitle, digestResultTitle } from '../composables/usePageTitle'
 import { scrollToItemComments } from '../lib/itemComments'
-import { Newspaper, Menu, ArrowLeft, CircleHelp } from 'lucide-vue-next'
+import { Newspaper, Menu, ArrowLeft, CircleHelp, Columns3, Rows2 } from 'lucide-vue-next'
 
 const router = useRouter()
 const route = useRoute()
 const feedStore = useFeedStore()
 const digestStore = useDigestStore()
 const themeStore = useThemeStore()
+const layoutStore = useLayoutStore()
 
 const { isDesktop, isTablet } = useBreakpoints()
 
@@ -59,10 +61,68 @@ const showShortcuts = ref(false)
 const feedMode = computed(() => feedStore.activeFeedId != null || showingSaved.value)
 const digestMode = computed(() => (digestStore.activeConfigId != null || digestStore.showingAllDigests) && !feedMode.value)
 
+// Is the content pane showing an ITEM (feed/category/section/saved view) or a
+// DIGEST? feedMode/digestMode cannot answer this: a category or section view is
+// neither a single feed (activeFeedId is null) nor a digest, so both are false
+// there and the selection was read off the digest store — which is always empty
+// in an items view. That made x a no-op in exactly those views.
+const inItemsMode = computed(() => !digestMode.value)
+
 // On mobile/tablet, one pane at a time: content when a selection exists.
 const showContentPane = computed(() =>
-  feedMode.value ? feedStore.selectedItem != null : digestStore.selectedResult != null,
+  inItemsMode.value ? feedStore.selectedItem != null : digestStore.selectedResult != null,
 )
+
+// ---- Maximized content pane (desktop) ----
+// 'x' collapses the CHROME panels to zero width and lets the content take the
+// whole row. They stay MOUNTED (an inline flex-grow/flex-basis override, not
+// v-if), so the list keeps its scroll position and reka's saved split is left
+// untouched.
+const contentMaximized = ref(false)
+
+// Only meaningful where it can be entered AND left: desktop, with something
+// selected. Elsewhere it is a no-op, so pressing x cannot strand the user on a
+// maximized empty pane.
+const canMaximize = computed(() => isDesktop.value && showContentPane.value)
+
+function toggleContentMaximized() {
+  if (!canMaximize.value) return
+  contentMaximized.value = !contentMaximized.value
+}
+
+// The maximized state must be dropped when it stops being enterable, and when
+// the layout changes: the two layouts collapse different panels, so carrying it
+// across would leave the new one half-collapsed with a Back button the user
+// never asked for.
+// The direction matters — resetting UNCONDITIONALLY also fires on false→true and
+// would cancel a maximize that had just been requested (the watcher job can flush
+// after x sets the flag). Only ever clear it, never on the way in.
+// NB: the layout source must be a GETTER — a Pinia setup store exposes `mode` as
+// an unwrapped string, and Vue silently ignores a non-ref/non-getter source.
+let lastLayoutMode = layoutStore.mode
+watch([canMaximize, () => layoutStore.mode], ([ok, mode]) => {
+  if (!ok || mode !== lastLayoutMode) contentMaximized.value = false
+  lastLayoutMode = mode
+})
+
+// `undefined` removes the whole inline style, so reka's own flex applies again.
+const collapsedPanelStyle = computed(() =>
+  contentMaximized.value ? { flexGrow: 0, flexBasis: 0 } : undefined,
+)
+
+// Maximizing leaves ONLY the content pane: the sidebar and the item list both
+// collapse, in either layout. In stacked that means the list's half of the
+// vertical split goes away too, so the content fills the right column top to
+// bottom. Restoring x/Back brings every split back to its saved size.
+const sidebarCollapsed = computed(() => contentMaximized.value)
+const listCollapsed = computed(() => contentMaximized.value)
+
+// Header Back: in the maximized layout it restores the 3-pane view and keeps
+// the selected item; below lg it is still mobile's "leave the content pane".
+function onHeaderBack() {
+  if (contentMaximized.value) { contentMaximized.value = false; return }
+  goBackToList()
+}
 
 // ---- Keyboard shortcuts ----
 useKeyboardShortcuts({
@@ -89,6 +149,7 @@ useKeyboardShortcuts({
   toggleTheme: () => {
     themeStore.mode = themeStore.mode === 'dark' ? 'light' : 'dark'
   },
+  toggleMaximize: toggleContentMaximized,
   openHelp: () => { showShortcuts.value = true },
   scrollToComments: () => scrollToItemComments(),
 })
@@ -384,14 +445,14 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
       <Button v-if="!isDesktop" variant="ghost" size="icon" @click="sidebarOpen = !sidebarOpen">
         <Menu class="size-4" />
       </Button>
-      <template v-if="showContentPane && !isDesktop">
-        <Button variant="ghost" size="sm" @click="goBackToList">
+      <template v-if="(showContentPane && !isDesktop) || contentMaximized">
+        <Button variant="ghost" size="sm" @click="onHeaderBack">
           <ArrowLeft class="size-4" /><span class="text-xs">Back</span>
         </Button>
       </template>
       <template v-else>
         <Newspaper class="size-5 text-accent shrink-0" />
-        <span class="font-semibold shrink-0 hidden sm:inline">Digesterr</span>
+        <span data-app-logo class="font-semibold shrink-0 hidden sm:inline">Digesterr</span>
       </template>
       <div class="ml-auto flex items-center gap-1">
         <!-- Background refresh pulse: shown while the 10s poll or a
@@ -408,6 +469,20 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
         </Button>
         <LogsDialog />
         <MetricsDialog />
+        <!-- Icon shows the CURRENT layout; the tooltip states the action. -->
+        <Button
+          variant="ghost" size="icon"
+          data-layout-toggle
+          :disabled="!isDesktop"
+          :title="isDesktop
+            ? (layoutStore.mode === 'panes' ? 'Switch to stacked layout' : 'Switch to 3-pane layout')
+            : 'Stacked layout is available at desktop width'"
+          :aria-label="layoutStore.mode === 'panes' ? 'Switch to stacked layout' : 'Switch to 3-pane layout'"
+          @click="layoutStore.toggle()"
+        >
+          <Columns3 v-if="layoutStore.mode === 'panes'" class="size-4" />
+          <Rows2 v-else class="size-4" />
+        </Button>
         <ThemeMenu />
         <!-- Change password / Google Reader API dialogs hook into the events emitted here. -->
         <AccountMenu @change-password="showChangePassword = true" @google-reader-api="readerApiOpen = true" />
@@ -422,28 +497,80 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
     <div class="flex flex-1 min-h-0 overflow-x-hidden">
       <!-- Desktop: 3 resizable panes -->
       <template v-if="isDesktop">
-        <SplitterGroup direction="horizontal" auto-save-id="digesterr" class="flex-1">
-          <SplitterPanel :default-size="18" :min-size="14" :max-size="28">
+        <SplitterGroup v-if="layoutStore.mode === 'panes'" direction="horizontal" auto-save-id="digesterr" class="flex-1" data-layout="panes">
+          <SplitterPanel
+            :default-size="18" :min-size="14" :max-size="28"
+            :style="sidebarCollapsed ? collapsedPanelStyle : undefined"
+            :inert="sidebarCollapsed || undefined"
+            :aria-hidden="sidebarCollapsed || undefined"
+          >
             <div class="h-full flex flex-col">
-              <aside class="flex-1 min-h-0 border-r bg-sidebar overflow-y-auto p-3">
+              <aside class="flex-1 min-h-0 bg-sidebar overflow-y-auto p-3" :class="sidebarCollapsed ? '' : 'border-r'">
                 <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @select-category="selectCategory" @select-section="selectSection" @show-saved="showSaved" />
               </aside>
-              <div class="shrink-0 flex justify-center border-r bg-sidebar py-1.5">
+              <div class="shrink-0 flex justify-center bg-sidebar py-1.5" :class="sidebarCollapsed ? '' : 'border-r'">
                 <VersionBadge />
               </div>
             </div>
           </SplitterPanel>
-          <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
+          <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" :class="{ hidden: contentMaximized }" />
 
-          <SplitterPanel :default-size="30" :min-size="20" :max-size="50">
-            <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="border-r" @select="onSelectDigestResult" @mark-all-read="digestStore.markAllRead(digestStore.activeConfigId ?? undefined)" />
+          <SplitterPanel
+            :default-size="30" :min-size="20" :max-size="50"
+            :style="listCollapsed ? collapsedPanelStyle : undefined"
+            :inert="listCollapsed || undefined"
+            :aria-hidden="listCollapsed || undefined"
+          >
+            <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" :class="listCollapsed ? '' : 'border-r'" @select="onSelectDigestResult" @mark-all-read="digestStore.markAllRead(digestStore.activeConfigId ?? undefined)" />
             <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="markAllReadInCurrentView" />
           </SplitterPanel>
-          <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" />
+          <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" :class="{ hidden: contentMaximized }" />
 
           <SplitterPanel :default-size="52" :min-size="30">
             <DigestContent v-if="digestMode" />
             <ItemContent v-else :unsave-item="unsaveItem" />
+          </SplitterPanel>
+        </SplitterGroup>
+
+        <!-- Desktop: stacked — sidebar, then the item selector above the content
+             in the right column. Its own auto-save-ids so each layout keeps its
+             own split sizes. x collapses only the sidebar here: the list is
+             already above the content, and it is the only way to pick an item. -->
+        <SplitterGroup v-else direction="horizontal" auto-save-id="digesterr-stacked" class="flex-1" data-layout="stacked">
+          <SplitterPanel
+            :default-size="18" :min-size="14" :max-size="28"
+            :style="sidebarCollapsed ? collapsedPanelStyle : undefined"
+            :inert="sidebarCollapsed || undefined"
+            :aria-hidden="sidebarCollapsed || undefined"
+          >
+            <div class="h-full flex flex-col">
+              <aside class="flex-1 min-h-0 bg-sidebar overflow-y-auto p-3" :class="sidebarCollapsed ? '' : 'border-r'">
+                <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @select-category="selectCategory" @select-section="selectSection" @show-saved="showSaved" />
+              </aside>
+              <div class="shrink-0 flex justify-center bg-sidebar py-1.5" :class="sidebarCollapsed ? '' : 'border-r'">
+                <VersionBadge />
+              </div>
+            </div>
+          </SplitterPanel>
+          <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" :class="{ hidden: contentMaximized }" />
+
+          <SplitterPanel :default-size="82" :min-size="40">
+            <SplitterGroup direction="vertical" auto-save-id="digesterr-stacked-v" class="h-full">
+              <SplitterPanel
+                :default-size="35" :min-size="15" :max-size="70"
+                :style="listCollapsed ? collapsedPanelStyle : undefined"
+                :inert="listCollapsed || undefined"
+                :aria-hidden="listCollapsed || undefined"
+              >
+                <DigestResultList v-if="digestMode" compact :showing-all="digestStore.showingAllDigests" class="h-full" :class="listCollapsed ? '' : 'border-b'" @select="onSelectDigestResult" @mark-all-read="digestStore.markAllRead(digestStore.activeConfigId ?? undefined)" />
+                <ItemList v-else compact :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="markAllReadInCurrentView" />
+              </SplitterPanel>
+              <SplitterResizeHandle class="h-1 hover:h-1.5 bg-border hover:bg-accent transition-all cursor-row-resize" :class="{ hidden: contentMaximized }" />
+              <SplitterPanel :default-size="65" :min-size="25">
+                <DigestContent v-if="digestMode" />
+                <ItemContent v-else :unsave-item="unsaveItem" />
+              </SplitterPanel>
+            </SplitterGroup>
           </SplitterPanel>
         </SplitterGroup>
       </template>
