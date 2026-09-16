@@ -5,11 +5,14 @@ import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
 import { Circle, CircleDot, LoaderCircle, CheckCircle2, ChevronsUp, ChevronsDown, MoreHorizontal } from 'lucide-vue-next'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
-import { absoluteTime } from '../lib/format'
+import { absoluteTime, relativeTime } from '../lib/format'
 import type { DigestResult, DigestResultWithConfigName } from '../types/api'
 
 const props = defineProps<{
   showingAll?: boolean
+  // Stacked desktop layout: one-line rows (title then item count on the same
+  // line) instead of the taller two-line block.
+  compact?: boolean
 }>()
 
 const emit = defineEmits<{ (e: 'select', result: DigestResult): void; (e: 'markAllRead'): void }>()
@@ -115,12 +118,53 @@ function onSelect(e: MouseEvent, result: DigestResult) {
     <div v-else>
       <div v-for="result in visibleResults" :key="result.id"
         role="button" tabindex="0"
-        class="group w-full text-left p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
-        :class="[showingAll ? 'min-h-[5.5rem]' : 'h-20', { 'bg-accent/10': isSelected(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read', 'opacity-50': digestStore.loadingMore }]"
+        class="group w-full text-left border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer"
+        :class="[
+          compact ? 'h-7' : 'p-2',
+          !compact && (showingAll ? 'min-h-[5.5rem]' : 'h-20'),
+          { 'bg-accent/10': isSelected(result), 'text-foreground': result.status === 'unread', 'text-muted-foreground': result.status === 'read', 'opacity-50': digestStore.loadingMore },
+        ]"
         @click="onSelect($event, result)"
         @keydown.enter.prevent="onSelect($event, result)"
         @keydown.space.prevent="onSelect($event, result)"
       >
+        <!-- Stacked layout: one line — status, title, item count, time, and the
+             same hover actions. The title and count are SIBLINGS so the count
+             can only ever sit beside the title, never under it. -->
+        <div v-if="compact" class="flex items-center gap-1.5 h-full min-w-0 px-2 text-sm">
+          <CircleDot v-if="result.status === 'unread'" class="size-3 shrink-0 text-accent" />
+          <Circle v-else class="size-3 shrink-0 text-muted-foreground/40" />
+          <span data-item-title class="font-semibold truncate shrink-0 max-w-[55%]">{{ resultTitle(result) }}</span>
+          <span data-item-excerpt class="text-xs text-muted-foreground/70 truncate flex-1 min-w-0">{{ result.item_count }} items</span>
+          <span class="text-[10px] text-muted-foreground/70 shrink-0" :title="absoluteTime(result.created_at)">{{ relativeTime(result.created_at) }}</span>
+          <span class="shrink-0 relative flex items-center justify-end h-4 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              v-if="result.status !== 'read'"
+              class="text-muted-foreground/50 hover:text-muted-foreground p-0.5"
+              @click.stop="toggleMenu(result.id)"
+            >
+              <MoreHorizontal class="size-3" />
+            </button>
+            <div
+              v-if="openMenuId === result.id"
+              class="absolute right-0 top-6 z-50 bg-popover border rounded-md shadow-md flex gap-1 p-1"
+            >
+              <button
+                class="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-accent/10 rounded transition-colors whitespace-nowrap"
+                @click.stop="markAboveRead(result)"
+              >
+                <ChevronsUp class="size-3" /> Above
+              </button>
+              <button
+                class="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-accent/10 rounded transition-colors whitespace-nowrap"
+                @click.stop="markBelowRead(result)"
+              >
+                <ChevronsDown class="size-3" /> Below
+              </button>
+            </div>
+          </span>
+        </div>
+        <template v-else>
         <div class="flex items-start gap-1 min-w-0">
           <CircleDot v-if="result.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
           <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
@@ -159,6 +203,7 @@ function onSelect(e: MouseEvent, result: DigestResult) {
         <div v-if="showingAll && result.config_name" class="flex items-center justify-between mt-2">
           <span class="text-[10px] text-accent/70 truncate">{{ result.config_name }}</span>
         </div>
+        </template>
       </div>
     </div>
     <!-- End-of-list mark-all-read button -->

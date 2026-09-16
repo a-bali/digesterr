@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import DigestResultList from './DigestResultList.vue'
 import { useDigestStore } from '../stores/digest'
-import { absoluteTime } from '../lib/format'
+import { absoluteTime, relativeTime } from '../lib/format'
 import type { DigestResult } from '../types/api'
 
 // reka-ui's dropdown content measures itself with ResizeObserver, which jsdom
@@ -45,7 +45,7 @@ function makeResult(overrides: Partial<DigestResult> = {}): DigestResult {
   } as DigestResult
 }
 
-function mountList() {
+function mountList(opts: { compact?: boolean; showingAll?: boolean } = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const store = useDigestStore()
@@ -54,7 +54,13 @@ function mountList() {
     makeResult(),
     makeResult({ id: 2, created_at: '2026-08-12T09:30:00Z', status: 'read' }),
   ]
-  return mount(DigestResultList, { global: { plugins: [pinia] } })
+  return mount(DigestResultList, {
+    props: {
+      ...(opts.compact !== undefined ? { compact: opts.compact } : {}),
+      ...(opts.showingAll !== undefined ? { showingAll: opts.showingAll } : {}),
+    },
+    global: { plugins: [pinia] },
+  })
 }
 
 // The dropdown content renders inside a reka-ui portal (teleported to
@@ -171,5 +177,77 @@ describe('DigestResultList', () => {
     expect(rows[0]).toContain(absoluteTime('2026-08-12T09:30:00Z'))
     expect(rows[1]).toContain(absoluteTime('2026-08-13T08:00:00Z'))
     expect(wrapper.html()).toContain('Oldest')
+  })
+})
+
+describe('DigestResultList compact rows (stacked layout)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('uses the compact row height', () => {
+    const wrapper = mountList({ compact: true })
+    const row = resultRows(wrapper)[0]
+
+    expect(row.classes()).toContain('h-7')
+    expect(row.classes()).not.toContain('h-20')
+    expect(row.classes()).not.toContain('min-h-[5.5rem]')
+  })
+
+  it('puts the title and the item count on the SAME line (adjacent siblings)', () => {
+    const wrapper = mountList({ compact: true })
+    const row = resultRows(wrapper)[0]
+    const title = row.find('[data-item-title]')
+    const excerpt = row.find('[data-item-excerpt]')
+
+    expect(title.exists()).toBe(true)
+    expect(excerpt.exists()).toBe(true)
+    expect(excerpt.text()).toContain('items')
+    // Same parent + flex row is the DOM-level encoding of "one line".
+    expect(title.element.parentElement).toBe(excerpt.element.parentElement)
+    expect(title.element.parentElement!.className).toContain('flex')
+    expect(title.element.parentElement!.className).toContain('items-center')
+  })
+
+  it('renders the relative publish time and the hover action menu on the same line', () => {
+    const wrapper = mountList({ compact: true })
+    const row = resultRows(wrapper)[0]
+
+    // The relative time is rendered (not the absolute one) and carries the
+    // absolute value as a tooltip, exactly like the regular row.
+    const timeEl = row.findAll('span').find(s => s.attributes('title') === absoluteTime('2026-08-13T08:00:00Z'))
+    expect(timeEl, 'the relative time must still be shown').toBeTruthy()
+    expect(relativeTime('2026-08-13T08:00:00Z')).toBeTruthy()
+    // The hover action trigger (MoreHorizontal) is present.
+    expect(row.findAll('button').some(b => b.attributes('class')?.includes('p-0.5'))).toBe(true)
+  })
+
+  it('leaves the default (non-compact) row untouched', () => {
+    const wrapper = mountList()
+    const row = resultRows(wrapper)[0]
+
+    expect(row.classes()).toContain('h-20')
+    expect(row.classes()).not.toContain('h-7')
+    expect(row.find('[data-item-title]').exists()).toBe(false)
+  })
+
+  it('keeps the one-line row in the showingAll view too', () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useDigestStore()
+    store.loading = false
+    store.showingAllDigests = true
+    store.allResults = [{ ...makeResult(), config_name: 'Morning Brief' } as never]
+    const wrapper = mount(DigestResultList, {
+      props: { compact: true, showingAll: true },
+      global: { plugins: [pinia] },
+    })
+    const row = resultRows(wrapper)[0]
+
+    expect(row.classes()).toContain('h-7')
+    expect(row.classes()).not.toContain('min-h-[5.5rem]')
+    expect(row.find('[data-item-title]').exists()).toBe(true)
   })
 })

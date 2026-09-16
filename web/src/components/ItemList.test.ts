@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ItemList from './ItemList.vue'
 import { useFeedStore } from '../stores/feed'
+import { itemApi } from '../services/api'
 import type { Feed, Item } from '../types/api'
 
 vi.mock('../services/api', () => ({
@@ -92,7 +93,7 @@ function makeItem(overrides: Partial<Item> = {}): Item {
   }
 }
 
-function mountList(opts: { savedItems?: Item[]; items?: Item[]; showingSaved?: boolean; feedType?: string; activeFeedId?: number | null } = {}) {
+function mountList(opts: { savedItems?: Item[]; items?: Item[]; showingSaved?: boolean; feedType?: string; activeFeedId?: number | null; compact?: boolean } = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const store = useFeedStore()
@@ -107,6 +108,7 @@ function mountList(opts: { savedItems?: Item[]; items?: Item[]; showingSaved?: b
     props: {
       savedItems: opts.savedItems ?? [],
       showingSaved: opts.showingSaved ?? false,
+      ...(opts.compact !== undefined ? { compact: opts.compact } : {}),
     },
     global: { plugins: [pinia] },
   })
@@ -655,5 +657,86 @@ describe('ItemList swipe action panels', () => {
     await flushPromises()
 
     expect(wrapper.emitted('selectItem')).toBeTruthy()
+  })
+})
+
+describe('ItemList compact rows (stacked layout)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
+
+  it('uses the compact row height and drops the two-line block', () => {
+    const { wrapper } = mountList({ compact: true })
+    const row = resultRows(wrapper)[0]
+
+    expect(row.classes()).toContain('h-7')
+    expect(row.classes()).not.toContain('h-20')
+    // The two-line variant's wrapper must be gone entirely.
+    expect(row.find('.line-clamp-2').exists()).toBe(false)
+  })
+
+  it('puts the title and the excerpt on the SAME line (adjacent siblings)', () => {
+    const { wrapper } = mountList({ compact: true })
+    const row = resultRows(wrapper)[0]
+    const title = row.find('[data-item-title]')
+    const excerpt = row.find('[data-item-excerpt]')
+
+    expect(title.exists()).toBe(true)
+    expect(excerpt.exists()).toBe(true)
+    // jsdom has no layout engine, so shared parentage with both nodes flex
+    // siblings is the assertion that actually encodes "on one line" — the
+    // regression this guards against is the excerpt wrapping to its own row.
+    expect(title.element.parentElement).toBe(excerpt.element.parentElement)
+    expect(title.element.parentElement!.className).toContain('flex')
+    expect(title.element.parentElement!.className).toContain('items-center')
+  })
+
+  it('keeps the feed name inline in a multi-feed view (source-label rule)', async () => {
+    const { wrapper, store } = mountList({ compact: true })
+    store.activeFeedId = null
+    store.activeSection = 'feeds'
+    store.multiItems = [
+      { ...makeItem({ id: 5, title: 'From a feed' }), feed_name: 'Hacker News', feed_type: 'hn' },
+    ] as never
+    await flushPromises()
+
+    const row = resultRows(wrapper)[0]
+    const title = row.find('[data-item-title]')
+    const rowText = row.text()
+    expect(rowText).toContain('Hacker News')
+    expect(rowText).toContain('From a feed')
+    // Still one line: the feed label sits in the same flex line as the title.
+    expect(title.element.parentElement!.textContent).toContain('Hacker News')
+  })
+
+  it('keeps the publish time and the hover mark-above/below actions', () => {
+    const { wrapper } = mountList({ compact: true })
+    const row = resultRows(wrapper)[0]
+
+    expect(row.find('[data-item-time]').exists()).toBe(true)
+    expect(row.find('[data-mark-actions]').exists()).toBe(true)
+    expect(row.find('[data-mark-above]').exists()).toBe(true)
+    expect(row.find('[data-mark-below]').exists()).toBe(true)
+  })
+
+  it('still marks above/below from the compact row', async () => {
+    const { wrapper } = mountList({ compact: true })
+    await resultRows(wrapper)[0].find('[data-mark-above]').trigger('click')
+    await flushPromises()
+
+    expect(itemApi.markReadAbove).toHaveBeenCalled()
+  })
+
+  it('leaves the default (non-compact) row untouched', () => {
+    const { wrapper } = mountList()
+    const row = resultRows(wrapper)[0]
+
+    expect(row.classes()).toContain('h-20')
+    expect(row.classes()).not.toContain('h-7')
+    expect(row.find('.line-clamp-2').exists()).toBe(true)
+    expect(row.find('[data-item-title]').exists()).toBe(false)
   })
 })

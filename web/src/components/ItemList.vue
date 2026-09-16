@@ -15,6 +15,9 @@ import { relativeTime, absoluteTime } from '../lib/format'
 const props = defineProps<{
   savedItems: any[]
   showingSaved: boolean
+  // Stacked desktop layout: one-line rows (title then excerpt on the same
+  // line) instead of the two-line block with a taller min-height.
+  compact?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -261,8 +264,12 @@ async function markBelowRead(item: any) {
       <TransitionGroup name="item-enter" tag="div">
       <div v-for="item in displayItems" :key="item.id"
       role="button" tabindex="0"
-      class="group w-full text-left p-2 border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer [touch-action:pan-y_pinch-zoom]"
-      :class="[feedStore.isMultiView ? 'min-h-[5.5rem]' : 'h-20', { 'bg-accent/10': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved', 'opacity-50 transition-opacity': feedStore.loading }]"
+      class="group w-full text-left border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer [touch-action:pan-y_pinch-zoom]"
+      :class="[
+        compact ? 'h-7' : 'p-2',
+        !compact && (feedStore.isMultiView ? 'min-h-[5.5rem]' : 'h-20'),
+        { 'bg-accent/10': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved', 'opacity-50 transition-opacity': feedStore.loading },
+      ]"
       :data-selected-item="item.id === feedStore.selectedItem?.id ? '' : undefined"
       :data-swipe-action="swipeActionFor(item.id) ?? undefined"
       @click="onRowClick($event, item)"
@@ -308,6 +315,55 @@ async function markBelowRead(item: any) {
 
       <!-- Row content, shifted aside while the panel is open. -->
       <div class="transition-transform duration-150" :class="swipeShift(item)" data-row-content>
+      <!-- Stacked layout: one line — status, source feed, title, excerpt, time.
+           The title and excerpt are SIBLINGS so the excerpt can only ever sit
+           beside the title, never under it. -->
+      <div v-if="compact" class="flex items-center gap-1.5 h-full min-w-0 px-2 text-sm">
+        <CircleDot v-if="item.status === 'unread'" class="size-3 shrink-0 text-accent" />
+        <CircleCheck v-else-if="item.status === 'saved'" class="size-3 shrink-0 text-accent" />
+        <span v-else-if="item.status === 'digested'" class="size-3 shrink-0 inline-flex items-center justify-center text-[10px] leading-none text-muted-foreground/60" title="digested">◐</span>
+        <Circle v-else class="size-3 shrink-0 text-muted-foreground/40" />
+        <img
+          v-if="feedStore.isMultiView && feedTypeIcon(item.feed_type)"
+          :src="feedTypeIcon(item.feed_type)"
+          class="size-3 shrink-0 rounded-sm"
+          @error="($event.target as HTMLImageElement).style.display = 'none'"
+        />
+        <span
+          v-if="feedStore.isMultiView && feedNameFor(item)"
+          class="text-[10px] text-accent/70 shrink-0 max-w-[7rem] truncate"
+        >{{ feedNameFor(item) }}</span>
+        <span data-item-title class="font-semibold truncate shrink-0 max-w-[55%]">{{ decodeHTMLEntities(item.title) }}</span>
+        <span data-item-excerpt class="text-xs text-muted-foreground/70 truncate flex-1 min-w-0">{{ stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</span>
+        <span class="shrink-0 relative flex items-center justify-end h-4">
+          <span
+            class="text-[10px] text-muted-foreground/70 group-hover:hidden"
+            data-item-time
+            :title="absoluteTime(item.published_at)"
+          >{{ relativeTime(item.published_at) }}</span>
+          <span v-if="!props.showingSaved" class="hidden group-hover:flex items-center gap-0.5" data-mark-actions>
+            <button
+              class="text-muted-foreground/50 hover:text-accent p-0.5"
+              title="Mark everything above as read, except this item"
+              aria-label="Mark everything above as read, except this item"
+              data-mark-above
+              @click.stop="markAboveRead(item)"
+            >
+              <ChevronsUp class="size-3" />
+            </button>
+            <button
+              class="text-muted-foreground/50 hover:text-accent p-0.5"
+              title="Mark everything below as read, except this item"
+              aria-label="Mark everything below as read, except this item"
+              data-mark-below
+              @click.stop="markBelowRead(item)"
+            >
+              <ChevronsDown class="size-3" />
+            </button>
+          </span>
+        </span>
+      </div>
+      <template v-else>
       <div class="flex items-start gap-1 min-w-0">
         <CircleDot v-if="item.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
         <CircleCheck v-else-if="item.status === 'saved'" class="size-3 shrink-0 mt-0.5 text-accent" />
@@ -393,6 +449,7 @@ async function markBelowRead(item: any) {
           <template v-if="item.comments_count > 0">{{ commentsTitle(item.comments_count) }}</template>
         </Tooltip>
       </div>
+      </template>
       </div>
       </div>
     </TransitionGroup>
