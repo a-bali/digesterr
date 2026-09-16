@@ -40,6 +40,29 @@ type DigestResultItem struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+type EmailMessage struct {
+	ID         int64          `json:"id"`
+	InboxID    string         `json:"inbox_id"`
+	MessageID  string         `json:"message_id"`
+	ThreadID   string         `json:"thread_id"`
+	FromAddr   string         `json:"from_addr"`
+	ToAddrs    string         `json:"to_addrs"`
+	Subject    string         `json:"subject"`
+	Text       string         `json:"text"`
+	Html       string         `json:"html"`
+	RawHeaders string         `json:"raw_headers"`
+	ReceivedAt sql.NullString `json:"received_at"`
+	CreatedAt  time.Time      `json:"created_at"`
+}
+
+type EmailSyncState struct {
+	InboxID      string         `json:"inbox_id"`
+	LastSyncedAt sql.NullString `json:"last_synced_at"`
+	LastError    string         `json:"last_error"`
+	LastErrorAt  sql.NullString `json:"last_error_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+}
+
 type Feed struct {
 	ID                int64        `json:"id"`
 	UserID            int64        `json:"user_id"`

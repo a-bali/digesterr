@@ -300,6 +300,38 @@ PRAGMA foreign_keys=ON;
 			"add digest_results.created_at index",
 			"CREATE INDEX IF NOT EXISTS idx_digest_results_created_at ON digest_results(created_at)",
 		},
+		{
+			"add email_messages staging table",
+			`CREATE TABLE IF NOT EXISTS email_messages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    inbox_id    TEXT    NOT NULL,
+    message_id  TEXT    NOT NULL,
+    thread_id   TEXT    NOT NULL DEFAULT '',
+    from_addr   TEXT    NOT NULL DEFAULT '',
+    to_addrs    TEXT    NOT NULL DEFAULT '',
+    subject     TEXT    NOT NULL DEFAULT '',
+    text        TEXT    NOT NULL DEFAULT '',
+    html        TEXT    NOT NULL DEFAULT '',
+    raw_headers TEXT    NOT NULL DEFAULT '{}',
+    received_at TEXT,
+    created_at  DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    UNIQUE (inbox_id, message_id)
+)`,
+		},
+		{
+			"add email_sync_state table",
+			`CREATE TABLE IF NOT EXISTS email_sync_state (
+    inbox_id       TEXT    PRIMARY KEY,
+    last_synced_at TEXT,
+    last_error     TEXT    NOT NULL DEFAULT '',
+    last_error_at  TEXT,
+    updated_at     DATETIME NOT NULL DEFAULT (DATETIME('now'))
+)`,
+		},
+		{
+			"add email_messages inbox/received index",
+			"CREATE INDEX IF NOT EXISTS idx_email_messages_inbox_received ON email_messages(inbox_id, received_at)",
+		},
 	}
 	for _, m := range migrations {
 		if skip, err := migrationSkipped(db, m.name); err != nil {
@@ -322,6 +354,11 @@ PRAGMA foreign_keys=ON;
 	// Migrations toggle PRAGMA foreign_keys; make sure enforcement is on even
 	// if a migration failed partway.
 	db.Exec("PRAGMA foreign_keys=ON")
+	// Enforce the instance-wide email address namespace. Done outside the
+	// migration loop because a unique index cannot be created while colliding
+	// rows exist, and that loop only logs failures at warn — an invariant this
+	// load-bearing must not be able to no-op without anyone noticing.
+	ensureEmailFeedURLUnique(db)
 	// Copy existing guid data into hash and create new unique index. Only
 	// report when there was actual work to do.
 	res, err := db.Exec("UPDATE items SET hash = guid WHERE hash = '' AND guid != ''")
@@ -370,6 +407,54 @@ func hasColumn(db *sql.DB, table, column string) (bool, error) {
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// ensureEmailFeedURLUnique creates the instance-wide unique index on email
+// feed addresses, reporting collisions instead of failing quietly.
+//
+// One AgentMail inbox serves every user, so an email feed's URL is a globally
+// shared address: if two feeds claim the same plus-address, both read the same
+// mail — and if they belong to different users, one user reads another's
+// subscription. Uniqueness must therefore be on url alone (a per-user index
+// would not catch that), and the cost of it silently not existing is high
+// enough to warrant its own path rather than a migration-loop entry, which
+// only logs failures at warn.
+//
+// Duplicate rows can only arrive by hand-editing the DB, so this reports them
+// and leaves them alone rather than deleting a feed: the operator decides.
+func ensureEmailFeedURLUnique(db *sql.DB) {
+	var dupes int
+	err := db.QueryRow(`
+SELECT count(*) FROM (
+    SELECT url FROM feeds WHERE type = 'email' AND url != ''
+    GROUP BY url HAVING count(*) > 1
+)`).Scan(&dupes)
+	if err != nil {
+		slog.Warn("email feed url uniqueness check failed", "error", err)
+		return
+	}
+	if dupes > 0 {
+		// Name the addresses but not the owners: this is a log, and the rows
+		// may belong to more than one account.
+		rows, qerr := db.Query(`
+SELECT url, count(*) FROM feeds WHERE type = 'email' AND url != ''
+GROUP BY url HAVING count(*) > 1 ORDER BY url`)
+		if qerr == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var url string
+				var n int
+				if rows.Scan(&url, &n) == nil {
+					slog.Warn("duplicate email feed address", "url", url, "feeds", n)
+				}
+			}
+		}
+		slog.Warn("unique index on email feed addresses NOT created: resolve the duplicate addresses and restart", "duplicate_addresses", dupes)
+		return
+	}
+	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_feeds_email_url ON feeds(url) WHERE type = 'email'"); err != nil {
+		slog.Warn("failed to create unique index on email feed addresses", "error", err)
+	}
 }
 
 // migrationSkipped reports whether a known table-recreating migration must
