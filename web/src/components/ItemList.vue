@@ -125,6 +125,9 @@ function feedTypeIcon(feedType: string): string {
   if (feedType === 'lobsters') return 'https://lobste.rs/favicon.ico'
   if (feedType === 'reddit') return 'https://www.reddit.com/favicon.ico'
   if (feedType === 'twitter') return 'https://abs.twimg.com/favicons/twitter.3.ico'
+  // Email feeds deliberately have no icon URL to fetch: the sender varies per
+  // message, so any fixed favicon would be misleading, and an image request per
+  // row is not worth it. The row simply renders without an icon.
   return ''
 }
 

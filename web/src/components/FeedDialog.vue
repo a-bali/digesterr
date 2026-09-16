@@ -5,7 +5,7 @@ import Dialog from './ui/Dialog.vue'
 import Input from './ui/Input.vue'
 import Select from './ui/Select.vue'
 import Button from './ui/Button.vue'
-import { SCORE_FEED_TYPES, feedUrlFor } from '../lib/feeds'
+import { SCORE_FEED_TYPES, feedUrlFor, isValidEmailSuffix, emailAddressFor, emailPrefixOf, emailDomainOf, emailSuffixOf, emailNameFor } from '../lib/feeds'
 import { feedApi } from '../services/api'
 import type { Feed } from '../types/api'
 
@@ -35,12 +35,45 @@ const categoryNames = computed(() => {
 })
 
 const form = reactive({ type: 'rss', name: '', url: '', category: '', extract_content: 0, min_score: 0 })
-const typeLabel = (t: string) => ({ rss: 'RSS / Atom', hn: 'Hacker News', lobsters: 'Lobste.rs', reddit: 'Reddit', twitter: 'Twitter / X' }[t] || t)
+const typeLabel = (t: string) => ({ rss: 'RSS / Atom', hn: 'Hacker News', lobsters: 'Lobste.rs', reddit: 'Reddit', twitter: 'Twitter / X', email: 'Email newsletter' }[t] || t)
 
 // Content extraction fetches the article behind item.url with readability;
 // x.com serves a login-wall to crawlers, so it can't work for tweets —
-// tweets already carry their full content from the API.
-const extractionSupported = computed(() => form.type !== 'twitter')
+// tweets already carry their full content from the API. A newsletter's first
+// link is not "the article" either, so extraction would replace a good body
+// with unrelated page chrome.
+const extractionSupported = computed(() => form.type !== 'twitter' && form.type !== 'email')
+
+// ---- Email feeds ----------------------------------------------------------
+//
+// One AgentMail inbox serves the whole instance, so the address is
+// <inbox-local-part>+<suffix>@<domain>: the prefix and domain are fixed server
+// state and only the suffix is the user's. Showing them as non-editable context
+// (below) is what makes that obvious, and composing the full address in one
+// helper keeps the dialog, the sidebar and the tests in agreement.
+const emailInbox = computed(() => feedStore.emailInbox ?? '')
+const emailAvailable = computed(() => emailInbox.value !== '')
+const emailPrefix = computed(() => emailPrefixOf(emailInbox.value))
+const emailDomain = computed(() => emailDomainOf(emailInbox.value))
+
+// The full address for the current suffix — what the user must hand to the
+// newsletter publisher. This is the single most important string in the form:
+// AgentMail has no catch-all, so a wrong address receives nothing at all.
+const resolvedEmailAddress = computed(() => {
+  const suffix = form.url.trim()
+  if (!emailAvailable.value || !isValidEmailSuffix(suffix)) return ''
+  return emailAddressFor(emailInbox.value, suffix)
+})
+
+// Suffix validity is checked here so the user finds out before a round trip.
+// Empty is not shown as an error while the field is untouched.
+const emailSuffixError = computed(() => {
+  const suffix = form.url.trim()
+  if (suffix === '') return ''
+  return isValidEmailSuffix(suffix)
+    ? ''
+    : 'Use letters, digits, dots, dashes or underscores (no spaces).'
+})
 
 // True while the name in the field came from the lookup rather than the user.
 // It lets a new URL replace an auto-filled name, while a typed name is never
@@ -80,6 +113,15 @@ async function prefillName() {
   const type = form.type
   const raw = form.url.trim()
   if (!raw) return
+  // An email feed's name comes from its own suffix, with no lookup: the server
+  // has no endpoint that could name an address, and a round trip that could
+  // time out would look like a broken form.
+  if (type === 'email') {
+    if (!emailAvailable.value || !isValidEmailSuffix(raw)) return
+    form.name = emailNameFor(raw)
+    nameFromLookup.value = true
+    return
+  }
   const url = feedUrlFor(type, raw)
   if (!url) return
   try {
@@ -109,7 +151,12 @@ watch(
         ? feed.url.replace('https://www.reddit.com/r/', '').replace('.rss', '')
         : feed.type === 'twitter'
           ? feed.url.replace('https://x.com/', '').replace('https://twitter.com/', '').replace(/^@/, '')
-          : feed.url
+          : feed.type === 'email'
+            // Only the suffix is editable, so an edit must prefill just that —
+            // round-tripping the full address through the field would let a
+            // stray keystroke corrupt it.
+            ? emailSuffixOf(feed.url)
+            : feed.url
       form.category = feed.category || ''
       form.extract_content = extractionSupported.value ? feed.extract_content : 0
       form.min_score = feed.min_score
@@ -122,6 +169,14 @@ watch(
       form.min_score = 0
     }
   },
+  { immediate: true },
+)
+
+// The email option needs the instance's inbox, which is only fetched when a
+// dialog first needs it (the store caches it for the session).
+watch(
+  () => form.type,
+  (t) => { if (t === 'email') void feedStore.ensureEmailConfig() },
   { immediate: true },
 )
 
@@ -149,7 +204,7 @@ const dialogId = Math.random().toString(36).slice(2)
       <div class="space-y-1">
         <label class="text-sm font-medium">Type</label>
         <Select v-model="form.type" @change="onTypeChange(($event.target as HTMLSelectElement).value)">
-          <option v-for="t in ['rss','hn','lobsters','reddit','twitter']" :key="t" :value="t">{{ typeLabel(t) }}</option>
+          <option v-for="t in ['rss','hn','lobsters','reddit','twitter','email']" :key="t" :value="t" :disabled="t === 'email' && !emailAvailable">{{ typeLabel(t) }}{{ t === 'email' && !emailAvailable ? ' (not configured)' : '' }}</option>
         </Select>
       </div>
       <div class="space-y-1">
@@ -173,6 +228,37 @@ const dialogId = Math.random().toString(36).slice(2)
           <span class="text-xs text-muted-foreground bg-muted rounded-l-md px-2 py-1.5 border border-border border-r-0 whitespace-nowrap">https://x.com/</span>
           <Input v-model="form.url" placeholder="username" required class="rounded-none" @blur="prefillName" />
         </div>
+      </div>
+      <!--
+        Email feeds: one AgentMail inbox serves the whole instance, so the
+        address is <prefix>+<suffix>@<domain>. The prefix and domain are
+        server-side state shown as fixed context; only the suffix is editable.
+        The resolved full address is displayed because that exact string is what
+        the user has to give the newsletter publisher — AgentMail has no
+        catch-all, so a wrong suffix silently receives nothing at all.
+      -->
+      <div v-else-if="form.type === 'email'" class="space-y-1" data-email-fields>
+        <label class="text-sm font-medium">Subscription address</label>
+        <div class="flex items-center gap-0">
+          <span class="text-xs text-muted-foreground bg-muted rounded-l-md px-2 py-1.5 border border-border border-r-0 whitespace-nowrap" data-email-prefix>{{ emailPrefix }}</span>
+          <Input
+            v-model="form.url"
+            placeholder="sport"
+            required
+            class="rounded-none"
+            data-email-suffix
+            @blur="prefillName"
+          />
+          <span class="text-xs text-muted-foreground bg-muted rounded-r-md px-2 py-1.5 border border-border border-l-0 whitespace-nowrap" data-email-domain>{{ emailDomain }}</span>
+        </div>
+        <p v-if="emailSuffixError" class="text-xs text-destructive">{{ emailSuffixError }}</p>
+        <template v-else-if="resolvedEmailAddress">
+          <p class="text-xs text-muted-foreground">Give this address to the newsletter publisher:</p>
+          <p class="text-xs font-mono bg-muted rounded px-2 py-1 select-all break-all" data-email-resolved>{{ resolvedEmailAddress }}</p>
+        </template>
+        <p v-else class="text-xs text-muted-foreground">
+          One mailbox serves this server, so only the part after “+” is yours to choose.
+        </p>
       </div>
       <div v-else class="space-y-1">
         <label class="text-sm font-medium">URL</label>

@@ -282,3 +282,15 @@ export interface MultiFeedItemsResponse {
   has_more: boolean
   total: number
 }
+
+// HealthInfo is the readiness payload. The email_* keys are present only when
+// the server has AgentMail credentials AND the request was authenticated, so
+// `undefined` means "the email feed type is unavailable here" — distinct from
+// an empty string.
+export interface HealthInfo {
+  status: string
+  email_enabled?: boolean
+  email_inbox?: string
+  email_prefix?: string
+  email_domain?: string
+}

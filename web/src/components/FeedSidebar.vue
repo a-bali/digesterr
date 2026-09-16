@@ -4,7 +4,7 @@ import { toast } from 'vue-sonner'
 import { useFeedStore } from '../stores/feed'
 import { useDigestStore } from '../stores/digest'
 import { feedApi } from '../services/api'
-import { feedUrlFor } from '../lib/feeds'
+import { feedUrlFor, emailAddressFor } from '../lib/feeds'
 import { toastError } from '../lib/toast'
 import { absoluteTime } from '../lib/format'
 import type { DigestConfig, Feed } from '../types/api'
@@ -131,6 +131,12 @@ function buildFeedPayload(form: { type: string; name: string; url: string; categ
     data.url = feedUrlFor('twitter', form.url)
   } else if (form.type === 'hn' || form.type === 'lobsters') {
     data.url = feedUrlFor(form.type, '')
+  } else if (form.type === 'email') {
+    // The form field holds only the part after '+'; the instance-wide inbox
+    // comes from the server, so the full address is composed here. The one
+    // inbox is why the suffix must be unique across ALL users: two feeds on one
+    // address would both read the same mail.
+    data.url = emailAddressFor(feedStore.emailInbox ?? '', form.url)
   } else data.url = form.url
   return data
 }
