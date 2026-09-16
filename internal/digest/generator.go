@@ -125,14 +125,13 @@ type digestItemRef struct {
 	TopComments      []commentRef `json:"top_comments,omitempty"`
 }
 
-// llmDigestOutput is the shape the digest prompt asks the model for.
+// llmDigestOutput is the shape the digest prompt asks the model for. The
+// per-highlight entry type is llmHighlight, which also carries the article
+// number used to align summaries with the articles they describe.
 type llmDigestOutput struct {
-	Title      string `json:"title"`
-	Summary    string `json:"summary"`
-	Highlights []struct {
-		Title   string `json:"title"`
-		Summary string `json:"summary"`
-	} `json:"highlights"`
+	Title      string         `json:"title"`
+	Summary    string         `json:"summary"`
+	Highlights []llmHighlight `json:"highlights"`
 }
 
 // decodeDigestOutput decodes the model's reply into llmDigestOutput, tolerating
@@ -683,6 +682,34 @@ func CleanContentForLLM(raw string) string {
 	return s
 }
 
+// digestReplyComplete reports whether the reply carried enough usable entries to
+// summarize every highlight article. A reply that parses but silently omits
+// articles is as broken as one that does not parse: the omitted highlights
+// render blank, and before alignment the remaining summaries shifted onto the
+// wrong articles.
+func digestReplyComplete(highlights []digestItem, entries []llmHighlight) bool {
+	if len(highlights) == 0 {
+		return true
+	}
+	_, missing := alignHighlights(highlights, entries)
+	return missing == 0
+}
+
+// assignSummaries writes each reply entry's summary onto the article it
+// describes and reports how many articles were matched. Entries that matched no
+// article are dropped; articles that matched no entry keep an empty summary.
+func assignSummaries(highlights []digestItem, refs []digestItemRef, entries []llmHighlight) (assignedCount, missing int) {
+	assigned, missing := alignHighlights(highlights, entries)
+	for articleIdx, entryIdx := range assigned {
+		if entryIdx == unassigned || articleIdx >= len(refs) {
+			continue
+		}
+		refs[articleIdx].LLMSummary = entries[entryIdx].Summary
+		assignedCount++
+	}
+	return assignedCount, missing
+}
+
 func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, highlights, rest []digestItem, genLogger *slog.Logger) (*digestResultContent, error) {
 	content := &digestResultContent{}
 
@@ -730,6 +757,13 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 		userPrompt += "\n"
 	}
 
+	// The format instruction is deliberately unchanged from the version that
+	// produced clean replies. Asking the model to number each entry was tried
+	// and reverted: measured over the same articles, it tripled malformed
+	// replies (3/6 vs 0/6, one of them truncated at the token limit) and bought
+	// no alignment benefit — title matching already places entries correctly,
+	// including on replies where the numbering was present. Alignment therefore
+	// relies on titles, not on the model cooperating with a new output field.
 	userPrompt += "For each HIGHLIGHT article, provide a 2-3 sentence highlight capturing the key insight and why it matters — skip introductory phrases like \"The article discusses\" or \"The author explains\". Format your response as JSON with keys \"title\" (string, a short title for the whole digest, at most 8-10 words, catchy and derived from the digest contents; a light pun is welcome but not required), \"summary\" (string of overall digest summary) and \"highlights\" (array of {title, summary})."
 
 	llmStart := time.Now()
@@ -746,24 +780,53 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 	genLogger.Info("LLM digest response received", "output_bytes", len(llmResponse), "duration", time.Since(llmStart))
 
 	output, err := decodeDigestOutput(llmResponse)
-	if err != nil {
-		// One corrective retry. Models that wrap, fence, or corrupt their JSON
-		// on the first attempt usually comply when the failure is quoted back;
-		// without this, a single stray token costs the whole digest run.
-		genLogger.Warn("LLM digest response was not valid JSON, retrying",
-			"error", err, "output_bytes", len(llmResponse), "response", llmjson.Excerpt(llmResponse, 500))
-		retryPrompt := userPrompt + "\n\nYour previous reply could not be parsed as JSON:\n  " + err.Error() +
+	if err != nil || !digestReplyComplete(highlights, output.Highlights) {
+		// One corrective retry, whatever went wrong: unparseable JSON, or a
+		// well-formed reply that silently omitted articles. Both need the same
+		// remedy — the model usually complies when the specific failure is
+		// quoted back — and allowing one retry for each would double the cost of
+		// a bad run.
+		var reason string
+		if err != nil {
+			reason = "Your previous reply could not be parsed as JSON:\n  " + err.Error()
+			genLogger.Warn("LLM digest response was not valid JSON, retrying",
+				"error", err, "output_bytes", len(llmResponse), "response", llmjson.Excerpt(llmResponse, 500))
+		} else {
+			reason = fmt.Sprintf("Your previous reply had %d highlight entries, but %d articles were sent. "+
+				"Reply with exactly one entry per article, and set \"article\" to that article's number (1..%d).",
+				len(output.Highlights), len(highlights), len(highlights))
+			genLogger.Warn("LLM digest response did not cover every highlight, retrying",
+				"articles", len(highlights), "entries", len(output.Highlights))
+		}
+		retryPrompt := userPrompt + "\n\n" + reason +
 			"\nReply again with only the JSON object described above — no prose, no markdown code fences, no extra words."
 		retried, retryErr := g.llm.Chat(ctx, systemPrompt, retryPrompt)
 		if retryErr != nil {
 			return nil, fmt.Errorf("LLM chat failed on retry: %w", retryErr)
 		}
 		genLogger.Info("LLM digest response received on retry", "output_bytes", len(retried))
-		output, err = decodeDigestOutput(retried)
-		if err != nil {
-			genLogger.Error("failed to parse LLM response", "error", err,
+		retryOutput, retryParseErr := decodeDigestOutput(retried)
+		switch {
+		case retryParseErr != nil && err != nil:
+			// Neither attempt parsed: nothing usable, so fail loudly with the
+			// offending reply in the error.
+			genLogger.Error("failed to parse LLM response", "error", retryParseErr,
 				"output_bytes", len(retried), "response", llmjson.Excerpt(retried, 500))
-			return nil, fmt.Errorf("parsing LLM response: %w (reply began: %s)", err, llmjson.Excerpt(retried, 500))
+			return nil, fmt.Errorf("parsing LLM response: %w (reply began: %s)", retryParseErr, llmjson.Excerpt(retried, 500))
+		case retryParseErr != nil:
+			// The first reply parsed but was incomplete and the retry is
+			// unusable; keep the first, whose recognized entries still align.
+			genLogger.Warn("retry reply was not valid JSON, keeping the first reply",
+				"error", retryParseErr, "response", llmjson.Excerpt(retried, 500))
+		case err != nil || len(retryOutput.Highlights) > len(output.Highlights):
+			// Either the first reply never parsed, or the retry covered more
+			// articles. Never merge the two replies: an entry must stay with the
+			// reply that produced it.
+			output = retryOutput
+		}
+		if !digestReplyComplete(highlights, output.Highlights) {
+			genLogger.Warn("digest reply still incomplete after retry; uncovered highlights render without a summary",
+				"articles", len(highlights), "entries", len(output.Highlights))
 		}
 	}
 	content.Title = output.Title
@@ -820,10 +883,19 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 	// sections, so the nested section highlights carry them too. Rendering
 	// prefers sections when present, so assigning after buildSections would
 	// leave every highlight summary empty in the rendered digest.
-	for i, h := range output.Highlights {
-		if i < len(content.Highlights) {
-			content.Highlights[i].LLMSummary = h.Summary
-		}
+	//
+	// Assignment is by matched identity, never by reply position: a reply that
+	// drops or reorders entries must not shift summaries onto other articles.
+	// Entries that matched nothing are dropped rather than guessed at.
+	assignedCount, missing := assignSummaries(highlights, content.Highlights, output.Highlights)
+	if missing > 0 {
+		genLogger.Warn("digest reply did not cover every highlight",
+			"articles", len(highlights), "entries", len(output.Highlights),
+			"assigned", assignedCount, "unassigned_articles", missing)
+	}
+	if len(output.Highlights) > assignedCount {
+		genLogger.Warn("digest reply entries matched no article and were dropped",
+			"entries", len(output.Highlights), "matched", assignedCount)
 	}
 
 	content.Sections = g.buildSections(dcfg, content.Highlights, content.Items, feedInfos)

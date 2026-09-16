@@ -1,0 +1,48 @@
+```json
+{
+  "title": "Frontier AI, Open Source Wins, and Security Alerts",
+  "summary": "This week’s highlights span a new ultra‑fast decision‑making AI model, Google’s latest voice‑agent breakthroughs, and a slew of open‑source advances—from a Linux GPU driver for Apple silicon to a Rust‑based coreutils overhaul in Ubuntu. At the same time, the Wayback Machine tightens its bot defenses, a massive driver‑license breach raises national‑security alarms, and an activist collective shuts down under political pressure, underscoring both technological progress and emerging risks.",
+  "highlights": [
+    {
+      "title": "Jev: 40‑400× Cheaper, 20‑200× Faster AI Model",
+      "summary": "TypeSafe AI’s Jev delivers comparable intelligence to frontier LLMs while cutting cost by two orders of magnitude and latency by up to 200×, thanks to a parallel sampling architecture and Reinforcement Learning for Calibrated Decisions. Its structured, type‑safe outputs with calibrated confidence eliminate hallucinations, making it practical for high‑throughput automation where reliability matters."
+    },
+    {
+      "title": "Wayback Machine Access Update",
+      "summary": "The Internet Archive has introduced stricter rate‑limiting that returns 429 errors for high‑volume automated traffic, inadvertently affecting legitimate users. By refining bot detection and offering a direct help channel, the Archive aims to keep its historic web‑crawling service accessible for researchers while protecting infrastructure."
+    },
+    {
+      "title": "Gemini 3.8 Live & Extended Thinking",
+      "summary": "Google’s Gemini 3.8 Live models combine real‑time visual grounding, multi‑language support, and parallel reasoning to enable fluid voice‑agent interactions, while the Extended Thinking variant handles complex, multi‑step tasks with enterprise‑grade accuracy. Their strong benchmark scores and cost‑effective pricing position them as the next generation of conversational AI for developers and large‑scale deployments."
+    },
+    {
+      "title": "Linux GPU Driver for M4 Mac Mini in a Month",
+      "summary": "A team reverse‑engineered Apple’s AGX firmware to deliver a fully OpenGL ES 3.0‑compliant Linux driver that runs Minecraft at 200 fps, proving high‑performance graphics can be achieved on Apple silicon in weeks rather than years. The clean‑room approach and published tooling open the door for broader Linux adoption on M‑series Macs."
+    },
+    {
+      "title": "America’s Driver’s License Breach Is a National‑Security Disaster",
+      "summary": "The dark‑web service Nexus exposed 153 million U.S. and Canadian driver’s licenses and 3 million travel documents, providing adversaries with verified identity data that can be cross‑referenced with other breaches. The leak highlights how identity‑document theft can amplify espionage capabilities and demands tighter safeguards for credential repositories."
+    },
+    {
+      "title": "GEFS Preview on OpenBSD",
+      "summary": "An early, bug‑laden port of the crash‑safe, copy‑on‑write GEFS filesystem is now available for OpenBSD, offering snapshotting and COW semantics while still lacking full error handling and POSIX compliance. If matured, it could give OpenBSD robust, crash‑resistant storage options comparable to modern filesystems."
+    },
+    {
+      "title": "A/I Shuts Down Amid Political Repression",
+      "summary": "The Autistici/Inventati collective, a privacy‑focused network labeled a global terrorist organization, is ceasing operations to protect its users from legal and physical threats. The shutdown underscores the escalating risks faced by independent, anti‑authoritarian tech infrastructures in hostile regimes."
+    },
+    {
+      "title": "Small Programming Tricks Matter",
+      "summary": "A curated list of high‑leverage shortcuts—from terminal fuzzy search and Git pickaxe to efficient HTTP agents—demonstrates how incremental knowledge boosts developer productivity dramatically. Sharing such nuggets cultivates a culture of rapid problem‑solving and collective skill growth."
+    },
+    {
+      "title": "Turn a $20 4G Hotspot into a Texting Device",
+      "summary": "By repurposing a cheap 4G modem with OpenStick firmware, a custom PCB, and a Clicks keyboard, the author built a low‑cost, battery‑powered texting unit capable of sending SMS without a smartphone. The hack showcases the power of DIY hardware to create affordable communication tools for niche use‑cases."
+    },
+    {
+      "title": "Ubuntu 26.10 Completes Rust‑Based Coreutils Migration",
+      "summary": "Ubuntu’s ‘Stonking Stingray’ release replaces the remaining GNU core utilities (cp, mv, rm) with memory‑safe Rust equivalents, eliminating lingering TOCTOU vulnerabilities. This milestone advances Canonical’s “oxidising” strategy, demonstrating that a major Linux distro can transition critical system tools to Rust for improved security."
+    }
+  ]
+}
+```
