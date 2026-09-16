@@ -29,16 +29,33 @@ type llmChatter interface {
 	Chat(ctx context.Context, systemPrompt, userPrompt string) (string, error)
 }
 
-func NewLLMClient(endpoint, apiKey, model string) *LLMClient {
+// LLMTimeoutDefault bounds a single LLM request when the caller passes no
+// timeout. It matches config.LLMTimeoutDefault.
+//
+// One client call is not necessarily one upstream attempt: when the endpoint is
+// a gateway that fails over between providers, the gateway may run several
+// sequential attempts before answering. The client budget therefore has to
+// exceed the sum of the gateway's own per-attempt budgets, or the client gives
+// up mid-failover and discards an answer that was still coming.
+const LLMTimeoutDefault = 5 * time.Minute
+
+// NewLLMClient builds a client for an OpenAI-compatible chat completions API.
+// An optional timeout overrides LLMTimeoutDefault; zero or negative (including
+// no argument at all) means the default.
+func NewLLMClient(endpoint, apiKey, model string, timeout ...time.Duration) *LLMClient {
 	endpoint = strings.TrimRight(endpoint, "/")
 	if !strings.HasSuffix(endpoint, "/chat/completions") {
 		endpoint += "/chat/completions"
+	}
+	d := LLMTimeoutDefault
+	if len(timeout) > 0 && timeout[0] > 0 {
+		d = timeout[0]
 	}
 	return &LLMClient{
 		endpoint: endpoint,
 		apiKey:   apiKey,
 		model:    model,
-		client:   &http.Client{Timeout: 120 * time.Second},
+		client:   &http.Client{Timeout: d},
 	}
 }
 

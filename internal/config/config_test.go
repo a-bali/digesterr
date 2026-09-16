@@ -26,7 +26,7 @@ func clearEnv(t *testing.T) {
 		"DB_PATH", "DATABASE_PATH",
 		"LOGGING_LEVEL", "LOG_LEVEL", "DIGESTERR_LOG_LEVEL",
 		"LOGGING_BUFFER_SIZE", "LOG_BUFFER_SIZE",
-		"LLM_ENDPOINT", "LLM_API_KEY", "LLM_MODEL",
+		"LLM_ENDPOINT", "LLM_API_KEY", "LLM_MODEL", "LLM_TIMEOUT",
 		"FEED_SYNC_INTERVAL", "FEED_EXPIRE_ITEMS", "FEED_EXPIRE_DIGESTS",
 		"REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET",
 	} {
@@ -67,6 +67,9 @@ func TestDefaults(t *testing.T) {
 	if cfg.LLM.APIKey != "" {
 		t.Errorf("llm.api_key = %q, want empty", cfg.LLM.APIKey)
 	}
+	if cfg.LLM.Timeout.Duration() != 5*time.Minute {
+		t.Errorf("llm.timeout = %v, want 5m", cfg.LLM.Timeout.Duration())
+	}
 	if cfg.Feed.SyncInterval.Duration() != 15*time.Minute {
 		t.Errorf("feed.sync_interval = %v, want 15m", cfg.Feed.SyncInterval.Duration())
 	}
@@ -97,6 +100,7 @@ llm:
   endpoint: http://llm.local/v1
   api_key: file-llm-key
   model: llama-3
+  timeout: 10m
 feed:
   sync_interval: 30m
   expire_items: 6mo
@@ -136,6 +140,9 @@ reddit:
 	if cfg.LLM.Model != "llama-3" {
 		t.Errorf("llm.model = %q", cfg.LLM.Model)
 	}
+	if cfg.LLM.Timeout.Duration() != 10*time.Minute {
+		t.Errorf("llm.timeout = %v, want file 10m", cfg.LLM.Timeout.Duration())
+	}
 	if cfg.Feed.SyncInterval.Duration() != 30*time.Minute {
 		t.Errorf("feed.sync_interval = %v, want 30m", cfg.Feed.SyncInterval.Duration())
 	}
@@ -163,6 +170,7 @@ logging:
 llm:
   endpoint: http://file.local/v1
   api_key: file-key
+  timeout: 3m
 feed:
   sync_interval: 1h
   expire_items: 1y
@@ -175,6 +183,7 @@ reddit:
 	t.Setenv("LOGGING_LEVEL", "debug")
 	t.Setenv("LLM_ENDPOINT", "http://env.local/v1")
 	t.Setenv("LLM_API_KEY", "env-key")
+	t.Setenv("LLM_TIMEOUT", "45s")
 	t.Setenv("FEED_SYNC_INTERVAL", "15m")
 	t.Setenv("FEED_EXPIRE_ITEMS", "30d")
 	t.Setenv("REDDIT_CLIENT_ID", "env-rid")
@@ -201,6 +210,9 @@ reddit:
 	}
 	if cfg.LLM.APIKey != "env-key" {
 		t.Errorf("llm.api_key = %q, want env", cfg.LLM.APIKey)
+	}
+	if cfg.LLM.Timeout.Duration() != 45*time.Second {
+		t.Errorf("llm.timeout = %v, want env 45s overriding file 3m", cfg.LLM.Timeout.Duration())
 	}
 	if cfg.Feed.SyncInterval.Duration() != 15*time.Minute {
 		t.Errorf("feed.sync_interval = %v, want 15m", cfg.Feed.SyncInterval.Duration())
@@ -229,6 +241,7 @@ func TestCanonicalEnvNames(t *testing.T) {
 	t.Setenv("LLM_ENDPOINT", "http://canonical-llm/v1")
 	t.Setenv("LLM_API_KEY", "canonical-key")
 	t.Setenv("LLM_MODEL", "canonical-model")
+	t.Setenv("LLM_TIMEOUT", "45s")
 	t.Setenv("FEED_SYNC_INTERVAL", "45s")
 	t.Setenv("FEED_EXPIRE_ITEMS", "2y")
 	t.Setenv("FEED_EXPIRE_DIGESTS", "1d")
@@ -250,6 +263,9 @@ func TestCanonicalEnvNames(t *testing.T) {
 	}
 	if cfg.LLM.Endpoint != "http://canonical-llm/v1" || cfg.LLM.APIKey != "canonical-key" || cfg.LLM.Model != "canonical-model" {
 		t.Errorf("llm = %+v", cfg.LLM)
+	}
+	if cfg.LLM.Timeout.Duration() != 45*time.Second {
+		t.Errorf("llm.timeout = %v, want env 45s", cfg.LLM.Timeout.Duration())
 	}
 	if cfg.Feed.SyncInterval.Duration() != 45*time.Second {
 		t.Errorf("feed.sync_interval = %v", cfg.Feed.SyncInterval.Duration())

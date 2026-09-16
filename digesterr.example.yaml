@@ -42,6 +42,16 @@ llm:
   api_key: ""
   # Model name used for digest summaries.              [LLM_MODEL]
   model: gpt-4o-mini
+  # Timeout for a single LLM request, covering both the wait for response
+  # headers and reading the body. Durations accept Go syntax (90s, 5m) plus
+  # d/mo/y suffixes. Raise this when the endpoint is a gateway that retries or
+  # fails over between providers: one request to the gateway can become several
+  # sequential upstream attempts, each with its own timeout, so this value must
+  # exceed the gateway's per-attempt budget times the number of attempts it may
+  # make. Otherwise the client gives up mid-failover and discards an answer
+  # that was still on its way.
+  # Defaults to 5m.                                     [LLM_TIMEOUT]
+  timeout: 5m
   # System prompt for per-item summaries. {content_sentences} and
   # {comment_sentences} are replaced with the requested length, either a single
   # count ("9") or a range ("12-18"), and {style} with the character of the
