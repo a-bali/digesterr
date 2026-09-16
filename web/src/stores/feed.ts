@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { feedApi, itemApi } from '../services/api'
+import { feedApi, itemApi, healthApi } from '../services/api'
 import type { Feed, Item, MultiItem, ItemSort, MarkRelativeOptions } from '../types/api'
 import { toastError } from '../lib/toast'
 import { SCORE_FEED_TYPES } from '../lib/feeds'
@@ -25,6 +25,26 @@ function saveFilter(f: string) {
 
 export const useFeedStore = defineStore('feed', () => {
   const feeds = ref<Feed[]>([])
+  // The instance's AgentMail inbox, fetched from /api/health on first use.
+  // The inbox is server-wide (one mailbox serves every email feed), so it is
+  // server-reported state rather than something the user types: the dialog
+  // shows it as fixed context and only the suffix is editable.
+  //
+  // null = not fetched yet, '' = server has the feature off.
+  const emailInbox = ref<string | null>(null)
+
+  // ensureEmailConfig fetches the inbox once per session. Failures leave it as
+  // '' rather than retrying on every dialog open; the email option is simply
+  // unavailable, which is the honest outcome when the server cannot say.
+  async function ensureEmailConfig() {
+    if (emailInbox.value !== null) return
+    try {
+      const health = await healthApi.get()
+      emailInbox.value = health.email_inbox ?? ''
+    } catch {
+      emailInbox.value = ''
+    }
+  }
   const activeFeedId = ref<number | null>(null)
   const activeCategory = ref<string | null>(null) // null = single-feed view, string = category name
   const activeSection = ref<'feeds' | 'digests' | null>(null) // null = not viewing a section
@@ -407,5 +427,6 @@ export const useFeedStore = defineStore('feed', () => {
     activeFeed, isMultiView, supportsScore, unreadCounts, backgroundRefreshing,
     fetchFeeds, setActiveFeed, setActiveCategory, setActiveSection, clearActiveView, fetchFirstPage, refreshItems, fetchMoreItems,
     selectItem, updateItemStatus, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, markAllRead, markReadAbove, markReadBelow,
+    emailInbox, ensureEmailConfig,
   }
 })

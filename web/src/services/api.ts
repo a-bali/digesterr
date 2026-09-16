@@ -1,4 +1,4 @@
-import type { AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, Item, LogsResponse, MarkRelativeOptions, MultiFeedItemsResponse, AllDigestResultsResponse, MetricsSummary } from '../types/api'
+import type { AllDigestResultsResponse, AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, HealthInfo, Item, LogsResponse, MarkRelativeOptions, MetricsSummary, MultiFeedItemsResponse } from '../types/api'
 
 const TOKEN_KEY = 'digesterr-token'
 
@@ -235,4 +235,12 @@ export const metricsApi = {
 
 export const systemApi = {
   version: () => api<VersionInfo>('/version'),
+}
+
+// healthApi.get returns the readiness payload. When authenticated it also
+// carries the email feed type's configuration (the instance-wide AgentMail
+// inbox and its fixed prefix/domain); those keys are ABSENT when the server has
+// no AgentMail credentials, so callers must treat undefined as "feature off".
+export const healthApi = {
+  get: () => api<HealthInfo>('/health'),
 }
