@@ -59,7 +59,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 		summaryPrompt:     cfg.LLM.SummaryPrompt,
 	}
 
-	llmClient := digest.NewLLMClient(cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model)
+	llmClient := digest.NewLLMClient(cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model, cfg.LLM.Timeout.Duration())
 	llmClient.SetRecordFunc(func(timestamp time.Time, url string, statusCode int, durationMs int64, bytes int64, errMsg string) {
 		s.metrics.Record(metrics.Record{
 			Timestamp:  timestamp,

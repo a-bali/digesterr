@@ -109,11 +109,28 @@ type LoggingConfig struct {
 	BufferSize int    `yaml:"buffer_size"`
 }
 
+// LLMTimeoutDefault bounds a single LLM request when llm.timeout is unset.
+//
+// One client call is not necessarily one upstream attempt: when llm.endpoint
+// points at a gateway that fails over between providers, the gateway may run
+// several sequential attempts before answering. The client budget therefore
+// has to exceed the sum of the gateway's own per-attempt budgets, or the
+// client gives up mid-failover and discards an answer that is still coming.
+// The gateway's per-attempt timeout is not visible from here, so this is
+// deliberately generous.
+const LLMTimeoutDefault = 5 * time.Minute
+
 // LLMConfig holds OpenAI-compatible API settings used for digest generation.
 type LLMConfig struct {
 	Endpoint string `yaml:"endpoint"`
 	APIKey   string `yaml:"api_key"`
 	Model    string `yaml:"model"`
+	// Timeout bounds a single LLM request, covering both the wait for response
+	// headers and reading the body. Raise it when the endpoint is a gateway
+	// that retries or fails over: the value must be larger than the gateway's
+	// per-attempt budget multiplied by the number of attempts it may make.
+	// Zero or negative means LLMTimeoutDefault.
+	Timeout Duration `yaml:"timeout"`
 	// SummaryPrompt overrides the system prompt used by the per-item summary
 	// endpoint. It may use the {content_sentences} and {comment_sentences}
 	// placeholders, which are replaced with the requested length — a single
@@ -198,6 +215,7 @@ func Default() Config {
 			Endpoint: "https://api.openai.com/v1",
 			APIKey:   "",
 			Model:    "gpt-4o-mini",
+			Timeout:  Duration(LLMTimeoutDefault),
 		},
 		Feed: FeedConfig{
 			SyncInterval:     Duration(15 * time.Minute),
@@ -336,6 +354,7 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 	setString(&cfg.LLM.Endpoint, "LLM_ENDPOINT", "")
 	setString(&cfg.LLM.APIKey, "LLM_API_KEY", "")
 	setString(&cfg.LLM.Model, "LLM_MODEL", "")
+	setDuration(&cfg.LLM.Timeout, "LLM_TIMEOUT")
 	setString(&cfg.LLM.SummaryPrompt, "LLM_SUMMARY_PROMPT", "")
 
 	setDuration(&cfg.Feed.SyncInterval, "FEED_SYNC_INTERVAL")
