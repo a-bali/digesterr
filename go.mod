@@ -8,6 +8,7 @@ require (
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/yuin/goldmark v1.8.2
 	golang.org/x/crypto v0.53.0
+	golang.org/x/net v0.55.0
 	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.52.0
@@ -25,7 +26,6 @@ require (
 	github.com/mmcdole/goxpp v1.1.1-0.20240225020742-a0c311522b23 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	modernc.org/libc v1.72.3 // indirect
