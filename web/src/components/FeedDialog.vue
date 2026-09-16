@@ -52,6 +52,11 @@ const extractionSupported = computed(() => form.type !== 'twitter' && form.type 
 // (below) is what makes that obvious, and composing the full address in one
 // helper keeps the dialog, the sidebar and the tests in agreement.
 const emailInbox = computed(() => feedStore.emailInbox ?? '')
+// `emailInbox` is null until /api/health answers, so '' means the server
+// definitely has no inbox. The pending state must NOT be rendered as
+// "not configured": that label is a claim, and a request still in flight is not
+// evidence of anything.
+const emailConfigPending = computed(() => feedStore.emailInbox === null)
 const emailAvailable = computed(() => emailInbox.value !== '')
 const emailPrefix = computed(() => emailPrefixOf(emailInbox.value))
 const emailDomain = computed(() => emailDomainOf(emailInbox.value))
@@ -172,13 +177,22 @@ watch(
   { immediate: true },
 )
 
-// The email option needs the instance's inbox, which is only fetched when a
-// dialog first needs it (the store caches it for the session).
-watch(
-  () => form.type,
-  (t) => { if (t === 'email') void feedStore.ensureEmailConfig() },
-  { immediate: true },
-)
+// The email option needs the instance's inbox, which the store fetches from
+// /api/health and caches for the session.
+//
+// This MUST run when the dialog opens, not when form.type becomes 'email':
+// until the inbox is known the email option is disabled, so it cannot be
+// selected, so a type-change watcher would never fire and the option would stay
+// permanently "not configured" — a deadlock. A user reported exactly that. Two
+// kinds of test missed it: component tests that pre-seed the store, and a
+// browser check that sets the <select> value in JS, which a real user cannot do
+// on a disabled option.
+//
+// The dialog is mounted per open (v-if in FeedSidebar), so setup is the open
+// event. The store caches the result, so this is at most one request per
+// session; an unconditional call keeps the option's enabled state correct on
+// first render for every type, and the edit form's prefix/domain too.
+void feedStore.ensureEmailConfig()
 
 function submit() {
   emit('save', { ...form })
@@ -204,7 +218,7 @@ const dialogId = Math.random().toString(36).slice(2)
       <div class="space-y-1">
         <label class="text-sm font-medium">Type</label>
         <Select v-model="form.type" @change="onTypeChange(($event.target as HTMLSelectElement).value)">
-          <option v-for="t in ['rss','hn','lobsters','reddit','twitter','email']" :key="t" :value="t" :disabled="t === 'email' && !emailAvailable">{{ typeLabel(t) }}{{ t === 'email' && !emailAvailable ? ' (not configured)' : '' }}</option>
+          <option v-for="t in ['rss','hn','lobsters','reddit','twitter','email']" :key="t" :value="t" :disabled="t === 'email' && !emailAvailable && !emailConfigPending">{{ typeLabel(t) }}{{ t === 'email' && !emailAvailable && !emailConfigPending ? ' (not configured)' : '' }}</option>
         </Select>
       </div>
       <div class="space-y-1">

@@ -224,4 +224,57 @@ describe('FeedDialog email feed type', () => {
 
     expect(mockHealth).toHaveBeenCalledTimes(1)
   })
+
+  // Regression: the email option must be selectable on open, with no prior type
+  // change. The config used to be fetched from a watcher on form.type, but the
+  // option is DISABLED until the config is known — so a real user could never
+  // trigger the fetch and the option stayed "not configured" forever. These
+  // tests deliberately never call selectEmailType(): they open the dialog and
+  // look straight at the option, which is what the user does.
+  it('enables the email option on open, without any prior type change', async () => {
+    mountDialog()
+    await flushPromises()
+
+    const emailOption = Array.from(typeSelect().options).find(o => o.value === 'email')!
+    expect(emailOption.disabled).toBe(false)
+    expect(emailOption.textContent).not.toContain('not configured')
+  })
+
+  it('requests the inbox on open rather than waiting for the type to change', async () => {
+    mountDialog()
+    await flushPromises()
+
+    expect(mockHealth).toHaveBeenCalled()
+  })
+
+  // While /api/health is still in flight the inbox is unknown; rendering that as
+  // "not configured" asserts something we have not established yet.
+  it('does not claim "not configured" while the inbox request is in flight', async () => {
+    let resolveHealth: (v: unknown) => void = () => {}
+    mockHealth.mockReturnValue(new Promise(r => { resolveHealth = r }))
+
+    mountDialog()
+    await flushPromises()
+
+    const pending = Array.from(typeSelect().options).find(o => o.value === 'email')!
+    expect(pending.disabled).toBe(false)
+    expect(pending.textContent).not.toContain('not configured')
+
+    resolveHealth({ status: 'ok', email_enabled: true, email_inbox: 'name@agentmail.to' })
+    await flushPromises()
+
+    const settled = Array.from(typeSelect().options).find(o => o.value === 'email')!
+    expect(settled.disabled).toBe(false)
+  })
+
+  // An edit form opens with the email type already set, so it needs the prefix
+  // and domain on first render — not after a change the user cannot make.
+  it('renders the fixed context when editing an existing email feed', async () => {
+    mountDialog({ feed: makeFeed({ type: 'email', url: 'name+sport@agentmail.to' }) })
+    await flushPromises()
+
+    expect(text('[data-email-prefix]')).toBe('name+')
+    expect(text('[data-email-domain]')).toBe('@agentmail.to')
+    expect(emailSuffixInput().value).toBe('sport')
+  })
 })
