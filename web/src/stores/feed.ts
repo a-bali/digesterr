@@ -92,6 +92,25 @@ export const useFeedStore = defineStore('feed', () => {
     }
   }
 
+  // The "Feeds" section is scoped by an explicit list of feed ids, which the
+  // caller can only build once the feed list has loaded. Selecting the section
+  // before that (cold deep link to /feeds, or a reload with the section
+  // restored) used to send `feed_ids=[]` — the query-string helper drops empty
+  // values, so the request arrived with NO scope at all and the API answered 400
+  // "feed_ids or category is required". Load the feeds first, and never pass an
+  // empty list.
+  async function sectionFeedIDs(): Promise<number[] | null> {
+    if (feeds.value.length === 0) {
+      try {
+        feeds.value = await feedApi.list()
+      } catch {
+        return null
+      }
+    }
+    const ids = feeds.value.map(f => f.id)
+    return ids.length > 0 ? ids : null
+  }
+
   // Loads items for a multi-feed view (category or "Feeds" section).
   async function loadMultiPage(replace: boolean) {
     const rid = ++fetchReq
@@ -112,8 +131,18 @@ export const useFeedStore = defineStore('feed', () => {
       if (activeCategory.value) {
         opts.category = activeCategory.value
       } else if (activeSection.value === 'feeds') {
-        // "Feeds" section: get all feed IDs from the feeds list.
-        opts.feed_ids = feeds.value.map(f => f.id)
+        const ids = await sectionFeedIDs()
+        // No feeds at all (or the list could not be loaded): send nothing rather
+        // than an unscoped request the API would reject.
+        if (ids === null) {
+          if (replace) {
+            multiItems.value = []
+            totalItems.value = 0
+            hasMore.value = false
+          }
+          return
+        }
+        opts.feed_ids = ids
       }
       const resp = await feedApi.multiItems(opts)
       if (rid !== fetchReq) return
@@ -210,7 +239,11 @@ export const useFeedStore = defineStore('feed', () => {
           offset: 0,
         }
         if (activeCategory.value) refreshOpts.category = activeCategory.value
-        else if (activeSection.value === 'feeds') refreshOpts.feed_ids = feeds.value.map(f => f.id)
+        else if (activeSection.value === 'feeds') {
+          const ids = await sectionFeedIDs()
+          if (ids === null) return
+          refreshOpts.feed_ids = ids
+        }
         const resp = await feedApi.multiItems(refreshOpts)
         if (rid !== fetchReq) return
         if (opts?.silent && !opts?.replace) {

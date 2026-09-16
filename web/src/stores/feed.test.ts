@@ -9,6 +9,7 @@ vi.mock('../services/api', () => ({
     update: vi.fn(),
     delete: vi.fn(),
     getItems: vi.fn(),
+    multiItems: vi.fn(),
     fetch: vi.fn(),
   },
   itemApi: {
@@ -110,5 +111,59 @@ describe('feed store', () => {
     expect(store.supportsScore).toBe(false)
     store.activeFeedId = null
     expect(store.supportsScore).toBe(false)
+  })
+
+  it('loads the "Feeds" section without an empty feed_ids list', async () => {
+    const { feedApi } = await import('../services/api')
+    const multi = feedApi.multiItems as ReturnType<typeof vi.fn>
+    multi.mockResolvedValue({ items: [], total: 0, has_more: false })
+
+    const store = useFeedStore()
+    // Cold start / deep link: the section is selected BEFORE the feeds list has
+    // resolved. An empty feed_ids is dropped by the query-string helper, so the
+    // request carried no scope at all and the API answered 400
+    // "feed_ids or category is required".
+    vi.mocked(feedApi.list).mockResolvedValue([])
+    await store.setActiveSection('feeds')
+
+    // With no feeds there is no scope to send, so the request must not be made
+    // at all — that is what produced the 400 before.
+    expect(multi, 'an unscoped multi-items request must never be sent').not.toHaveBeenCalled()
+    expect(feedApi.list).toHaveBeenCalled()
+    // And the pane settles on an empty state instead of a stale/loading one.
+    expect(store.multiItems).toEqual([])
+    expect(store.totalItems).toBe(0)
+    expect(store.loading).toBe(false)
+  })
+
+  it('loads the "Feeds" section with the real feed ids once feeds resolve', async () => {
+    const { feedApi } = await import('../services/api')
+    const multi = feedApi.multiItems as ReturnType<typeof vi.fn>
+    multi.mockResolvedValue({ items: [], total: 0, has_more: false })
+    vi.mocked(feedApi.list).mockResolvedValue([{ id: 7 }, { id: 9 }] as never)
+
+    const store = useFeedStore()
+    await store.setActiveSection('feeds')
+
+    expect(multi).toHaveBeenCalled()
+    const opts = multi.mock.calls[multi.mock.calls.length - 1][0]
+    expect(opts.feed_ids).toEqual([7, 9])
+  })
+
+  it('never sends an empty feed_ids from a refresh either', async () => {
+    const { feedApi } = await import('../services/api')
+    const multi = feedApi.multiItems as ReturnType<typeof vi.fn>
+    multi.mockResolvedValue({ items: [], total: 0, has_more: false })
+    vi.mocked(feedApi.list).mockResolvedValue([])
+
+    const store = useFeedStore()
+    await store.setActiveSection('feeds')
+    multi.mockClear()
+
+    await store.refreshItems()
+
+    if (multi.mock.calls.length > 0) {
+      expect(multi.mock.calls[0][0].feed_ids).not.toEqual([])
+    }
   })
 })
