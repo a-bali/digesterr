@@ -46,14 +46,15 @@ const extractionSupported = computed(() => form.type !== 'twitter' && form.type 
 
 // ---- Email feeds ----------------------------------------------------------
 //
-// One AgentMail inbox serves the whole instance, so the address is
-// <inbox-local-part>+<suffix>@<domain>: the prefix and domain are fixed server
-// state and only the suffix is the user's. Showing them as non-editable context
-// (below) is what makes that obvious, and composing the full address in one
-// helper keeps the dialog, the sidebar and the tests in agreement.
+// The inbox is the signed-in account's own AgentMail mailbox (from
+// GET /api/settings/email), so the address is
+// <that inbox's local part>+<suffix>@<domain>: the prefix and domain are fixed
+// per account and only the suffix is the user's. Showing them as non-editable
+// context (below) is what makes that obvious, and composing the full address in
+// one helper keeps the dialog, the sidebar and the tests in agreement.
 const emailInbox = computed(() => feedStore.emailInbox ?? '')
-// `emailInbox` is null until /api/health answers, so '' means the server
-// definitely has no inbox. The pending state must NOT be rendered as
+// `emailInbox` is null until /api/settings/email answers, so '' means this
+// account definitely has no inbox. The pending state must NOT be rendered as
 // "not configured": that label is a claim, and a request still in flight is not
 // evidence of anything.
 const emailConfigPending = computed(() => feedStore.emailInbox === null)
@@ -248,9 +249,9 @@ const dialogId = Math.random().toString(36).slice(2)
         </div>
       </div>
       <!--
-        Email feeds: one AgentMail inbox serves the whole instance, so the
-        address is <prefix>+<suffix>@<domain>. The prefix and domain are
-        server-side state shown as fixed context; only the suffix is editable.
+        Email feeds: the address is <that account's inbox local part>+<suffix>@<domain>.
+        The prefix and domain are per-account state (from the account's AgentMail
+        settings) shown as fixed context; only the suffix is editable.
         The resolved full address is displayed because that exact string is what
         the user has to give the newsletter publisher — AgentMail has no
         catch-all, so a wrong suffix silently receives nothing at all.

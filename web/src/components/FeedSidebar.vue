@@ -132,10 +132,10 @@ function buildFeedPayload(form: { type: string; name: string; url: string; categ
   } else if (form.type === 'hn' || form.type === 'lobsters') {
     data.url = feedUrlFor(form.type, '')
   } else if (form.type === 'email') {
-    // The form field holds only the part after '+'; the instance-wide inbox
-    // comes from the server, so the full address is composed here. The one
-    // inbox is why the suffix must be unique across ALL users: two feeds on one
-    // address would both read the same mail.
+    // The form field holds only the part after '+'; the account's inbox comes
+    // from the server, so the full address is composed here. The address
+    // namespace is global, so the suffix must be unique across ALL users: two
+    // feeds on one address would both read the same mail.
     data.url = emailAddressFor(feedStore.emailInbox ?? '', form.url)
   } else data.url = form.url
   return data

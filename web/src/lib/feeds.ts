@@ -23,13 +23,15 @@ export function isValidEmailSuffix(suffix: string): boolean {
   return EMAIL_SUFFIX_RE.test(suffix.trim().toLowerCase())
 }
 
-// emailAddressFor composes the full address from the instance's inbox and the
+// emailAddressFor composes the full address from the account's inbox and the
 // user's suffix.
 //
-// The inbox is instance-wide (one AgentMail mailbox serves every email feed), so
-// it comes from the server rather than from user input; only the suffix is
-// editable. One inbox plus one suffix is why the suffix must be unique across
-// all users — see the server's emailAddressTaken.
+// The inbox is the signed-in account's own AgentMail mailbox, so it comes from
+// the server rather than from user input; only the suffix is editable. The
+// address namespace is still global (a feed URL is the routing key, and two
+// feeds on one address would both read the same mail), and only one account can
+// hold a given inbox — see the server's emailAddressTaken and the partial unique
+// index on users.email_inbox.
 export function emailAddressFor(inbox: string, suffix: string): string {
   const at = inbox.lastIndexOf('@')
   if (at <= 0) return suffix
