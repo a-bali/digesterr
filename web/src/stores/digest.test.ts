@@ -9,6 +9,7 @@ vi.mock('../services/api', () => ({
     updateConfig: vi.fn(),
     deleteConfig: vi.fn(),
     listResults: vi.fn(),
+    listAllResults: vi.fn(),
     listResultItems: vi.fn(),
     generate: vi.fn(),
     updateResultStatus: vi.fn(),
@@ -130,5 +131,52 @@ describe('digest store stale-request guards', () => {
     await refreshPromise
     expect(store.results.map(r => r.id)).toEqual([42])
     expect(store.hasMore).toBe(false)
+  })
+})
+
+describe('digest store status normalisation', () => {
+  // The API stores digests as status "new"; the UI works in terms of "unread".
+  // The All-Digests path skipped normalize(), so unread results there rendered
+  // as read and the Unread filter (and the 'u' shortcut) matched nothing.
+  it('maps "new" to "unread" in the All-Digests list', async () => {
+    const { digestApi } = await import('../services/api')
+    ;(digestApi.listAllResults as ReturnType<typeof vi.fn>).mockResolvedValue({
+      results: [
+        { id: 1, status: 'new', config_name: 'c' },
+        { id: 2, status: 'read', config_name: 'c' },
+      ],
+      has_more: false,
+    })
+
+    const store = useDigestStore()
+    await store.loadAllResults(true)
+
+    expect(store.allResults.map(r => r.status)).toEqual(['unread', 'read'])
+  })
+
+  it('normalises appended pages too, not just the first', async () => {
+    const { digestApi } = await import('../services/api')
+    ;(digestApi.listAllResults as ReturnType<typeof vi.fn>).mockResolvedValue({
+      results: [{ id: 9, status: 'new', config_name: 'c' }],
+      has_more: false,
+    })
+
+    const store = useDigestStore()
+    await store.loadAllResults(false)
+
+    expect(store.allResults.map(r => r.status)).toEqual(['unread'])
+  })
+
+  it('maps "new" to "unread" in the per-config list (unchanged behaviour)', async () => {
+    const { digestApi } = await import('../services/api')
+    ;(digestApi.listResults as ReturnType<typeof vi.fn>).mockResolvedValue({
+      results: [{ id: 3, status: 'new' }],
+      has_more: false,
+    })
+
+    const store = useDigestStore()
+    await store.setActiveConfig(1)
+
+    expect(store.results.map(r => r.status)).toEqual(['unread'])
   })
 })

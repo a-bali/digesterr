@@ -263,11 +263,21 @@ const categoryUnreadCounts = computed(() => {
   <div>
     <!-- Saved -->
     <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': route.path === '/saved' }" @click="emit('showSaved')">
-      <BookmarkCheck class="size-3.5 shrink-0 text-accent" /> <span class="truncate">Saved items</span>
+      <BookmarkCheck class="size-3.5 shrink-0 text-accent" />
+      <span class="truncate">Saved items</span>
+      <span
+        v-if="feedStore.savedCount > 0"
+        data-testid="saved-count"
+        class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-1.5"
+        :title="`${feedStore.savedCount} saved item${feedStore.savedCount === 1 ? '' : 's'}`"
+      >{{ feedStore.savedCount }}</span>
     </button>
 
-    <!-- Digests -->
-    <div class="group/section flex items-center justify-between mb-2 px-2">
+    <!-- Digests. The wrapper carries no horizontal padding: the header button's
+         own px-2 is what puts the icon at x=20 and the label at x=42, the same
+         line as the Saved row above and the Feeds row below. All three icons
+         are size-3.5 (14px) with gap-2, so the labels share one text column. -->
+    <div class="group/section flex items-center justify-between mb-2">
       <button
         class="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase rounded-md px-2 py-1.5 hover:bg-accent/10 transition-colors cursor-pointer w-full"
         :class="{ 'text-accent bg-accent/10': digestStore.showingAllDigests }"
@@ -336,8 +346,8 @@ const categoryUnreadCounts = computed(() => {
       </div>
     </div>
 
-    <!-- Feeds -->
-    <div class="group/section flex items-center justify-between mb-2 px-2">
+    <!-- Feeds. Same wrapper treatment as Digests above — see that comment. -->
+    <div class="group/section flex items-center justify-between mb-2">
       <button
         class="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase rounded-md px-2 py-1.5 hover:bg-accent/10 transition-colors cursor-pointer w-full"
         :class="{ 'text-accent bg-accent/10': feedStore.activeSection === 'feeds' }"

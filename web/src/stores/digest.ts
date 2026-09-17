@@ -24,13 +24,21 @@ export const useDigestStore = defineStore('digest', () => {
   const unreadCounts = ref<Record<number, number>>({})
   const allResults = ref<DigestResultWithConfigName[]>([])
   const showingAllDigests = ref(false)
+  // Status filter for the digest result list. It lives in the store, not in
+  // DigestResultList, because the 'u' shortcut has to reach it: a local ref was
+  // only reachable from that one component, so pressing 'u' in a digest view
+  // silently flipped the ITEM filter and left the digest list unchanged.
+  const resultFilter = ref<'all' | 'unread' | 'read'>('all')
 
   const activeConfig = computed(() => configs.value.find(c => c.id === activeConfigId.value) || null)
 
   // Monotonic request id to drop stale responses (config switches, refreshes).
   let resultsReq = 0
 
-  function normalize(r: DigestResult): DigestResult {
+  // Maps the API's "new" status to "unread". Generic over the result shape: the
+  // per-config list and the All-Digests list are different interfaces, and both
+  // need this mapping.
+  function normalize<T extends DigestResult>(r: T): T {
     if (r.status === 'new') r.status = 'unread'
     return r
   }
@@ -204,10 +212,13 @@ export const useDigestStore = defineStore('digest', () => {
         offset: replace ? 0 : allResults.value.length,
       })
       if (rid !== resultsReq) return
+      // normalize() maps the API's "new" to "unread". Without it the All-Digests
+      // view rendered unread results as read (grey, no dot) and the Unread
+      // filter matched nothing, because the status never equalled 'unread'.
       if (replace) {
-        allResults.value = resp.results
+        allResults.value = resp.results.map(normalize)
       } else {
-        allResults.value.push(...resp.results)
+        allResults.value.push(...resp.results.map(normalize))
       }
       hasMore.value = resp.has_more
     } catch (e) {
@@ -319,7 +330,7 @@ export const useDigestStore = defineStore('digest', () => {
   return {
     configs, activeConfigId, results, selectedResult, resultItems,
     loading, generating, loadingMore, loadingContent, hasMore, activeConfig, unreadCounts, backgroundRefreshing,
-    allResults, showingAllDigests,
+    allResults, showingAllDigests, resultFilter,
     fetchConfigs, createConfig, updateConfig, deleteConfig,
     setActiveConfig, selectResult, generateNow, markResultRead, deleteResult,
     updateResultStatus, silentRefresh, fetchUnreadCounts, fetchMoreResults,

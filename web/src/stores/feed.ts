@@ -68,6 +68,10 @@ export const useFeedStore = defineStore('feed', () => {
   const backgroundRefreshing = ref(false)
   const hasMore = ref(false)
   const totalItems = ref(0)
+  // Total saved items across all feeds, for the sidebar badge. Separate from
+  // unreadCounts because "saved" is a status, not an unread tally, and it is
+  // fetched separately so it stays correct while a filter hides items.
+  const savedCount = ref(0)
 
   const activeFeed = computed(() => feeds.value.find(f => f.id === activeFeedId.value) || null)
 
@@ -421,9 +425,24 @@ export const useFeedStore = defineStore('feed', () => {
         ;(multiItems.value[midx] as any) = { ...updated, feed_name: old.feed_name, feed_type: old.feed_type }
       }
       if (selectedItem.value?.id === item.id) selectedItem.value = updated
+      // Keep the saved badge in step without a round trip: the transition is
+      // already known here. Clamped because the counter is a total maintained
+      // across many sources, and a double-fire must not drive it negative.
+      if (item.status !== 'saved' && status === 'saved') savedCount.value++
+      else if (item.status === 'saved' && status !== 'saved') savedCount.value = Math.max(0, savedCount.value - 1)
       fetchUnreadCounts()
     } catch (e) {
       toastError(e, 'Failed to update item')
+    }
+  }
+
+  // fetchSavedCount refreshes the sidebar's saved total. Failures are silent:
+  // the badge is decoration, and a stale number beats an error toast.
+  async function fetchSavedCount() {
+    try {
+      savedCount.value = (await feedApi.savedCount()).count
+    } catch {
+      // silent
     }
   }
 
@@ -468,7 +487,7 @@ export const useFeedStore = defineStore('feed', () => {
     feeds, activeFeedId, activeCategory, activeSection, items, multiItems, selectedItem, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
     activeFeed, isMultiView, supportsScore, unreadCounts, backgroundRefreshing,
     fetchFeeds, setActiveFeed, setActiveCategory, setActiveSection, clearActiveView, fetchFirstPage, refreshItems, fetchMoreItems,
-    selectItem, updateItemStatus, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, markAllRead, markReadAbove, markReadBelow,
+    selectItem, updateItemStatus, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, savedCount, fetchSavedCount, markAllRead, markReadAbove, markReadBelow,
     emailInbox, ensureEmailConfig, refreshEmailConfig,
   }
 })

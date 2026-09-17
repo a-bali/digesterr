@@ -137,6 +137,9 @@ export const feedApi = {
     body: JSON.stringify(category ? { category } : {}),
   }),
   unreadCounts: () => api<Record<number, number>>('/unread-counts'),
+  // Total saved items across all feeds. NOT an unread count — the sidebar shows
+  // it on the Saved row, which is a status view, not an inbox.
+  savedCount: () => api<{ count: number }>('/saved-count'),
   multiItems: (opts: { feed_ids?: number[]; category?: string; status?: string; limit?: number; offset?: number; min_score?: number; sort?: string }) => {
     const params: Record<string, string | number | undefined> = {
       status: opts.status, limit: opts.limit, offset: opts.offset,

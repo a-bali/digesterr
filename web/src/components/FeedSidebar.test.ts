@@ -15,6 +15,7 @@ vi.mock('../services/api', () => ({
     fetch: vi.fn(),
     markRead: vi.fn(),
     unreadCounts: vi.fn().mockResolvedValue({}),
+    savedCount: vi.fn().mockResolvedValue({ count: 0 }),
   },
   digestApi: {
     listConfigs: vi.fn().mockResolvedValue([]),
@@ -38,7 +39,7 @@ vi.mock('../services/api', () => ({
   ApiError: class extends Error {},
 }))
 
-import { feedApi, digestApi } from '../services/api'
+import { feedApi, digestApi, itemApi } from '../services/api'
 
 // jsdom lacks matchMedia (useBreakpoints) and ResizeObserver (reka-ui
 // dropdown/splitter measuring).
@@ -447,5 +448,150 @@ describe('FeedSidebar unread pill and error-icon placement', () => {
     expect(follows(name, pill)).toBe(true)
     expect(follows(pill, settings)).toBe(true)
     wrapper.unmount()
+  })
+})
+
+describe('FeedSidebar saved counter', () => {
+  // Minimal item shape for store-level status transitions.
+  const itemRow = {
+    id: 1, feed_id: 1, title: 't', url: '', author: '', content: '', status: 'unread',
+    published_at: null, fetched_at: '', points: 0, comments_count: 0, comment_url: '',
+    created_at: '', updated_at: '',
+  } as any
+
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    vi.mocked(digestApi.listConfigs).mockResolvedValue([])
+  })
+
+  it('shows the saved total and hides the badge at zero', async () => {
+    const wrapper = await mountSidebar()
+    const { useFeedStore } = await import('../stores/feed')
+    const feedStore = useFeedStore()
+    const root = wrapper.element as HTMLElement
+    expect(root.querySelector('[data-testid="saved-count"]')).toBeNull()
+
+    feedStore.savedCount = 3
+    await flushPromises()
+    const badge = root.querySelector('[data-testid="saved-count"]') as HTMLElement
+    expect(badge.textContent?.trim()).toBe('3')
+    expect(badge.getAttribute('title')).toBe('3 saved items')
+    wrapper.unmount()
+  })
+
+  it('counts ALL saved items, not unread ones', async () => {
+    // The user asked for a saved counter specifically NOT tied to read/unread.
+    // Saved items can be read or unread; the badge must ignore that split.
+    const wrapper = await mountSidebar()
+    const { useFeedStore } = await import('../stores/feed')
+    const feedStore = useFeedStore()
+    const root = wrapper.element as HTMLElement
+
+    // The feeds section badge is on screen at the same time, so the saved badge
+    // must be driven by the saved count alone, not by that unread total.
+    feedStore.feeds.push(feed)
+    feedStore.unreadCounts[feed.id] = 12
+    feedStore.savedCount = 2
+    await flushPromises()
+
+    expect(root.querySelector('[data-testid="feeds-section-total"]')?.textContent).toBe('12')
+    const badge = root.querySelector('[data-testid="saved-count"]') as HTMLElement
+    expect(badge.textContent?.trim()).toBe('2')
+    wrapper.unmount()
+  })
+
+  // Alignment is a layout guarantee, and jsdom does no layout, so the test pins
+  // the structure that makes it true instead of coordinates: the Saved row and
+  // both section headers must each have exactly one horizontally-padded layer
+  // (their own px-2 button), with no padding on the wrapper. The section
+  // wrappers previously carried px-2 ON TOP of the button's px-2, which put
+  // their icons 8px right of the Saved row's (measured x=28 vs x=20 live).
+  it('gives Saved, Digests and Feeds the same single padding layer', async () => {
+    const wrapper = await mountSidebar()
+    const root = wrapper.element as HTMLElement
+    const saved = Array.from(root.querySelectorAll('button')).find(b => b.textContent?.includes('Saved items')) as HTMLElement
+    const digests = Array.from(root.querySelectorAll('button')).find(b => /digests/i.test(b.textContent ?? '') && b.className.includes('uppercase')) as HTMLElement
+    const feeds = Array.from(root.querySelectorAll('button')).find(b => /^feeds$/i.test(b.textContent?.trim() ?? '') && b.className.includes('uppercase')) as HTMLElement
+
+    expect(saved).toBeDefined()
+    expect(digests).toBeDefined()
+    expect(feeds).toBeDefined()
+
+    // All three buttons pad their own content identically...
+    for (const btn of [saved, digests, feeds]) expect(btn.className).toContain('px-2')
+
+    // ...and neither section wrapper adds horizontal padding of its own.
+    for (const btn of [digests, feeds]) {
+      const wrapperCls = btn.parentElement?.className ?? ''
+      expect(wrapperCls).not.toMatch(/(^|\s)px-2(\s|$)/)
+    }
+    wrapper.unmount()
+  })
+
+  it('keeps every row icon the same size so the labels line up', async () => {
+    const wrapper = await mountSidebar()
+    const root = wrapper.element as HTMLElement
+    // Match on the class signature rather than textContent: a row's text
+    // includes its badge digit ("Feeds 12"), so anchored text matching misses.
+    const sectionBtn = (label: string) => Array.from(root.querySelectorAll('button'))
+      .find(b => b.className.includes('uppercase') && (b.textContent ?? '').trim().startsWith(label)) as HTMLElement
+    const saved = Array.from(root.querySelectorAll('button'))
+      .find(b => (b.textContent ?? '').includes('Saved items')) as HTMLElement
+
+    const rows = [saved, sectionBtn('Digests'), sectionBtn('Feeds')]
+    for (const row of rows) {
+      expect(row).toBeDefined()
+      const icon = row.querySelector('svg') as SVGElement
+      // size-3.5 == 14px. A different size here shifts the label column.
+      expect(icon.getAttribute('class')).toContain('size-3.5')
+    }
+    // And every row uses the same icon/label gap, so the text column matches.
+    for (const row of rows) expect(row.className).toContain('gap-2')
+    wrapper.unmount()
+  })
+
+  it('includes the saved total in the initial fetch, so the badge is painted', async () => {
+    const { feedApi } = await import('../services/api')
+    vi.mocked(feedApi.savedCount).mockResolvedValue({ count: 5 })
+    const { useFeedStore } = await import('../stores/feed')
+    setActivePinia(createPinia())
+    const feedStore = useFeedStore()
+
+    await feedStore.fetchSavedCount()
+    expect(feedStore.savedCount).toBe(5)
+  })
+
+  it('adjusts the saved total locally when an item is saved or unsaved', async () => {
+    const { itemApi } = await import('../services/api')
+    const { useFeedStore } = await import('../stores/feed')
+    setActivePinia(createPinia())
+    const feedStore = useFeedStore()
+    feedStore.savedCount = 1
+
+    const item = { ...itemRow, id: 99, status: 'unread' } as any
+    vi.mocked(itemApi.updateStatus).mockResolvedValue({ ...item, status: 'saved' } as any)
+    await feedStore.updateItemStatus(item, 'saved')
+    expect(feedStore.savedCount).toBe(2)
+
+    const savedItem = { ...itemRow, id: 99, status: 'saved' } as any
+    vi.mocked(itemApi.updateStatus).mockResolvedValue({ ...savedItem, status: 'read' } as any)
+    await feedStore.updateItemStatus(savedItem, 'read')
+    expect(feedStore.savedCount).toBe(1)
+  })
+
+  it('never drives the saved total below zero', async () => {
+    // Two sources can report the same transition; the counter must clamp
+    // rather than show a negative badge.
+    const { itemApi } = await import('../services/api')
+    const { useFeedStore } = await import('../stores/feed')
+    setActivePinia(createPinia())
+    const feedStore = useFeedStore()
+    feedStore.savedCount = 0
+    const savedItem = { ...itemRow, id: 77, status: 'saved' } as any
+    vi.mocked(itemApi.updateStatus).mockResolvedValue({ ...savedItem, status: 'read' } as any)
+    await feedStore.updateItemStatus(savedItem, 'read')
+    expect(feedStore.savedCount).toBe(0)
   })
 })

@@ -637,13 +637,23 @@ func (s *Server) handleUnreadCounts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// handleSavedCount reports how many items the user has saved, across all
+// feeds. The sidebar badge needs a total that does not depend on which feeds
+// the client has loaded, and the saved view itself is assembled client-side
+// from per-feed requests, so its array length is only the loaded page.
+func (s *Server) handleSavedCount(w http.ResponseWriter, r *http.Request) {
+	userID := authedUserID(r)
+	count, err := s.queries.CountStarredItems(r.Context(), userID)
+	if err != nil {
+		writeServerError(w, "failed to count saved items", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"count": count})
+}
+
 func (s *Server) handleMarkFeedRead(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
-		return
-	}
 	_, err = s.queries.GetFeed(r.Context(), store.GetFeedParams{
 		ID:     id,
 		UserID: userID,

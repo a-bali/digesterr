@@ -157,6 +157,10 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 
 	mux.HandleFunc("GET /api/unread-counts", s.requireAuth(s.handleUnreadCounts))
 	mux.HandleFunc("GET /api/digest-unread-counts", s.requireAuth(s.handleDigestUnreadCounts))
+	// Total saved (starred) items for the sidebar badge. Deliberately distinct
+	// from the unread counts: "saved" is a status, not an unread tally, and the
+	// saved view is assembled client-side across feeds, so it has no length.
+	mux.HandleFunc("GET /api/saved-count", s.requireAuth(s.handleSavedCount))
 
 	mux.HandleFunc("PATCH /api/items/{id}", s.requireAuth(s.handleUpdateItemStatus))
 	mux.HandleFunc("GET /api/items/{id}", s.requireAuth(s.handleGetItem))

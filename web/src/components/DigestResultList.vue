@@ -28,7 +28,13 @@ const { onScroll } = useInfiniteScroll({
   threshold: 200,
 })
 
-const digestFilter = ref<FilterStatus>('all')
+// The status filter lives in the digest store so the 'u' shortcut can reach it
+// from HomeView; see resultFilter's comment in stores/digest.ts. Sort order is
+// purely presentational, so it stays local.
+const digestFilter = computed({
+  get: () => digestStore.resultFilter,
+  set: v => { digestStore.resultFilter = v },
+})
 const sortOrder = ref<FilterSort>('newest')
 
 const STATUS_OPTIONS: { value: FilterStatus; label: string }[] = [

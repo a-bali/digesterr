@@ -142,11 +142,19 @@ useKeyboardShortcuts({
   markAllRead: markAllReadInCurrentView,
   markAllReadDialogOpen,
   toggleShowRead: () => {
+    // 'u' toggles unread-only for whichever list is on screen. In a digest view
+    // the item filter is not what the user is looking at, and flipping it had
+    // no visible effect while silently overwriting the persisted item filter.
+    if (digestMode.value) {
+      digestStore.resultFilter = digestStore.resultFilter === 'unread' ? 'all' : 'unread'
+      return
+    }
     feedStore.changeFilter(feedStore.filter === 'unread' ? 'all' : 'unread')
   },
   refreshCounts: () => {
     feedStore.fetchUnreadCounts()
     digestStore.fetchUnreadCounts()
+    feedStore.fetchSavedCount()
   },
   toggleTheme: () => {
     themeStore.mode = themeStore.mode === 'dark' ? 'light' : 'dark'
@@ -161,9 +169,13 @@ let pollInterval: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
   feedStore.fetchFeeds()
+  // The saved badge is part of the initial paint, not just a poll refresh: the
+  // sidebar renders before any item is touched.
+  feedStore.fetchSavedCount()
   pollInterval = setInterval(() => {
     feedStore.fetchUnreadCounts()
     digestStore.fetchUnreadCounts()
+    feedStore.fetchSavedCount()
     digestStore.silentRefresh()
   }, 10000)
   // External clients (e.g. NetNewsWire via the Reader API) can change item
@@ -185,6 +197,7 @@ function onVisibilityChange() {
   // exactly as the user left it.
   feedStore.fetchUnreadCounts()
   digestStore.fetchUnreadCounts()
+  feedStore.fetchSavedCount()
 }
 
 // Resolve the item referenced by the URL and select it. The list only holds the
