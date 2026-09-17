@@ -6,6 +6,24 @@ import { useDigestStore } from '../stores/digest'
 import { absoluteTime, relativeTime } from '../lib/format'
 import type { DigestResult } from '../types/api'
 
+vi.mock('../services/api', () => ({
+  digestApi: {
+    listConfigs: vi.fn().mockResolvedValue([]),
+    createConfig: vi.fn(),
+    updateConfig: vi.fn(),
+    deleteConfig: vi.fn(),
+    listResults: vi.fn().mockResolvedValue({ results: [], has_more: false }),
+    listResultItems: vi.fn().mockResolvedValue([]),
+    generate: vi.fn(),
+    updateResultStatus: vi.fn(),
+    deleteResult: vi.fn(),
+    unreadCounts: vi.fn().mockResolvedValue({}),
+    markReadAbove: vi.fn().mockResolvedValue({ message: 'ok' }),
+    markReadBelow: vi.fn().mockResolvedValue({ message: 'ok' }),
+  },
+  ApiError: class extends Error { constructor(public status: number, body: any) { super(body?.error) } },
+}))
+
 // reka-ui's dropdown content measures itself with ResizeObserver, which jsdom
 // does not provide.
 class ResizeObserverStub {
@@ -97,11 +115,11 @@ describe('DigestResultList', () => {
     setActivePinia(createPinia())
   })
 
-  it('shows the full date and time for each digest', () => {
+  it('shows the relative publish time for each digest', () => {
     const wrapper = mountList()
-    const text = wrapper.text()
-    expect(text).toContain(absoluteTime('2026-08-13T08:00:00Z'))
-    expect(text).toContain(absoluteTime('2026-08-12T09:30:00Z'))
+    const times = resultRows(wrapper).map(r => r.find('[data-item-time]').attributes('title'))
+    expect(times).toContain(absoluteTime('2026-08-13T08:00:00Z'))
+    expect(times).toContain(absoluteTime('2026-08-12T09:30:00Z'))
   })
 
   it('counts items from the digest content', () => {
@@ -136,13 +154,13 @@ describe('DigestResultList', () => {
     await openMenu(wrapper, 0)
     await clickItem('Unread')
     expect(resultRows(wrapper)).toHaveLength(1)
-    expect(resultRows(wrapper)[0].text()).toContain(absoluteTime('2026-08-13T08:00:00Z'))
+    expect(resultRows(wrapper)[0].find('[data-item-time]').attributes('title')).toBe(absoluteTime('2026-08-13T08:00:00Z'))
     expect(wrapper.html()).toContain('Unread')
 
     await openMenu(wrapper, 0)
     await clickItem('Read')
     expect(resultRows(wrapper)).toHaveLength(1)
-    expect(resultRows(wrapper)[0].text()).toContain(absoluteTime('2026-08-12T09:30:00Z'))
+    expect(resultRows(wrapper)[0].find('[data-item-time]').attributes('title')).toBe(absoluteTime('2026-08-12T09:30:00Z'))
 
     await openMenu(wrapper, 0)
     await clickItem('All')
@@ -168,14 +186,14 @@ describe('DigestResultList', () => {
     const wrapper = mountList()
 
     // Default (newest first): the Aug 13 digest renders before Aug 12.
-    expect(resultRows(wrapper)[0].text()).toContain(absoluteTime('2026-08-13T08:00:00Z'))
+    expect(resultRows(wrapper)[0].find('[data-item-time]').attributes('title')).toBe(absoluteTime('2026-08-13T08:00:00Z'))
 
     await openMenu(wrapper, 1)
     await clickItem('Oldest')
 
-    const rows = resultRows(wrapper).map(r => r.text())
-    expect(rows[0]).toContain(absoluteTime('2026-08-12T09:30:00Z'))
-    expect(rows[1]).toContain(absoluteTime('2026-08-13T08:00:00Z'))
+    const rows = resultRows(wrapper).map(r => r.find('[data-item-time]').attributes('title'))
+    expect(rows[0]).toBe(absoluteTime('2026-08-12T09:30:00Z'))
+    expect(rows[1]).toBe(absoluteTime('2026-08-13T08:00:00Z'))
     expect(wrapper.html()).toContain('Oldest')
   })
 })
@@ -196,32 +214,37 @@ describe('DigestResultList compact rows (stacked layout)', () => {
     expect(row.classes()).not.toContain('min-h-[5.5rem]')
   })
 
-  it('puts the title and the item count on the SAME line (adjacent siblings)', () => {
+  it('puts the title and the meta cluster on the SAME line (same flex row)', () => {
     const wrapper = mountList({ compact: true })
     const row = resultRows(wrapper)[0]
     const title = row.find('[data-item-title]')
-    const excerpt = row.find('[data-item-excerpt]')
+    const cluster = row.find('[data-item-meta]').element.parentElement as HTMLElement
 
     expect(title.exists()).toBe(true)
-    expect(excerpt.exists()).toBe(true)
-    expect(excerpt.text()).toContain('items')
+    expect(row.find('[data-item-count]').text()).toContain('items')
     // Same parent + flex row is the DOM-level encoding of "one line".
-    expect(title.element.parentElement).toBe(excerpt.element.parentElement)
-    expect(title.element.parentElement!.className).toContain('flex')
-    expect(title.element.parentElement!.className).toContain('items-center')
+    expect(title.element.parentElement).toBe(cluster.parentElement)
+    expect(cluster.parentElement!.className).toContain('flex')
+    expect(cluster.parentElement!.className).toContain('items-center')
   })
 
-  it('renders the relative publish time and the hover action menu on the same line', () => {
+  it('keeps the item count and the time together in the right-hand cluster', () => {
+    const wrapper = mountList({ compact: true })
+    const cluster = resultRows(wrapper)[0].find('[data-item-meta]')
+
+    // Count before time, both inside the wrapper that hover replaces.
+    expect(cluster.find('[data-item-count]').text()).toContain('items')
+    expect(cluster.find('[data-item-time]').exists()).toBe(true)
+  })
+
+  it('renders the mark chevrons and the relative publish time on the same line', () => {
     const wrapper = mountList({ compact: true })
     const row = resultRows(wrapper)[0]
 
-    // The relative time is rendered (not the absolute one) and carries the
-    // absolute value as a tooltip, exactly like the regular row.
-    const timeEl = row.findAll('span').find(s => s.attributes('title') === absoluteTime('2026-08-13T08:00:00Z'))
-    expect(timeEl, 'the relative time must still be shown').toBeTruthy()
+    const timeEl = row.find('[data-item-time]')
+    expect(timeEl.exists(), 'the relative time must still be shown').toBe(true)
     expect(relativeTime('2026-08-13T08:00:00Z')).toBeTruthy()
-    // The hover action trigger (MoreHorizontal) is present.
-    expect(row.findAll('button').some(b => b.attributes('class')?.includes('p-0.5'))).toBe(true)
+    expect(row.find('[data-mark-actions]').exists()).toBe(true)
   })
 
   it('leaves the default (non-compact) row untouched', () => {
@@ -249,5 +272,101 @@ describe('DigestResultList compact rows (stacked layout)', () => {
     expect(row.classes()).toContain('h-7')
     expect(row.classes()).not.toContain('min-h-[5.5rem]')
     expect(row.find('[data-item-title]').exists()).toBe(true)
+  })
+})
+
+// The digest list must carry the SAME mark-above/below affordance as the item
+// list: two chevrons in the top right corner, on every row whatever its status,
+// swapped in for the timestamp on hover. It used to be a MoreHorizontal menu
+// that only existed on unread rows.
+describe('DigestResultList mark read above/below hover actions', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('renders both chevrons on every row regardless of status, in both layouts', () => {
+    for (const compact of [false, true]) {
+      const pinia = createPinia()
+      setActivePinia(pinia)
+      const store = useDigestStore()
+      store.loading = false
+      store.results = [
+        makeResult({ id: 1, status: 'unread' }),
+        makeResult({ id: 2, status: 'read' }),
+      ]
+      const wrapper = mount(DigestResultList, {
+        props: { compact },
+        global: { plugins: [pinia] },
+      })
+      const rows = resultRows(wrapper)
+      expect(rows).toHaveLength(2)
+      for (const row of rows) {
+        expect(row.find('[data-mark-above]').exists(), `compact=${compact}`).toBe(true)
+        expect(row.find('[data-mark-below]').exists(), `compact=${compact}`).toBe(true)
+        expect(row.find('[data-mark-actions]').exists()).toBe(true)
+      }
+    }
+  })
+
+  it('does not use a dropdown trigger any more', () => {
+    const wrapper = mountList()
+    const row = resultRows(wrapper)[0]
+    // The old affordance: one button whose click opened a menu.
+    expect(row.findAll('button')).toHaveLength(2)
+  })
+
+  it('labels the chevrons for assistive tech, noting the item is kept', () => {
+    const wrapper = mountList()
+    const row = resultRows(wrapper)[0]
+    expect(row.find('[data-mark-above]').attributes('aria-label')).toBe('Mark everything above as read, except this item')
+    expect(row.find('[data-mark-below]').attributes('aria-label')).toBe('Mark everything below as read, except this item')
+    expect(row.find('[data-mark-above]').attributes('title')).toBe('Mark everything above as read, except this item')
+    expect(row.find('[data-mark-below]').attributes('title')).toBe('Mark everything below as read, except this item')
+  })
+
+  it('swaps the time for the chevrons instead of stacking them', () => {
+    const wrapper = mountList()
+    const row = resultRows(wrapper)[0]
+    const time = row.find('[data-item-time]')
+    const actions = row.find('[data-mark-actions]')
+
+    // Hovering only hides the time with CSS; it stays in the DOM so the
+    // relative time is still announced and the absolute time stays available.
+    expect(time.classes()).toContain('group-hover:hidden')
+    expect(actions.classes()).toContain('hidden')
+    expect(actions.classes()).toContain('group-hover:flex')
+  })
+
+  it('marks above with the clicked result', async () => {
+    const { digestApi } = await import('../services/api')
+    const markAbove = digestApi.markReadAbove as ReturnType<typeof vi.fn>
+    const wrapper = mountList()
+
+    await resultRows(wrapper)[1].find('[data-mark-above]').trigger('click')
+    await flushPromises()
+
+    expect(markAbove).toHaveBeenCalledTimes(1)
+    expect(markAbove.mock.calls[0][0]).toBe(2)
+  })
+
+  it('marks below with the clicked result', async () => {
+    const { digestApi } = await import('../services/api')
+    const markBelow = digestApi.markReadBelow as ReturnType<typeof vi.fn>
+    const wrapper = mountList()
+
+    await resultRows(wrapper)[0].find('[data-mark-below]').trigger('click')
+    await flushPromises()
+
+    expect(markBelow).toHaveBeenCalledTimes(1)
+    expect(markBelow.mock.calls[0][0]).toBe(1)
+  })
+
+  it('does not select the row when a chevron is clicked', async () => {
+    const wrapper = mountList()
+    await resultRows(wrapper)[0].find('[data-mark-above]').trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('select')).toBeFalsy()
   })
 })

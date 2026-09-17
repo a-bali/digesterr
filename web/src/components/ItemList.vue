@@ -338,12 +338,33 @@ async function markBelowRead(item: any) {
         >{{ feedNameFor(item) }}</span>
         <span data-item-title class="font-semibold truncate shrink-0 max-w-[55%]">{{ decodeHTMLEntities(item.title) }}</span>
         <span data-item-excerpt class="text-xs text-muted-foreground/70 truncate flex-1 min-w-0">{{ stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</span>
-        <span class="shrink-0 relative flex items-center justify-end h-4">
-          <span
-            class="text-[10px] text-muted-foreground/70 group-hover:hidden"
-            data-item-time
-            :title="absoluteTime(item.published_at)"
-          >{{ relativeTime(item.published_at) }}</span>
+        <!-- Score, comments and the publish time form one cluster on the right;
+             on hover the whole cluster gives way to the two chevrons, so the
+             meta does not fight the action for the same pixels. -->
+        <span class="shrink-0 relative flex items-center justify-end gap-1.5 h-4">
+          <span class="group-hover:hidden flex items-center gap-1.5" data-item-meta>
+            <Tooltip v-if="item.points > 0">
+              <template #trigger>
+                <span class="flex items-center gap-0.5 text-[10px]" :style="accentStyle(item.points, scale.points_max)" data-item-score>
+                  <ArrowUp class="size-3" /> {{ item.points }}
+                </span>
+              </template>
+              {{ pointsTitle(item.points) }}
+            </Tooltip>
+            <Tooltip v-if="item.comments_count > 0 || item.comment_url">
+              <template #trigger>
+                <span class="flex items-center gap-0.5 text-[10px]" :style="item.comments_count > 0 ? accentStyle(item.comments_count, scale.comments_max) : undefined" :class="item.comments_count > 0 ? '' : 'text-accent/30'" data-item-comments>
+                  <MessageSquare class="size-3" /> <template v-if="item.comments_count > 0">{{ item.comments_count }}</template>
+                </span>
+              </template>
+              <template v-if="item.comments_count > 0">{{ commentsTitle(item.comments_count) }}</template>
+            </Tooltip>
+            <span
+              class="text-[10px] text-muted-foreground/70"
+              data-item-time
+              :title="absoluteTime(item.published_at)"
+            >{{ relativeTime(item.published_at) }}</span>
+          </span>
           <span v-if="!props.showingSaved" class="hidden group-hover:flex items-center gap-0.5" data-mark-actions>
             <button
               class="text-muted-foreground/50 hover:text-accent p-0.5"
