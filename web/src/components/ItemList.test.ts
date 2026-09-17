@@ -791,3 +791,88 @@ describe('ItemList compact rows (stacked layout)', () => {
     expect(row.find('[data-item-title]').exists()).toBe(false)
   })
 })
+
+// The middle pane's header reports "feed name x/y": x is what the lazy loader has
+// actually appended, y is the server's count for the CURRENT filter. The two must
+// come from one result set, so these assert against the store fields the server
+// fills (items.length / totalItems) and not against a row count.
+//
+// Every mutation is followed by a tick: the header reads store state through a
+// computed, so a synchronous DOM read straight after assigning `totalItems`
+// returns the PREVIOUS render (0/0) and reads as a broken component.
+describe('middle pane header counts', () => {
+  function headerCount(wrapper: ReturnType<typeof mount>): string {
+    return wrapper.find('[data-filter-count]').text()
+  }
+
+  it('shows loaded out of the filter-aware total, not the loaded length', async () => {
+    const { store, wrapper } = mountList({ items: [makeItem(), makeItem({ id: 2 })] })
+    store.totalItems = 566
+    await wrapper.vm.$nextTick()
+
+    // Two rows loaded of 566 matching: the old header claimed "566 items" while
+    // showing two, which is the pair this fixes.
+    expect(headerCount(wrapper)).toBe('2/566')
+  })
+
+  it('updates x as pages are appended and y when the filter changes', async () => {
+    const { store, wrapper } = mountList({ items: [makeItem()] })
+    store.totalItems = 566
+    await wrapper.vm.$nextTick()
+    expect(headerCount(wrapper)).toBe('1/566')
+
+    // Infinite scroll appends.
+    store.items = [...store.items, makeItem({ id: 2 }), makeItem({ id: 3 })]
+    await wrapper.vm.$nextTick()
+    expect(headerCount(wrapper)).toBe('3/566')
+
+    // Changing filter re-counts on the server: fewer total, list reset to page 1.
+    store.totalItems = 55
+    store.items = [makeItem({ id: 4 })]
+    await wrapper.vm.$nextTick()
+    expect(headerCount(wrapper)).toBe('1/55')
+  })
+
+  it('names the feed alongside the counts in every layout', () => {
+    const { wrapper } = mountList()
+    expect(wrapper.find('[data-filter-feed-name]').text()).toBe('Hacker News')
+    // Not hidden at desktop width: the pane is narrow there too.
+    expect(wrapper.find('[data-filter-feed-name]').classes()).not.toContain('lg:hidden')
+  })
+
+  it('never reports more loaded than total when a replaced list keeps the focused row', async () => {
+    const { store, wrapper } = mountList({ items: [makeItem(), makeItem({ id: 2 })] })
+    store.totalItems = 1
+    // A background refresh left the selected item in the array after the filter
+    // changed, so the array holds one row that is not in the new result set.
+    store.selectedItem = store.items[0]
+    await wrapper.vm.$nextTick()
+
+    expect(headerCount(wrapper)).toBe('1/1')
+  })
+
+  it('treats the saved view as fully loaded, since it has no pagination', () => {
+    const saved = [makeItem({ status: 'saved' }), makeItem({ id: 2, status: 'saved' })]
+    const { wrapper } = mountList({ showingSaved: true, savedItems: saved })
+
+    expect(headerCount(wrapper)).toBe('2/2')
+    expect(wrapper.find('[data-filter-feed-name]').text()).toBe('Saved')
+  })
+
+  // Centring on the BAR is a layout guarantee, and jsdom does no layout — what it
+  // can assert is the structure that makes it true: the bar is a 3-column grid
+  // with EQUAL outer columns, so the middle column is centred by construction
+  // regardless of how wide the two buttons are. Swapping this for a flex row
+  // flanked by equal spacers looks equivalent and measured 14px off-centre live,
+  // because the sort button is wider than the filter button.
+  it('centres the cluster with a symmetric grid, not equal flex spacers', () => {
+    const { wrapper } = mountList()
+    const bar = wrapper.find('[data-filter-count]').element.closest('.border-b') as HTMLElement
+
+    expect(bar.className).toContain('grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]')
+    // The centre cell is the measured node, and both buttons are still present.
+    expect(bar.querySelector('[data-filter-center]')).not.toBeNull()
+    expect(bar.querySelector('[aria-label="Filter items"]')).not.toBeNull()
+    expect(bar.querySelector('[aria-label="Sort items"]')).not.toBeNull()
+  })
+})

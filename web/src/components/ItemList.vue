@@ -100,6 +100,24 @@ const SCORE_MAP_REV: Record<string, FilterSort> = { date_desc: 'newest', date_as
 
 const scoreSupported = computed(() => !props.showingSaved && feedStore.supportsScore)
 
+// The middle pane's header reports loaded/total for the CURRENT filter, so the
+// two numbers always describe the same set. `totalItems` is the server's
+// filter-aware count (CountItemsByFeed), not a length — the loaded length alone
+// would read as "50 of 50" while the feed actually holds 566.
+//
+// `items` is emptied only on a clean load, so a background refresh can leave the
+// focused item in the array after a filter/sort change (that is deliberate: the
+// selection must not vanish under the cursor). That row belongs to a different
+// result set, so subtracting it keeps loaded <= total. The saved view is exempt:
+// it has no pagination and no server total, so loaded == total there.
+const loadedCount = computed(() => {
+  if (props.showingSaved) return displayItems.value.length
+  const loaded = feedStore.isMultiView ? feedStore.multiItems.length : feedStore.items.length
+  const stale = feedStore.items.some(i => i.id === feedStore.selectedItem?.id) ? 1 : 0
+  return Math.min(loaded - stale, feedStore.totalItems)
+})
+const totalCount = computed(() => (props.showingSaved ? displayItems.value.length : feedStore.totalItems))
+
 const showMarkAllRead = computed(() =>
   (feedStore.activeFeedId != null || feedStore.isMultiView) && !props.showingSaved && !feedStore.loadingMore && feedStore.totalItems > 0,
 )
@@ -234,8 +252,9 @@ async function markBelowRead(item: any) {
       :sort-value="(SCORE_MAP_REV[feedStore.sort] ?? 'newest') as FilterSort"
       :min-score="feedStore.minScore"
       :score-supported="scoreSupported"
-      :item-count="showingSaved ? displayItems.length : feedStore.totalItems"
-      :feed-name="showingSaved ? null : (feedStore.isMultiView ? (feedStore.activeCategory ?? 'All Feeds') : feedStore.activeFeed?.name ?? null)"
+      :loaded-count="loadedCount"
+      :total-count="totalCount"
+      :feed-name="showingSaved ? 'Saved' : (feedStore.isMultiView ? (feedStore.activeCategory ?? 'All Feeds') : feedStore.activeFeed?.name ?? null)"
       :status-options="STATUS_OPTIONS"
       @update:status-filter="onFilterStatus"
       @update:sort-value="onSortValue"

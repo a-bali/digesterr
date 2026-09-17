@@ -12,7 +12,11 @@ const props = defineProps<{
   sortValue: FilterSort
   minScore: number | null
   scoreSupported: boolean
-  itemCount: number
+  // Lazy-loaded count and the full count for the current filter. Both describe
+  // the same result set (the server's total is filter-aware), so `loaded` can
+  // never exceed `total` and the pair reads as "how much of this list is here".
+  loadedCount: number
+  totalCount: number
   feedName?: string | null
   statusOptions: { value: FilterStatus; label: string }[]
 }>()
@@ -94,8 +98,9 @@ function resetScore() {
 </script>
 
 <template>
-  <div class="flex items-center gap-1 px-2.5 py-1.5 border-b">
+  <div class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1 px-2.5 py-1.5 border-b">
     <!-- Filter button -->
+    <div class="justify-self-start">
     <DropdownMenu :items="filterItems">
       <template #trigger>
         <Button variant="ghost" size="sm" class="relative" aria-label="Filter items">
@@ -142,16 +147,27 @@ function resetScore() {
         </div>
       </template>
     </DropdownMenu>
+    </div>
 
-    <!-- Feed name (mobile only) -->
-    <span v-if="feedName" class="text-xs font-semibold truncate lg:hidden">{{ feedName }}</span>
+    <!-- Feed name and the loaded/total counts, centred on the BAR. One block for
+         every layout: the mobile/tablet list pane and both desktop panes share
+         this component, so the header reads identically everywhere. The name is
+         not hidden at desktop width any more — the middle pane is narrow there
+         too, and a header naming the feed is the point.
 
-    <!-- Item count -->
-    <span class="text-[11px] text-muted-foreground whitespace-nowrap flex-1 text-center">
-      {{ itemCount }} items
-    </span>
+         The bar is a symmetric grid (`1fr auto 1fr`) for a reason: the two side
+         columns are equal by construction, so the middle one is centred on the
+         BAR rather than on the space the buttons leave. Flanking it with equal
+         flex spacers instead looks equivalent and is not — the buttons differ in
+         width (the sort label is wider than the filter label), and both were
+         measured 14px off-centre in every layout before this. -->
+    <div class="flex min-w-0 items-baseline justify-center gap-1.5" data-filter-center>
+      <span v-if="feedName" class="text-xs font-semibold truncate" data-filter-feed-name>{{ feedName }}</span>
+      <span class="shrink-0 text-[11px] text-muted-foreground" data-filter-count>{{ loadedCount }}/{{ totalCount }}</span>
+    </div>
 
     <!-- Sort button -->
+    <div class="justify-self-end">
     <DropdownMenu :items="sortItems">
       <template #trigger>
         <Button variant="ghost" size="sm" class="relative" aria-label="Sort items">
@@ -161,5 +177,6 @@ function resetScore() {
         </Button>
       </template>
     </DropdownMenu>
+    </div>
   </div>
 </template>
