@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useDigestStore } from '../stores/digest'
 import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
-import { Circle, CircleDot, LoaderCircle, CheckCircle2, ChevronsUp, ChevronsDown, MoreHorizontal } from 'lucide-vue-next'
+import { Circle, CircleDot, LoaderCircle, CheckCircle2, ChevronsUp, ChevronsDown } from 'lucide-vue-next'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { absoluteTime, relativeTime } from '../lib/format'
 import type { DigestResult, DigestResultWithConfigName } from '../types/api'
@@ -71,20 +71,14 @@ const showMarkAllRead = computed(() =>
   visibleResults.value.some(r => r.status !== 'read')
 )
 
-// Hover action menu
-const openMenuId = ref<number | null>(null)
-
-function toggleMenu(resultId: number) {
-  openMenuId.value = openMenuId.value === resultId ? null : resultId
-}
-
+// Hover actions: the two chevrons in the top right corner mark everything
+// above or below a row as read. Identical to the item list — same icons, same
+// corner, same labels, on every row whatever its status.
 async function markAboveRead(result: DigestResult) {
-  openMenuId.value = null
   await digestStore.markReadAbove(result)
 }
 
 async function markBelowRead(result: DigestResult) {
-  openMenuId.value = null
   await digestStore.markReadBelow(result)
 }
 
@@ -130,38 +124,39 @@ function onSelect(e: MouseEvent, result: DigestResult) {
       >
         <!-- Stacked layout: one line — status, title, item count, time, and the
              same hover actions. The title and count are SIBLINGS so the count
-             can only ever sit beside the title, never under it. -->
+             can only ever sit beside the title, never under it. The whole
+             right-hand cluster (count + time) gives way to the two chevrons on
+             hover, exactly like the item list. -->
         <div v-if="compact" class="flex items-center gap-1.5 h-full min-w-0 px-2 text-sm">
           <CircleDot v-if="result.status === 'unread'" class="size-3 shrink-0 text-accent" />
           <Circle v-else class="size-3 shrink-0 text-muted-foreground/40" />
           <span data-item-title class="font-semibold truncate shrink-0 max-w-[55%]">{{ resultTitle(result) }}</span>
-          <span data-item-excerpt class="text-xs text-muted-foreground/70 truncate flex-1 min-w-0">{{ result.item_count }} items</span>
-          <span class="text-[10px] text-muted-foreground/70 shrink-0" :title="absoluteTime(result.created_at)">{{ relativeTime(result.created_at) }}</span>
-          <span class="shrink-0 relative flex items-center justify-end h-4 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
-              v-if="result.status !== 'read'"
-              class="text-muted-foreground/50 hover:text-muted-foreground p-0.5"
-              @click.stop="toggleMenu(result.id)"
-            >
-              <MoreHorizontal class="size-3" />
-            </button>
-            <div
-              v-if="openMenuId === result.id"
-              class="absolute right-0 top-6 z-50 bg-popover border rounded-md shadow-md flex gap-1 p-1"
-            >
+          <span class="flex-1 min-w-0" />
+          <span class="shrink-0 relative flex items-center justify-end gap-1.5 h-4">
+            <span class="group-hover:hidden flex items-center gap-1.5" data-item-meta>
+              <span class="text-[10px] text-muted-foreground/70" data-item-count>{{ result.item_count }} items</span>
+              <span class="text-[10px] text-muted-foreground/70" data-item-time :title="absoluteTime(result.created_at)">{{ relativeTime(result.created_at) }}</span>
+            </span>
+            <span class="hidden group-hover:flex items-center gap-0.5" data-mark-actions>
               <button
-                class="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-accent/10 rounded transition-colors whitespace-nowrap"
+                class="text-muted-foreground/50 hover:text-accent p-0.5"
+                title="Mark everything above as read, except this item"
+                aria-label="Mark everything above as read, except this item"
+                data-mark-above
                 @click.stop="markAboveRead(result)"
               >
-                <ChevronsUp class="size-3" /> Above
+                <ChevronsUp class="size-3" />
               </button>
               <button
-                class="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-accent/10 rounded transition-colors whitespace-nowrap"
+                class="text-muted-foreground/50 hover:text-accent p-0.5"
+                title="Mark everything below as read, except this item"
+                aria-label="Mark everything below as read, except this item"
+                data-mark-below
                 @click.stop="markBelowRead(result)"
               >
-                <ChevronsDown class="size-3" /> Below
+                <ChevronsDown class="size-3" />
               </button>
-            </div>
+            </span>
           </span>
         </div>
         <template v-else>
@@ -170,34 +165,38 @@ function onSelect(e: MouseEvent, result: DigestResult) {
           <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
           <div class="flex-1 min-w-0">
             <p class="text-sm font-semibold truncate">{{ resultTitle(result) }}</p>
-            <p class="text-xs text-muted-foreground truncate">{{ absoluteTime(result.created_at) }} · {{ result.item_count }} items</p>
+            <p class="text-xs text-muted-foreground truncate" data-item-count>{{ result.item_count }} items</p>
           </div>
-          <!-- Hover action: mark read above/below -->
-          <span class="shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity relative">
-            <button
-              v-if="result.status !== 'read'"
-              class="text-muted-foreground/50 hover:text-muted-foreground p-0.5"
-              @click.stop="toggleMenu(result.id)"
-            >
-              <MoreHorizontal class="size-3" />
-            </button>
-            <div
-              v-if="openMenuId === result.id"
-              class="absolute right-0 top-6 z-50 bg-popover border rounded-md shadow-md flex gap-1 p-1"
-            >
+          <!-- Top right corner: the publish time gives way to the mark-read
+               chevrons on hover. Every row gets them, whatever its status, so
+               the action is in the same place on every item. Neither chevron
+               marks the row being hovered — only the rows beyond it. -->
+          <span class="shrink-0 mt-0.5 relative flex items-center justify-end h-4">
+            <span
+              class="text-[10px] text-muted-foreground/70 group-hover:hidden"
+              data-item-time
+              :title="absoluteTime(result.created_at)"
+            >{{ relativeTime(result.created_at) }}</span>
+            <span class="hidden group-hover:flex items-center gap-0.5" data-mark-actions>
               <button
-                class="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-accent/10 rounded transition-colors whitespace-nowrap"
+                class="text-muted-foreground/50 hover:text-accent p-0.5"
+                title="Mark everything above as read, except this item"
+                aria-label="Mark everything above as read, except this item"
+                data-mark-above
                 @click.stop="markAboveRead(result)"
               >
-                <ChevronsUp class="size-3" /> Above
+                <ChevronsUp class="size-3.5" />
               </button>
               <button
-                class="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-accent/10 rounded transition-colors whitespace-nowrap"
+                class="text-muted-foreground/50 hover:text-accent p-0.5"
+                title="Mark everything below as read, except this item"
+                aria-label="Mark everything below as read, except this item"
+                data-mark-below
                 @click.stop="markBelowRead(result)"
               >
-                <ChevronsDown class="size-3" /> Below
+                <ChevronsDown class="size-3.5" />
               </button>
-            </div>
+            </span>
           </span>
         </div>
         <div v-if="showingAll && result.config_name" class="flex items-center justify-between mt-2">

@@ -722,6 +722,57 @@ describe('ItemList compact rows (stacked layout)', () => {
     expect(row.find('[data-mark-below]').exists()).toBe(true)
   })
 
+  // The stacked view showed no score or comment count at all, so the two
+  // layouts disagreed about what a row says. They now sit left of the
+  // timestamp.
+  it('shows the score and the comment count to the LEFT of the timestamp', () => {
+    const { wrapper } = mountList({
+      compact: true,
+      items: [makeItem({ id: 1, points: 42, comments_count: 7 })],
+    })
+    const row = resultRows(wrapper)[0]
+    const meta = row.find('[data-item-meta]')
+
+    expect(meta.exists()).toBe(true)
+    expect(meta.find('[data-item-score]').text()).toContain('42')
+    expect(meta.find('[data-item-comments]').text()).toContain('7')
+
+    // Order inside the cluster: score, comments, time. Comparing DOM order is
+    // the jsdom-safe way to encode "to the left of the timestamp".
+    const html = meta.html()
+    expect(html.indexOf('data-item-score')).toBeLessThan(html.indexOf('data-item-comments'))
+    expect(html.indexOf('data-item-comments')).toBeLessThan(html.indexOf('data-item-time'))
+  })
+
+  it('hides the whole right-hand cluster behind the chevrons on hover', () => {
+    const { wrapper } = mountList({
+      compact: true,
+      items: [makeItem({ id: 1, points: 42, comments_count: 7 })],
+    })
+    const row = resultRows(wrapper)[0]
+    const meta = row.find('[data-item-meta]')
+    const actions = row.find('[data-mark-actions]')
+
+    // Hovering only hides the cluster with CSS; score, comments and time stay
+    // in the DOM, so the tooltips and the absolute time remain available.
+    expect(meta.classes()).toContain('group-hover:hidden')
+    expect(actions.classes()).toContain('hidden')
+    expect(actions.classes()).toContain('group-hover:flex')
+    expect(meta.find('[data-item-time]').attributes('title')).toBeTruthy()
+  })
+
+  it('omits the score and comments when the feed does not report them', () => {
+    const { wrapper } = mountList({
+      compact: true,
+      items: [makeItem({ id: 1, points: 0, comments_count: 0, comment_url: '' })],
+    })
+    const row = resultRows(wrapper)[0]
+
+    expect(row.find('[data-item-score]').exists()).toBe(false)
+    expect(row.find('[data-item-comments]').exists()).toBe(false)
+    expect(row.find('[data-item-time]').exists()).toBe(true)
+  })
+
   it('still marks above/below from the compact row', async () => {
     const { wrapper } = mountList({ compact: true })
     await resultRows(wrapper)[0].find('[data-mark-above]').trigger('click')
