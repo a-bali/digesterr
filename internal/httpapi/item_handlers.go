@@ -410,7 +410,7 @@ func (s *Server) handleSummarizeItem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := s.llmClient.Chat(r.Context(), systemPrompt, userPrompt)
+	result, err := s.resolveLLMClient(r.Context(), userID).Chat(r.Context(), systemPrompt, userPrompt)
 	if err != nil {
 		writeServerError(w, "LLM request failed", err)
 		return

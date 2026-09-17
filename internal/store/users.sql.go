@@ -12,7 +12,7 @@ import (
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (email, password_hash, api_key)
 VALUES (?, ?, ?)
-RETURNING id, email, password_hash, api_key, created_at, updated_at
+RETURNING id, email, password_hash, api_key, llm_model, created_at, updated_at
 `
 
 type CreateUserParams struct {
@@ -29,6 +29,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Email,
 		&i.PasswordHash,
 		&i.ApiKey,
+		&i.LlmModel,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -36,7 +37,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 }
 
 const getUserByAPIKey = `-- name: GetUserByAPIKey :one
-SELECT id, email, password_hash, api_key, created_at, updated_at FROM users WHERE api_key = ?
+SELECT id, email, password_hash, api_key, llm_model, created_at, updated_at FROM users WHERE api_key = ?
 `
 
 func (q *Queries) GetUserByAPIKey(ctx context.Context, apiKey string) (User, error) {
@@ -47,6 +48,7 @@ func (q *Queries) GetUserByAPIKey(ctx context.Context, apiKey string) (User, err
 		&i.Email,
 		&i.PasswordHash,
 		&i.ApiKey,
+		&i.LlmModel,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -54,7 +56,7 @@ func (q *Queries) GetUserByAPIKey(ctx context.Context, apiKey string) (User, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, api_key, created_at, updated_at FROM users WHERE email = ?
+SELECT id, email, password_hash, api_key, llm_model, created_at, updated_at FROM users WHERE email = ?
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -65,6 +67,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.Email,
 		&i.PasswordHash,
 		&i.ApiKey,
+		&i.LlmModel,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -72,7 +75,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, api_key, created_at, updated_at FROM users WHERE id = ?
+SELECT id, email, password_hash, api_key, llm_model, created_at, updated_at FROM users WHERE id = ?
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
@@ -83,6 +86,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.Email,
 		&i.PasswordHash,
 		&i.ApiKey,
+		&i.LlmModel,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -93,7 +97,7 @@ const updateUserAPIKey = `-- name: UpdateUserAPIKey :one
 UPDATE users
 SET api_key = ?, updated_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, email, password_hash, api_key, created_at, updated_at
+RETURNING id, email, password_hash, api_key, llm_model, created_at, updated_at
 `
 
 type UpdateUserAPIKeyParams struct {
@@ -109,6 +113,34 @@ func (q *Queries) UpdateUserAPIKey(ctx context.Context, arg UpdateUserAPIKeyPara
 		&i.Email,
 		&i.PasswordHash,
 		&i.ApiKey,
+		&i.LlmModel,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateUserLLMModel = `-- name: UpdateUserLLMModel :one
+UPDATE users
+SET llm_model = ?, updated_at = DATETIME('now')
+WHERE id = ?
+RETURNING id, email, password_hash, api_key, llm_model, created_at, updated_at
+`
+
+type UpdateUserLLMModelParams struct {
+	LlmModel string `json:"llm_model"`
+	ID       int64  `json:"id"`
+}
+
+func (q *Queries) UpdateUserLLMModel(ctx context.Context, arg UpdateUserLLMModelParams) (User, error) {
+	row := q.db.QueryRowContext(ctx, updateUserLLMModel, arg.LlmModel, arg.ID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.ApiKey,
+		&i.LlmModel,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -119,7 +151,7 @@ const updateUserPassword = `-- name: UpdateUserPassword :one
 UPDATE users
 SET password_hash = ?, updated_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, email, password_hash, api_key, created_at, updated_at
+RETURNING id, email, password_hash, api_key, llm_model, created_at, updated_at
 `
 
 type UpdateUserPasswordParams struct {
@@ -135,6 +167,7 @@ func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPassword
 		&i.Email,
 		&i.PasswordHash,
 		&i.ApiKey,
+		&i.LlmModel,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

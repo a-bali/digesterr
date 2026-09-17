@@ -301,6 +301,10 @@ PRAGMA foreign_keys=ON;
 			"CREATE INDEX IF NOT EXISTS idx_digest_results_created_at ON digest_results(created_at)",
 		},
 		{
+			"add users.llm_model",
+			"ALTER TABLE users ADD COLUMN llm_model TEXT NOT NULL DEFAULT ''",
+		},
+		{
 			"add email_messages staging table",
 			`CREATE TABLE IF NOT EXISTS email_messages (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

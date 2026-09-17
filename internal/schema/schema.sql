@@ -3,6 +3,7 @@ CREATE TABLE users (
     email       TEXT    NOT NULL UNIQUE,
     password_hash TEXT  NOT NULL,
     api_key     TEXT    NOT NULL DEFAULT '',
+    llm_model   TEXT    NOT NULL DEFAULT '',
     created_at  DATETIME NOT NULL DEFAULT (DATETIME('now')),
     updated_at  DATETIME NOT NULL DEFAULT (DATETIME('now'))
 );

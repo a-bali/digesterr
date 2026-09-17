@@ -237,6 +237,19 @@ export const systemApi = {
   version: () => api<VersionInfo>('/version'),
 }
 
+export interface LlmSettings {
+  model: string
+  default_model: string
+  overridden: boolean
+}
+
+export const settingsApi = {
+  getLLM: () => api<LlmSettings>('/settings/llm'),
+  updateLLM: (model: string) =>
+    api<LlmSettings>('/settings/llm', { method: 'PUT', body: JSON.stringify({ model }) }),
+  resetLLM: () => api<LlmSettings>('/settings/llm', { method: 'DELETE' }),
+}
+
 // healthApi.get returns the readiness payload. When authenticated it also
 // carries the email feed type's configuration (the instance-wide AgentMail
 // inbox and its fixed prefix/domain); those keys are ABSENT when the server has

@@ -415,7 +415,7 @@ func (s *Server) handleGenerateDigest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.generator.Generate(r.Context(), cfg)
+	result, err := s.generator.Generate(r.Context(), cfg, s.resolveLLMClient(r.Context(), userID))
 	if err != nil {
 		slog.Error("digest generation failed", "config_id", configID, "config_name", cfg.Name, "user_id", userID, "error", err)
 		s.queries.UpdateDigestConfigError(r.Context(), store.UpdateDigestConfigErrorParams{

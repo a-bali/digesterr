@@ -41,6 +41,11 @@ type Server struct {
 	// summaryPrompt is the configured system prompt for per-item summaries.
 	// Empty means the built-in default.
 	summaryPrompt string
+	// llmDefaultModel is the env/file-configured model name. A user with a
+	// users.llm_model override uses that instead; the default stays untouched
+	// so a reset can fall back to it. Stored separately (not read off the
+	// shared client) because the client carries no getter.
+	llmDefaultModel string
 	// emailInbox is the configured AgentMail mailbox for the email feed type,
 	// empty when unconfigured. It is the source of both the plus-address prefix
 	// and the domain the UI renders as fixed context, so the frontend never has
@@ -67,6 +72,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 		commentCache:      newCommentCache(cfg.Feed.CommentCacheTTL.Duration()),
 		schedulerTimezone: cfg.Digest.SchedulerTimezone,
 		summaryPrompt:     cfg.LLM.SummaryPrompt,
+		llmDefaultModel:   cfg.LLM.Model,
 		emailInbox:        cfg.Email.InboxID,
 		emailConfigured:   cfg.Email.EmailConfigured(),
 		emailDomain:       feed.EmailInboxDomain(cfg.Email.InboxID),
@@ -186,6 +192,10 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	mux.HandleFunc("GET /api/logs", s.requireAuth(s.handleListLogs))
 	mux.HandleFunc("GET /api/metrics", s.requireAuth(s.handleGetMetrics))
 	mux.HandleFunc("POST /api/metrics/reset", s.requireAuth(s.handleResetMetrics))
+
+	mux.HandleFunc("GET /api/settings/llm", s.requireAuth(s.handleGetLLMSettings))
+	mux.HandleFunc("PUT /api/settings/llm", s.requireAuth(s.handleUpdateLLMSettings))
+	mux.HandleFunc("DELETE /api/settings/llm", s.requireAuth(s.handleResetLLMSettings))
 
 	mux.HandleFunc("GET /reader/api/0/token", s.readerAuth(s.handleReaderToken))
 	mux.HandleFunc("GET /reader/api/0/user-info", s.readerAuth(s.handleReaderUserInfo))

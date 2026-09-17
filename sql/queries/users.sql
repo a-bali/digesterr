@@ -23,3 +23,8 @@ UPDATE users
 SET api_key = ?, updated_at = DATETIME('now')
 WHERE id = ?
 RETURNING *;
+-- name: UpdateUserLLMModel :one
+UPDATE users
+SET llm_model = ?, updated_at = DATETIME('now')
+WHERE id = ?
+RETURNING *;

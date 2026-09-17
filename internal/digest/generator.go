@@ -168,9 +168,19 @@ func decodeDigestOutput(reply string) (llmDigestOutput, error) {
 	return llmDigestOutput{}, err
 }
 
-func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*store.DigestResult, error) {
+// Generate builds a digest for cfg. An optional llmChatter overrides the
+// Generator's default client for this run: the HTTP layer resolves the
+// caller's per-user model into a client via WithModel and passes it here, so
+// scheduled and manual generations honor the same setting. Empty means "use
+// the default client" — callers that predate the setting pass nothing.
+func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig, llmOverride ...llmChatter) (*store.DigestResult, error) {
 	start := time.Now()
 	genLogger := slog.With("config_id", cfg.ID, "config_name", cfg.Name)
+
+	llm := g.llm
+	if len(llmOverride) > 0 && llmOverride[0] != nil {
+		llm = llmOverride[0]
+	}
 
 	// Data retention runs during digest generation as well as feed refresh:
 	// delete items/digest results older than the configured windows. Saved
@@ -238,7 +248,7 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig) (*stor
 
 	g.fetchCommentsForHighlights(ctx, highlights, genLogger)
 
-	content, err := g.buildContent(ctx, dcfg, highlights, rest, genLogger)
+	content, err := g.buildContentWithLLM(ctx, dcfg, highlights, rest, genLogger, llm)
 	if err != nil {
 		return nil, fmt.Errorf("building digest content: %w", err)
 	}
@@ -710,7 +720,17 @@ func assignSummaries(highlights []digestItem, refs []digestItemRef, entries []ll
 	return assignedCount, missing
 }
 
+// buildContent is the legacy entry point kept for existing callers (tests,
+// benchmarks): it runs the content pass against the Generator's default LLM
+// client.
 func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, highlights, rest []digestItem, genLogger *slog.Logger) (*digestResultContent, error) {
+	return g.buildContentWithLLM(ctx, dcfg, highlights, rest, genLogger, g.llm)
+}
+
+// buildContentWithLLM is the run-specific content pass: Generate resolves the
+// caller's per-user model and hands it in, so the selected model — not the
+// instance default — serves both the attempt and the retry.
+func (g *Generator) buildContentWithLLM(ctx context.Context, dcfg digestConfigJSON, highlights, rest []digestItem, genLogger *slog.Logger, llm llmChatter) (*digestResultContent, error) {
 	content := &digestResultContent{}
 
 	feedInfos := g.buildFeedInfoMap(ctx)
@@ -764,16 +784,16 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 	// no alignment benefit — title matching already places entries correctly,
 	// including on replies where the numbering was present. Alignment therefore
 	// relies on titles, not on the model cooperating with a new output field.
-	userPrompt += "For each HIGHLIGHT article, provide a 2-3 sentence highlight capturing the key insight and why it matters — skip introductory phrases like \"The article discusses\" or \"The author explains\". Format your response as JSON with keys \"title\" (string, a short title for the whole digest, at most 8-10 words, catchy and derived from the digest contents; a light pun is welcome but not required), \"summary\" (string of overall digest summary) and \"highlights\" (array of {title, summary})."
+	userPrompt += "For each HIGHLIGHT article, provide a 2-3 sentence highlight capturing the key insight and why it matters — skip introductory phrases like \"The article discusses\" or \"The author explains\". Format your response as JSON with keys \"title\" (string, a short title for the whole digest, at most 8-10 words, catchy and derived from the digest contents; a light pun is welcome but not required), \"summary\" (string of overall digest summary) and \"highlights\" (array of {title, summary}). " + jsonOutputRule
 
 	llmStart := time.Now()
 	genLogger.Info("calling LLM for digest", "input_bytes", len(systemPrompt)+len(userPrompt))
 	// Surface a clear error when the LLM is needed but not configured: the
 	// request would otherwise fail with an obscure auth error downstream.
-	if c, ok := g.llm.(interface{ HasAPIKey() bool }); ok && !c.HasAPIKey() {
+	if c, ok := llm.(interface{ HasAPIKey() bool }); ok && !c.HasAPIKey() {
 		genLogger.Error("LLM API key is not configured (llm.api_key / LLM_API_KEY); digest generation will fail")
 	}
-	llmResponse, err := g.llm.Chat(ctx, systemPrompt, userPrompt)
+	llmResponse, err := llm.Chat(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("LLM chat failed: %w", err)
 	}
@@ -798,9 +818,12 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 			genLogger.Warn("LLM digest response did not cover every highlight, retrying",
 				"articles", len(highlights), "entries", len(output.Highlights))
 		}
-		retryPrompt := userPrompt + "\n\n" + reason +
+	// The retry prompt reuses the (already hardened) first-attempt prompt, so
+		// apply withJSONRule defensively: a config-level prompt that already
+		// contained the rule must not get it twice.
+		retryPrompt := withJSONRule(userPrompt) + "\n\n" + reason +
 			"\nReply again with only the JSON object described above — no prose, no markdown code fences, no extra words."
-		retried, retryErr := g.llm.Chat(ctx, systemPrompt, retryPrompt)
+		retried, retryErr := llm.Chat(ctx, systemPrompt, retryPrompt)
 		if retryErr != nil {
 			return nil, fmt.Errorf("LLM chat failed on retry: %w", retryErr)
 		}

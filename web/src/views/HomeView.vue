@@ -14,6 +14,7 @@ import ShortcutsDialog from '../components/ShortcutsDialog.vue'
 import VersionBadge from '../components/VersionBadge.vue'
 import ThemeMenu from '../components/ThemeMenu.vue'
 import AccountMenu from '../components/AccountMenu.vue'
+import LlmSettingsDialog from '../components/LlmSettingsDialog.vue'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
 import GoogleReaderApiDialog from '../components/GoogleReaderApiDialog.vue'
 import { useFeedStore } from '../stores/feed'
@@ -27,7 +28,7 @@ import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts'
 import { useSwipeGesture } from '../composables/useSwipeGesture'
 import { usePageTitle, digestResultTitle } from '../composables/usePageTitle'
 import { scrollToItemComments } from '../lib/itemComments'
-import { Newspaper, Menu, ArrowLeft, CircleHelp, Columns3, Rows2 } from 'lucide-vue-next'
+import { Newspaper, Menu, ArrowLeft, CircleHelp, Columns3, Rows2, Settings } from 'lucide-vue-next'
 
 const router = useRouter()
 const route = useRoute()
@@ -55,6 +56,7 @@ useSwipeGesture(canSwipe, () => {
 })
 
 const showChangePassword = ref(false)
+const showLlmSettings = ref(false)
 const readerApiOpen = ref(false)
 const showShortcuts = ref(false)
 
@@ -484,12 +486,24 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
           <Rows2 v-else class="size-4" />
         </Button>
         <ThemeMenu />
+        <!-- Cogwheel settings (LLM model) sits immediately before the profile button. -->
+        <Button
+          variant="ghost"
+          size="icon"
+          title="Settings"
+          aria-label="Settings"
+          data-settings-button
+          @click="showLlmSettings = true"
+        >
+          <Settings class="size-4" />
+        </Button>
         <!-- Change password / Google Reader API dialogs hook into the events emitted here. -->
         <AccountMenu @change-password="showChangePassword = true" @google-reader-api="readerApiOpen = true" />
       </div>
     </header>
 
     <ChangePasswordDialog :open="showChangePassword" @update:open="showChangePassword = $event" />
+    <LlmSettingsDialog :open="showLlmSettings" @update:open="showLlmSettings = $event" />
     <GoogleReaderApiDialog :open="readerApiOpen" @update:open="readerApiOpen = $event" />
     <ShortcutsDialog v-model:open="showShortcuts" />
 

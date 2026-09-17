@@ -64,9 +64,21 @@ func (c *LLMClient) SetRecordFunc(fn LLMRecordFunc) {
 	c.recordFn = fn
 }
 
+// WithModel returns a copy of the client that sends a different model name.
+// The HTTP client (including its timeout) and the metrics callback are
+// shared: a per-user model override must not change transport behavior.
+func (c *LLMClient) WithModel(model string) *LLMClient {
+	cp := *c
+	cp.model = model
+	return &cp
+}
+
 // HasAPIKey reports whether an API key is configured. Digest generation logs
 // an error when the LLM is needed but no key is set.
 func (c *LLMClient) HasAPIKey() bool { return c.apiKey != "" }
+
+// Model returns the model name this client sends.
+func (c *LLMClient) Model() string { return c.model }
 
 type chatMessage struct {
 	Role    string `json:"role"`

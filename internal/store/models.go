@@ -119,6 +119,7 @@ type User struct {
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"password_hash"`
 	ApiKey       string    `json:"api_key"`
+	LlmModel     string    `json:"llm_model"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
