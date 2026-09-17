@@ -239,6 +239,14 @@ function toggleCategory(name: string) {
   else collapsedCategories.add(name)
 }
 
+// Digest unread counts arrive from a separate request than the configs, so a
+// missing key means "not loaded yet" rather than zero — only an explicit 0 dims.
+// (Feed rows apply the same rule in FeedRow.vue.) Dimming the row wrapper instead
+// of the icon/name would compound with the hover-revealed action buttons.
+function digestHasNoUnread(id: number) {
+  return digestStore.unreadCounts[id] === 0
+}
+
 // Per-category unread counts.
 const categoryUnreadCounts = computed(() => {
   const counts: Record<string, number> = {}
@@ -294,8 +302,8 @@ const categoryUnreadCounts = computed(() => {
         @click="emit('selectDigestConfig', cfg.id)"
       >
         <div class="flex items-center gap-2 flex-1 min-w-0">
-          <MessageSquare class="size-3.5 shrink-0 text-accent" />
-          <span class="truncate">{{ cfg.name || cfg.schedule }}</span>
+          <MessageSquare class="size-3.5 shrink-0 text-accent" :class="{ 'opacity-60': digestHasNoUnread(cfg.id) }" />
+          <span class="truncate" :class="{ 'opacity-60': digestHasNoUnread(cfg.id) }">{{ cfg.name || cfg.schedule }}</span>
           <Tooltip v-if="cfg.last_error">
             <template #trigger>
               <svg data-testid="digest-error" viewBox="0 0 24 24" class="size-4 text-red-500 shrink-0" fill="none"><rect x="2" y="2" width="20" height="20" rx="4" fill="currentColor"/><path d="M12 7v6" stroke="white" stroke-width="2.5" stroke-linecap="round"/><circle cx="12" cy="16" r="1.3" fill="white"/></svg>
