@@ -177,8 +177,8 @@ watch(
   { immediate: true },
 )
 
-// The email option needs the instance's inbox, which the store fetches from
-// /api/health and caches for the session.
+// The email option needs this account's inbox, which the store fetches from
+// GET /api/settings/email and caches for the session.
 //
 // This MUST run when the dialog opens, not when form.type becomes 'email':
 // until the inbox is known the email option is disabled, so it cannot be
@@ -192,6 +192,10 @@ watch(
 // event. The store caches the result, so this is at most one request per
 // session; an unconditional call keeps the option's enabled state correct on
 // first render for every type, and the edit form's prefix/domain too.
+//
+// The value is per-account state, so the settings dialog refetches it after a save
+// (feedStore.refreshEmailConfig) — otherwise configuring the inbox there would
+// leave this option disabled until a page reload.
 void feedStore.ensureEmailConfig()
 
 function submit() {
@@ -271,7 +275,7 @@ const dialogId = Math.random().toString(36).slice(2)
           <p class="text-xs font-mono bg-muted rounded px-2 py-1 select-all break-all" data-email-resolved>{{ resolvedEmailAddress }}</p>
         </template>
         <p v-else class="text-xs text-muted-foreground">
-          One mailbox serves this server, so only the part after “+” is yours to choose.
+          Email feeds use your own AgentMail inbox — set it up in Settings, next to the theme picker.
         </p>
       </div>
       <div v-else class="space-y-1">

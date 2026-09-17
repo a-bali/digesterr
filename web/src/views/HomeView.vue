@@ -14,7 +14,7 @@ import ShortcutsDialog from '../components/ShortcutsDialog.vue'
 import VersionBadge from '../components/VersionBadge.vue'
 import ThemeMenu from '../components/ThemeMenu.vue'
 import AccountMenu from '../components/AccountMenu.vue'
-import LlmSettingsDialog from '../components/LlmSettingsDialog.vue'
+import SettingsDialog from '../components/SettingsDialog.vue'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
 import GoogleReaderApiDialog from '../components/GoogleReaderApiDialog.vue'
 import { useFeedStore } from '../stores/feed'
@@ -503,7 +503,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
     </header>
 
     <ChangePasswordDialog :open="showChangePassword" @update:open="showChangePassword = $event" />
-    <LlmSettingsDialog :open="showLlmSettings" @update:open="showLlmSettings = $event" />
+    <SettingsDialog :open="showLlmSettings" @update:open="showLlmSettings = $event" />
     <GoogleReaderApiDialog :open="readerApiOpen" @update:open="readerApiOpen = $event" />
     <ShortcutsDialog v-model:open="showShortcuts" />
 

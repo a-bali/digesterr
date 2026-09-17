@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"digesterr/internal/metrics"
@@ -29,17 +30,21 @@ const syncListBody = `{"messages":[{"message_id":"<m1@test>","timestamp":"2026-0
 
 const syncGetBody = `{"message_id":"<m1@test>","timestamp":"2026-09-16T19:02:52.000Z","subject":"Money Stuff","text":"body","html":"<p>body</p><a href=\"https://example.com/story\">Read</a>"}`
 
-// newEmailPoller builds a poller with the email feed type registered and the
-// sync pointed at the stub server, mirroring the server wiring.
-func newEmailPoller(t *testing.T, q *store.Queries, srv *httptest.Server) (*Poller, *EmailSync) {
+// newEmailPoller builds a poller whose AgentMail clients point at the stub
+// server, mirroring the server wiring. Credentials are per user, so the caller
+// must also give the feed's owner a configured inbox (seedConfiguredEmailUser).
+func newEmailPoller(t *testing.T, q *store.Queries, srv *httptest.Server) *Poller {
 	t.Helper()
-	sync := newSyncFor(t, q, srv)
-	if sync == nil {
-		t.Fatal("sync not configured")
-	}
 	p := NewPoller(q)
-	p.SetEmailSync(sync)
-	return p, sync
+	p.SetEmailClientFactory(func(EmailAccount) *AgentMailClient {
+		c := NewAgentMailClient("test"+"-key", "name@agentmail.to")
+		if c == nil {
+			return nil
+		}
+		c.baseURL = srv.URL
+		return c
+	})
+	return p
 }
 
 // TestPollFeedDrainsMailboxForEmailFeed is the regression for defect 1: polling
@@ -50,7 +55,7 @@ func TestPollFeedDrainsMailboxForEmailFeed(t *testing.T) {
 	ctx := context.Background()
 
 	srv, calls := syncTestServer(t, syncListBody, func(string) string { return syncGetBody })
-	p, _ := newEmailPoller(t, q, srv)
+	p := newEmailPoller(t, q, srv)
 
 	seedEmailFeed(t, q, "name+mattlevine@agentmail.to")
 
@@ -86,12 +91,17 @@ func TestPollAllRecordsSyncTrafficSeparately(t *testing.T) {
 	srv, _ := syncTestServer(t, syncListBody, func(string) string { return syncGetBody })
 
 	transport := metrics.NewTransport(http.DefaultTransport)
-	sync := newSyncFor(t, q, srv)
-	sync.setTransport(transport)
 
 	p := NewPoller(q)
 	p.SetTransport(transport)
-	p.SetEmailSync(sync)
+	p.SetEmailClientFactory(func(acct EmailAccount) *AgentMailClient {
+		c := NewAgentMailClient(acct.APIKey, acct.InboxID)
+		if c == nil {
+			return nil
+		}
+		c.baseURL = srv.URL
+		return c
+	})
 
 	type rec struct {
 		reason string
@@ -137,10 +147,14 @@ func TestSyncMetricsAreRecordedOncePerPollAll(t *testing.T) {
 	ctx := context.Background()
 
 	srv, calls := syncTestServer(t, syncListBody, func(string) string { return syncGetBody })
-	p, _ := newEmailPoller(t, q, srv)
+	p := newEmailPoller(t, q, srv)
 
-	seedEmailFeed(t, q, "name+one@agentmail.to")
-	seedEmailFeed(t, q, "name+two@agentmail.to")
+	// One account owns both feeds: they share a mailbox, which is exactly the
+	// case that must drain once. (Two accounts cannot share an inbox —
+	// idx_users_email_inbox.)
+	owner := seedConfiguredEmailUser(t, q, "shared-owner@test", "name+one@agentmail.to")
+	seedEmailFeedForUser(t, q, owner.ID, "name+one@agentmail.to")
+	seedEmailFeedForUser(t, q, owner.ID, "name+two@agentmail.to")
 
 	p.PollAll(ctx)
 
@@ -153,15 +167,55 @@ func TestSyncMetricsAreRecordedOncePerPollAll(t *testing.T) {
 
 // ---- helpers -------------------------------------------------------------
 
-func seedEmailFeed(t *testing.T, q *store.Queries, address string) int64 {
+// seedConfiguredEmailUser creates an account with AgentMail credentials stored on
+// its row, which is where the poller now reads them from.
+func seedConfiguredEmailUser(t *testing.T, q *store.Queries, email, feedAddress string) store.User {
 	t.Helper()
 	ctx := context.Background()
-	user, err := q.CreateUser(ctx, store.CreateUserParams{Email: address + ".owner@test", PasswordHash: "x", ApiKey: "k-" + address})
+	u, err := q.CreateUser(ctx, store.CreateUserParams{
+		Email: email, PasswordHash: "x", ApiKey: "k-" + email,
+	})
 	if err != nil {
-		t.Fatalf("create user: %v", err)
+		t.Fatalf("create user %s: %v", email, err)
 	}
+	// The inbox is the feed address with its '+' suffix stripped — the same
+	// relationship production maintains, so a feed resolves to its owner's
+	// mailbox. One inbox per account is enforced by idx_users_email_inbox, so
+	// fixtures that need two feeds share one owner, as they do in production.
+	inbox := emailInboxOf(feedAddress)
+	u, err = q.UpdateUserEmailConfig(ctx, store.UpdateUserEmailConfigParams{
+		EmailInbox: inbox, EmailApiKey: "test" + "-key", ID: u.ID,
+	})
+	if err != nil {
+		t.Fatalf("configure email for %s: %v", email, err)
+	}
+	return u
+}
+
+// emailInboxOf strips a feed's plus-address suffix, yielding the mailbox that
+// owns it ("name+news@x" -> "name@x").
+func emailInboxOf(feedAddress string) string {
+	local, domain, found := strings.Cut(feedAddress, "@")
+	if !found {
+		return feedAddress
+	}
+	base, _, _ := strings.Cut(local, "+")
+	return base + "@" + domain
+}
+
+func seedEmailFeed(t *testing.T, q *store.Queries, address string) int64 {
+	t.Helper()
+	user := seedConfiguredEmailUser(t, q, address+".owner@test", address)
+	return seedEmailFeedForUser(t, q, user.ID, address)
+}
+
+// seedEmailFeedForUser attaches an email feed to an existing account, for the
+// tests that need several feeds reading one mailbox.
+func seedEmailFeedForUser(t *testing.T, q *store.Queries, userID int64, address string) int64 {
+	t.Helper()
+	ctx := context.Background()
 	f, err := q.CreateFeed(ctx, store.CreateFeedParams{
-		UserID: user.ID,
+		UserID: userID,
 		Type:   "email",
 		Name:   "Matt Levine - Money Stuff",
 		Url:    address,

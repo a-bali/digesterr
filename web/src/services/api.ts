@@ -241,6 +241,19 @@ export interface LlmSettings {
   model: string
   default_model: string
   overridden: boolean
+  // The endpoint's offered model list, for the picker. Advisory only: empty when
+  // the list could not be fetched, which is why the field stays editable.
+  models: string[]
+}
+
+// EmailSettings is the per-account AgentMail configuration for the email feed
+// type. `token_set` reports whether a credential is stored; the token itself is
+// NEVER sent to the client, so the settings dialog edits it blind (an empty field
+// means "leave it alone", not "clear it").
+export interface EmailSettings {
+  configured: boolean
+  inbox: string
+  token_set: boolean
 }
 
 export const settingsApi = {
@@ -248,12 +261,23 @@ export const settingsApi = {
   updateLLM: (model: string) =>
     api<LlmSettings>('/settings/llm', { method: 'PUT', body: JSON.stringify({ model }) }),
   resetLLM: () => api<LlmSettings>('/settings/llm', { method: 'DELETE' }),
+
+  getEmail: () => api<EmailSettings>('/settings/email'),
+  // apiKey is omitted (rather than sent empty) when the field still holds the
+  // stored-key mask: the backend reads a missing key as "keep the stored token".
+  // An empty string is sent when the user emptied the field, which now means
+  // "clear the stored key" (the inbox is kept).
+  updateEmail: (inbox: string, apiKey?: string) =>
+    api<EmailSettings>('/settings/email', {
+      method: 'PUT',
+      body: JSON.stringify(apiKey === undefined ? { inbox } : { inbox, api_key: apiKey }),
+    }),
+  resetEmail: () => api<EmailSettings>('/settings/email', { method: 'DELETE' }),
 }
 
-// healthApi.get returns the readiness payload. When authenticated it also
-// carries the email feed type's configuration (the instance-wide AgentMail
-// inbox and its fixed prefix/domain); those keys are ABSENT when the server has
-// no AgentMail credentials, so callers must treat undefined as "feature off".
+// healthApi.get returns the readiness payload: it carries no feature state.
+// Email feed availability used to be reported here, but that is a per-account
+// setting now and lives in settingsApi.getEmail().
 export const healthApi = {
   get: () => api<HealthInfo>('/health'),
 }

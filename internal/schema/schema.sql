@@ -4,6 +4,18 @@ CREATE TABLE users (
     password_hash TEXT  NOT NULL,
     api_key     TEXT    NOT NULL DEFAULT '',
     llm_model   TEXT    NOT NULL DEFAULT '',
+    -- AgentMail credentials for the email feed type, per user. Both empty means
+    -- the email feed type is off for this account: the Add Feed dialog disables
+    -- the option and the API rejects an email feed. A mailbox belongs to exactly
+    -- one account (enforced by idx_users_email_inbox), because email_messages is
+    -- staged per inbox and every feed reading that inbox must belong to the same
+    -- owner.
+    email_inbox   TEXT  NOT NULL DEFAULT '',
+    -- Bearer token for the AgentMail API. Stored as plain text: whoever can read
+    -- this SQLite file already holds server.jwt_secret and llm.api_key from the
+    -- environment, so encrypting this one column at rest would buy nothing.
+    -- Never returned by the API -- the settings endpoint reports token_set only.
+    email_api_key TEXT  NOT NULL DEFAULT '',
     created_at  DATETIME NOT NULL DEFAULT (DATETIME('now')),
     updated_at  DATETIME NOT NULL DEFAULT (DATETIME('now'))
 );
@@ -161,11 +173,18 @@ CREATE INDEX idx_refresh_tokens_token_hash ON refresh_tokens(token_hash);
 CREATE UNIQUE INDEX idx_items_feed_hash ON items(feed_id, hash) WHERE hash != '';
 CREATE UNIQUE INDEX idx_users_api_key ON users(api_key) WHERE api_key != '';
 
--- One AgentMail inbox and its API key are server-wide (like llm.api_key), so the
--- plus-address namespace is shared by every user on the instance. Uniqueness is
--- therefore GLOBAL, not per-user: a per-user index would let two users claim the
--- same suffix and then both read mail addressed to it. Partial, so RSS feeds
--- remain free to duplicate URLs.
+-- An AgentMail inbox belongs to exactly one account. The per-user setting is what
+-- namespaces email feeds: user A's feed reads only the mail staged for user A's
+-- inbox, so two accounts sharing a mailbox would each read the other's
+-- subscription. Partial, so the many users with no email config (empty inbox) do
+-- not collide with each other.
+CREATE UNIQUE INDEX idx_users_email_inbox ON users(email_inbox) WHERE email_inbox != '';
+
+-- Email feed addresses stay globally unique. That is now a consequence of the
+-- inbox index above rather than a separate rule: only one account can hold a
+-- given inbox, so a plus-address can only ever be claimed inside that account's
+-- namespace -- and within one account two feeds on the same address would ingest
+-- the same mail twice. Partial, so RSS feeds remain free to duplicate URLs.
 CREATE UNIQUE INDEX idx_feeds_email_url ON feeds(url) WHERE type = 'email';
 
 CREATE INDEX idx_email_messages_inbox_received ON email_messages(inbox_id, received_at);

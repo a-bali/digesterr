@@ -3,8 +3,6 @@ package httpapi
 import (
 	"net/http"
 	"strings"
-
-	"digesterr/internal/feed"
 )
 
 // handleHealthz answers 200 "ok" for liveness probes. It intentionally does
@@ -33,41 +31,20 @@ func bearerToken(r *http.Request) string {
 // performs a database ping so a pod with a broken DB connection is taken out
 // of service. It is intentionally unauthenticated (probes carry no token).
 //
-// When the request carries a valid access token the response additionally
-// reports whether the email feed type is available, plus the inbox prefix and
-// domain the UI renders as fixed context around the editable suffix. Those keys
-// are OMITTED rather than sent as empty/false when unauthenticated, so a probe
-// response stays byte-identical to what it was before this feature and the
-// frontend can distinguish "not configured" from "not logged in" by absence.
+// It advertises NO feature state, authenticated or not. Email feed availability
+// used to be reported here, which made a probe endpoint the frontend's source of
+// truth for a per-user setting; that now lives in GET /api/settings/email. The
+// payload is byte-identical with and without a token, so a probe response cannot
+// vary with credentials.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if err := s.queries.DB().PingContext(ctx); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "database unavailable")
 		return
 	}
-	if token := bearerToken(r); token != "" {
-		if _, err := s.auth.ValidateAccessToken(token); err == nil {
-			writeJSON(w, http.StatusOK, s.healthWithFeatures())
-			return
-		}
-	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// healthWithFeatures builds the authenticated health payload.
-//
-// The email fields describe the SHAPE of a feed address so the UI can show
-// "name+" and "@agentmail.to" as non-editable context and let the user type
-// only the suffix. The address is instance-wide, so nothing here is per-user.
-func (s *Server) healthWithFeatures() map[string]any {
-	resp := map[string]any{
-		"status":        "ok",
-		"email_enabled": s.emailConfigured,
-	}
-	if s.emailConfigured {
-		resp["email_inbox"] = s.emailInbox
-		resp["email_prefix"] = feed.EmailInboxPrefix(s.emailInbox)
-		resp["email_domain"] = s.emailDomain
-	}
-	return resp
-}
+// healthWithFeatures was removed with the instance-wide email configuration: the
+// email feed type is per user now, so feature availability is reported by
+// GET /api/settings/email for the authenticated caller and by nothing at all here.

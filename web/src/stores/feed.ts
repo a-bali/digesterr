@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { feedApi, itemApi, healthApi } from '../services/api'
+import { feedApi, itemApi, settingsApi } from '../services/api'
 import type { Feed, Item, MultiItem, ItemSort, MarkRelativeOptions } from '../types/api'
 import { toastError } from '../lib/toast'
 import { SCORE_FEED_TYPES } from '../lib/feeds'
@@ -25,12 +25,15 @@ function saveFilter(f: string) {
 
 export const useFeedStore = defineStore('feed', () => {
   const feeds = ref<Feed[]>([])
-  // The instance's AgentMail inbox, fetched from /api/health on first use.
-  // The inbox is server-wide (one mailbox serves every email feed), so it is
-  // server-reported state rather than something the user types: the dialog
-  // shows it as fixed context and only the suffix is editable.
+  // The signed-in account's AgentMail inbox, from GET /api/settings/email.
   //
-  // null = not fetched yet, '' = server has the feature off.
+  // It is PER-ACCOUNT state, not server-fixed state: the same user can change it
+  // in the settings dialog, so a once-per-session cache would go stale the moment
+  // they do — the Add Feed dialog would keep saying "(not configured)" until a
+  // reload. Hence refreshEmailConfig(), which the settings dialog calls after a
+  // successful save.
+  //
+  // null = not fetched yet, '' = this account has no email configuration.
   const emailInbox = ref<string | null>(null)
 
   // ensureEmailConfig fetches the inbox once per session. Failures leave it as
@@ -38,9 +41,15 @@ export const useFeedStore = defineStore('feed', () => {
   // unavailable, which is the honest outcome when the server cannot say.
   async function ensureEmailConfig() {
     if (emailInbox.value !== null) return
+    await refreshEmailConfig()
+  }
+
+  // refreshEmailConfig refetches unconditionally. Call it after anything that can
+  // change the value (saving or clearing it in the settings dialog).
+  async function refreshEmailConfig() {
     try {
-      const health = await healthApi.get()
-      emailInbox.value = health.email_inbox ?? ''
+      const settings = await settingsApi.getEmail()
+      emailInbox.value = settings.configured ? settings.inbox : ''
     } catch {
       emailInbox.value = ''
     }
@@ -460,6 +469,6 @@ export const useFeedStore = defineStore('feed', () => {
     activeFeed, isMultiView, supportsScore, unreadCounts, backgroundRefreshing,
     fetchFeeds, setActiveFeed, setActiveCategory, setActiveSection, clearActiveView, fetchFirstPage, refreshItems, fetchMoreItems,
     selectItem, updateItemStatus, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, markAllRead, markReadAbove, markReadBelow,
-    emailInbox, ensureEmailConfig,
+    emailInbox, ensureEmailConfig, refreshEmailConfig,
   }
 })

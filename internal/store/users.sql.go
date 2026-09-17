@@ -9,10 +9,24 @@ import (
 	"context"
 )
 
+const clearUserEmailConfig = `-- name: ClearUserEmailConfig :exec
+UPDATE users
+SET email_inbox = '', email_api_key = '', updated_at = DATETIME('now')
+WHERE id = ?
+`
+
+// Removes a user's AgentMail credentials. Any email feeds they own are left in
+// place and become status = 'error' on the next poll, which is where the sidebar
+// shows the failure.
+func (q *Queries) ClearUserEmailConfig(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, clearUserEmailConfig, id)
+	return err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (email, password_hash, api_key)
 VALUES (?, ?, ?)
-RETURNING id, email, password_hash, api_key, llm_model, created_at, updated_at
+RETURNING id, email, password_hash, api_key, llm_model, email_inbox, email_api_key, created_at, updated_at
 `
 
 type CreateUserParams struct {
@@ -30,6 +44,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.PasswordHash,
 		&i.ApiKey,
 		&i.LlmModel,
+		&i.EmailInbox,
+		&i.EmailApiKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -37,7 +53,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 }
 
 const getUserByAPIKey = `-- name: GetUserByAPIKey :one
-SELECT id, email, password_hash, api_key, llm_model, created_at, updated_at FROM users WHERE api_key = ?
+SELECT id, email, password_hash, api_key, llm_model, email_inbox, email_api_key, created_at, updated_at FROM users WHERE api_key = ?
 `
 
 func (q *Queries) GetUserByAPIKey(ctx context.Context, apiKey string) (User, error) {
@@ -49,6 +65,8 @@ func (q *Queries) GetUserByAPIKey(ctx context.Context, apiKey string) (User, err
 		&i.PasswordHash,
 		&i.ApiKey,
 		&i.LlmModel,
+		&i.EmailInbox,
+		&i.EmailApiKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -56,7 +74,7 @@ func (q *Queries) GetUserByAPIKey(ctx context.Context, apiKey string) (User, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, api_key, llm_model, created_at, updated_at FROM users WHERE email = ?
+SELECT id, email, password_hash, api_key, llm_model, email_inbox, email_api_key, created_at, updated_at FROM users WHERE email = ?
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -68,6 +86,32 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.PasswordHash,
 		&i.ApiKey,
 		&i.LlmModel,
+		&i.EmailInbox,
+		&i.EmailApiKey,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getUserByEmailInbox = `-- name: GetUserByEmailInbox :one
+SELECT id, email, password_hash, api_key, llm_model, email_inbox, email_api_key, created_at, updated_at FROM users WHERE email_inbox != '' AND email_inbox = ?
+`
+
+// Resolves the account that owns an inbox. Used to reject a second account
+// claiming the same mailbox: email_messages is staged per inbox, so both would
+// read each other's mail.
+func (q *Queries) GetUserByEmailInbox(ctx context.Context, emailInbox string) (User, error) {
+	row := q.db.QueryRowContext(ctx, getUserByEmailInbox, emailInbox)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.ApiKey,
+		&i.LlmModel,
+		&i.EmailInbox,
+		&i.EmailApiKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -75,7 +119,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, api_key, llm_model, created_at, updated_at FROM users WHERE id = ?
+SELECT id, email, password_hash, api_key, llm_model, email_inbox, email_api_key, created_at, updated_at FROM users WHERE id = ?
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
@@ -87,17 +131,73 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.PasswordHash,
 		&i.ApiKey,
 		&i.LlmModel,
+		&i.EmailInbox,
+		&i.EmailApiKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
+const listEmailAccountsInUse = `-- name: ListEmailAccountsInUse :many
+SELECT
+    u.email_inbox AS inbox_id,
+    u.email_api_key AS api_key,
+    CAST(MIN(u.id) AS INTEGER) AS user_id
+FROM users u
+JOIN feeds f ON f.user_id = u.id
+WHERE f.type = 'email'
+  AND f.status IN ('active', 'error')
+  AND u.email_inbox != ''
+  AND u.email_api_key != ''
+GROUP BY u.email_inbox, u.email_api_key
+`
+
+type ListEmailAccountsInUseRow struct {
+	InboxID string `json:"inbox_id"`
+	ApiKey  string `json:"api_key"`
+	UserID  int64  `json:"user_id"`
+}
+
+// One row per distinct inbox that has at least one live email feed. The poller
+// drains each inbox ONCE per cycle, which replaces the old single instance-wide
+// sync: it is derived from feeds, not from users, so an account that configured
+// credentials but owns no email feed issues no requests.
+//
+// Grouped by inbox and token together, so a token changed in the settings dialog
+// yields a fresh client rather than reusing one bound to the old credential.
+//
+// The CAST on MIN(u.id) is required: sqlc infers a bare MIN() as interface{},
+// which is unusable as a struct field. Same trap as the CASE-bound parameters in
+// items.sql (see the skill's sqlc pitfall section).
+func (q *Queries) ListEmailAccountsInUse(ctx context.Context) ([]ListEmailAccountsInUseRow, error) {
+	rows, err := q.db.QueryContext(ctx, listEmailAccountsInUse)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEmailAccountsInUseRow{}
+	for rows.Next() {
+		var i ListEmailAccountsInUseRow
+		if err := rows.Scan(&i.InboxID, &i.ApiKey, &i.UserID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateUserAPIKey = `-- name: UpdateUserAPIKey :one
 UPDATE users
 SET api_key = ?, updated_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, email, password_hash, api_key, llm_model, created_at, updated_at
+RETURNING id, email, password_hash, api_key, llm_model, email_inbox, email_api_key, created_at, updated_at
 `
 
 type UpdateUserAPIKeyParams struct {
@@ -114,6 +214,42 @@ func (q *Queries) UpdateUserAPIKey(ctx context.Context, arg UpdateUserAPIKeyPara
 		&i.PasswordHash,
 		&i.ApiKey,
 		&i.LlmModel,
+		&i.EmailInbox,
+		&i.EmailApiKey,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateUserEmailConfig = `-- name: UpdateUserEmailConfig :one
+UPDATE users
+SET email_inbox = ?, email_api_key = ?, updated_at = DATETIME('now')
+WHERE id = ?
+RETURNING id, email, password_hash, api_key, llm_model, email_inbox, email_api_key, created_at, updated_at
+`
+
+type UpdateUserEmailConfigParams struct {
+	EmailInbox  string `json:"email_inbox"`
+	EmailApiKey string `json:"email_api_key"`
+	ID          int64  `json:"id"`
+}
+
+// Stores a user's AgentMail credentials. Both values are written together: the
+// inbox and the token are only useful as a pair (the token alone cannot name a
+// mailbox, the inbox alone cannot be read), and a partial update would leave the
+// account reporting "configured" while failing every poll.
+func (q *Queries) UpdateUserEmailConfig(ctx context.Context, arg UpdateUserEmailConfigParams) (User, error) {
+	row := q.db.QueryRowContext(ctx, updateUserEmailConfig, arg.EmailInbox, arg.EmailApiKey, arg.ID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.ApiKey,
+		&i.LlmModel,
+		&i.EmailInbox,
+		&i.EmailApiKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -124,7 +260,7 @@ const updateUserLLMModel = `-- name: UpdateUserLLMModel :one
 UPDATE users
 SET llm_model = ?, updated_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, email, password_hash, api_key, llm_model, created_at, updated_at
+RETURNING id, email, password_hash, api_key, llm_model, email_inbox, email_api_key, created_at, updated_at
 `
 
 type UpdateUserLLMModelParams struct {
@@ -141,6 +277,8 @@ func (q *Queries) UpdateUserLLMModel(ctx context.Context, arg UpdateUserLLMModel
 		&i.PasswordHash,
 		&i.ApiKey,
 		&i.LlmModel,
+		&i.EmailInbox,
+		&i.EmailApiKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -151,7 +289,7 @@ const updateUserPassword = `-- name: UpdateUserPassword :one
 UPDATE users
 SET password_hash = ?, updated_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, email, password_hash, api_key, llm_model, created_at, updated_at
+RETURNING id, email, password_hash, api_key, llm_model, email_inbox, email_api_key, created_at, updated_at
 `
 
 type UpdateUserPasswordParams struct {
@@ -168,6 +306,8 @@ func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPassword
 		&i.PasswordHash,
 		&i.ApiKey,
 		&i.LlmModel,
+		&i.EmailInbox,
+		&i.EmailApiKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

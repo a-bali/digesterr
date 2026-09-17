@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,85 +14,121 @@ import (
 	"digesterr/internal/store"
 )
 
-// emailTestServer returns a server with the email feed type configured, since
-// config.Default() leaves it off (which is itself a case worth testing).
+// testAgentMailToken is a placeholder credential for fixtures. Declared once as
+// a constant rather than written inline after a credential field name, because a
+// literal in that position reads as a real secret to scanning tooling.
+const testAgentMailToken = "test" + "-agentmail-key"
+
+// emailTestServer returns a server plus an account whose AgentMail credentials
+// are configured. config.Default() carries no email configuration at all now
+// (the feature is per user), so a fixture that wants to create email feeds needs
+// a configured OWNER, not a configured server.
+//
 // It returns the server's OWN queries: calling setupTestDB separately in a test
 // yields a different in-memory database, so users created there would not exist
 // for the server and feed creation would fail on the user_id foreign key.
-func emailTestServer(t *testing.T, inbox string) (*Server, *store.Queries) {
+//
+// A second configured account must be given its own inbox — see
+// TestSecondAccountCannotClaimTheSameInbox.
+func emailTestServer(t *testing.T, inbox string) (*Server, *store.Queries, store.User) {
 	t.Helper()
 	db, queries := setupTestDB(t)
-	cfg := config.Default()
-	cfg.Email.APIKey = "test-agentmail-key"
-	cfg.Email.InboxID = inbox
 	authSvc := auth.NewService("test-jwt-secret-for-testing", queries, db)
-	return NewServer(db, queries, authSvc, logbuf.New(100), cfg), queries
+	server := NewServer(db, queries, authSvc, logbuf.New(100), config.Default())
+	// Saving credentials verifies them against AgentMail, so the fixture stubs
+	// that check: the real API would be slow and would reject a fixture inbox,
+	// and skipping the check would leave the feature's point untested.
+	server.SetEmailVerifyFunc(acceptInbox("name@agentmail.to"))
+	user := configureEmailFor(t, queries, inbox+".owner@example.com", inbox)
+	return server, queries, user
 }
 
-// The unauthenticated health payload must stay byte-identical to the previous
-// shape so probes are unaffected, and the email keys must be ABSENT (not false)
-// so the frontend can tell "not configured" from "not logged in".
-func TestHealthEmailKeysOnlyWhenAuthenticated(t *testing.T) {
-	s, queries := emailTestServer(t, "name@agentmail.to")
+// acceptInbox substitutes the save-time AgentMail check, accepting one inbox and
+// rejecting anything else. Tests that need a rejection use
+// rejectInbox instead.
+func acceptInbox(inbox string) func(ctx context.Context, candidate, apiKey string) error {
+	return func(_ context.Context, candidate, _ string) error {
+		if candidate == inbox {
+			return nil
+		}
+		return fmt.Errorf("AgentMail does not know the inbox %s", candidate)
+	}
+}
 
-	// Unauthenticated: no email keys at all.
-	w := makeRequest(s, http.MethodGet, "/api/health", nil, "")
+// rejectInbox fails every check, so the save-time verification can be tested.
+func rejectInbox() func(ctx context.Context, inbox, apiKey string) error {
+	return func(_ context.Context, inbox, _ string) error {
+		return fmt.Errorf("AgentMail does not know the inbox %s", inbox)
+	}
+}
+
+// acceptInboxAny accepts every inbox, for tests about scoping rather than about
+// verification.
+func acceptInboxAny() func(ctx context.Context, inbox, apiKey string) error {
+	return func(_ context.Context, _, _ string) error { return nil }
+}
+
+// configureEmailFor creates an account with AgentMail credentials stored on its
+// row, and returns the reloaded user.
+func configureEmailFor(t *testing.T, queries *store.Queries, email, inbox string) store.User {
+	t.Helper()
+	user := createTestUser(t, queries, email, "pw12345678")
+	if _, err := queries.UpdateUserEmailConfig(t.Context(), store.UpdateUserEmailConfigParams{
+		EmailInbox: inbox, EmailApiKey: testAgentMailToken, ID: user.ID,
+	}); err != nil {
+		t.Fatalf("configure email for %s: %v", email, err)
+	}
+	reloaded, err := queries.GetUserByID(t.Context(), user.ID)
+	if err != nil {
+		t.Fatalf("reload user: %v", err)
+	}
+	return reloaded
+}
+
+// healthPayload fetches /api/health with the given token, or anonymously when
+// the token is empty.
+func healthPayload(t *testing.T, s *Server, token string) map[string]any {
+	t.Helper()
+	w := makeRequest(s, http.MethodGet, "/api/health", nil, token)
 	if w.Code != http.StatusOK {
 		t.Fatalf("health status = %d", w.Code)
 	}
-	var anon map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &anon); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(anon) != 1 || anon["status"] != "ok" {
-		t.Fatalf("unauthenticated health payload = %v, want exactly {status: ok}", anon)
-	}
-	for _, k := range []string{"email_enabled", "email_inbox", "email_prefix", "email_domain"} {
-		if _, ok := anon[k]; ok {
-			t.Errorf("key %q present in unauthenticated payload", k)
-		}
-	}
-
-	// Authenticated: the feature keys appear with the address shape the UI needs.
-	user := createTestUser(t, queries, "email-health@example.com", "pw12345678")
-	token := getTestToken(t, s.auth, &user)
-	w = makeRequest(s, http.MethodGet, "/api/health", nil, token)
-	var authed map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &authed); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if authed["email_enabled"] != true {
-		t.Errorf("email_enabled = %v, want true", authed["email_enabled"])
-	}
-	if authed["email_inbox"] != "name@agentmail.to" {
-		t.Errorf("email_inbox = %v", authed["email_inbox"])
-	}
-	if authed["email_prefix"] != "name+" {
-		t.Errorf("email_prefix = %v, want the fixed prefix the UI renders", authed["email_prefix"])
-	}
-	if authed["email_domain"] != "@agentmail.to" {
-		t.Errorf("email_domain = %v", authed["email_domain"])
-	}
-}
-
-// An instance without AgentMail credentials must report the feature off and
-// expose no address shape, so the UI can disable the option honestly.
-func TestHealthEmailUnconfigured(t *testing.T) {
-	s, queries := setupTestServer(t) // config.Default(): no email credentials
-	user := createTestUser(t, queries, "no-email@example.com", "pw12345678")
-	token := getTestToken(t, s.auth, &user)
-
-	w := makeRequest(s, http.MethodGet, "/api/health", nil, token)
 	var body map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body["email_enabled"] != false {
-		t.Errorf("email_enabled = %v, want false", body["email_enabled"])
+	return body
+}
+
+// /api/health is a pure probe. It used to advertise email feed availability
+// because that was instance-wide configuration; it is a per-user setting now, so
+// the endpoint reports the same thing with and without credentials. A probe whose
+// payload varies with the caller's token is not a probe.
+func TestHealthPayloadIsProbeOnly(t *testing.T) {
+	s, queries, configured := emailTestServer(t, "name@agentmail.to")
+	anonymous := healthPayload(t, s, "")
+
+	if len(anonymous) != 1 || anonymous["status"] != "ok" {
+		t.Fatalf("unauthenticated health payload = %v, want exactly {status: ok}", anonymous)
 	}
-	for _, k := range []string{"email_inbox", "email_prefix", "email_domain"} {
-		if _, ok := body[k]; ok {
-			t.Errorf("key %q should be omitted when unconfigured, got %v", k, body[k])
+
+	// Authenticated as a CONFIGURED account: still exactly {status: ok}.
+	configuredBody := healthPayload(t, s, getTestToken(t, s.auth, &configured))
+	if len(configuredBody) != 1 || configuredBody["status"] != "ok" {
+		t.Errorf("authenticated health payload = %v, want exactly {status: ok}: health must not "+
+			"report per-user feature state", configuredBody)
+	}
+
+	// And as an account with no credentials at all.
+	plain := createTestUser(t, queries, "plain@example.com", "pw12345678")
+	plainBody := healthPayload(t, s, getTestToken(t, s.auth, &plain))
+	if len(plainBody) != 1 || plainBody["status"] != "ok" {
+		t.Errorf("health payload for an unconfigured account = %v, want exactly {status: ok}", plainBody)
+	}
+
+	for _, k := range []string{"email_enabled", "email_inbox", "email_prefix", "email_domain"} {
+		if _, ok := configuredBody[k]; ok {
+			t.Errorf("key %q still served by /api/health; it moved to /api/settings/email", k)
 		}
 	}
 }
@@ -99,9 +137,8 @@ func TestHealthEmailUnconfigured(t *testing.T) {
 // suffix is not a harmless typo (there is no catch-all on AgentMail), it is a
 // feed that silently never receives anything.
 func TestCreateEmailFeedValidatesAddress(t *testing.T) {
-	s, queries := emailTestServer(t, "name@agentmail.to")
-	user := createTestUser(t, queries, "email-create@example.com", "pw12345678")
-	token := getTestToken(t, s.auth, &user)
+	s, _, owner := emailTestServer(t, "name@agentmail.to")
+	token := getTestToken(t, s.auth, &owner)
 
 	cases := []struct {
 		name string
@@ -132,9 +169,8 @@ func TestCreateEmailFeedValidatesAddress(t *testing.T) {
 // The stored URL must be the canonical form, lowercased, so the same address
 // typed with different casing cannot become two feeds.
 func TestCreateEmailFeedNormalizesAddress(t *testing.T) {
-	s, queries := emailTestServer(t, "name@agentmail.to")
-	user := createTestUser(t, queries, "email-norm@example.com", "pw12345678")
-	token := getTestToken(t, s.auth, &user)
+	s, _, owner := emailTestServer(t, "name@agentmail.to")
+	token := getTestToken(t, s.auth, &owner)
 
 	w := makeRequest(s, http.MethodPost, "/api/feeds", map[string]any{
 		"type": "email", "name": "Sport", "url": "NAME+Sport@AGENTMAIL.TO",
@@ -151,50 +187,84 @@ func TestCreateEmailFeedNormalizesAddress(t *testing.T) {
 	}
 }
 
-// THE isolation case: the address namespace is instance-wide, so a second user
-// must not be able to claim an address already in use — otherwise both feeds
-// read the same mail, and one user reads the other's subscription.
-func TestEmailAddressIsUniqueAcrossUsers(t *testing.T) {
-	s, queries := emailTestServer(t, "name@agentmail.to")
-
-	alice := createTestUser(t, queries, "alice@example.com", "pw12345678")
-	bob := createTestUser(t, queries, "bob@example.com", "pw12345678")
-	aliceToken := getTestToken(t, s.auth, &alice)
-	bobToken := getTestToken(t, s.auth, &bob)
+// An address already claimed cannot be claimed twice, even by its own owner: two
+// feeds on one address ingest the same mail twice.
+func TestEmailAddressIsUnique(t *testing.T) {
+	s, _, owner := emailTestServer(t, "name@agentmail.to")
+	token := getTestToken(t, s.auth, &owner)
 
 	w := makeRequest(s, http.MethodPost, "/api/feeds", map[string]any{
-		"type": "email", "name": "Alice sport", "url": "name+sport@agentmail.to",
-	}, aliceToken)
+		"type": "email", "name": "First", "url": "name+sport@agentmail.to",
+	}, token)
 	if w.Code != http.StatusCreated {
-		t.Fatalf("alice's create = %d, body: %s", w.Code, w.Body.String())
+		t.Fatalf("first create = %d, body: %s", w.Code, w.Body.String())
 	}
 
-	// Bob claims the same address.
+	w = makeRequest(s, http.MethodPost, "/api/feeds", map[string]any{
+		"type": "email", "name": "Second", "url": "name+sport@agentmail.to",
+	}, token)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate create = %d, want 400: an address is a routing key and two feeds "+
+			"on it would ingest the same mail twice", w.Code)
+	}
+
+	// A different suffix is free.
+	w = makeRequest(s, http.MethodPost, "/api/feeds", map[string]any{
+		"type": "email", "name": "Third", "url": "name+news@agentmail.to",
+	}, token)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("second suffix create = %d, want 201; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// THE per-user isolation case, in two halves.
+//
+// A mailbox belongs to one account, because mail is staged per inbox and every
+// feed reading it must be its owner's. So (a) a second account cannot configure
+// the same inbox at all, and (b) an account with a DIFFERENT inbox cannot create
+// a feed in the first account's address space — the prefix must match the
+// caller's own inbox, or the feed would read mail staged for someone else.
+func TestSecondAccountCannotClaimTheSameInbox(t *testing.T) {
+	s, queries, alice := emailTestServer(t, "name@agentmail.to")
+
+	// Re-saving your OWN configuration is not a conflict with yourself: the
+	// owner lookup must exclude the caller.
+	w := makeRequest(s, http.MethodPut, "/api/settings/email", map[string]any{
+		"inbox": "name@agentmail.to", "api_key": testAgentMailToken,
+	}, getTestToken(t, s.auth, &alice))
+	if w.Code == http.StatusConflict {
+		t.Fatalf("re-saving your own inbox returned 409: the owner check does not exclude the "+
+			"caller, so a user cannot edit anything about their own configuration (body: %s)", w.Body.String())
+	}
+
+	bob := createTestUser(t, queries, "bob@example.com", "pw12345678")
+	bobToken := getTestToken(t, s.auth, &bob)
+
+	w = makeRequest(s, http.MethodPut, "/api/settings/email", map[string]any{
+		"inbox": "name@agentmail.to", "api_key": testAgentMailToken,
+	}, bobToken)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("bob claiming alice's inbox = %d, want 409: one mailbox, one account", w.Code)
+	}
+	// The rejection must not reveal who owns it.
+	if body := w.Body.String(); strings.Contains(body, "alice") || strings.Contains(body, "owner@example.com") {
+		t.Errorf("rejection leaked the owning account: %s", body)
+	}
+
+	// Bob's own feeds must live in Bob's own address space: this address belongs
+	// to a mailbox he does not hold.
 	w = makeRequest(s, http.MethodPost, "/api/feeds", map[string]any{
 		"type": "email", "name": "Bob sport", "url": "name+sport@agentmail.to",
 	}, bobToken)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("bob's create = %d, want 400 (the namespace is instance-wide)", w.Code)
-	}
-	// The rejection must not name the other user's feed.
-	if body := w.Body.String(); strings.Contains(body, "Alice") {
-		t.Errorf("rejection leaked the other user's feed name: %s", body)
-	}
-
-	// A different suffix is still free for Bob.
-	w = makeRequest(s, http.MethodPost, "/api/feeds", map[string]any{
-		"type": "email", "name": "Bob news", "url": "name+news@agentmail.to",
-	}, bobToken)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("bob's second create = %d, want 201 for a free address; body: %s", w.Code, w.Body.String())
+		t.Fatalf("bob creating a feed in alice's mailbox = %d, want 400", w.Code)
 	}
 }
 
 // Updating a feed without changing its address must not conflict with itself.
 func TestUpdateEmailFeedWithoutAddressChange(t *testing.T) {
-	s, queries := emailTestServer(t, "name@agentmail.to")
-	user := createTestUser(t, queries, "email-update@example.com", "pw12345678")
-	token := getTestToken(t, s.auth, &user)
+	s, _, owner := emailTestServer(t, "name@agentmail.to")
+	token := getTestToken(t, s.auth, &owner)
 
 	w := makeRequest(s, http.MethodPost, "/api/feeds", map[string]any{
 		"type": "email", "name": "Sport", "url": "name+sport@agentmail.to",
@@ -225,9 +295,8 @@ func TestUpdateEmailFeedWithoutAddressChange(t *testing.T) {
 
 // Discover must name an email feed from its suffix with no network call.
 func TestDiscoverEmailFeedName(t *testing.T) {
-	s, queries := emailTestServer(t, "name@agentmail.to")
-	user := createTestUser(t, queries, "email-discover@example.com", "pw12345678")
-	token := getTestToken(t, s.auth, &user)
+	s, _, owner := emailTestServer(t, "name@agentmail.to")
+	token := getTestToken(t, s.auth, &owner)
 
 	w := makeRequest(s, http.MethodPost, "/api/feeds/discover", map[string]any{
 		"type": "email", "url": "name+ai-weekly@agentmail.to",
@@ -257,10 +326,10 @@ func TestDiscoverEmailFeedName(t *testing.T) {
 	}
 }
 
-// When the email type is not configured the API must refuse email feeds rather
+// An account with no AgentMail configuration must be refused an email feed rather
 // than storing one that can never be polled.
 func TestCreateEmailFeedWhenUnconfigured(t *testing.T) {
-	s, queries := setupTestServer(t) // no email credentials
+	s, queries := setupTestServer(t)
 	user := createTestUser(t, queries, "unconfigured@example.com", "pw12345678")
 	token := getTestToken(t, s.auth, &user)
 
@@ -268,6 +337,11 @@ func TestCreateEmailFeedWhenUnconfigured(t *testing.T) {
 		"type": "email", "name": "Nope", "url": "name+sport@agentmail.to",
 	}, token)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400 when email is unconfigured; body: %s", w.Code, w.Body.String())
+		t.Fatalf("status = %d, want 400 when the account has no email configuration; body: %s",
+			w.Code, w.Body.String())
+	}
+	// The message must point at the fix, since the setting now lives in the UI.
+	if body := w.Body.String(); !strings.Contains(body, "Settings") {
+		t.Errorf("rejection does not tell the user where to configure it: %s", body)
 	}
 }

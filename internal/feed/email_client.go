@@ -210,6 +210,23 @@ func (c *AgentMailClient) GetMessage(ctx context.Context, messageID string) (*Ag
 	return &msg, nil
 }
 
+// VerifyInbox checks that this key can actually see the configured mailbox.
+//
+// It exists because a wrong inbox or a wrong token is otherwise INVISIBLE: the
+// settings save succeeds, every poll returns nothing, and the only symptom is a
+// permanently empty feed. One request at save time converts that into a 400 with
+// the API's own message. AgentMail has no catch-all, so a typo is not a partial
+// failure — it receives no mail at all.
+//
+// The returned error is a metrics.StatusError carrying the real status code, so
+// a rejected credential is not recorded as a 500 by callers that log it.
+func (c *AgentMailClient) VerifyInbox(ctx context.Context) error {
+	var out struct {
+		InboxID string `json:"inbox_id"`
+	}
+	return c.get(ctx, "/inboxes/"+url.PathEscape(c.inboxID), &out)
+}
+
 // get performs a GET and decodes the JSON body, mapping failures to a
 // metrics.StatusError so the poller records the real status code. Hardcoding
 // 500 here is what made the Twitter 429s invisible in metrics for months.

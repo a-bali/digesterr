@@ -119,19 +119,16 @@ func (s *EmailSync) RunEmailSync(ctx context.Context, record func(Record)) {
 	})
 }
 
-// PollEmailFeed runs the mailbox sync when the feed is an email feed. An email
-// feed's Fetch is a pure read of the staging table, so without this a per-feed
-// poll — the UI's refresh button, and the auto-fetch after creating a feed —
-// would always return zero new items until the next 15-minute cycle. The user
-// sees a working "Refresh" that never shows newly delivered mail.
-//
-// It is synchronous on purpose: the request must not report success before the
-// mailbox has actually been read.
-func (p *Poller) PollEmailFeed(ctx context.Context, feed store.Feed) {
-	if feed.Type != "email" || p.emailSync == nil {
+// PollEmailFeed is kept as the per-feed entry point for callers that already
+// hold an account's credentials. It is NOT what the poller uses: with per-user
+// AgentMail configuration the credentials have to be resolved from the feed's
+// owner first, so Poller.PollFeed does that and calls the sync directly. This
+// remains for the tests that exercise a sync in isolation.
+func (p *Poller) PollEmailFeed(ctx context.Context, feed store.Feed, sync *EmailSync) {
+	if feed.Type != "email" || sync == nil {
 		return
 	}
-	p.emailSync.RunEmailSync(ctx, p.recordFn)
+	sync.RunEmailSync(ctx, p.recordFn)
 }
 
 // Run performs one sync pass for this inbox.

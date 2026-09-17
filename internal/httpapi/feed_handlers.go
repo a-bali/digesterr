@@ -43,11 +43,12 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 	if req.Config == "" {
 		req.Config = "{}"
 	}
-	// Email feeds carry a plus-address in a namespace shared by every user
-	// (the AgentMail inbox is instance-wide), so the address is normalised and
-	// checked before it reaches the database.
+	// Email feeds carry a plus-address: it is normalised against the CALLER's own
+	// inbox and checked for collision before it reaches the database. Addresses
+	// are unique across the instance because an address is a routing key and two
+	// feeds on it would ingest the same mail twice.
 	if req.Type == "email" {
-		addr, err := s.normalizeEmailFeedURL(req.URL)
+		addr, err := s.normalizeEmailFeedURL(req.URL, s.callerEmailInbox(r.Context(), userID))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -113,7 +114,8 @@ func (s *Server) handleDiscoverFeed(w http.ResponseWriter, r *http.Request) {
 	// time out would present as a broken form. Discovery here is a pure
 	// convenience, matching the contract that a failed lookup returns "".
 	if req.Type == "email" {
-		if suffix, ok := feed.EmailSplitAddress(req.URL, s.emailInbox); ok {
+		inbox := s.callerEmailInbox(ctx, authedUserID(r))
+		if suffix, ok := feed.EmailSplitAddress(req.URL, inbox); ok {
 			writeJSON(w, http.StatusOK, map[string]string{"name": feed.EmailSuffixToName(suffix)})
 			return
 		}
@@ -127,31 +129,38 @@ func (s *Server) handleDiscoverFeed(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"name": name})
 }
 
-// normalizeEmailFeedURL validates and canonicalises an email feed's address.
+// normalizeEmailFeedURL validates and canonicalises an email feed's address
+// against the CALLER's own AgentMail inbox.
 //
-// The UI sends the full address it composed from the configured prefix and the
+// The inbox is per account, so it is passed in rather than read off the Server:
+// an empty inbox means this account has not configured the email feed type, and
+// that is a 400 rather than a silent acceptance.
+//
+// The UI sends the full address it composed from the account's prefix and the
 // user's suffix, so this is the boundary where a bad address must be caught:
 // a wrong suffix is not a harmless typo (there is no catch-all on AgentMail), it
 // is a feed that silently never receives anything.
-func (s *Server) normalizeEmailFeedURL(raw string) (string, error) {
-	if !s.emailConfigured {
-		return "", fmt.Errorf("email feeds are not configured on this server")
+func (s *Server) normalizeEmailFeedURL(raw, inbox string) (string, error) {
+	if inbox == "" {
+		return "", fmt.Errorf("email feeds are not configured for this account: add an AgentMail inbox and API key in Settings")
 	}
-	suffix, ok := feed.EmailSplitAddress(raw, s.emailInbox)
+	suffix, ok := feed.EmailSplitAddress(raw, inbox)
 	if !ok {
 		return "", fmt.Errorf("invalid email feed address: it must be %s<suffix>%s with a suffix of letters, digits, dots, dashes or underscores",
-			feed.EmailInboxPrefix(s.emailInbox), s.emailDomain)
+			feed.EmailInboxPrefix(inbox), feed.EmailInboxDomain(inbox))
 	}
-	return feed.EmailBuildAddress(s.emailInbox, suffix), nil
+	return feed.EmailBuildAddress(inbox, suffix), nil
 }
 
 // emailAddressTaken reports whether another feed already claims this address.
 //
-// The namespace is INSTANCE-WIDE, not per-user, because one AgentMail inbox and
-// API key serve the whole instance: two feeds on one address would both read the
-// same mail, and if they belong to different users, one user would read the
-// other's subscription. The caller must not reveal WHICH feed holds the address
-// — it may belong to someone else — so the response is a bare "already in use".
+// The address namespace is instance-wide: an address is a routing key, so two
+// feeds on it would both read the same mail and every newsletter would be
+// ingested twice. Email feeds are namespaced per account (only one account can
+// hold a given inbox), so in practice a collision is either two feeds of the
+// same owner or two feeds whose accounts share a mailbox. The caller must not
+// reveal WHICH feed holds the address — it may belong to someone else — so the
+// response is a bare "already in use".
 //
 // excludeID skips a feed's own row so re-saving an unchanged address is not a
 // conflict with itself.
@@ -246,7 +255,7 @@ func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
 	// when it changed. The check ignores this feed's own row so saving without
 	// touching the address is not a conflict with itself.
 	if existing.Type == "email" {
-		addr, err := s.normalizeEmailFeedURL(url)
+		addr, err := s.normalizeEmailFeedURL(url, s.callerEmailInbox(r.Context(), userID))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return

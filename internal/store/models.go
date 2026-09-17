@@ -120,6 +120,8 @@ type User struct {
 	PasswordHash string    `json:"password_hash"`
 	ApiKey       string    `json:"api_key"`
 	LlmModel     string    `json:"llm_model"`
+	EmailInbox   string    `json:"email_inbox"`
+	EmailApiKey  string    `json:"email_api_key"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

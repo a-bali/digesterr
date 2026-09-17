@@ -305,6 +305,14 @@ PRAGMA foreign_keys=ON;
 			"ALTER TABLE users ADD COLUMN llm_model TEXT NOT NULL DEFAULT ''",
 		},
 		{
+			"add users.email_inbox",
+			"ALTER TABLE users ADD COLUMN email_inbox TEXT NOT NULL DEFAULT ''",
+		},
+		{
+			"add users.email_api_key",
+			"ALTER TABLE users ADD COLUMN email_api_key TEXT NOT NULL DEFAULT ''",
+		},
+		{
 			"add email_messages staging table",
 			`CREATE TABLE IF NOT EXISTS email_messages (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -363,6 +371,9 @@ PRAGMA foreign_keys=ON;
 	// rows exist, and that loop only logs failures at warn — an invariant this
 	// load-bearing must not be able to no-op without anyone noticing.
 	ensureEmailFeedURLUnique(db)
+	// The per-user email configuration's load-bearing invariant: one AgentMail
+	// inbox, one account. See ensureUserEmailInboxUnique.
+	ensureUserEmailInboxUnique(db)
 	// Copy existing guid data into hash and create new unique index. Only
 	// report when there was actual work to do.
 	res, err := db.Exec("UPDATE items SET hash = guid WHERE hash = '' AND guid != ''")
@@ -416,13 +427,17 @@ func hasColumn(db *sql.DB, table, column string) (bool, error) {
 // ensureEmailFeedURLUnique creates the instance-wide unique index on email
 // feed addresses, reporting collisions instead of failing quietly.
 //
-// One AgentMail inbox serves every user, so an email feed's URL is a globally
-// shared address: if two feeds claim the same plus-address, both read the same
-// mail — and if they belong to different users, one user reads another's
-// subscription. Uniqueness must therefore be on url alone (a per-user index
-// would not catch that), and the cost of it silently not existing is high
-// enough to warrant its own path rather than a migration-loop entry, which
-// only logs failures at warn.
+// An email address is a routing key: two feeds on the same plus-address both
+// read the same mail, which double-ingests every newsletter. Email feeds are
+// namespaced per account (only one account can hold a given inbox — see the
+// users.email_inbox index), so a global index on url is consistent with the
+// per-user setting and costs no migration. The cost of the index silently not
+// existing is high enough to warrant its own path rather than a migration-loop
+// entry, which only logs failures at warn.
+//
+// It runs OUTSIDE the migration loop for the same reason, and because indexes do
+// not exist in the embedded schema at all: schema.sql only creates tables, so
+// every index on an existing database comes from here or from a migration entry.
 //
 // Duplicate rows can only arrive by hand-editing the DB, so this reports them
 // and leaves them alone rather than deleting a feed: the operator decides.
@@ -458,6 +473,57 @@ GROUP BY url HAVING count(*) > 1 ORDER BY url`)
 	}
 	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_feeds_email_url ON feeds(url) WHERE type = 'email'"); err != nil {
 		slog.Warn("failed to create unique index on email feed addresses", "error", err)
+	}
+}
+
+// ensureUserEmailInboxUnique creates the unique index that makes an AgentMail
+// inbox belong to exactly one account, reporting collisions instead of failing
+// quietly.
+//
+// It is the load-bearing invariant of the per-user email configuration: mail is
+// staged in email_messages per inbox, and a feed reads the rows addressed to its
+// own plus-address, so two accounts sharing a mailbox would each read the other's
+// subscriptions. Without the index nothing rejects that — the second account's
+// save simply succeeds and the two silently share one mailbox.
+//
+// It runs OUTSIDE the migration loop for the same reason as
+// ensureEmailFeedURLUnique: indexes do not exist in the embedded schema (which
+// creates tables only), a pre-existing duplicate would make an in-loop CREATE
+// INDEX fail quietly at warn, and this invariant must not be able to no-op
+// without anyone noticing.
+func ensureUserEmailInboxUnique(db *sql.DB) {
+	var dupes int
+	err := db.QueryRow(`
+SELECT count(*) FROM (
+    SELECT email_inbox FROM users WHERE email_inbox != ''
+    GROUP BY email_inbox HAVING count(*) > 1
+)`).Scan(&dupes)
+	if err != nil {
+		slog.Warn("user email inbox uniqueness check failed", "error", err)
+		return
+	}
+	if dupes > 0 {
+		rows, qerr := db.Query(`
+SELECT email_inbox, count(*) FROM users WHERE email_inbox != ''
+GROUP BY email_inbox HAVING count(*) > 1 ORDER BY email_inbox`)
+		if qerr == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var inbox string
+				var n int
+				if rows.Scan(&inbox, &n) == nil {
+					// The inbox is the operator's own configuration, not
+					// another account's private data, so naming it is useful
+					// here; no user identity is logged.
+					slog.Warn("duplicate email inbox across accounts", "inbox", inbox, "accounts", n)
+				}
+			}
+		}
+		slog.Warn("unique index on users.email_inbox NOT created: give each account its own mailbox and restart", "duplicate_inboxes", dupes)
+		return
+	}
+	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_inbox ON users(email_inbox) WHERE email_inbox != ''"); err != nil {
+		slog.Warn("failed to create unique index on users.email_inbox", "error", err)
 	}
 }
 

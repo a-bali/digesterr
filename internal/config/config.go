@@ -88,7 +88,6 @@ type Config struct {
 	Feed    FeedConfig    `yaml:"feed"`
 	Reddit  RedditConfig  `yaml:"reddit"`
 	Twitter TwitterConfig `yaml:"twitter"`
-	Email   EmailConfig   `yaml:"email"`
 	Digest  DigestConfig  `yaml:"digest"`
 }
 
@@ -196,37 +195,12 @@ type TwitterConfig struct {
 	AuthToken string `yaml:"auth_token"`
 }
 
-// EmailConfig holds AgentMail credentials used by the email feed type, which
-// subscribes to email newsletters and presents them as feeds.
-//
-// One inbox serves the whole instance: individual feeds are distinguished by
-// RFC 5233 subaddressing, so a feed for a sports newsletter is addressed
-// <inbox-local-part>+sport@<inbox-domain> and routing keys off the part after
-// the '+'. See internal/feed/email_address.go for the address contract.
-//
-// There is deliberately NO base_url option. The AgentMail API host is not
-// something an operator should retarget (unlike the self-hostable LLM
-// endpoint), so it is a constant and tests point the client at an httptest
-// server by assigning the unexported field — the same package-internal
-// approach RedditFetcher.baseURL and TwitterFetcher.baseURL use. Do not add a
-// config knob that exists only so a test can override it.
-type EmailConfig struct {
-	// APIKey is the AgentMail organisation API key (Bearer token). Empty
-	// disables the email feed type.
-	APIKey string `yaml:"api_key"`
-	// InboxID is the mailbox that newsletters are delivered to, as a full
-	// address (e.g. name@agentmail.to). Required when APIKey is set: it is
-	// both the polled mailbox and the source of the plus-address prefix the
-	// UI shows and the API validates against.
-	InboxID string `yaml:"inbox_id"`
-}
-
-// EmailConfigured reports whether the email feed type can operate. Both values
-// are required: the key alone cannot identify a mailbox, and the mailbox alone
-// cannot be read.
-func (c EmailConfig) EmailConfigured() bool {
-	return c.APIKey != "" && c.InboxID != ""
-}
+// EmailConfig was removed: AgentMail credentials are per-user settings
+// (users.email_inbox / users.email_api_key), editable in the Settings dialog and
+// served by /api/settings/email. They are deliberately NOT configurable from the
+// environment or the config file — a deployment-wide mailbox would be shared by
+// every account, and email_messages is staged per inbox, so two accounts on one
+// mailbox would read each other's subscriptions.
 
 // Default returns the built-in configuration, used when neither the config
 // file nor environment variables set a value.
@@ -265,7 +239,6 @@ func Default() Config {
 		},
 		Reddit:  RedditConfig{},
 		Twitter: TwitterConfig{},
-		Email:   EmailConfig{},
 	}
 }
 
@@ -410,7 +383,4 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 	setString(&cfg.Twitter.AuthToken, "TWITTER_AUTH_TOKEN", "")
 
 	setString(&cfg.Digest.SchedulerTimezone, "DIGEST_SCHEDULER_TIMEZONE", "")
-
-	setString(&cfg.Email.APIKey, "EMAIL_API_KEY", "AGENTMAIL_API_KEY")
-	setString(&cfg.Email.InboxID, "EMAIL_INBOX_ID", "AGENTMAIL_INBOX_ID")
 }

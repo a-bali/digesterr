@@ -46,16 +46,16 @@ type Server struct {
 	// so a reset can fall back to it. Stored separately (not read off the
 	// shared client) because the client carries no getter.
 	llmDefaultModel string
-	// emailInbox is the configured AgentMail mailbox for the email feed type,
-	// empty when unconfigured. It is the source of both the plus-address prefix
-	// and the domain the UI renders as fixed context, so the frontend never has
-	// to guess the address shape.
-	emailInbox string
-	// emailConfigured reports whether the email feed type can operate at all.
-	emailConfigured bool
-	// emailDomain is the AgentMail domain, used to validate an inbound message's
-	// recipient against the configured inbox.
-	emailDomain string
+	// emailVerify checks a candidate inbox + token against AgentMail when the
+	// settings dialog saves them. Nil means the real API. Tests substitute a
+	// function rather than a client: that keeps the seam inside this package,
+	// needing no exported base-URL setter on feed.AgentMailClient (which exists
+	// precisely so the host cannot become a configuration knob).
+	emailVerify func(ctx context.Context, inbox, apiKey string) error
+	// llmModels lists the endpoint's models for the settings picker. Nil means
+	// the real endpoint; tests substitute a function. The list is advisory, so a
+	// failure is swallowed rather than surfaced.
+	llmModels func(ctx context.Context) ([]string, error)
 }
 
 func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffer, cfg config.Config) *Server {
@@ -73,9 +73,6 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 		schedulerTimezone: cfg.Digest.SchedulerTimezone,
 		summaryPrompt:     cfg.LLM.SummaryPrompt,
 		llmDefaultModel:   cfg.LLM.Model,
-		emailInbox:        cfg.Email.InboxID,
-		emailConfigured:   cfg.Email.EmailConfigured(),
-		emailDomain:       feed.EmailInboxDomain(cfg.Email.InboxID),
 	}
 
 	llmClient := digest.NewLLMClient(cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model, cfg.LLM.Timeout.Duration())
@@ -121,11 +118,10 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	s.poller.SetTransport(s.metrics.Transport())
 	s.poller.SetRedditCredentials(cfg.Reddit.ClientID, cfg.Reddit.ClientSecret)
 	s.poller.SetTwitterCredentials(cfg.Twitter.Ct0, cfg.Twitter.AuthToken)
-	// Email feed type: the sync stage owns all AgentMail I/O. NewAgentMailClient
-	// returns nil when unconfigured, and a nil sync is inert, so an instance
-	// without credentials simply has no email fetcher registered.
-	s.poller.SetEmailSync(feed.NewEmailSync(
-		feed.NewAgentMailClient(cfg.Email.APIKey, cfg.Email.InboxID), queries))
+	// The email feed type has no wiring here any more: its AgentMail credentials
+	// are per user, so the poller resolves them from each feed owner's row at
+	// poll time (see Poller.emailAccountFor) and creates the sync stage on first
+	// use. An account that never configures the feature is simply skipped.
 	s.poller.SetUserAgent(cfg.Feed.UserAgent)
 	s.poller.SetTwitterCount(cfg.Feed.TwitterCount)
 	s.poller.SetRedditCount(cfg.Feed.RedditCount)
@@ -196,6 +192,10 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	mux.HandleFunc("GET /api/settings/llm", s.requireAuth(s.handleGetLLMSettings))
 	mux.HandleFunc("PUT /api/settings/llm", s.requireAuth(s.handleUpdateLLMSettings))
 	mux.HandleFunc("DELETE /api/settings/llm", s.requireAuth(s.handleResetLLMSettings))
+
+	mux.HandleFunc("GET /api/settings/email", s.requireAuth(s.handleGetEmailSettings))
+	mux.HandleFunc("PUT /api/settings/email", s.requireAuth(s.handleUpdateEmailSettings))
+	mux.HandleFunc("DELETE /api/settings/email", s.requireAuth(s.handleResetEmailSettings))
 
 	mux.HandleFunc("GET /reader/api/0/token", s.readerAuth(s.handleReaderToken))
 	mux.HandleFunc("GET /reader/api/0/user-info", s.readerAuth(s.handleReaderUserInfo))

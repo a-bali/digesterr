@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -71,6 +72,75 @@ func (c *LLMClient) WithModel(model string) *LLMClient {
 	cp := *c
 	cp.model = model
 	return &cp
+}
+
+// Models returns the model IDs the endpoint offers, for the settings dialog's
+// picker. OpenAI-compatible servers expose this at GET /models.
+//
+// This is a convenience, never a gate: the settings dialog still accepts a typed
+// model name, because a gateway may hide entries from the list or the list call
+// may not be permitted at all. A failure here must therefore stay a soft error
+// and never leave the dialog with no value.
+func (c *LLMClient) Models(ctx context.Context) ([]string, error) {
+	url := strings.TrimSuffix(c.endpoint, "/chat/completions") + "/models"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating models request: %w", err)
+	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	slog.Debug("listing LLM models", "url", url)
+	start := time.Now()
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("sending models request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading models response: %w", err)
+	}
+
+	// Recorded like a chat call so a failing models endpoint is attributable in
+	// GET /api/metrics rather than only in a handler log line.
+	if c.recordFn != nil {
+		errStr := ""
+		if resp.StatusCode != http.StatusOK {
+			errStr = fmt.Sprintf("status %d", resp.StatusCode)
+		}
+		c.recordFn(start, url, resp.StatusCode, time.Since(start).Milliseconds(), int64(len(respBody)), errStr)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("model list returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var list struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &list); err != nil {
+		return nil, fmt.Errorf("unmarshaling model list: %w", err)
+	}
+
+	names := make([]string, 0, len(list.Data))
+	seen := make(map[string]bool, len(list.Data))
+	for _, m := range list.Data {
+		id := strings.TrimSpace(m.ID)
+		// A duplicate would render as two identical menu rows.
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		names = append(names, id)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 // HasAPIKey reports whether an API key is configured. Digest generation logs

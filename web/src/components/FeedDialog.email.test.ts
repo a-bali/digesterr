@@ -4,9 +4,10 @@ import { createPinia, setActivePinia } from 'pinia'
 import FeedDialog from './FeedDialog.vue'
 import type { Feed } from '../types/api'
 
-// The instance's AgentMail inbox comes from /api/health, so it is mocked here
-// rather than passed in: the dialog must never invent an inbox of its own.
-const mockHealth = vi.fn()
+// The account's AgentMail inbox comes from GET /api/settings/email, so it is
+// mocked here rather than passed in: the dialog must never invent an inbox of its
+// own, and it must not read it from /api/health any more.
+const mockGetEmail = vi.fn()
 const mockDiscover = vi.fn()
 
 vi.mock('../services/api', () => ({
@@ -21,7 +22,15 @@ vi.mock('../services/api', () => ({
     unreadCounts: vi.fn().mockResolvedValue({}),
     discover: (...args: any[]) => mockDiscover(...args),
   },
-  healthApi: { get: (...args: any[]) => mockHealth(...args) },
+  healthApi: { get: vi.fn().mockResolvedValue({ status: 'ok' }) },
+  settingsApi: {
+    getLLM: vi.fn(),
+    updateLLM: vi.fn(),
+    resetLLM: vi.fn(),
+    getEmail: (...args: any[]) => mockGetEmail(...args),
+    updateEmail: vi.fn(),
+    resetEmail: vi.fn(),
+  },
   digestApi: {
     listConfigs: vi.fn().mockResolvedValue([]),
     createConfig: vi.fn(),
@@ -99,12 +108,10 @@ beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
   document.body.innerHTML = ''
-  mockHealth.mockResolvedValue({
-    status: 'ok',
-    email_enabled: true,
-    email_inbox: 'name@agentmail.to',
-    email_prefix: 'name+',
-    email_domain: '@agentmail.to',
+  mockGetEmail.mockResolvedValue({
+    configured: true,
+    inbox: 'name@agentmail.to',
+    token_set: true,
   })
 })
 
@@ -199,7 +206,7 @@ describe('FeedDialog email feed type', () => {
   })
 
   it('disables the email option when the server has no AgentMail config', async () => {
-    mockHealth.mockResolvedValue({ status: 'ok', email_enabled: false })
+    mockGetEmail.mockResolvedValue({ status: 'ok', email_enabled: false })
     mountDialog()
     await flushPromises()
 
@@ -217,12 +224,12 @@ describe('FeedDialog email feed type', () => {
     expect(checkbox.disabled).toBe(true)
   })
 
-  it('fetches the inbox from health once, not on every type change', async () => {
+  it('fetches the inbox once, not on every type change', async () => {
     mountDialog()
     await flushPromises()
     await selectEmailType()
 
-    expect(mockHealth).toHaveBeenCalledTimes(1)
+    expect(mockGetEmail).toHaveBeenCalledTimes(1)
   })
 
   // Regression: the email option must be selectable on open, with no prior type
@@ -244,14 +251,14 @@ describe('FeedDialog email feed type', () => {
     mountDialog()
     await flushPromises()
 
-    expect(mockHealth).toHaveBeenCalled()
+    expect(mockGetEmail).toHaveBeenCalled()
   })
 
-  // While /api/health is still in flight the inbox is unknown; rendering that as
-  // "not configured" asserts something we have not established yet.
+  // While the settings request is still in flight the inbox is unknown; rendering
+  // that as "not configured" asserts something we have not established yet.
   it('does not claim "not configured" while the inbox request is in flight', async () => {
-    let resolveHealth: (v: unknown) => void = () => {}
-    mockHealth.mockReturnValue(new Promise(r => { resolveHealth = r }))
+    let resolveInbox: (v: unknown) => void = () => {}
+    mockGetEmail.mockReturnValue(new Promise(r => { resolveInbox = r }))
 
     mountDialog()
     await flushPromises()
@@ -260,7 +267,7 @@ describe('FeedDialog email feed type', () => {
     expect(pending.disabled).toBe(false)
     expect(pending.textContent).not.toContain('not configured')
 
-    resolveHealth({ status: 'ok', email_enabled: true, email_inbox: 'name@agentmail.to' })
+    resolveInbox({ configured: true, inbox: 'name@agentmail.to', token_set: true })
     await flushPromises()
 
     const settled = Array.from(typeSelect().options).find(o => o.value === 'email')!

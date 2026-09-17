@@ -36,10 +36,33 @@ type Poller struct {
 	// enrichmentWindow bounds how long after insertion an item stays
 	// eligible for periodic score re-enrichment. Zero means 24h.
 	enrichmentWindow time.Duration
-	// emailSync drains the AgentMail inbox into email_messages once per poll
-	// cycle. Nil when the email feed type is not configured.
-	emailSync *EmailSync
+	// emailClientFactory builds the AgentMail client for one account. Tests
+	// substitute a factory pointing at an httptest server; production uses the
+	// default. See SetEmailClientFactory.
+	emailClientFactory EmailClientFactory
+	// emailSyncs holds one sync stage per (inbox, token) pair, created on first
+	// use. AgentMail configuration is per user, so there is no single sync to
+	// attach: the same mailbox shared by two accounts is still drained once,
+	// because the pair is the same.
+	emailSyncs map[string]*EmailSync
 }
+
+// EmailAccount is one user's AgentMail credentials, resolved from their users
+// row. The email feed type is configured per account, not per instance.
+type EmailAccount struct {
+	UserID  int64
+	InboxID string
+	APIKey  string
+}
+
+// EmailClientFactory builds the AgentMail client for one account.
+//
+// Production leaves it at the default (the real API host). Tests substitute a
+// factory that points the client at an httptest server, which is the ONLY reason
+// this seam exists: AgentMailClient.baseURL is unexported and lives in this
+// package, exactly as RedditFetcher.baseURL and TwitterFetcher.baseURL do. There
+// is deliberately no YAML/env counterpart — do not turn it into a config knob.
+type EmailClientFactory func(account EmailAccount) *AgentMailClient
 
 // fetchedCandidate pairs a freshly fetched item with its duplicate-detection
 // fingerprint, so scores can be refreshed before the insert decision.
@@ -57,7 +80,8 @@ func NewPoller(queries *store.Queries) *Poller {
 	redditEnricher := NewRedditEnricher(queries)
 	noop := &NoopEnricher{}
 	return &Poller{
-		queries: queries,
+		queries:    queries,
+		emailSyncs: map[string]*EmailSync{},
 		fetchers: map[string]Fetcher{
 			"rss":      rssFetcher,
 			"atom":     rssFetcher,
@@ -85,27 +109,108 @@ func NewPoller(queries *store.Queries) *Poller {
 	}
 }
 
-// SetEmailSync attaches the AgentMail sync stage and registers the email
-// fetcher. Until this is called, email feeds have no fetcher and are skipped
-// with the usual "no fetcher for feed type" warning.
-func (p *Poller) SetEmailSync(s *EmailSync) {
-	p.emailSync = s
-	if s == nil || !s.Configured() {
-		return
+// SetEmailClientFactory overrides how AgentMail clients are built. Passing nil
+// restores the default (the real API host).
+//
+// The email feed type is configured per user, so there is no "set the sync"
+// call any more: credentials are resolved from the owner's users row at poll
+// time and the sync stage is created on first use. Tests use this to point the
+// client at a stub server.
+func (p *Poller) SetEmailClientFactory(f EmailClientFactory) {
+	p.emailClientFactory = f
+	// Drop the memoized syncs: they hold clients built by the previous factory.
+	p.emailSyncs = map[string]*EmailSync{}
+}
+
+// defaultEmailClientFactory builds a client against the real AgentMail API,
+// returning nil when the account has no usable credentials.
+func defaultEmailClientFactory(acct EmailAccount) *AgentMailClient {
+	return NewAgentMailClient(acct.APIKey, acct.InboxID)
+}
+
+// emailAccountFor resolves the AgentMail credentials of the account that owns a
+// feed. ok=false means the account has not configured the email feed type (or
+// the user row is gone), which callers treat as "skip and report", never as a
+// hard error: one unconfigured account must not stop every other feed from
+// polling.
+func (p *Poller) emailAccountFor(ctx context.Context, userID int64) (EmailAccount, bool) {
+	user, err := p.queries.GetUserByID(ctx, userID)
+	if err != nil {
+		return EmailAccount{}, false
 	}
-	inbox := s.client.InboxID()
-	// Read-only over the staging table: no client needed, so Fetch cannot
-	// accidentally gain I/O (see EmailFetcher's doc comment).
-	p.fetchers["email"] = NewEmailFetcher(p.queries, inbox)
-	p.enrichers["email"] = &NoopEnricher{}
-	p.commentFetchers["email"] = &NoopEnricher{}
-	// The sync (not the fetcher) issues the HTTP requests, so the metrics
-	// transport has to be handed to it directly: SetTransport's type assertion
-	// only walks the fetcher/enricher/commentFetcher maps, and without this the
-	// email feed is invisible in GET /api/metrics.
+	inbox := strings.TrimSpace(user.EmailInbox)
+	key := strings.TrimSpace(user.EmailApiKey)
+	if inbox == "" || key == "" {
+		return EmailAccount{}, false
+	}
+	return EmailAccount{UserID: user.ID, InboxID: inbox, APIKey: key}, true
+}
+
+// emailSyncFor returns the sync stage for an account, creating it on first use.
+//
+// The stage is memoized per (inbox, token) pair rather than per account: two
+// accounts sharing one mailbox share the drain (it is keyed by inbox_id
+// server-side anyway), while a token changed in the settings dialog yields a
+// fresh client instead of reusing one bound to the old credential.
+func (p *Poller) emailSyncFor(acct EmailAccount) *EmailSync {
+	key := acct.InboxID + "\x00" + acct.APIKey
+	if s, ok := p.emailSyncs[key]; ok {
+		return s
+	}
+	factory := p.emailClientFactory
+	if factory == nil {
+		factory = defaultEmailClientFactory
+	}
+	client := factory(acct)
+	if client == nil {
+		return nil
+	}
+	s := NewEmailSync(client, p.queries)
+	if s == nil {
+		return nil
+	}
+	// A lazily-created sync still needs the shared metrics transport, or this
+	// inbox's traffic becomes invisible in GET /api/metrics.
 	if p.sharedTransport != nil {
 		s.setTransport(p.sharedTransport)
 	}
+	p.emailSyncs[key] = s
+	return s
+}
+
+// failEmailFeed records a visible failure on a feed whose owner cannot be
+// polled, so the sidebar's error icon shows why it is empty instead of the feed
+// silently returning nothing.
+func (p *Poller) failEmailFeed(ctx context.Context, feed store.Feed, msg string) error {
+	logger := slog.With("feed_id", feed.ID, "feed_name", feed.Name, "feed_url", feed.Url)
+	logger.Warn("email feed cannot be polled", "error", msg)
+	if err := p.queries.UpdateFeedError(ctx, store.UpdateFeedErrorParams{
+		ID:    feed.ID,
+		Error: msg,
+	}); err != nil {
+		logger.Error("failed to record email feed error", "error", err)
+	}
+	if _, err := p.queries.UpdateFeedStatus(ctx, store.UpdateFeedStatusParams{
+		ID:     feed.ID,
+		Status: "error",
+	}); err != nil {
+		logger.Error("failed to update feed status", "error", err)
+	}
+	return errors.New(msg)
+}
+
+// emailFetcherFor returns the staging-table reader for an email feed, scoped to
+// its OWNER's inbox.
+//
+// Before AgentMail credentials became per-user there was one inbox on the
+// instance, so the fetcher could be registered once in the fetchers map. It
+// cannot be now: ListEmailMessagesByRecipient filters by inbox_id, and that
+// filter is what stops one account's feed from reading another account's staged
+// mail.
+func (p *Poller) emailFetcherFor(acct EmailAccount) Fetcher {
+	// Read-only over the staging table: no client needed, so Fetch cannot
+	// accidentally gain I/O (see EmailFetcher's doc comment).
+	return NewEmailFetcher(p.queries, acct.InboxID)
 }
 
 func (p *Poller) Enrichers() map[string]Enricher {
@@ -138,10 +243,12 @@ func (p *Poller) SetTransport(transport http.RoundTripper) {
 	for _, cf := range p.commentFetchers {
 		setClientTransport(cf, transport)
 	}
-	// The email sync is not in any of those maps (it is a stage, not a
-	// fetcher) but it is what actually issues the AgentMail requests.
-	if p.emailSync != nil {
-		p.emailSync.setTransport(transport)
+	// The email syncs are not in any of those maps (they are a stage, not a
+	// fetcher) but they are what actually issue the AgentMail requests. They are
+	// created lazily, so apply the transport to the ones that already exist —
+	// emailSyncFor does the same on creation.
+	for _, s := range p.emailSyncs {
+		s.setTransport(transport)
 	}
 }
 
@@ -429,21 +536,40 @@ func (p *Poller) PollAll(ctx context.Context) {
 	slog.Info("polling feeds", "count", len(feeds))
 	start := time.Now()
 
-	// Drain the mailbox once, before the feed loop. Doing it per feed would
-	// re-download the whole mailbox once per email feed: several feeds share
-	// one inbox, so the fan-out is N-fold. A sync failure is recorded on the
-	// inbox and does not stop the other feeds from polling.
+	// The email feed type is configured per user, and the mailboxes to drain are
+	// derived from FEEDS (not users), so an account that stored credentials but
+	// owns no email feed issues no requests. Each distinct mailbox is drained
+	// once, before the feed loop: doing it per feed would re-download the whole
+	// mailbox once per email feed, the N-fold fan-out that caused the production
+	// Twitter 429s. A sync failure is recorded on the inbox and does not stop the
+	// other feeds from polling.
 	//
-	// RunEmailSync (not Run) so the sync's HTTP traffic is consumed and
-	// recorded as `email_sync` here: the first pollFeed below reads the shared
-	// transport counters immediately after its Fetch, so whatever the sync
-	// leaves behind is reported as that feed's own traffic.
-	if p.emailSync != nil {
-		p.emailSync.RunEmailSync(ctx, p.recordFn)
-	}
+	// RunEmailSync (not Run) so the sync's HTTP traffic is consumed and recorded
+	// as `email_sync` here: the first pollFeed below reads the shared transport
+	// counters immediately after its Fetch, so whatever the sync leaves behind is
+	// reported as that feed's own traffic.
+	p.drainEmailInboxes(ctx)
 
 	for _, feed := range feeds {
-		fetcher, ok := p.fetchers[feed.Type]
+		var fetcher Fetcher
+		ok := true
+		if feed.Type == "email" {
+			// Resolved per feed, because the fetcher is scoped to the owner's
+			// inbox. Missing credentials are a visible feed failure, not a
+			// silent skip: the owner sees why the feed is empty.
+			acct, configured := p.emailAccountFor(ctx, feed.UserID)
+			if !configured {
+				if err := p.failEmailFeed(ctx, feed, emailUnconfiguredMsg); err != nil {
+					slog.Debug("email feed failure recorded", "feed_id", feed.ID, "error", err)
+				}
+				continue
+			}
+			fetcher = p.emailFetcherFor(acct)
+		} else {
+			var found bool
+			fetcher, found = p.fetchers[feed.Type]
+			ok = found
+		}
 		if !ok {
 			slog.Warn("no fetcher for feed type", "type", feed.Type, "feed_id", feed.ID)
 			continue
@@ -456,18 +582,64 @@ func (p *Poller) PollAll(ctx context.Context) {
 }
 
 func (p *Poller) PollFeed(ctx context.Context, feed store.Feed) error {
-	// An email feed's Fetch only reads the staging table, so the mailbox must be
-	// drained first or a per-feed poll always returns zero new items. This is
-	// the path the UI's refresh button and the post-create auto-fetch take; the
-	// 15-minute PollAll cycle would otherwise be the only thing that ever
-	// delivered new mail, making "Refresh" look broken for email feeds.
-	p.PollEmailFeed(ctx, feed)
+	// An email feed's Fetch only reads the staging table, so the owner's mailbox
+	// must be drained first or a per-feed poll always returns zero new items.
+	// This is the path the UI's refresh button and the post-create auto-fetch
+	// take; the 15-minute PollAll cycle would otherwise be the only thing that
+	// ever delivered new mail, making "Refresh" look broken for email feeds.
+	//
+	// Synchronous on purpose: the request must not report success before the
+	// mailbox has actually been read.
+	if feed.Type == "email" {
+		acct, ok := p.emailAccountFor(ctx, feed.UserID)
+		if !ok {
+			return p.failEmailFeed(ctx, feed, emailUnconfiguredMsg)
+		}
+		sync := p.emailSyncFor(acct)
+		if sync == nil {
+			return p.failEmailFeed(ctx, feed, emailUnconfiguredMsg)
+		}
+		sync.RunEmailSync(ctx, p.recordFn)
+
+		return p.pollFeed(ctx, feed, p.emailFetcherFor(acct))
+	}
 
 	fetcher, ok := p.fetchers[feed.Type]
 	if !ok {
 		return fmt.Errorf("no fetcher for feed type: %s", feed.Type)
 	}
 	return p.pollFeed(ctx, feed, fetcher)
+}
+
+// emailUnconfiguredMsg is the feed-level error text for an email feed whose
+// owner has no AgentMail configuration. It is user-facing (the sidebar shows
+// last_error in a tooltip), so it names the fix rather than the internals.
+const emailUnconfiguredMsg = "email feeds need an AgentMail inbox and API key: configure them in Settings"
+
+// drainEmailInboxes runs one sync pass per distinct AgentMail mailbox that has
+// at least one live email feed.
+//
+// The account list comes from ListEmailAccountsInUse, which joins feeds to their
+// owners: credentials stored by an account with no email feeds cost nothing, and
+// a mailbox shared by two accounts is drained once because the query groups by
+// inbox.
+func (p *Poller) drainEmailInboxes(ctx context.Context) {
+	accounts, err := p.queries.ListEmailAccountsInUse(ctx)
+	if err != nil {
+		slog.Warn("failed to list email accounts to drain", "error", err)
+		return
+	}
+	for _, acct := range accounts {
+		sync := p.emailSyncFor(EmailAccount{
+			UserID:  acct.UserID,
+			InboxID: acct.InboxID,
+			APIKey:  acct.ApiKey,
+		})
+		if sync == nil {
+			continue
+		}
+		sync.RunEmailSync(ctx, p.recordFn)
+	}
 }
 
 func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher) error {

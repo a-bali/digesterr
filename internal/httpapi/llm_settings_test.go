@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -164,3 +166,41 @@ func TestResolveLLMClientUnknownUserUsesDefault(t *testing.T) {
 	}
 }
 
+// The model list rides on GET /api/settings/llm so the dialog can offer a picker.
+func TestGetLLMSettingsIncludesModelList(t *testing.T) {
+	server, _, token := setupLLMSettingsServer(t)
+	server.SetLLMModelsFunc(func(context.Context) ([]string, error) {
+		return []string{"virtual-chat", "virtual-free"}, nil
+	})
+
+	w := makeRequest(server, http.MethodGet, "/api/settings/llm", nil, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	resp := decodeLLMSettings(t, w)
+	if len(resp.Models) != 2 || resp.Models[0] != "virtual-chat" {
+		t.Errorf("models = %v, want the endpoint list", resp.Models)
+	}
+}
+
+// The list is a convenience, so a failing endpoint must NOT break loading the
+// settings: the dialog then shows a plain text field. Asserting the 200 keeps a
+// future refactor from turning this into an error path.
+func TestGetLLMSettingsSurvivesModelListFailure(t *testing.T) {
+	server, _, token := setupLLMSettingsServer(t)
+	server.SetLLMModelsFunc(func(context.Context) ([]string, error) {
+		return nil, errors.New("gateway unreachable")
+	})
+
+	w := makeRequest(server, http.MethodGet, "/api/settings/llm", nil, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 even when the model list fails (body %s)", w.Code, w.Body.String())
+	}
+	resp := decodeLLMSettings(t, w)
+	if len(resp.Models) != 0 {
+		t.Errorf("models = %v, want empty on failure", resp.Models)
+	}
+	if resp.Model != "env-default-model" {
+		t.Errorf("model = %q, want the effective model still reported", resp.Model)
+	}
+}

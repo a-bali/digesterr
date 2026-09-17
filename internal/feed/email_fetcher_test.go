@@ -18,6 +18,18 @@ import (
 // emailFetchSchema mirrors the email parts of the real schema plus the feeds
 // and items tables the fetcher path touches.
 const emailFetchSchema = `
+CREATE TABLE users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    email         TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    api_key       TEXT NOT NULL DEFAULT '',
+    llm_model     TEXT NOT NULL DEFAULT '',
+    email_inbox   TEXT NOT NULL DEFAULT '',
+    email_api_key TEXT NOT NULL DEFAULT '',
+    created_at    DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    updated_at    DATETIME NOT NULL DEFAULT (DATETIME('now'))
+);
+
 CREATE TABLE feeds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
