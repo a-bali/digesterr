@@ -265,10 +265,20 @@ const categoryUnreadCounts = computed(() => {
     <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': route.path === '/saved' }" @click="emit('showSaved')">
       <BookmarkCheck class="size-3.5 shrink-0 text-accent" />
       <span class="truncate">Saved items</span>
+      <!-- Solid like the unread pills, at a dimmed accent — same shape and size,
+           so it stays one family while a saved count is not mistaken for an
+           unread tally. A hollow outline was tried first and was barely visible.
+
+           The text colour is mode-aware because the dimmed fill inverts: white
+           on accent/60 measures 6.27:1 in dark but only 2.18:1 in light (worse
+           than the full pill's 3.64:1, so white would defeat the dim); the
+           foreground colour gives 8.18:1 light / 2.85:1 dark. Pairing each mode
+           with the text that stays legible on its own fill keeps both above the
+           unread pill's baseline. -->
       <span
         v-if="feedStore.savedCount > 0"
         data-testid="saved-count"
-        class="text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-accent text-accent bg-transparent ml-1.5"
+        class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent/60 text-foreground dark:text-accent-foreground ml-1.5"
         :title="`${feedStore.savedCount} saved item${feedStore.savedCount === 1 ? '' : 's'}`"
       >{{ feedStore.savedCount }}</span>
     </button>

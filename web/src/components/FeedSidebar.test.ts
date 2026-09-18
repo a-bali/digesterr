@@ -466,10 +466,12 @@ describe('FeedSidebar saved counter', () => {
     vi.mocked(digestApi.listConfigs).mockResolvedValue([])
   })
 
-  it('renders the saved badge as a hollow pill, unlike the filled unread pills', async () => {
+  it('dims the saved badge accent so it cannot be read as an unread tally', async () => {
     // The saved counter is a different KIND of number from an unread tally, so
-    // it must not look like one. Every unread badge in this sidebar is a filled
-    // bg-accent pill; the saved one is outlined with a transparent fill.
+    // it must not look like one. Every unread badge in this sidebar is a solid
+    // bg-accent pill; the saved one is the same solid pill at a DIMMED accent
+    // (bg-accent/60). A hollow outline was tried first and was barely visible,
+    // so the distinction is the accent's opacity, not the shape.
     const wrapper = await mountSidebar()
     const { useFeedStore } = await import('../stores/feed')
     const feedStore = useFeedStore()
@@ -483,22 +485,26 @@ describe('FeedSidebar saved counter', () => {
     const saved = root.querySelector('[data-testid="saved-count"]') as HTMLElement
     const unread = root.querySelector('[data-testid="feeds-section-total"]') as HTMLElement
 
-    // Hollow: outlined, no fill.
-    expect(saved.classList).toContain('border')
-    expect(saved.classList).toContain('border-accent')
-    expect(saved.classList).toContain('text-accent')
-    expect(saved.classList).toContain('bg-transparent')
-    expect(saved.classList).not.toContain('bg-accent')
-    // The control case: the unread pill is still filled, so this is a real
-    // difference between the two, not both having drifted.
-    expect(unread.classList).toContain('bg-accent')
-    expect(unread.classList).not.toContain('bg-transparent')
-    // Same shape and size, so it reads as a sibling badge rather than a new kind
-    // of control.
+    // Same pill shape and size as the unread badge — one family, not two.
     for (const cls of ['rounded-full', 'px-1.5', 'py-0.5', 'text-[10px]', 'font-medium']) {
       expect(saved.classList).toContain(cls)
       expect(unread.classList).toContain(cls)
     }
+    // The saved pill is SOLID (not an outline), so it cannot be invisible.
+    expect(saved.classList).not.toContain('bg-transparent')
+    // ...and its accent is dimmed. This exact class is the discriminator: the
+    // unread pill next to it carries the FULL `bg-accent`, so reverting the dim
+    // fails here rather than passing on a shared substring.
+    expect(saved.classList).toContain('bg-accent/60')
+    expect(unread.classList).toContain('bg-accent')
+    expect(unread.classList).not.toContain('bg-accent/60')
+    // The text is mode-aware: white on the dimmed fill is 6.27:1 in dark but
+    // only 2.18:1 in light (below the unread pill's own 3.64:1 baseline, so
+    // white would undo the dim's legibility), while the foreground colour gives
+    // 8.18:1 light / 2.85:1 dark. Losing either half leaves a mode where the
+    // number is hard to read.
+    expect(saved.classList).toContain('text-foreground')
+    expect(saved.classList).toContain('dark:text-accent-foreground')
     wrapper.unmount()
   })
 
