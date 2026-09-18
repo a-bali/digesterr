@@ -335,8 +335,13 @@ async function markBelowRead(item: any) {
         </button>
       </template>
 
-      <!-- Row content, shifted aside while the panel is open. -->
-      <div class="transition-transform duration-150" :class="swipeShift(item)" data-row-content>
+      <!-- Row content, shifted aside while the panel is open. In the compact
+           (stacked) layout this must fill the row's content box: the inner line
+           is <code>h-full items-center</code>, and a wrapper sized to its own
+           content leaves that line 20px tall inside the 27px box, so the text
+           sits 4px above the row's centre. The non-compact rows are padded and
+           align to the top on purpose, so they keep the auto height. -->
+      <div class="transition-transform duration-150" :class="[swipeShift(item), compact ? 'h-full' : '']" data-row-content>
       <!-- Stacked layout: one line — status, source feed, title, excerpt, time.
            The title and excerpt are SIBLINGS so the excerpt can only ever sit
            beside the title, never under it. -->

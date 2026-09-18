@@ -790,6 +790,25 @@ describe('ItemList compact rows (stacked layout)', () => {
     expect(row.find('.line-clamp-2').exists()).toBe(true)
     expect(row.find('[data-item-title]').exists()).toBe(false)
   })
+
+  // The inner line is `h-full items-center`, so the wrapper between the row and
+  // that line must itself fill the row — otherwise the line falls back to its
+  // content height and the row's text sits above the row's vertical centre. The
+  // defect is invisible to jsdom (no layout engine), so this pins the STRUCTURE
+  // that makes centring possible and the browser pins the resulting geometry.
+  it('makes the row-content wrapper fill the row so the line can centre', () => {
+    const { wrapper } = mountList({ compact: true })
+    const content = resultRows(wrapper)[0].find('[data-row-content]')
+
+    expect(content.classes()).toContain('h-full')
+  })
+
+  it('does not force the wrapper to fill a padded, top-aligned row', () => {
+    const { wrapper } = mountList()
+    const content = resultRows(wrapper)[0].find('[data-row-content]')
+
+    expect(content.classes()).not.toContain('h-full')
+  })
 })
 
 // The middle pane's header reports "feed name x/y": x is what the lazy loader has
