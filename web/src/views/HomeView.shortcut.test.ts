@@ -66,8 +66,10 @@ async function mountAt(path: string) {
     history: createMemoryHistory(),
     routes: [
       { path: '/', component: HomeView },
+      { path: '/digests', component: HomeView },
       { path: '/digests/:configId', component: HomeView },
       { path: '/feeds/:id', component: HomeView },
+      { path: '/saved', component: HomeView },
     ],
   })
   router.push(path)
@@ -154,6 +156,40 @@ describe("'u' shortcut in digest view", () => {
     await flushPromises()
     // The FilterBar renders the active status label.
     expect(wrapper.text()).toContain('Unread')
+    wrapper.unmount()
+  })
+})
+
+// The saved view clears every feed/category/digest selection, so the page title
+// had no name to render — and formatTitle() discards the item title when the
+// name is empty, which is why BOTH halves went missing.
+describe('page title in the saved view', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.clearAllMocks()
+    document.title = ''
+  })
+
+  it('names the view and shows the saved total when nothing is selected', async () => {
+    const { useFeedStore } = await import('../stores/feed')
+    const { wrapper } = await mountAt('/saved')
+    const feedStore = useFeedStore()
+    feedStore.savedCount = 4
+    await flushPromises()
+
+    expect(document.title).toBe('[0] 📰 (Saved: 4)')
+    wrapper.unmount()
+  })
+
+  it('includes the selected article title', async () => {
+    const { useFeedStore } = await import('../stores/feed')
+    const { wrapper } = await mountAt('/saved')
+    const feedStore = useFeedStore()
+    feedStore.savedCount = 4
+    feedStore.selectedItem = { id: 9, title: 'A saved article' } as any
+    await flushPromises()
+
+    expect(document.title).toBe('[0] 📰 (Saved: 4) A saved article')
     wrapper.unmount()
   })
 })

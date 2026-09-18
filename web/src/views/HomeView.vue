@@ -399,6 +399,7 @@ function markAllReadDialogOpen() {
 // shortcut and the pane's own button both come through here so they cannot
 // disagree on scope. A category marks that category, the "Feeds" section marks
 // every feed; a single feed still asks for confirmation first.
+
 function markAllReadInCurrentView() {
   if (feedStore.isMultiView) {
     feedStore.markAllRead(feedStore.activeCategory ?? undefined)
@@ -419,9 +420,17 @@ const activeFeedName = computed(() => {
   if (feedStore.activeFeed) return feedStore.activeFeed.name
   if (feedStore.isMultiView) return feedStore.activeCategory ?? 'All Feeds'
   if (digestStore.showingAllDigests) return 'All Digests'
+  // The saved view clears every feed/category/digest selection, so without this
+  // branch it returns '' — and formatTitle() short-circuits on an empty name,
+  // which also swallowed the item title. Naming the view is what makes both
+  // halves of the title render.
+  if (showingSaved.value) return 'Saved'
   return digestStore.activeConfig?.name ?? ''
 })
 const activeFeedUnread = computed(() => {
+  // Saved view: the count that belongs to this view is the saved total, not an
+  // unread tally (a saved item can be read or unread).
+  if (showingSaved.value) return feedStore.savedCount
   // Single feed selected.
   if (feedStore.activeFeedId) return feedStore.unreadCounts[feedStore.activeFeedId] ?? 0
   // Single digest config selected.

@@ -466,6 +466,42 @@ describe('FeedSidebar saved counter', () => {
     vi.mocked(digestApi.listConfigs).mockResolvedValue([])
   })
 
+  it('renders the saved badge as a hollow pill, unlike the filled unread pills', async () => {
+    // The saved counter is a different KIND of number from an unread tally, so
+    // it must not look like one. Every unread badge in this sidebar is a filled
+    // bg-accent pill; the saved one is outlined with a transparent fill.
+    const wrapper = await mountSidebar()
+    const { useFeedStore } = await import('../stores/feed')
+    const feedStore = useFeedStore()
+    const root = wrapper.element as HTMLElement
+
+    feedStore.feeds.push(feed)
+    feedStore.unreadCounts[feed.id] = 12
+    feedStore.savedCount = 2
+    await flushPromises()
+
+    const saved = root.querySelector('[data-testid="saved-count"]') as HTMLElement
+    const unread = root.querySelector('[data-testid="feeds-section-total"]') as HTMLElement
+
+    // Hollow: outlined, no fill.
+    expect(saved.classList).toContain('border')
+    expect(saved.classList).toContain('border-accent')
+    expect(saved.classList).toContain('text-accent')
+    expect(saved.classList).toContain('bg-transparent')
+    expect(saved.classList).not.toContain('bg-accent')
+    // The control case: the unread pill is still filled, so this is a real
+    // difference between the two, not both having drifted.
+    expect(unread.classList).toContain('bg-accent')
+    expect(unread.classList).not.toContain('bg-transparent')
+    // Same shape and size, so it reads as a sibling badge rather than a new kind
+    // of control.
+    for (const cls of ['rounded-full', 'px-1.5', 'py-0.5', 'text-[10px]', 'font-medium']) {
+      expect(saved.classList).toContain(cls)
+      expect(unread.classList).toContain(cls)
+    }
+    wrapper.unmount()
+  })
+
   it('shows the saved total and hides the badge at zero', async () => {
     const wrapper = await mountSidebar()
     const { useFeedStore } = await import('../stores/feed')

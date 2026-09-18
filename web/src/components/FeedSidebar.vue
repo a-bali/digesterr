@@ -268,7 +268,7 @@ const categoryUnreadCounts = computed(() => {
       <span
         v-if="feedStore.savedCount > 0"
         data-testid="saved-count"
-        class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-1.5"
+        class="text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-accent text-accent bg-transparent ml-1.5"
         :title="`${feedStore.savedCount} saved item${feedStore.savedCount === 1 ? '' : 's'}`"
       >{{ feedStore.savedCount }}</span>
     </button>
@@ -324,7 +324,7 @@ const categoryUnreadCounts = computed(() => {
           <span
             v-if="(digestStore.unreadCounts[cfg.id] ?? 0) > 0"
             data-testid="digest-unread"
-            class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-1.5"
+            class="text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-accent text-accent bg-transparent ml-1.5"
           >{{ digestStore.unreadCounts[cfg.id] }}</span>
         </div>
         <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity">
