@@ -7,7 +7,7 @@ import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
 import DropdownMenu from './ui/DropdownMenu.vue'
 import Skeleton from './ui/Skeleton.vue'
-import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown, Sparkles } from 'lucide-vue-next'
+import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown, Sparkles, Trash2 } from 'lucide-vue-next'
 import { absoluteTime } from '../lib/format'
 import { decodeHTMLEntities } from '../lib/utils'
 import { setItemCommentsScroller, clearItemCommentsScroller } from '../lib/itemComments'
@@ -46,6 +46,16 @@ const extractionSupported = computed(() => {
 const extracting = ref(false)
 const extractedCollapsed = ref(false)
 const originalCollapsed = ref(false)
+
+// A deleted extraction keeps its status as 'cleared' so the server knows the
+// item must not be re-extracted by a later pass (see ClearItemExtraction). To
+// the reader there is no extraction at all any more, so the pane renders the
+// plain original body — like a never-extracted item — and the action button
+// offers "Extract" again.
+const extractionCleared = computed(() => feedStore.selectedItem?.extract_status === 'cleared')
+// "Delete extracted" is offered exactly when there is an extracted body to
+// delete — the same condition under which the action button reads "Re-extract".
+const hasExtraction = computed(() => feedStore.selectedItem?.extract_status === 'done')
 
 // On-demand top comments (experimental).
 const topComments = ref<ItemComment[]>([])
@@ -295,6 +305,16 @@ async function doExtract() {
   }
 }
 
+async function doDeleteExtraction() {
+  const item = feedStore.selectedItem
+  if (!item) return
+  // An extraction may still be running (Re-extract leaves the poll live). Drop
+  // it first: otherwise its next tick would write the freshly extracted body
+  // back over the item we are about to clear.
+  stopExtractPoll()
+  await feedStore.deleteExtraction(item)
+}
+
 // Cancel in-flight comment fetch when a different item is selected.
 let commentFetchTimeout: ReturnType<typeof setTimeout> | null = null
 function fetchTopComments(refresh = false) {
@@ -440,6 +460,10 @@ onUnmounted(() => {
           <template v-if="extracting"><RefreshCw class="animate-spin" /> Extracting</template>
           <template v-else><Download /> {{ feedStore.selectedItem.extract_status === 'done' ? 'Re-extract' : 'Extract' }}</template>
         </Button>
+        <Button v-if="extractionSupported && hasExtraction" size="sm" variant="outline" :disabled="extracting"
+          title="Delete the extracted content and show the original one" @click="doDeleteExtraction">
+          <Trash2 /> Delete extracted
+        </Button>
         <!-- Split button: summarizing runs at the selected length, and the
              attached chevron opens the length picker. -->
         <div class="flex items-center">
@@ -494,8 +518,10 @@ onUnmounted(() => {
         </template>
       </template>
 
-      <!-- Extracted Content -->
-      <template v-if="feedStore.selectedItem.extract_status">
+      <!-- Extracted Content. A cleared extraction has nothing to show and its
+           body below renders the original directly, so the split view is
+           skipped entirely rather than left as two empty sections. -->
+      <template v-if="feedStore.selectedItem.extract_status && !extractionCleared">
         <Separator class="mb-4" />
         <button
           type="button"
@@ -523,7 +549,7 @@ onUnmounted(() => {
       </template>
 
       <!-- Original Content -->
-      <template v-if="feedStore.selectedItem.extract_status">
+      <template v-if="feedStore.selectedItem.extract_status && !extractionCleared">
         <Separator class="mb-4" />
         <button
           type="button"

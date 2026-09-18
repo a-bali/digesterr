@@ -142,6 +142,15 @@ SELECT * FROM items WHERE feed_id = ? AND url != '' AND extract_status IN ('pend
 -- name: UpdateItemExtraction :one
 UPDATE items SET extract_content = ?, extract_status = ?, extract_retries = ?, extract_date = DATETIME('now'), updated_at = DATETIME('now') WHERE id = ? RETURNING *;
 
+-- name: ClearItemExtraction :one
+-- Drop an extracted body so the item falls back to its original content.
+-- extract_status = 'cleared' is a deliberate marker, not an empty string:
+-- "needs extraction" is expressed as NOT(done) in this schema (see
+-- ListItemsNeedingExtraction and the digest generator's per-item check), so an
+-- empty status would be indistinguishable from "never extracted" and the next
+-- extraction pass would fetch the body straight back, undoing the user's delete.
+UPDATE items SET extract_content = '', extract_status = 'cleared', extract_retries = 0, extract_date = NULL, updated_at = DATETIME('now') WHERE id = ? RETURNING *;
+
 -- name: MarkFeedRead :exec
 UPDATE items SET status = 'read', updated_at = DATETIME('now') WHERE feed_id = ? AND status = 'unread';
 

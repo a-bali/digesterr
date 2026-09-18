@@ -166,6 +166,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	mux.HandleFunc("GET /api/items/{id}", s.requireAuth(s.handleGetItem))
 	mux.HandleFunc("GET /api/items/{id}/comments", s.requireAuth(s.handleGetItemComments))
 	mux.HandleFunc("POST /api/items/{id}/extract", s.requireAuth(s.handleExtractItem))
+	mux.HandleFunc("DELETE /api/items/{id}/extract", s.requireAuth(s.handleDeleteItemExtraction))
 	mux.HandleFunc("POST /api/items/{id}/mark-read-above", s.requireAuth(s.handleMarkItemReadAbove))
 	mux.HandleFunc("POST /api/items/{id}/mark-read-below", s.requireAuth(s.handleMarkItemReadBelow))
 	mux.HandleFunc("POST /api/items/{id}/summarize", s.requireAuth(s.handleSummarizeItem))

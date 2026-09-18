@@ -413,18 +413,28 @@ export const useFeedStore = defineStore('feed', () => {
     }
   }
 
+  // applyUpdatedItem writes a server-returned item into every place that holds
+  // it: the feed's item list, the multi-view list, and the selection.
+  //
+  // The multiItems row keeps its feed_name/feed_type: the item endpoints return
+  // a plain Item, which carries neither, so replacing the row wholesale makes
+  // the source-feed label vanish from the middle pane (see "MultiItem field
+  // preservation on status update").
+  function applyUpdatedItem(updated: Item) {
+    const idx = items.value.findIndex(i => i.id === updated.id)
+    if (idx !== -1) items.value[idx] = updated
+    const midx = multiItems.value.findIndex(i => i.id === updated.id)
+    if (midx !== -1) {
+      const old = multiItems.value[midx]
+      ;(multiItems.value[midx] as any) = { ...updated, feed_name: old.feed_name, feed_type: old.feed_type }
+    }
+    if (selectedItem.value?.id === updated.id) selectedItem.value = updated
+  }
+
   async function updateItemStatus(item: Item, status: string) {
     try {
       const updated = await itemApi.updateStatus(item.id, status)
-      // Update in both items and multiItems arrays.
-      const idx = items.value.findIndex(i => i.id === item.id)
-      if (idx !== -1) items.value[idx] = updated
-      const midx = multiItems.value.findIndex(i => i.id === item.id)
-      if (midx !== -1) {
-        const old = multiItems.value[midx]
-        ;(multiItems.value[midx] as any) = { ...updated, feed_name: old.feed_name, feed_type: old.feed_type }
-      }
-      if (selectedItem.value?.id === item.id) selectedItem.value = updated
+      applyUpdatedItem(updated)
       // Keep the saved badge in step without a round trip: the transition is
       // already known here. Clamped because the counter is a total maintained
       // across many sources, and a double-fire must not drive it negative.
@@ -433,6 +443,17 @@ export const useFeedStore = defineStore('feed', () => {
       fetchUnreadCounts()
     } catch (e) {
       toastError(e, 'Failed to update item')
+    }
+  }
+
+  // deleteExtraction drops an item's extracted body, so the panes fall back to
+  // the original content from the feed. No list refetch: the response carries
+  // the whole updated item, and a refetch would discard the reader's position.
+  async function deleteExtraction(item: Item) {
+    try {
+      applyUpdatedItem(await itemApi.deleteExtracted(item.id))
+    } catch (e) {
+      toastError(e, 'Failed to delete extracted content')
     }
   }
 
@@ -487,7 +508,7 @@ export const useFeedStore = defineStore('feed', () => {
     feeds, activeFeedId, activeCategory, activeSection, items, multiItems, selectedItem, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
     activeFeed, isMultiView, supportsScore, unreadCounts, backgroundRefreshing,
     fetchFeeds, setActiveFeed, setActiveCategory, setActiveSection, clearActiveView, fetchFirstPage, refreshItems, fetchMoreItems,
-    selectItem, updateItemStatus, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, savedCount, fetchSavedCount, markAllRead, markReadAbove, markReadBelow,
+    selectItem, updateItemStatus, deleteExtraction, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, savedCount, fetchSavedCount, markAllRead, markReadAbove, markReadBelow,
     emailInbox, ensureEmailConfig, refreshEmailConfig,
   }
 })

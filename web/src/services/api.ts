@@ -156,6 +156,8 @@ export const itemApi = {
     api<Item>(`/items/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   getItem: (id: number) => api<Item>(`/items/${id}`),
   extract: (id: number) => api<Item>(`/items/${id}/extract`, { method: 'POST' }),
+  // Drop the extracted body so the item renders its original feed content.
+  deleteExtracted: (id: number) => api<Item>(`/items/${id}/extract`, { method: 'DELETE' }),
   summarize: (id: number, opts?: { sentence_count?: number; min_sentences?: number; max_sentences?: number; detail?: string; prompt?: string }) =>
     api<import('../types/api').ItemSummaryResponse>(`/items/${id}/summarize`, {
       method: 'POST',

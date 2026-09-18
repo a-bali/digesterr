@@ -11,6 +11,44 @@ import (
 	"time"
 )
 
+const clearItemExtraction = `-- name: ClearItemExtraction :one
+UPDATE items SET extract_content = '', extract_status = 'cleared', extract_retries = 0, extract_date = NULL, updated_at = DATETIME('now') WHERE id = ? RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date
+`
+
+// Drop an extracted body so the item falls back to its original content.
+// extract_status = 'cleared' is a deliberate marker, not an empty string:
+// "needs extraction" is expressed as NOT(done) in this schema (see
+// ListItemsNeedingExtraction and the digest generator's per-item check), so an
+// empty status would be indistinguishable from "never extracted" and the next
+// extraction pass would fetch the body straight back, undoing the user's delete.
+func (q *Queries) ClearItemExtraction(ctx context.Context, id int64) (Item, error) {
+	row := q.db.QueryRowContext(ctx, clearItemExtraction, id)
+	var i Item
+	err := row.Scan(
+		&i.ID,
+		&i.FeedID,
+		&i.Hash,
+		&i.Title,
+		&i.Url,
+		&i.Content,
+		&i.Author,
+		&i.CommentUrl,
+		&i.Points,
+		&i.CommentsCount,
+		&i.PublishedAt,
+		&i.Status,
+		&i.FetchedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastEnrichedAt,
+		&i.ExtractContent,
+		&i.ExtractStatus,
+		&i.ExtractRetries,
+		&i.ExtractDate,
+	)
+	return i, err
+}
+
 const countItemsByFeed = `-- name: CountItemsByFeed :one
 SELECT CAST(COUNT(*) AS INTEGER) AS count FROM items
 WHERE feed_id = ?1

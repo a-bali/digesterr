@@ -31,6 +31,31 @@ type digestFeedSelection struct {
 	Comments   int `json:"comments"`
 }
 
+// Extraction statuses, and why there are two "not extracted" spellings:
+//
+//	''        never extracted (the column default)
+//	'pending' an extraction run is in flight
+//	'done'    a body was extracted; it is what the UI and the digest prompt show
+//	'failed'  the last attempt failed; extract_content holds the error log
+//	'skipped' extraction was deliberately not attempted (self-hosted URL)
+//	'cleared' the user deleted the extracted body; the item must stay on its
+//	          original content and must NOT be picked up by an extraction pass
+//
+// An empty status and 'cleared' mean the same thing to every READER of these
+// columns, but they must stay distinguishable to the WRITER: an item with no
+// body is exactly the item an extraction pass wants to fetch, so without the
+// marker a deletion is silently undone by the next pass. 'cleared' therefore
+// outranks emptiness.
+const extractionStatusCleared = "cleared"
+
+// itemNeedsExtraction reports whether an item should be handed to the extractor.
+// An empty body is not enough on its own — see the status table above.
+func itemNeedsExtraction(item store.Item) bool {
+	return item.ExtractStatus != "done" &&
+		item.ExtractStatus != "skipped" &&
+		item.ExtractStatus != extractionStatusCleared
+}
+
 type digestConfigJSON struct {
 	Categories        []digestCategorySelection `json:"categories"`
 	Feeds             []digestFeedSelection     `json:"feeds"`
@@ -492,7 +517,7 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 
 	for i := range items {
 		item := &items[i]
-		if item.ExtractStatus == "done" || item.ExtractContent != "" {
+		if !itemNeedsExtraction(item.Item) {
 			continue
 		}
 		if feedTypes[item.FeedID] == "" {
@@ -1060,6 +1085,9 @@ func (g *Generator) buildSections(dcfg digestConfigJSON, highlights, items []dig
 }
 
 func contentForRendering(item store.Item) string {
+	// A failed extraction stores its error log in this column, so only a
+	// successful body is content to render; 'pending'/'failed'/'cleared' hold
+	// nothing usable. Original content is the fallback in every other case.
 	if item.ExtractContent != "" && item.ExtractStatus == "done" {
 		return item.ExtractContent
 	}

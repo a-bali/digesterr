@@ -14,6 +14,7 @@ vi.mock('../services/api', () => ({
   },
   itemApi: {
     updateStatus: vi.fn(),
+    deleteExtracted: vi.fn(),
   },
   ApiError: class extends Error { constructor(public status: number, body: any) { super(body?.error) } },
 }))
@@ -69,6 +70,44 @@ describe('feed store', () => {
     await store.updateItemStatus(store.items[0], 'read')
     expect(store.items[0].status).toBe('read')
     expect(store.selectedItem?.status).toBe('read')
+  })
+
+  it('deleteExtraction clears the extracted body in the list, the multi-view and the selection', async () => {
+    const { itemApi } = await import('../services/api')
+    ;(itemApi.deleteExtracted as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 1, extract_status: 'cleared', extract_content: '',
+    })
+
+    const store = useFeedStore()
+    const item = { id: 1, title: 'Test', status: 'unread', extract_status: 'done', extract_content: '<p>x</p>' } as any
+    store.items = [{ ...item }]
+    store.multiItems = [{ ...item, feed_name: 'HN', feed_type: 'hn' }] as any
+    store.selectItem(store.items[0])
+
+    await store.deleteExtraction(store.items[0])
+
+    expect(store.items[0].extract_status).toBe('cleared')
+    expect(store.items[0].extract_content).toBe('')
+    expect(store.selectedItem?.extract_status).toBe('cleared')
+    // The multi-view row must keep its source-feed label: the item endpoints
+    // return a plain Item with no feed_name/feed_type, so a wholesale replace
+    // makes the label vanish from the middle pane.
+    expect(store.multiItems[0].feed_name).toBe('HN')
+    expect(store.multiItems[0].extract_status).toBe('cleared')
+  })
+
+  it('deleteExtraction reports a failure instead of silently keeping the body', async () => {
+    const { itemApi } = await import('../services/api')
+    ;(itemApi.deleteExtracted as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('nope'))
+
+    const store = useFeedStore()
+    const item = { id: 1, title: 'Test', status: 'unread', extract_status: 'done', extract_content: '<p>x</p>' } as any
+    store.items = [{ ...item }]
+    store.selectItem(store.items[0])
+
+    await store.deleteExtraction(store.items[0])
+
+    expect(store.selectedItem?.extract_status).toBe('done')
   })
 
   it('passes min_score and sort to getItems and refetches on change', async () => {

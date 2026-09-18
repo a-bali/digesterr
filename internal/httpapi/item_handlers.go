@@ -114,6 +114,36 @@ func (s *Server) handleExtractItem(w http.ResponseWriter, r *http.Request) {
 	go s.doExtractItem(id, item.Url)
 }
 
+// handleDeleteItemExtraction drops an item's extracted body so it falls back to
+// the original content from the feed. The item is otherwise untouched (status,
+// points, comments), and the extraction columns are reset rather than emptied so
+// the next extraction pass can tell a deliberate deletion from "never extracted"
+// — see ClearItemExtraction. Naturally idempotent: deleting twice is a no-op.
+func (s *Server) handleDeleteItemExtraction(w http.ResponseWriter, r *http.Request) {
+	userID := authedUserID(r)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	// Ownership check only; the item itself is what the update is keyed on.
+	if _, err := s.queries.GetItemWithFeedOwner(r.Context(), store.GetItemWithFeedOwnerParams{
+		ID:     id,
+		UserID: userID,
+	}); err != nil {
+		writeError(w, http.StatusNotFound, "item not found")
+		return
+	}
+
+	item, err := s.queries.ClearItemExtraction(r.Context(), id)
+	if err != nil {
+		writeServerError(w, "failed to clear extracted content", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
 type summarizeRequest struct {
 	SentenceCount int    `json:"sentence_count"`
 	Prompt        string `json:"prompt"`
