@@ -44,6 +44,32 @@ describe('FeedRow unread-aware dimming', () => {
     vi.clearAllMocks()
   })
 
+  it('renders an envelope for email feeds instead of the generic Rss icon', async () => {
+    // An email feed's url is a mail address ("inbox+suffix@domain"), which
+    // feedIcon() cannot parse into a favicon, so it used to fall through to the
+    // generic <Rss> icon — indistinguishable from a web feed with a bad URL.
+    const emailFeed = makeFeed({ id: 7, type: 'email', name: 'Newsletter', url: 'inbox+news@agentmail.to' })
+    const wrapper = mountFeedRow(emailFeed)
+    await wrapper.vm.$nextTick()
+
+    // No favicon image, and the Rss fallback is gone.
+    expect(wrapper.find('img').exists()).toBe(false)
+    const icons = wrapper.findAll('svg')
+    // lucide's Mail renders a <rect> + a <path>; Rss renders only <path>/<circle>.
+    expect(icons.some(s => s.html().includes('<rect'))).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('still uses the Rss icon for a non-email feed with no favicon', async () => {
+    const wrapper = mountFeedRow(makeFeed({ id: 8, type: 'rss', url: 'not a url' }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('img').exists()).toBe(false)
+    // Control: the envelope must be conditional on the feed type, not a blanket
+    // replacement of the fallback icon.
+    expect(wrapper.findAll('svg').some(s => s.html().includes('<rect'))).toBe(false)
+    wrapper.unmount()
+  })
+
   it('dims the Rss fallback icon when no favicon can be derived', async () => {
     // feedIcon() returns '' only for a URL that fails to parse, which is when the
     // Rss svg renders instead of an <img>.

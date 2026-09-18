@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import Tooltip from './ui/Tooltip.vue'
-import { Rss, Check, Settings, RefreshCw } from 'lucide-vue-next'
+import { Rss, Check, Settings, RefreshCw, Mail } from 'lucide-vue-next'
 import { feedIcon, absoluteTime } from '../lib/format'
 import type { Feed } from '../types/api'
 
@@ -30,6 +30,9 @@ const noUnread = computed(() => feedStore.unreadCounts[props.feed.id] === 0)
   >
     <button class="flex items-center gap-2 flex-1 min-w-0" @click="emit('select', feed.id)">
       <img v-if="feedIcon(feed)" :src="feedIcon(feed)" class="size-3.5 shrink-0 rounded" :class="{ 'opacity-60': noUnread }" @error="($event.target as HTMLImageElement).style.display = 'none'" />
+      <!-- Email feeds have an address rather than a URL, so feedIcon() finds no
+           favicon for them; an envelope is what identifies the type. -->
+      <Mail v-else-if="feed.type === 'email'" class="size-3.5 shrink-0 text-accent" :class="{ 'opacity-60': noUnread }" />
       <Rss v-else class="size-3.5 shrink-0 text-accent" :class="{ 'opacity-60': noUnread }" />
       <Tooltip>
         <template #trigger>
