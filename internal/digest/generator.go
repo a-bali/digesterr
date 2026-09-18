@@ -732,6 +732,11 @@ func (g *Generator) buildContent(ctx context.Context, dcfg digestConfigJSON, hig
 // caller's per-user model and hands it in, so the selected model — not the
 // instance default — serves both the attempt and the retry.
 func (g *Generator) buildContentWithLLM(ctx context.Context, dcfg digestConfigJSON, highlights, rest []digestItem, genLogger *slog.Logger, llm llmChatter) (*digestResultContent, error) {
+	// rest (non-highlight items) is kept for the result's item lists, but is
+	// deliberately NOT sent to the model: entries are produced one per
+	// highlight and nothing references the rest, so sending it was pure
+	// prompt bloat. _ = rest documents that the omission is intentional.
+	_ = rest
 	content := &digestResultContent{}
 
 	feedInfos := g.buildFeedInfoMap(ctx)
@@ -770,13 +775,11 @@ func (g *Generator) buildContentWithLLM(ctx context.Context, dcfg digestConfigJS
 		userPrompt += "\n"
 	}
 
-	if len(rest) > 0 {
-		userPrompt += "Additional articles (not highlights, just for context):\n"
-		for i, item := range rest {
-			userPrompt += fmt.Sprintf("%d. %s (%s) - Points: %d\n", i+1, item.Title, item.Url, item.Points)
-		}
-		userPrompt += "\n"
-	}
+	// Non-highlight articles are deliberately NOT sent: the model produces
+	// one entry per highlight and nothing references the rest, so the
+	// "additional articles for context" block was pure prompt bloat (~50
+	// titles/URLs on a typical Daily Tech run) that raised token cost and
+	// the free-tier TPM-429 odds for zero output rows.
 
 	// The format instruction asks for article numbers and exact URL echoes as
 	// join keys. Measured on virtual-free (the weakest model, 2026-09-18,
@@ -788,7 +791,7 @@ func (g *Generator) buildContentWithLLM(ctx context.Context, dcfg digestConfigJS
 	// the number only as a complete permutation, the URL only on exact
 	// match, and otherwise falls back to mutual-best title matching — never
 	// to reply position.
-	userPrompt += "For each HIGHLIGHT article, provide a 2-3 sentence highlight capturing the key insight and why it matters — skip introductory phrases like \"The article discusses\" or \"The author explains\". Format your response as JSON with keys \"title\" (string, a short title for the whole digest, at most 8-10 words, catchy and derived from the digest contents; a light pun is welcome but not required), \"summary\" (string of overall digest summary) and \"highlights\" (array of {article, url, title, summary}). Set \"article\" to the article's number (1.." + strconv.Itoa(len(highlights)) + ") exactly as shown above and copy its \"url\" EXACTLY as given — the number and url are how entries are matched to articles. Reply with exactly one entry per article. " + jsonOutputRule
+	userPrompt += "For each HIGHLIGHT article, provide a 2-3 sentence highlight capturing the key insight and why it matters — skip introductory phrases like \"The article discusses\" or \"The author explains\". Where top comments are given, fold what they add into the highlight: note when commenters agree, and surface corrections, counterpoints, or key insights from the discussion. Format your response as JSON with keys \"title\" (string, a short title for the whole digest, at most 8-10 words, catchy and derived from the digest contents; a light pun is welcome but not required), \"summary\" (string of overall digest summary) and \"highlights\" (array of {article, url, title, summary}). Set \"article\" to the article's number (1.." + strconv.Itoa(len(highlights)) + ") exactly as shown above and copy its \"url\" EXACTLY as given — the number and url are how entries are matched to articles. Reply with exactly one entry per article. " + jsonOutputRule
 
 	llmStart := time.Now()
 	genLogger.Info("calling LLM for digest", "input_bytes", len(systemPrompt)+len(userPrompt))
@@ -822,7 +825,7 @@ func (g *Generator) buildContentWithLLM(ctx context.Context, dcfg digestConfigJS
 			genLogger.Warn("LLM digest response did not cover every highlight, retrying",
 				"articles", len(highlights), "entries", len(output.Highlights))
 		}
-	// The retry prompt reuses the (already hardened) first-attempt prompt, so
+		// The retry prompt reuses the (already hardened) first-attempt prompt, so
 		// apply withJSONRule defensively: a config-level prompt that already
 		// contained the rule must not get it twice.
 		retryPrompt := withJSONRule(userPrompt) + "\n\n" + reason +
