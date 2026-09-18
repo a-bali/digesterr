@@ -409,6 +409,44 @@ describe('FeedSidebar unread pill and error-icon placement', () => {
     wrapper.unmount()
   })
 
+  it('renders every unread badge as a solid pill, never an outline', async () => {
+    // A blanket check across ALL of them, because the failure this guards
+    // against is a class string shared by several spans: a find-and-replace
+    // aimed at one badge silently turned the per-digest unread pill into an
+    // outline ("why do digests have hollow circles now?"). Asserting per-badge
+    // in separate tests did not catch it, since no test looked at that span.
+    vi.mocked(digestApi.listConfigs).mockResolvedValue([digestConfig])
+    const wrapper = await mountSidebar()
+    const { useFeedStore } = await import('../stores/feed')
+    const { useDigestStore } = await import('../stores/digest')
+    const feedStore = useFeedStore()
+    const digestStore = useDigestStore()
+    const root = wrapper.element as HTMLElement
+
+    feedStore.feeds.push(feed)
+    feedStore.feeds.push({ ...feed, id: 21, name: 'Tech Feed', category: 'tech' })
+    feedStore.unreadCounts[feed.id] = 12
+    feedStore.unreadCounts[21] = 3
+    feedStore.savedCount = 2
+    digestStore.unreadCounts[digestConfig.id] = 4
+    await flushPromises()
+
+    // Every unread tally in the sidebar, by the testid the code already carries.
+    const unreadBadges = ['feeds-section-total', 'digests-section-total', 'digest-unread', 'category-unread']
+    for (const id of unreadBadges) {
+      const el = root.querySelector(`[data-testid="${id}"]`) as HTMLElement
+      expect(el, `${id} should be rendered`).not.toBeNull()
+      expect(el.classList, `${id} must be a solid pill`).toContain('bg-accent')
+      expect(el.classList, `${id} must not be an outline`).not.toContain('bg-transparent')
+      expect(el.classList, `${id} must be filled, not bordered-only`).toContain('text-accent-foreground')
+    }
+    // The SAVED badge is the one deliberate exception: solid, but at a dimmed
+    // accent so it is not read as an unread tally.
+    const saved = root.querySelector('[data-testid="saved-count"]') as HTMLElement
+    expect(saved.classList).toContain('bg-accent/60')
+    wrapper.unmount()
+  })
+
   it('places the category unread pill directly after the category name', async () => {
     const wrapper = await mountSidebar()
     const { useFeedStore } = await import('../stores/feed')
