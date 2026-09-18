@@ -248,6 +248,58 @@ func TestPollFeedMinScoreRSSFeedAllowsAll(t *testing.T) {
 	}
 }
 
+// TestPollFeedMinScoreCleanupNeverDeletesPreExistingRows is the regression
+// test for the prod resurrection loop (2026-09-18): the min_score cleanup
+// deleted a READ row via (feed_id, hash) when the enricher missed it on a
+// re-poll, and the next poll re-inserted it as unread — the user saw the
+// same article come back as unread. The cleanup may only remove rows this
+// poll inserted.
+func TestPollFeedMinScoreCleanupNeverDeletesPreExistingRows(t *testing.T) {
+	queries, feedObj, poller, enr := setupMinScoreFeed(t, 100, map[string]int{
+		"https://example.com/story/a": 150, // scored above threshold
+	})
+
+	if err := poller.PollFeed(context.Background(), feedObj); err != nil {
+		t.Fatalf("first PollFeed failed: %v", err)
+	}
+	byTitle := titlesByFeed(t, queries, feedObj.ID)
+	itemA, ok := byTitle["Item A"]
+	if !ok {
+		t.Fatal("Item A was not inserted on the first poll")
+	}
+
+	// The user reads the item.
+	if _, err := queries.UpdateItemStatus(t.Context(), store.UpdateItemStatusParams{
+		ID:     itemA.ID,
+		Status: "read",
+	}); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+
+	// Next cycle the enricher misses every post (e.g. Reddit info.json
+	// returns nothing for it). The re-poll must neither delete nor resurrect
+	// the read row.
+	enr.points = map[string]int{}
+	if err := poller.PollFeed(context.Background(), feedObj); err != nil {
+		t.Fatalf("second PollFeed failed: %v", err)
+	}
+
+	got, err := queries.GetItem(t.Context(), itemA.ID)
+	if err != nil {
+		t.Fatalf("pre-existing read row was deleted by the re-poll: %v", err)
+	}
+	if got.Status != "read" {
+		t.Errorf("item status = %q, want %q (row must survive a scoreless re-poll)", got.Status, "read")
+	}
+	byTitle = titlesByFeed(t, queries, feedObj.ID)
+	if len(byTitle) != 1 {
+		// Only Item A may exist: B/C were never scored on the first poll
+		// (inserted, then cleaned up) and stay that way. The count must not
+		// grow — no duplicate/resurrected row.
+		t.Errorf("expected 1 item after the scoreless re-poll, got %d items", len(byTitle))
+	}
+}
+
 // TestListItemsByFeedSortedScoreDesc guards the sqlc query used by
 // GET /feeds/:id/items?sort=score_desc with min_score filtering.
 func TestListItemsByFeedSortedScoreDesc(t *testing.T) {
