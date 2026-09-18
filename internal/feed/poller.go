@@ -717,6 +717,10 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	var enrichedHashes map[string]bool
 	scored, enrichedHashes = p.enrichForPoll(ctx, feed, candidates, logger)
 
+	// Hashes of rows inserted by THIS poll. The min_score cleanup below may
+	// only remove these — never pre-existing rows (which the user may have
+	// already read, saved, or linked into a digest).
+	insertedThisPoll := make(map[string]int64, len(candidates))
 	for _, c := range candidates {
 		item := c.item
 		// enriched tracks whether a real score was obtained for this
@@ -769,6 +773,7 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 			continue
 		}
 		if id > 0 {
+			insertedThisPoll[h] = id
 			newCount++
 			if feed.ExtractContent != 0 {
 				p.setItemExtractionPending(ctx, id, logger)
@@ -784,16 +789,22 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 		}
 	}
 
-	// Clean up newly-inserted items the enricher couldn't reach: when
-	// min_score > 0 and a real enricher ran, items the enricher didn't
-	// modify (not in enrichedHashes) with score=0 should be removed.
+	// Clean up unenriched zero-score rows inserted by this poll: when
+	// min_score > 0 and a real enricher ran, rows the enricher didn't
+	// score (not in enrichedHashes) with score=0 are removed again. Only
+	// rows inserted above (same-cycle ids) are eligible — a re-poll must
+	// never delete a pre-existing row the user may have read, saved, or
+	// linked into a digest (that deletion re-inserted the item as unread
+	// on the next cycle, prod 2026-09-18: read rows on r/kiszamolo kept
+	// reappearing). Deleting by id also pins the exact row instead of
+	// re-matching by (feed_id, hash).
 	if feed.MinScore > 0 && enrichedHashes != nil {
 		for _, c := range candidates {
 			if !enrichedHashes[c.hash] && c.item.Points == 0 {
-				if _, err := p.queries.DB().ExecContext(ctx,
-					`DELETE FROM items WHERE feed_id = ? AND hash = ?`,
-					feed.ID, c.hash); err != nil {
-					logger.Warn("failed to clean up unenriched zero-score item", "hash", c.hash, "error", err)
+				if id, ok := insertedThisPoll[c.hash]; ok {
+					if _, err := p.queries.DeleteItem(ctx, id); err != nil {
+						logger.Warn("failed to clean up unenriched zero-score item", "item_id", id, "hash", c.hash, "error", err)
+					}
 				}
 			}
 		}
