@@ -103,6 +103,7 @@ type Item struct {
 	ExtractStatus  string       `json:"extract_status"`
 	ExtractRetries int64        `json:"extract_retries"`
 	ExtractDate    sql.NullTime `json:"extract_date"`
+	IsSaved        int64        `json:"is_saved"`
 }
 
 type RefreshToken struct {

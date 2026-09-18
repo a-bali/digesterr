@@ -18,6 +18,11 @@ import (
 
 type updateItemStatusRequest struct {
 	Status string `json:"status"`
+	// Saved is a flag, not a status: it is orthogonal to read state, so
+	// `{"saved":true}` stars an item without dictating what read state it has,
+	// and `{"status":"unread"}` un-reads it without unstarring it. A request may
+	// carry one or the other, or both.
+	Saved *bool `json:"saved"`
 }
 
 func (s *Server) handleUpdateItemStatus(w http.ResponseWriter, r *http.Request) {
@@ -42,18 +47,48 @@ func (s *Server) handleUpdateItemStatus(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	validStatuses := map[string]bool{"unread": true, "read": true, "digested": true, "saved": true}
-	if !validStatuses[req.Status] {
-		writeError(w, http.StatusBadRequest, "invalid status; must be unread, read, digested, or saved")
+	if req.Status == "" && req.Saved == nil {
+		writeError(w, http.StatusBadRequest, "status or saved is required")
 		return
 	}
-	item, err := s.queries.UpdateItemStatus(r.Context(), store.UpdateItemStatusParams{
-		ID:     id,
-		Status: req.Status,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "item not found")
-		return
+	// 'saved' is deliberately NOT a valid status any more: it was a status
+	// before is_saved existed, and accepting it here would let a client put the
+	// column back into a state the app no longer understands.
+	if req.Status != "" {
+		validStatuses := map[string]bool{"unread": true, "read": true, "digested": true}
+		if !validStatuses[req.Status] {
+			writeError(w, http.StatusBadRequest, "invalid status; must be unread, read, or digested")
+			return
+		}
+	}
+	// Both fields in one request: apply the status first, then savedness, so the
+	// saved handler's own read-state rule (starring an unread item marks it read)
+	// sees the status the caller asked for.
+	var item store.Item
+	if req.Status != "" {
+		item, err = s.queries.UpdateItemStatus(r.Context(), store.UpdateItemStatusParams{
+			ID:     id,
+			Status: req.Status,
+		})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "item not found")
+			return
+		}
+	}
+	if req.Saved != nil {
+		savedArg := int64(0)
+		if *req.Saved {
+			savedArg = 1
+		}
+		item, err = s.queries.SetItemSaved(r.Context(), store.SetItemSavedParams{
+			Saved:    savedArg,
+			MarkRead: savedArg,
+			ID:       id,
+		})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "item not found")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, item)
 }

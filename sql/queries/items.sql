@@ -33,6 +33,24 @@ SET status = ?, updated_at = DATETIME('now')
 WHERE id = ?
 RETURNING *;
 
+-- name: SetItemSaved :one
+-- Saved is orthogonal to read state: this touches ONLY is_saved, so a read
+-- toggle can never destroy saved-ness and vice versa. `saved = 1` also marks an
+-- unread item read (matching the pre-flag behaviour, where a saved item was not
+-- in the unread counts); unsaving clears the flag and leaves the read state
+-- alone, so an item that was already read stays read.
+--
+-- mark_read carries the same value as saved. It is a second named parameter
+-- rather than a repeat of `saved` because a bare repeat inside the CASE would
+-- work in SQLite but leaves sqlc generating a positional Column2, and the
+-- duplication documents the rule: only the SAVE direction forces read.
+UPDATE items
+SET is_saved = sqlc.arg(saved),
+    status = CASE WHEN sqlc.arg(mark_read) = 1 AND status = 'unread' THEN 'read' ELSE status END,
+    updated_at = DATETIME('now')
+WHERE id = sqlc.arg(id)
+RETURNING *;
+
 -- name: UpdateItemPointsAndComments :one
 UPDATE items
 SET points = ?, comments_count = ?, comment_url = ?, updated_at = DATETIME('now'), last_enriched_at = DATETIME('now')
@@ -47,7 +65,7 @@ DELETE FROM items WHERE id = ? RETURNING id;
 
 -- name: DeleteExpiredItems :execrows
 DELETE FROM items
-WHERE status != 'saved'
+WHERE is_saved = 0
   AND items.created_at < ?
   AND NOT EXISTS (SELECT 1 FROM digest_result_items dri WHERE dri.item_id = items.id);
 
@@ -75,7 +93,7 @@ GROUP BY f.id;
 -- name: CountStarredItems :one
 SELECT CAST(COUNT(*) AS INTEGER) AS count FROM items i
 JOIN feeds f ON f.id = i.feed_id
-WHERE f.user_id = ? AND i.status = 'saved';
+WHERE f.user_id = ? AND i.is_saved = 1;
 
 
 -- name: ListItemsByFeedPaginated :many
@@ -87,45 +105,73 @@ SELECT * FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC,
 -- name: ListItemsByFeedSortedDateDesc :many
 -- Preview query for the middle pane: excludes hash, url, author, and
 -- internal metadata not needed for list display.
-SELECT i.id, i.title, i.status, i.published_at, i.content,
+SELECT i.id, i.title, i.status, i.is_saved, i.published_at, i.content,
        i.extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = sqlc.arg(feed_id)
   AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+  -- saved_only = 1 asks for the starred set, which is a flag rather than a
+  -- status now. The handler translates a `status=saved` request into
+  -- status=NULL + saved_only=1, so the two filters never fight.
+  -- CAST is required: a bare sqlc.arg comparison infers interface{} and a
+  -- nil value makes `? = 0` NULL, which silently drops EVERY row (including
+  -- callers that never set the filter). CAST makes it a real integer.
+  AND (CAST(sqlc.arg(saved_only) AS INTEGER) = 0 OR i.is_saved = 1)
   AND (points >= sqlc.arg(min_score) OR sqlc.arg(min_score) = 0)
 ORDER BY published_at DESC, created_at DESC, id DESC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: ListItemsByFeedSortedDateAsc :many
-SELECT i.id, i.title, i.status, i.published_at, i.content,
+SELECT i.id, i.title, i.status, i.is_saved, i.published_at, i.content,
        i.extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = sqlc.arg(feed_id)
   AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+  -- saved_only = 1 asks for the starred set, which is a flag rather than a
+  -- status now. The handler translates a `status=saved` request into
+  -- status=NULL + saved_only=1, so the two filters never fight.
+  -- CAST is required: a bare sqlc.arg comparison infers interface{} and a
+  -- nil value makes `? = 0` NULL, which silently drops EVERY row (including
+  -- callers that never set the filter). CAST makes it a real integer.
+  AND (CAST(sqlc.arg(saved_only) AS INTEGER) = 0 OR i.is_saved = 1)
   AND (points >= sqlc.arg(min_score) OR sqlc.arg(min_score) = 0)
 ORDER BY published_at ASC, created_at ASC, id ASC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: ListItemsByFeedSortedScoreDesc :many
-SELECT i.id, i.title, i.status, i.published_at, i.content,
+SELECT i.id, i.title, i.status, i.is_saved, i.published_at, i.content,
        i.extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = sqlc.arg(feed_id)
   AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+  -- saved_only = 1 asks for the starred set, which is a flag rather than a
+  -- status now. The handler translates a `status=saved` request into
+  -- status=NULL + saved_only=1, so the two filters never fight.
+  -- CAST is required: a bare sqlc.arg comparison infers interface{} and a
+  -- nil value makes `? = 0` NULL, which silently drops EVERY row (including
+  -- callers that never set the filter). CAST makes it a real integer.
+  AND (CAST(sqlc.arg(saved_only) AS INTEGER) = 0 OR i.is_saved = 1)
   AND (points >= sqlc.arg(min_score) OR sqlc.arg(min_score) = 0)
 ORDER BY points DESC, published_at DESC, created_at DESC, id DESC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: ListItemsByFeedSortedScoreAsc :many
-SELECT i.id, i.title, i.status, i.published_at, i.content,
+SELECT i.id, i.title, i.status, i.is_saved, i.published_at, i.content,
        i.extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = sqlc.arg(feed_id)
   AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+  -- saved_only = 1 asks for the starred set, which is a flag rather than a
+  -- status now. The handler translates a `status=saved` request into
+  -- status=NULL + saved_only=1, so the two filters never fight.
+  -- CAST is required: a bare sqlc.arg comparison infers interface{} and a
+  -- nil value makes `? = 0` NULL, which silently drops EVERY row (including
+  -- callers that never set the filter). CAST makes it a real integer.
+  AND (CAST(sqlc.arg(saved_only) AS INTEGER) = 0 OR i.is_saved = 1)
   AND (points >= sqlc.arg(min_score) OR sqlc.arg(min_score) = 0)
 ORDER BY points ASC, published_at DESC, created_at DESC, id DESC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
@@ -134,6 +180,7 @@ LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 SELECT CAST(COUNT(*) AS INTEGER) AS count FROM items
 WHERE feed_id = sqlc.arg(feed_id)
   AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+  AND (CAST(sqlc.arg(saved_only) AS INTEGER) = 0 OR is_saved = 1)
   AND (points >= sqlc.arg(min_score) OR sqlc.arg(min_score) = 0);
 
 -- name: ListItemsNeedingExtraction :many
@@ -366,10 +413,14 @@ WHERE f.user_id = ? AND i.status = ?
 ORDER BY i.published_at DESC, i.created_at DESC;
 
 -- name: ListItemsByUserStatusPaginated :many
--- Reader-stream page for a user-wide status filter.
+-- Reader-stream page for a user-wide status filter. saved_only = 1 selects the
+-- starred set instead of a status, which is how the reader API's starred stream
+-- stays independent of read state.
 SELECT i.* FROM items i
 JOIN feeds f ON f.id = i.feed_id
-WHERE f.user_id = @user_id AND i.status = @status
+WHERE f.user_id = @user_id
+  AND (i.status = @status OR @status = '')
+  AND (CAST(@saved_only AS INTEGER) = 0 OR i.is_saved = 1)
 ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at DESC
 LIMIT @lim OFFSET @off;
 

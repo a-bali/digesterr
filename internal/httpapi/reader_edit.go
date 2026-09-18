@@ -45,6 +45,17 @@ func (s *Server) setItemStatus(ctx context.Context, id, userID int64, status str
 	_, _ = s.queries.UpdateItemStatus(ctx, store.UpdateItemStatusParams{ID: id, Status: status})
 }
 
+// setItemSaved flips an item's saved flag after verifying the item belongs to
+// the user. Unknown or foreign items are silently skipped. Read state is left
+// to SetItemSaved's own rule (saving an unread item reads it); the point of the
+// flag is that the two are independent, so this never writes `status` directly.
+func (s *Server) setItemSaved(ctx context.Context, id, userID, saved int64) {
+	if _, err := s.queries.GetItemWithFeedOwner(ctx, store.GetItemWithFeedOwnerParams{ID: id, UserID: userID}); err != nil {
+		return
+	}
+	_, _ = s.queries.SetItemSaved(ctx, store.SetItemSavedParams{ID: id, Saved: saved, MarkRead: saved})
+}
+
 // setDigestStatus updates a digest result's status after verifying it belongs
 // to the user. Unknown or foreign results are silently skipped.
 func (s *Server) setDigestStatus(ctx context.Context, id, userID int64, status string) {
@@ -64,9 +75,14 @@ func (s *Server) setDigestStatus(ctx context.Context, id, userID int64, status s
 //	                    | add              | remove
 //	read (item)         | read             | unread
 //	read (digest)       | read             | new
-//	starred (item)      | saved            | read
+//	starred (item)      | saved flag on    | saved flag off
 //	starred (digest)    | no-op            | no-op
 //	any other tag       | no-op            | no-op
+//
+// Starred is a FLAG, so it is independent of the read transition: removing the
+// read tag from a starred item leaves it starred. Before is_saved existed,
+// starred WAS the status, so a client that starred an item and then marked it
+// unread silently unstarred it.
 func (s *Server) applyEditTag(ctx context.Context, userID int64, kind readerEditKind, id int64, add bool, tag string) {
 	switch tag {
 	case readerTagRead:
@@ -86,11 +102,11 @@ func (s *Server) applyEditTag(ctx context.Context, userID int64, kind readerEdit
 		}
 	case readerTagStarred:
 		if kind == readerEditItem {
+			saved := int64(0)
 			if add {
-				s.setItemStatus(ctx, id, userID, "saved")
-			} else {
-				s.setItemStatus(ctx, id, userID, "read")
+				saved = 1
 			}
+			s.setItemSaved(ctx, id, userID, saved)
 		}
 		// Digest results have no starred state: no-op.
 	}

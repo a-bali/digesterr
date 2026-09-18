@@ -152,8 +152,10 @@ export const feedApi = {
 }
 
 export const itemApi = {
-  updateStatus: (id: number, status: string) =>
-    api<Item>(`/items/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  // A single PATCH carrying either field: `status` writes read state, `saved`
+  // flips the saved FLAG. They are independent, so either can be sent alone.
+  updateStatus: (id: number, body: { status?: string; saved?: boolean }) =>
+    api<Item>(`/items/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   getItem: (id: number) => api<Item>(`/items/${id}`),
   extract: (id: number) => api<Item>(`/items/${id}/extract`, { method: 'POST' }),
   // Drop the extracted body so the item renders its original feed content.

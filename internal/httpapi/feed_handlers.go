@@ -444,6 +444,15 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 
 	status := r.URL.Query().Get("status")
 
+	// `status=saved` is a legacy request shape for the starred set, which is now
+	// a flag rather than a status. Translate it here so every caller keeps
+	// working while the query stays a plain status filter plus saved_only.
+	savedOnly := int64(0)
+	if status == "saved" {
+		status = ""
+		savedOnly = 1
+	}
+
 	// min_score filters out items below the given score. A zero or absent
 	// value disables the filter (mirrors the feed-level min_score semantics).
 	minScore := int64(0)
@@ -504,6 +513,7 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 		ID             int64       `json:"id"`
 		Title          string      `json:"title"`
 		Status         string      `json:"status"`
+		IsSaved        int64       `json:"is_saved"`
 		PublishedAt    interface{} `json:"published_at"`
 		Content        string      `json:"content"`
 		ExtractContent string      `json:"extract_content"`
@@ -517,19 +527,19 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 	switch sort {
 	case "date_asc":
 		rawItems, err = s.queries.ListItemsByFeedSortedDateAsc(r.Context(), store.ListItemsByFeedSortedDateAscParams{
-			FeedID: id, Status: statusArg, MinScore: minScore, Limit: limit, Offset: offset,
+			FeedID: id, Status: statusArg, SavedOnly: savedOnly, MinScore: minScore, Limit: limit, Offset: offset,
 		})
 	case "score_desc":
 		rawItems, err = s.queries.ListItemsByFeedSortedScoreDesc(r.Context(), store.ListItemsByFeedSortedScoreDescParams{
-			FeedID: id, Status: statusArg, MinScore: minScore, Limit: limit, Offset: offset,
+			FeedID: id, Status: statusArg, SavedOnly: savedOnly, MinScore: minScore, Limit: limit, Offset: offset,
 		})
 	case "score_asc":
 		rawItems, err = s.queries.ListItemsByFeedSortedScoreAsc(r.Context(), store.ListItemsByFeedSortedScoreAscParams{
-			FeedID: id, Status: statusArg, MinScore: minScore, Limit: limit, Offset: offset,
+			FeedID: id, Status: statusArg, SavedOnly: savedOnly, MinScore: minScore, Limit: limit, Offset: offset,
 		})
 	default:
 		rawItems, err = s.queries.ListItemsByFeedSortedDateDesc(r.Context(), store.ListItemsByFeedSortedDateDescParams{
-			FeedID: id, Status: statusArg, MinScore: minScore, Limit: limit, Offset: offset,
+			FeedID: id, Status: statusArg, SavedOnly: savedOnly, MinScore: minScore, Limit: limit, Offset: offset,
 		})
 	}
 	if err != nil {
@@ -541,22 +551,22 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 	case []store.ListItemsByFeedSortedDateDescRow:
 		items = make([]itemPreview, len(rows))
 		for i, r := range rows {
-			items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
+			items[i] = itemPreview{r.ID, r.Title, r.Status, r.IsSaved, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
 		}
 	case []store.ListItemsByFeedSortedDateAscRow:
 		items = make([]itemPreview, len(rows))
 		for i, r := range rows {
-			items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
+			items[i] = itemPreview{r.ID, r.Title, r.Status, r.IsSaved, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
 		}
 	case []store.ListItemsByFeedSortedScoreDescRow:
 		items = make([]itemPreview, len(rows))
 		for i, r := range rows {
-			items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
+			items[i] = itemPreview{r.ID, r.Title, r.Status, r.IsSaved, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
 		}
 	case []store.ListItemsByFeedSortedScoreAscRow:
 		items = make([]itemPreview, len(rows))
 		for i, r := range rows {
-			items[i] = itemPreview{r.ID, r.Title, r.Status, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
+			items[i] = itemPreview{r.ID, r.Title, r.Status, r.IsSaved, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
 		}
 	}
 	if err != nil {
@@ -573,7 +583,7 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 		// Count total matching items (without LIMIT/OFFSET) so the client
 		// can display the full item count, not just the loaded subset.
 		total, err = s.queries.CountItemsByFeed(r.Context(), store.CountItemsByFeedParams{
-			FeedID: id, Status: statusArg, MinScore: minScore,
+			FeedID: id, Status: statusArg, SavedOnly: savedOnly, MinScore: minScore,
 		})
 		if err != nil {
 			writeServerError(w, "failed to count items", err)
@@ -708,6 +718,7 @@ type multiItemRow struct {
 	CommentsCount  int64       `json:"comments_count"`
 	PublishedAt    interface{} `json:"published_at"`
 	Status         string      `json:"status"`
+	IsSaved        int64       `json:"is_saved"`
 	ExtractContent string      `json:"extract_content"`
 	ExtractStatus  string      `json:"extract_status"`
 	FeedName       string      `json:"feed_name"`
@@ -806,8 +817,12 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 		args = append(args, category, userID)
 	}
 
-	// Add status, min_score filters.
-	if status != "" {
+	// Add status, min_score filters. `status=saved` is the legacy shape for the
+	// starred set, which is a flag now (matching handleListFeedItems).
+	if status == "saved" {
+		status = ""
+		whereClause += " AND i.is_saved = 1"
+	} else if status != "" {
 		whereClause += " AND i.status = ?"
 		args = append(args, status)
 	} else {
@@ -834,7 +849,7 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 	// middle pane — excludes hash, url, author, and internal metadata.
 	queryStr := fmt.Sprintf(
 		"SELECT i.id, i.title, i.content, i.comment_url, i.points, i.comments_count, "+
-			"i.published_at, i.status, i.extract_content, i.extract_status, "+
+			"i.published_at, i.status, i.is_saved, i.extract_content, i.extract_status, "+
 			"f.name AS feed_name, f.type AS feed_type FROM items i "+
 			"JOIN feeds f ON f.id = i.feed_id WHERE %s ORDER BY %s LIMIT ? OFFSET ?",
 		whereClause, orderClause,
@@ -880,6 +895,7 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 			CommentsCount:  colInt64(colMap["comments_count"]),
 			PublishedAt:    colMap["published_at"],
 			Status:         colStr(colMap["status"]),
+			IsSaved:        colInt64(colMap["is_saved"]),
 			ExtractContent: colStr(colMap["extract_content"]),
 			ExtractStatus:  colStr(colMap["extract_status"]),
 			FeedName:       colStr(colMap["feed_name"]),

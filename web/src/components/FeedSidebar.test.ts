@@ -650,14 +650,23 @@ describe('FeedSidebar saved counter', () => {
     const feedStore = useFeedStore()
     feedStore.savedCount = 1
 
-    const item = { ...itemRow, id: 99, status: 'unread' } as any
-    vi.mocked(itemApi.updateStatus).mockResolvedValue({ ...item, status: 'saved' } as any)
-    await feedStore.updateItemStatus(item, 'saved')
+    // Saving: the flag goes on, so the badge goes up.
+    const item = { ...itemRow, id: 99, status: 'unread', is_saved: 0 } as any
+    vi.mocked(itemApi.updateStatus).mockResolvedValue({ ...item, status: 'read', is_saved: 1 } as any)
+    await feedStore.updateItemStatus(item, undefined, true)
     expect(feedStore.savedCount).toBe(2)
 
-    const savedItem = { ...itemRow, id: 99, status: 'saved' } as any
-    vi.mocked(itemApi.updateStatus).mockResolvedValue({ ...savedItem, status: 'read' } as any)
-    await feedStore.updateItemStatus(savedItem, 'read')
+    // Marking a SAVED item read must NOT change the saved total: saved-ness is a
+    // flag, so a read-state change is invisible to it. (Under the old status
+    // model this decremented, which is the bug the user reported.)
+    const savedItem = { ...itemRow, id: 99, status: 'read', is_saved: 1 } as any
+    vi.mocked(itemApi.updateStatus).mockResolvedValue({ ...savedItem, status: 'unread' } as any)
+    await feedStore.updateItemStatus(savedItem, 'unread')
+    expect(feedStore.savedCount).toBe(2)
+
+    // Unsaving is what decrements it.
+    vi.mocked(itemApi.updateStatus).mockResolvedValue({ ...savedItem, is_saved: 0 } as any)
+    await feedStore.unsaveItem(savedItem)
     expect(feedStore.savedCount).toBe(1)
   })
 
@@ -669,9 +678,9 @@ describe('FeedSidebar saved counter', () => {
     setActivePinia(createPinia())
     const feedStore = useFeedStore()
     feedStore.savedCount = 0
-    const savedItem = { ...itemRow, id: 77, status: 'saved' } as any
-    vi.mocked(itemApi.updateStatus).mockResolvedValue({ ...savedItem, status: 'read' } as any)
-    await feedStore.updateItemStatus(savedItem, 'read')
+    const savedItem = { ...itemRow, id: 77, status: 'read', is_saved: 1 } as any
+    vi.mocked(itemApi.updateStatus).mockResolvedValue({ ...savedItem, is_saved: 0 } as any)
+    await feedStore.unsaveItem(savedItem)
     expect(feedStore.savedCount).toBe(0)
   })
 })

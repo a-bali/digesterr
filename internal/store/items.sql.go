@@ -12,7 +12,7 @@ import (
 )
 
 const clearItemExtraction = `-- name: ClearItemExtraction :one
-UPDATE items SET extract_content = '', extract_status = 'cleared', extract_retries = 0, extract_date = NULL, updated_at = DATETIME('now') WHERE id = ? RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date
+UPDATE items SET extract_content = '', extract_status = 'cleared', extract_retries = 0, extract_date = NULL, updated_at = DATETIME('now') WHERE id = ? RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved
 `
 
 // Drop an extracted body so the item falls back to its original content.
@@ -45,6 +45,7 @@ func (q *Queries) ClearItemExtraction(ctx context.Context, id int64) (Item, erro
 		&i.ExtractStatus,
 		&i.ExtractRetries,
 		&i.ExtractDate,
+		&i.IsSaved,
 	)
 	return i, err
 }
@@ -53,17 +54,24 @@ const countItemsByFeed = `-- name: CountItemsByFeed :one
 SELECT CAST(COUNT(*) AS INTEGER) AS count FROM items
 WHERE feed_id = ?1
   AND (status = ?2 OR ?2 IS NULL)
-  AND (points >= ?3 OR ?3 = 0)
+  AND (CAST(?3 AS INTEGER) = 0 OR is_saved = 1)
+  AND (points >= ?4 OR ?4 = 0)
 `
 
 type CountItemsByFeedParams struct {
-	FeedID   int64          `json:"feed_id"`
-	Status   sql.NullString `json:"status"`
-	MinScore int64          `json:"min_score"`
+	FeedID    int64          `json:"feed_id"`
+	Status    sql.NullString `json:"status"`
+	SavedOnly int64          `json:"saved_only"`
+	MinScore  int64          `json:"min_score"`
 }
 
 func (q *Queries) CountItemsByFeed(ctx context.Context, arg CountItemsByFeedParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countItemsByFeed, arg.FeedID, arg.Status, arg.MinScore)
+	row := q.db.QueryRowContext(ctx, countItemsByFeed,
+		arg.FeedID,
+		arg.Status,
+		arg.SavedOnly,
+		arg.MinScore,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -72,7 +80,7 @@ func (q *Queries) CountItemsByFeed(ctx context.Context, arg CountItemsByFeedPara
 const countStarredItems = `-- name: CountStarredItems :one
 SELECT CAST(COUNT(*) AS INTEGER) AS count FROM items i
 JOIN feeds f ON f.id = i.feed_id
-WHERE f.user_id = ? AND i.status = 'saved'
+WHERE f.user_id = ? AND i.is_saved = 1
 `
 
 func (q *Queries) CountStarredItems(ctx context.Context, userID int64) (int64, error) {
@@ -85,7 +93,7 @@ func (q *Queries) CountStarredItems(ctx context.Context, userID int64) (int64, e
 const createItem = `-- name: CreateItem :one
 INSERT INTO items (feed_id, hash, title, url, content, comment_url, author, published_at, points, comments_count, status)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date
+RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved
 `
 
 type CreateItemParams struct {
@@ -138,6 +146,7 @@ func (q *Queries) CreateItem(ctx context.Context, arg CreateItemParams) (Item, e
 		&i.ExtractStatus,
 		&i.ExtractRetries,
 		&i.ExtractDate,
+		&i.IsSaved,
 	)
 	return i, err
 }
@@ -181,7 +190,7 @@ func (q *Queries) CreateItemIfNotExists(ctx context.Context, arg CreateItemIfNot
 
 const deleteExpiredItems = `-- name: DeleteExpiredItems :execrows
 DELETE FROM items
-WHERE status != 'saved'
+WHERE is_saved = 0
   AND items.created_at < ?
   AND NOT EXISTS (SELECT 1 FROM digest_result_items dri WHERE dri.item_id = items.id)
 `
@@ -206,7 +215,7 @@ func (q *Queries) DeleteItem(ctx context.Context, id int64) (int64, error) {
 }
 
 const getItem = `-- name: GetItem :one
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE id = ?
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items WHERE id = ?
 `
 
 func (q *Queries) GetItem(ctx context.Context, id int64) (Item, error) {
@@ -233,6 +242,7 @@ func (q *Queries) GetItem(ctx context.Context, id int64) (Item, error) {
 		&i.ExtractStatus,
 		&i.ExtractRetries,
 		&i.ExtractDate,
+		&i.IsSaved,
 	)
 	return i, err
 }
@@ -254,7 +264,7 @@ func (q *Queries) GetItemTitleByHash(ctx context.Context, arg GetItemTitleByHash
 }
 
 const getItemWithFeedOwner = `-- name: GetItemWithFeedOwner :one
-SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date, i.is_saved FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE i.id = ? AND f.user_id = ?
 `
@@ -288,6 +298,7 @@ func (q *Queries) GetItemWithFeedOwner(ctx context.Context, arg GetItemWithFeedO
 		&i.ExtractStatus,
 		&i.ExtractRetries,
 		&i.ExtractDate,
+		&i.IsSaved,
 	)
 	return i, err
 }
@@ -330,7 +341,7 @@ func (q *Queries) GetUnreadCounts(ctx context.Context, userID int64) ([]GetUnrea
 }
 
 const listItemsByCategory = `-- name: ListItemsByCategory :many
-SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date, i.is_saved FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE f.category = ? AND f.user_id = ?
 ORDER BY i.published_at DESC, i.created_at DESC
@@ -371,6 +382,7 @@ func (q *Queries) ListItemsByCategory(ctx context.Context, arg ListItemsByCatego
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}
@@ -386,7 +398,7 @@ func (q *Queries) ListItemsByCategory(ctx context.Context, arg ListItemsByCatego
 }
 
 const listItemsByCategoryPaginated = `-- name: ListItemsByCategoryPaginated :many
-SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date, i.is_saved FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE f.category = ?1 AND f.user_id = ?2
 ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at DESC
@@ -436,6 +448,7 @@ func (q *Queries) ListItemsByCategoryPaginated(ctx context.Context, arg ListItem
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}
@@ -451,7 +464,7 @@ func (q *Queries) ListItemsByCategoryPaginated(ctx context.Context, arg ListItem
 }
 
 const listItemsByFeed = `-- name: ListItemsByFeed :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC
 `
 
 func (q *Queries) ListItemsByFeed(ctx context.Context, feedID int64) ([]Item, error) {
@@ -484,6 +497,7 @@ func (q *Queries) ListItemsByFeed(ctx context.Context, feedID int64) ([]Item, er
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}
@@ -499,7 +513,7 @@ func (q *Queries) ListItemsByFeed(ctx context.Context, feedID int64) ([]Item, er
 }
 
 const listItemsByFeedAndStatus = `-- name: ListItemsByFeedAndStatus :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC
 `
 
 type ListItemsByFeedAndStatusParams struct {
@@ -537,6 +551,7 @@ func (q *Queries) ListItemsByFeedAndStatus(ctx context.Context, arg ListItemsByF
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}
@@ -552,7 +567,7 @@ func (q *Queries) ListItemsByFeedAndStatus(ctx context.Context, arg ListItemsByF
 }
 
 const listItemsByFeedAndStatusPaginated = `-- name: ListItemsByFeedAndStatusPaginated :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?
 `
 
 type ListItemsByFeedAndStatusPaginatedParams struct {
@@ -597,6 +612,7 @@ func (q *Queries) ListItemsByFeedAndStatusPaginated(ctx context.Context, arg Lis
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}
@@ -612,7 +628,7 @@ func (q *Queries) ListItemsByFeedAndStatusPaginated(ctx context.Context, arg Lis
 }
 
 const listItemsByFeedPaginated = `-- name: ListItemsByFeedPaginated :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?
 `
 
 type ListItemsByFeedPaginatedParams struct {
@@ -651,6 +667,7 @@ func (q *Queries) ListItemsByFeedPaginated(ctx context.Context, arg ListItemsByF
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}
@@ -666,29 +683,38 @@ func (q *Queries) ListItemsByFeedPaginated(ctx context.Context, arg ListItemsByF
 }
 
 const listItemsByFeedSortedDateAsc = `-- name: ListItemsByFeedSortedDateAsc :many
-SELECT i.id, i.title, i.status, i.published_at, i.content,
+SELECT i.id, i.title, i.status, i.is_saved, i.published_at, i.content,
        i.extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = ?1
   AND (status = ?2 OR ?2 IS NULL)
-  AND (points >= ?3 OR ?3 = 0)
+  -- saved_only = 1 asks for the starred set, which is a flag rather than a
+  -- status now. The handler translates a ` + "`" + `status=saved` + "`" + ` request into
+  -- status=NULL + saved_only=1, so the two filters never fight.
+  -- CAST is required: a bare sqlc.arg comparison infers interface{} and a
+  -- nil value makes ` + "`" + `? = 0` + "`" + ` NULL, which silently drops EVERY row (including
+  -- callers that never set the filter). CAST makes it a real integer.
+  AND (CAST(?3 AS INTEGER) = 0 OR i.is_saved = 1)
+  AND (points >= ?4 OR ?4 = 0)
 ORDER BY published_at ASC, created_at ASC, id ASC
-LIMIT ?5 OFFSET ?4
+LIMIT ?6 OFFSET ?5
 `
 
 type ListItemsByFeedSortedDateAscParams struct {
-	FeedID   int64          `json:"feed_id"`
-	Status   sql.NullString `json:"status"`
-	MinScore int64          `json:"min_score"`
-	Offset   int64          `json:"offset"`
-	Limit    int64          `json:"limit"`
+	FeedID    int64          `json:"feed_id"`
+	Status    sql.NullString `json:"status"`
+	SavedOnly int64          `json:"saved_only"`
+	MinScore  int64          `json:"min_score"`
+	Offset    int64          `json:"offset"`
+	Limit     int64          `json:"limit"`
 }
 
 type ListItemsByFeedSortedDateAscRow struct {
 	ID             int64        `json:"id"`
 	Title          string       `json:"title"`
 	Status         string       `json:"status"`
+	IsSaved        int64        `json:"is_saved"`
 	PublishedAt    sql.NullTime `json:"published_at"`
 	Content        string       `json:"content"`
 	ExtractContent string       `json:"extract_content"`
@@ -702,6 +728,7 @@ func (q *Queries) ListItemsByFeedSortedDateAsc(ctx context.Context, arg ListItem
 	rows, err := q.db.QueryContext(ctx, listItemsByFeedSortedDateAsc,
 		arg.FeedID,
 		arg.Status,
+		arg.SavedOnly,
 		arg.MinScore,
 		arg.Offset,
 		arg.Limit,
@@ -717,6 +744,7 @@ func (q *Queries) ListItemsByFeedSortedDateAsc(ctx context.Context, arg ListItem
 			&i.ID,
 			&i.Title,
 			&i.Status,
+			&i.IsSaved,
 			&i.PublishedAt,
 			&i.Content,
 			&i.ExtractContent,
@@ -739,29 +767,38 @@ func (q *Queries) ListItemsByFeedSortedDateAsc(ctx context.Context, arg ListItem
 }
 
 const listItemsByFeedSortedDateDesc = `-- name: ListItemsByFeedSortedDateDesc :many
-SELECT i.id, i.title, i.status, i.published_at, i.content,
+SELECT i.id, i.title, i.status, i.is_saved, i.published_at, i.content,
        i.extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = ?1
   AND (status = ?2 OR ?2 IS NULL)
-  AND (points >= ?3 OR ?3 = 0)
+  -- saved_only = 1 asks for the starred set, which is a flag rather than a
+  -- status now. The handler translates a ` + "`" + `status=saved` + "`" + ` request into
+  -- status=NULL + saved_only=1, so the two filters never fight.
+  -- CAST is required: a bare sqlc.arg comparison infers interface{} and a
+  -- nil value makes ` + "`" + `? = 0` + "`" + ` NULL, which silently drops EVERY row (including
+  -- callers that never set the filter). CAST makes it a real integer.
+  AND (CAST(?3 AS INTEGER) = 0 OR i.is_saved = 1)
+  AND (points >= ?4 OR ?4 = 0)
 ORDER BY published_at DESC, created_at DESC, id DESC
-LIMIT ?5 OFFSET ?4
+LIMIT ?6 OFFSET ?5
 `
 
 type ListItemsByFeedSortedDateDescParams struct {
-	FeedID   int64          `json:"feed_id"`
-	Status   sql.NullString `json:"status"`
-	MinScore int64          `json:"min_score"`
-	Offset   int64          `json:"offset"`
-	Limit    int64          `json:"limit"`
+	FeedID    int64          `json:"feed_id"`
+	Status    sql.NullString `json:"status"`
+	SavedOnly int64          `json:"saved_only"`
+	MinScore  int64          `json:"min_score"`
+	Offset    int64          `json:"offset"`
+	Limit     int64          `json:"limit"`
 }
 
 type ListItemsByFeedSortedDateDescRow struct {
 	ID             int64        `json:"id"`
 	Title          string       `json:"title"`
 	Status         string       `json:"status"`
+	IsSaved        int64        `json:"is_saved"`
 	PublishedAt    sql.NullTime `json:"published_at"`
 	Content        string       `json:"content"`
 	ExtractContent string       `json:"extract_content"`
@@ -777,6 +814,7 @@ func (q *Queries) ListItemsByFeedSortedDateDesc(ctx context.Context, arg ListIte
 	rows, err := q.db.QueryContext(ctx, listItemsByFeedSortedDateDesc,
 		arg.FeedID,
 		arg.Status,
+		arg.SavedOnly,
 		arg.MinScore,
 		arg.Offset,
 		arg.Limit,
@@ -792,6 +830,7 @@ func (q *Queries) ListItemsByFeedSortedDateDesc(ctx context.Context, arg ListIte
 			&i.ID,
 			&i.Title,
 			&i.Status,
+			&i.IsSaved,
 			&i.PublishedAt,
 			&i.Content,
 			&i.ExtractContent,
@@ -814,29 +853,38 @@ func (q *Queries) ListItemsByFeedSortedDateDesc(ctx context.Context, arg ListIte
 }
 
 const listItemsByFeedSortedScoreAsc = `-- name: ListItemsByFeedSortedScoreAsc :many
-SELECT i.id, i.title, i.status, i.published_at, i.content,
+SELECT i.id, i.title, i.status, i.is_saved, i.published_at, i.content,
        i.extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = ?1
   AND (status = ?2 OR ?2 IS NULL)
-  AND (points >= ?3 OR ?3 = 0)
+  -- saved_only = 1 asks for the starred set, which is a flag rather than a
+  -- status now. The handler translates a ` + "`" + `status=saved` + "`" + ` request into
+  -- status=NULL + saved_only=1, so the two filters never fight.
+  -- CAST is required: a bare sqlc.arg comparison infers interface{} and a
+  -- nil value makes ` + "`" + `? = 0` + "`" + ` NULL, which silently drops EVERY row (including
+  -- callers that never set the filter). CAST makes it a real integer.
+  AND (CAST(?3 AS INTEGER) = 0 OR i.is_saved = 1)
+  AND (points >= ?4 OR ?4 = 0)
 ORDER BY points ASC, published_at DESC, created_at DESC, id DESC
-LIMIT ?5 OFFSET ?4
+LIMIT ?6 OFFSET ?5
 `
 
 type ListItemsByFeedSortedScoreAscParams struct {
-	FeedID   int64          `json:"feed_id"`
-	Status   sql.NullString `json:"status"`
-	MinScore int64          `json:"min_score"`
-	Offset   int64          `json:"offset"`
-	Limit    int64          `json:"limit"`
+	FeedID    int64          `json:"feed_id"`
+	Status    sql.NullString `json:"status"`
+	SavedOnly int64          `json:"saved_only"`
+	MinScore  int64          `json:"min_score"`
+	Offset    int64          `json:"offset"`
+	Limit     int64          `json:"limit"`
 }
 
 type ListItemsByFeedSortedScoreAscRow struct {
 	ID             int64        `json:"id"`
 	Title          string       `json:"title"`
 	Status         string       `json:"status"`
+	IsSaved        int64        `json:"is_saved"`
 	PublishedAt    sql.NullTime `json:"published_at"`
 	Content        string       `json:"content"`
 	ExtractContent string       `json:"extract_content"`
@@ -850,6 +898,7 @@ func (q *Queries) ListItemsByFeedSortedScoreAsc(ctx context.Context, arg ListIte
 	rows, err := q.db.QueryContext(ctx, listItemsByFeedSortedScoreAsc,
 		arg.FeedID,
 		arg.Status,
+		arg.SavedOnly,
 		arg.MinScore,
 		arg.Offset,
 		arg.Limit,
@@ -865,6 +914,7 @@ func (q *Queries) ListItemsByFeedSortedScoreAsc(ctx context.Context, arg ListIte
 			&i.ID,
 			&i.Title,
 			&i.Status,
+			&i.IsSaved,
 			&i.PublishedAt,
 			&i.Content,
 			&i.ExtractContent,
@@ -887,29 +937,38 @@ func (q *Queries) ListItemsByFeedSortedScoreAsc(ctx context.Context, arg ListIte
 }
 
 const listItemsByFeedSortedScoreDesc = `-- name: ListItemsByFeedSortedScoreDesc :many
-SELECT i.id, i.title, i.status, i.published_at, i.content,
+SELECT i.id, i.title, i.status, i.is_saved, i.published_at, i.content,
        i.extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = ?1
   AND (status = ?2 OR ?2 IS NULL)
-  AND (points >= ?3 OR ?3 = 0)
+  -- saved_only = 1 asks for the starred set, which is a flag rather than a
+  -- status now. The handler translates a ` + "`" + `status=saved` + "`" + ` request into
+  -- status=NULL + saved_only=1, so the two filters never fight.
+  -- CAST is required: a bare sqlc.arg comparison infers interface{} and a
+  -- nil value makes ` + "`" + `? = 0` + "`" + ` NULL, which silently drops EVERY row (including
+  -- callers that never set the filter). CAST makes it a real integer.
+  AND (CAST(?3 AS INTEGER) = 0 OR i.is_saved = 1)
+  AND (points >= ?4 OR ?4 = 0)
 ORDER BY points DESC, published_at DESC, created_at DESC, id DESC
-LIMIT ?5 OFFSET ?4
+LIMIT ?6 OFFSET ?5
 `
 
 type ListItemsByFeedSortedScoreDescParams struct {
-	FeedID   int64          `json:"feed_id"`
-	Status   sql.NullString `json:"status"`
-	MinScore int64          `json:"min_score"`
-	Offset   int64          `json:"offset"`
-	Limit    int64          `json:"limit"`
+	FeedID    int64          `json:"feed_id"`
+	Status    sql.NullString `json:"status"`
+	SavedOnly int64          `json:"saved_only"`
+	MinScore  int64          `json:"min_score"`
+	Offset    int64          `json:"offset"`
+	Limit     int64          `json:"limit"`
 }
 
 type ListItemsByFeedSortedScoreDescRow struct {
 	ID             int64        `json:"id"`
 	Title          string       `json:"title"`
 	Status         string       `json:"status"`
+	IsSaved        int64        `json:"is_saved"`
 	PublishedAt    sql.NullTime `json:"published_at"`
 	Content        string       `json:"content"`
 	ExtractContent string       `json:"extract_content"`
@@ -923,6 +982,7 @@ func (q *Queries) ListItemsByFeedSortedScoreDesc(ctx context.Context, arg ListIt
 	rows, err := q.db.QueryContext(ctx, listItemsByFeedSortedScoreDesc,
 		arg.FeedID,
 		arg.Status,
+		arg.SavedOnly,
 		arg.MinScore,
 		arg.Offset,
 		arg.Limit,
@@ -938,6 +998,7 @@ func (q *Queries) ListItemsByFeedSortedScoreDesc(ctx context.Context, arg ListIt
 			&i.ID,
 			&i.Title,
 			&i.Status,
+			&i.IsSaved,
 			&i.PublishedAt,
 			&i.Content,
 			&i.ExtractContent,
@@ -960,7 +1021,7 @@ func (q *Queries) ListItemsByFeedSortedScoreDesc(ctx context.Context, arg ListIt
 }
 
 const listItemsByFeedStreamPage = `-- name: ListItemsByFeedStreamPage :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ?
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items WHERE feed_id = ?
 ORDER BY COALESCE(published_at, fetched_at, created_at) DESC, created_at DESC
 LIMIT ? OFFSET ?
 `
@@ -1003,6 +1064,7 @@ func (q *Queries) ListItemsByFeedStreamPage(ctx context.Context, arg ListItemsBy
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}
@@ -1018,7 +1080,7 @@ func (q *Queries) ListItemsByFeedStreamPage(ctx context.Context, arg ListItemsBy
 }
 
 const listItemsByUserRead = `-- name: ListItemsByUserRead :many
-SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date, i.is_saved FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE f.user_id = ? AND i.status IN ('read', 'digested')
 ORDER BY i.published_at DESC, i.created_at DESC
@@ -1054,6 +1116,7 @@ func (q *Queries) ListItemsByUserRead(ctx context.Context, userID int64) ([]Item
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}
@@ -1069,7 +1132,7 @@ func (q *Queries) ListItemsByUserRead(ctx context.Context, userID int64) ([]Item
 }
 
 const listItemsByUserReadPaginated = `-- name: ListItemsByUserReadPaginated :many
-SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date, i.is_saved FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE f.user_id = ?1 AND i.status IN ('read', 'digested')
 ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at DESC
@@ -1113,6 +1176,7 @@ func (q *Queries) ListItemsByUserReadPaginated(ctx context.Context, arg ListItem
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}
@@ -1128,7 +1192,7 @@ func (q *Queries) ListItemsByUserReadPaginated(ctx context.Context, arg ListItem
 }
 
 const listItemsByUserStatus = `-- name: ListItemsByUserStatus :many
-SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date, i.is_saved FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE f.user_id = ? AND i.status = ?
 ORDER BY i.published_at DESC, i.created_at DESC
@@ -1169,6 +1233,7 @@ func (q *Queries) ListItemsByUserStatus(ctx context.Context, arg ListItemsByUser
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}
@@ -1184,25 +1249,31 @@ func (q *Queries) ListItemsByUserStatus(ctx context.Context, arg ListItemsByUser
 }
 
 const listItemsByUserStatusPaginated = `-- name: ListItemsByUserStatusPaginated :many
-SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date, i.is_saved FROM items i
 JOIN feeds f ON f.id = i.feed_id
-WHERE f.user_id = ?1 AND i.status = ?2
+WHERE f.user_id = ?1
+  AND (i.status = ?2 OR ?2 = '')
+  AND (CAST(?3 AS INTEGER) = 0 OR i.is_saved = 1)
 ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at DESC
-LIMIT ?4 OFFSET ?3
+LIMIT ?5 OFFSET ?4
 `
 
 type ListItemsByUserStatusPaginatedParams struct {
-	UserID int64  `json:"user_id"`
-	Status string `json:"status"`
-	Off    int64  `json:"off"`
-	Lim    int64  `json:"lim"`
+	UserID    int64  `json:"user_id"`
+	Status    string `json:"status"`
+	SavedOnly int64  `json:"saved_only"`
+	Off       int64  `json:"off"`
+	Lim       int64  `json:"lim"`
 }
 
-// Reader-stream page for a user-wide status filter.
+// Reader-stream page for a user-wide status filter. saved_only = 1 selects the
+// starred set instead of a status, which is how the reader API's starred stream
+// stays independent of read state.
 func (q *Queries) ListItemsByUserStatusPaginated(ctx context.Context, arg ListItemsByUserStatusPaginatedParams) ([]Item, error) {
 	rows, err := q.db.QueryContext(ctx, listItemsByUserStatusPaginated,
 		arg.UserID,
 		arg.Status,
+		arg.SavedOnly,
 		arg.Off,
 		arg.Lim,
 	)
@@ -1234,6 +1305,7 @@ func (q *Queries) ListItemsByUserStatusPaginated(ctx context.Context, arg ListIt
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}
@@ -1249,7 +1321,7 @@ func (q *Queries) ListItemsByUserStatusPaginated(ctx context.Context, arg ListIt
 }
 
 const listItemsNeedingExtraction = `-- name: ListItemsNeedingExtraction :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? AND url != '' AND extract_status IN ('pending', 'failed') AND extract_retries < 3 ORDER BY extract_retries ASC, published_at DESC
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items WHERE feed_id = ? AND url != '' AND extract_status IN ('pending', 'failed') AND extract_retries < 3 ORDER BY extract_retries ASC, published_at DESC
 `
 
 func (q *Queries) ListItemsNeedingExtraction(ctx context.Context, feedID int64) ([]Item, error) {
@@ -1282,6 +1354,7 @@ func (q *Queries) ListItemsNeedingExtraction(ctx context.Context, feedID int64) 
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}
@@ -1297,7 +1370,7 @@ func (q *Queries) ListItemsNeedingExtraction(ctx context.Context, feedID int64) 
 }
 
 const listUnreadItemsForEnrichment = `-- name: ListUnreadItemsForEnrichment :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY last_enriched_at IS NULL DESC, last_enriched_at ASC, published_at DESC
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY last_enriched_at IS NULL DESC, last_enriched_at ASC, published_at DESC
 `
 
 type ListUnreadItemsForEnrichmentParams struct {
@@ -1336,6 +1409,7 @@ func (q *Queries) ListUnreadItemsForEnrichment(ctx context.Context, arg ListUnre
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}
@@ -1830,8 +1904,62 @@ func (q *Queries) NewestUnreadItemPerFeed(ctx context.Context, userID int64) ([]
 	return items, nil
 }
 
+const setItemSaved = `-- name: SetItemSaved :one
+UPDATE items
+SET is_saved = ?1,
+    status = CASE WHEN ?2 = 1 AND status = 'unread' THEN 'read' ELSE status END,
+    updated_at = DATETIME('now')
+WHERE id = ?3
+RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved
+`
+
+type SetItemSavedParams struct {
+	Saved    int64       `json:"saved"`
+	MarkRead interface{} `json:"mark_read"`
+	ID       int64       `json:"id"`
+}
+
+// Saved is orthogonal to read state: this touches ONLY is_saved, so a read
+// toggle can never destroy saved-ness and vice versa. `saved = 1` also marks an
+// unread item read (matching the pre-flag behaviour, where a saved item was not
+// in the unread counts); unsaving clears the flag and leaves the read state
+// alone, so an item that was already read stays read.
+//
+// mark_read carries the same value as saved. It is a second named parameter
+// rather than a repeat of `saved` because a bare repeat inside the CASE would
+// work in SQLite but leaves sqlc generating a positional Column2, and the
+// duplication documents the rule: only the SAVE direction forces read.
+func (q *Queries) SetItemSaved(ctx context.Context, arg SetItemSavedParams) (Item, error) {
+	row := q.db.QueryRowContext(ctx, setItemSaved, arg.Saved, arg.MarkRead, arg.ID)
+	var i Item
+	err := row.Scan(
+		&i.ID,
+		&i.FeedID,
+		&i.Hash,
+		&i.Title,
+		&i.Url,
+		&i.Content,
+		&i.Author,
+		&i.CommentUrl,
+		&i.Points,
+		&i.CommentsCount,
+		&i.PublishedAt,
+		&i.Status,
+		&i.FetchedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastEnrichedAt,
+		&i.ExtractContent,
+		&i.ExtractStatus,
+		&i.ExtractRetries,
+		&i.ExtractDate,
+		&i.IsSaved,
+	)
+	return i, err
+}
+
 const updateItemExtraction = `-- name: UpdateItemExtraction :one
-UPDATE items SET extract_content = ?, extract_status = ?, extract_retries = ?, extract_date = DATETIME('now'), updated_at = DATETIME('now') WHERE id = ? RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date
+UPDATE items SET extract_content = ?, extract_status = ?, extract_retries = ?, extract_date = DATETIME('now'), updated_at = DATETIME('now') WHERE id = ? RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved
 `
 
 type UpdateItemExtractionParams struct {
@@ -1870,6 +1998,7 @@ func (q *Queries) UpdateItemExtraction(ctx context.Context, arg UpdateItemExtrac
 		&i.ExtractStatus,
 		&i.ExtractRetries,
 		&i.ExtractDate,
+		&i.IsSaved,
 	)
 	return i, err
 }
@@ -1878,7 +2007,7 @@ const updateItemPointsAndComments = `-- name: UpdateItemPointsAndComments :one
 UPDATE items
 SET points = ?, comments_count = ?, comment_url = ?, updated_at = DATETIME('now'), last_enriched_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date
+RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved
 `
 
 type UpdateItemPointsAndCommentsParams struct {
@@ -1917,6 +2046,7 @@ func (q *Queries) UpdateItemPointsAndComments(ctx context.Context, arg UpdateIte
 		&i.ExtractStatus,
 		&i.ExtractRetries,
 		&i.ExtractDate,
+		&i.IsSaved,
 	)
 	return i, err
 }
@@ -1925,7 +2055,7 @@ const updateItemStatus = `-- name: UpdateItemStatus :one
 UPDATE items
 SET status = ?, updated_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date
+RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved
 `
 
 type UpdateItemStatusParams struct {
@@ -1957,6 +2087,7 @@ func (q *Queries) UpdateItemStatus(ctx context.Context, arg UpdateItemStatusPara
 		&i.ExtractStatus,
 		&i.ExtractRetries,
 		&i.ExtractDate,
+		&i.IsSaved,
 	)
 	return i, err
 }

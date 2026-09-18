@@ -60,7 +60,7 @@ func seedReaderUnread(t *testing.T, queries *store.Queries, userID int64) (feedA
 	}
 
 	// One saved item for the starred count.
-	if _, err := queries.CreateItem(t.Context(), store.CreateItemParams{
+	if _, err := createSavedItem(t, queries, store.CreateItemParams{
 		FeedID: feedA.ID,
 		Hash:   "a-saved",
 		Title:  "A saved item",

@@ -15,6 +15,9 @@ import (
 // loaded: the saved view is assembled client-side from per-feed requests, so
 // its array length is only the loaded page. Equally, "saved" is a status, not
 // an unread tally, so it must not be derived from the unread counts.
+//
+// Saved is a FLAG (`items.is_saved`), orthogonal to read state: a starred item
+// may be read or unread, which is exactly why this total is not an inbox count.
 func TestSavedCount(t *testing.T) {
 	server, queries := setupTestServer(t)
 	user := createTestUser(t, queries, "saved-count@example.com", "password123")
@@ -38,14 +41,24 @@ func TestSavedCount(t *testing.T) {
 	// Three items in three different states. Only 'saved' counts, and the
 	// unread one must not leak into the total.
 	for i, status := range []string{"unread", "read", "saved"} {
-		if _, err := queries.CreateItem(t.Context(), store.CreateItemParams{
+		// Only the "saved" iteration is starred; the other two are plain read
+		// states and must NOT get the flag, or this test would be asserting the
+		// wrong thing entirely.
+		params := store.CreateItemParams{
 			FeedID:  feed.ID,
 			Hash:    fmt.Sprintf("h%d", i),
 			Title:   fmt.Sprintf("t%d", i),
 			Url:     fmt.Sprintf("https://example.com/%d", i),
 			Content: "c",
 			Status:  status,
-		}); err != nil {
+		}
+		var err error
+		if status == "saved" {
+			_, err = createSavedItem(t, queries, params)
+		} else {
+			_, err = queries.CreateItem(t.Context(), params)
+		}
+		if err != nil {
 			t.Fatalf("create item %d: %v", i, err)
 		}
 	}
@@ -55,7 +68,7 @@ func TestSavedCount(t *testing.T) {
 	}
 
 	// A second saved item still increments, so this is a count and not a flag.
-	if _, err := queries.CreateItem(t.Context(), store.CreateItemParams{
+	if _, err := createSavedItem(t, queries, store.CreateItemParams{
 		FeedID:  feed.ID,
 		Hash:    "h3",
 		Title:   "t3",
@@ -84,7 +97,7 @@ func TestSavedCountIsScopedToUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create feed: %v", err)
 	}
-	if _, err := queries.CreateItem(t.Context(), store.CreateItemParams{
+	if _, err := createSavedItem(t, queries, store.CreateItemParams{
 		FeedID: theirFeed.ID, Hash: "x", Title: "x", Url: "https://other.example/1",
 		Content: "c", Status: "saved",
 	}); err != nil {

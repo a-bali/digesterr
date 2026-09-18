@@ -61,6 +61,12 @@ CREATE TABLE items (
     extract_status   TEXT    NOT NULL DEFAULT '',
     extract_retries  INTEGER NOT NULL DEFAULT 0,
     extract_date     DATETIME,
+    -- Saved/starred is a FLAG, not a status: it is orthogonal to read state, so
+    -- marking a saved item read or unread leaves it saved. It used to be a
+    -- fourth value of `status`, which made every read toggle destroy saved-ness
+    -- and forced the reader API's starred state to share a column with read
+    -- state. `status` is now only unread/read/digested.
+    is_saved         INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
 );
 

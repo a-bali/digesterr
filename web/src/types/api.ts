@@ -36,7 +36,9 @@ export interface Item {
   points: number
   comments_count: number
   published_at: string | null
-  status: 'unread' | 'read' | 'digested' | 'saved'
+  status: 'unread' | 'read' | 'digested'
+  /** Saved/starred is a FLAG, orthogonal to read state: 1 when starred. */
+  is_saved?: number
   fetched_at?: string
   created_at?: string
   updated_at?: string

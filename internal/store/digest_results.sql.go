@@ -649,7 +649,7 @@ func (q *Queries) ListDigestResultsByUserStatusPaginated(ctx context.Context, ar
 }
 
 const listUnreadDigestItems = `-- name: ListUnreadDigestItems :many
-SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date FROM items i
+SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date, i.is_saved FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE f.user_id = ? AND i.status = 'unread'
 ORDER BY i.points DESC
@@ -691,6 +691,7 @@ func (q *Queries) ListUnreadDigestItems(ctx context.Context, arg ListUnreadDiges
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}
@@ -706,7 +707,7 @@ func (q *Queries) ListUnreadDigestItems(ctx context.Context, arg ListUnreadDiges
 }
 
 const listUnreadDigestItemsByFeed = `-- name: ListUnreadDigestItemsByFeed :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date FROM items
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items
 WHERE feed_id = ? AND status = 'unread'
 ORDER BY points DESC
 LIMIT ?
@@ -747,6 +748,7 @@ func (q *Queries) ListUnreadDigestItemsByFeed(ctx context.Context, arg ListUnrea
 			&i.ExtractStatus,
 			&i.ExtractRetries,
 			&i.ExtractDate,
+			&i.IsSaved,
 		); err != nil {
 			return nil, err
 		}

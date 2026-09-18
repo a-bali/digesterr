@@ -72,6 +72,12 @@ export const useFeedStore = defineStore('feed', () => {
   // unreadCounts because "saved" is a status, not an unread tally, and it is
   // fetched separately so it stays correct while a filter hides items.
   const savedCount = ref(0)
+  // The Saved view's item list. It lives in the store, not in HomeView, because
+  // it is a fourth place an item can be held and it was the one `applyUpdatedItem`
+  // could not reach: marking an item unread from the saved view updated the DB and
+  // the content pane while the ROW kept its old status icon until a reload
+  // ("mark unread is not showing as unread until I reload the view").
+  const savedItems = ref<Item[]>([])
 
   const activeFeed = computed(() => feeds.value.find(f => f.id === activeFeedId.value) || null)
 
@@ -428,18 +434,32 @@ export const useFeedStore = defineStore('feed', () => {
       const old = multiItems.value[midx]
       ;(multiItems.value[midx] as any) = { ...updated, feed_name: old.feed_name, feed_type: old.feed_type }
     }
+    // The saved view is a separate list of the same items. Saved-ness and read
+    // state are independent, so a status change does NOT remove the row: an item
+    // marked unread is still saved and must stay, re-rendered with its new icon.
+    // (Only unsaving removes it, and that path filters the array itself.)
+    const sidx = savedItems.value.findIndex(i => i.id === updated.id)
+    if (sidx !== -1) savedItems.value[sidx] = updated
     if (selectedItem.value?.id === updated.id) selectedItem.value = updated
   }
 
-  async function updateItemStatus(item: Item, status: string) {
+  // updateItemStatus writes read state and/or the saved flag. They are separate
+  // fields on the API — `saved` is NOT a status — so each caller sends only what
+  // it means to change: marking read must not alter savedness, and vice versa.
+  async function updateItemStatus(item: Item, status?: string, saved?: boolean) {
     try {
-      const updated = await itemApi.updateStatus(item.id, status)
+      const body: { status?: string; saved?: boolean } = {}
+      if (status !== undefined) body.status = status
+      if (saved !== undefined) body.saved = saved
+      const updated = await itemApi.updateStatus(item.id, body)
       applyUpdatedItem(updated)
       // Keep the saved badge in step without a round trip: the transition is
       // already known here. Clamped because the counter is a total maintained
       // across many sources, and a double-fire must not drive it negative.
-      if (item.status !== 'saved' && status === 'saved') savedCount.value++
-      else if (item.status === 'saved' && status !== 'saved') savedCount.value = Math.max(0, savedCount.value - 1)
+      const wasSaved = item.is_saved === 1
+      const nowSaved = saved ?? (updated.is_saved === 1)
+      if (!wasSaved && nowSaved) savedCount.value++
+      else if (wasSaved && !nowSaved) savedCount.value = Math.max(0, savedCount.value - 1)
       fetchUnreadCounts()
     } catch (e) {
       toastError(e, 'Failed to update item')
@@ -504,11 +524,32 @@ export const useFeedStore = defineStore('feed', () => {
     await fetchUnreadCounts()
   }
 
+  // unsaveItem clears the saved flag and drops the row from the Saved view.
+  //
+  // It deliberately does NOT write a read status: unsaving is not a read-state
+  // change, and the old code forced 'read' here, which silently un-read nothing
+  // but also meant a saved-and-unread item could never stay unread. The item
+  // keeps whatever read state it had.
+  async function unsaveItem(item: Item) {
+    await updateItemStatus(item, undefined, false)
+    savedItems.value = savedItems.value.filter(i => i.id !== item.id)
+  }
+
+  // fetchSavedItems loads the Saved view's list. Server-side per-feed query, so
+  // it is kept here rather than in the view that happens to render it.
+  async function fetchSavedItems() {
+    const acc: Item[] = []
+    for (const feed of feeds.value) {
+      try { acc.push(...(await feedApi.getItems(feed.id, { status: 'saved' })).items) } catch { /* skip */ }
+    }
+    savedItems.value = acc
+  }
+
   return {
-    feeds, activeFeedId, activeCategory, activeSection, items, multiItems, selectedItem, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
+    feeds, activeFeedId, activeCategory, activeSection, items, multiItems, selectedItem, savedItems, savedCount, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
     activeFeed, isMultiView, supportsScore, unreadCounts, backgroundRefreshing,
     fetchFeeds, setActiveFeed, setActiveCategory, setActiveSection, clearActiveView, fetchFirstPage, refreshItems, fetchMoreItems,
-    selectItem, updateItemStatus, deleteExtraction, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, savedCount, fetchSavedCount, markAllRead, markReadAbove, markReadBelow,
+    selectItem, updateItemStatus, unsaveItem, deleteExtraction, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, fetchSavedItems, fetchSavedCount, markAllRead, markReadAbove, markReadBelow,
     emailInbox, ensureEmailConfig, refreshEmailConfig,
   }
 })

@@ -87,6 +87,8 @@ func seedEditState(t *testing.T, queries *store.Queries, userID int64) editSeed 
 	return seed
 }
 
+// itemStatus returns an item's READ state ("unread"/"read"/"digested").
+// Saved is a flag now, not a status, so use itemIsSaved for that.
 func itemStatus(t *testing.T, queries *store.Queries, id int64) string {
 	t.Helper()
 	item, err := queries.GetItem(t.Context(), id)
@@ -94,6 +96,16 @@ func itemStatus(t *testing.T, queries *store.Queries, id int64) string {
 		t.Fatalf("failed to get item %d: %v", id, err)
 	}
 	return item.Status
+}
+
+// itemIsSaved reports the saved FLAG, which is independent of read state.
+func itemIsSaved(t *testing.T, queries *store.Queries, id int64) bool {
+	t.Helper()
+	item, err := queries.GetItem(t.Context(), id)
+	if err != nil {
+		t.Fatalf("failed to get item %d: %v", id, err)
+	}
+	return item.IsSaved != 0
 }
 
 func digestStatus(t *testing.T, queries *store.Queries, id, userID int64) string {
@@ -165,8 +177,32 @@ func TestReaderEditTagAddStarred(t *testing.T) {
 
 	postReaderForm(t, server, "/reader/api/0/edit-tag", editTagForm(readerTagStarred, "", itemStreamID(seed.aUnread.ID)))
 
-	if got := itemStatus(t, queries, seed.aUnread.ID); got != "saved" {
-		t.Fatalf("expected unread item to become saved, got %q", got)
+	// Starred is a FLAG now, so it is asserted on its own field — not by the
+	// status string it used to occupy.
+	if !itemIsSaved(t, queries, seed.aUnread.ID) {
+		t.Fatal("expected unread item to become saved")
+	}
+	// Saving reads an unread item, preserving the pre-flag behaviour where a
+	// saved item was absent from the unread counts.
+	if got := itemStatus(t, queries, seed.aUnread.ID); got != "read" {
+		t.Fatalf("expected saving an unread item to mark it read, got %q", got)
+	}
+}
+
+// The whole point of the flag: a read-state change must not destroy saved-ness.
+// This is the bug the user reported ("mark unread removes it from saved").
+func TestReaderEditTagRemoveReadKeepsStarred(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	postReaderForm(t, server, "/reader/api/0/edit-tag", editTagForm("", readerTagRead, itemStreamID(seed.aSaved.ID)))
+
+	if itemIsSaved(t, queries, seed.aSaved.ID) != true {
+		t.Fatal("marking a starred item unread unstarred it")
+	}
+	if got := itemStatus(t, queries, seed.aSaved.ID); got != "unread" {
+		t.Fatalf("expected starred item to become unread, got %q", got)
 	}
 }
 
@@ -177,8 +213,14 @@ func TestReaderEditTagRemoveStarred(t *testing.T) {
 
 	postReaderForm(t, server, "/reader/api/0/edit-tag", editTagForm("", readerTagStarred, itemStreamID(seed.aSaved.ID)))
 
+	if itemIsSaved(t, queries, seed.aSaved.ID) {
+		t.Fatal("expected the saved flag to be cleared")
+	}
+	// Unstarring no longer writes read state at all — it used to force 'read',
+	// which is what made it destructive. The seeded item was 'read' already, so
+	// the assertion is that it is unchanged, not that it was set.
 	if got := itemStatus(t, queries, seed.aSaved.ID); got != "read" {
-		t.Fatalf("expected saved item to fall back to read, got %q", got)
+		t.Fatalf("expected unstarred item to keep its read state, got %q", got)
 	}
 }
 
@@ -303,8 +345,11 @@ func TestReaderMarkAllAsReadGlobal(t *testing.T) {
 	if got := itemStatus(t, queries, seed.aRead.ID); got != "read" {
 		t.Fatalf("expected read item to stay read, got %q", got)
 	}
-	if got := itemStatus(t, queries, seed.aSaved.ID); got != "saved" {
-		t.Fatalf("expected saved item to stay saved, got %q", got)
+	// A saved item keeps its FLAG across mark-all-read. Its read state may
+	// legitimately flip (read state and savedness are independent), so the flag
+	// is what is asserted here.
+	if !itemIsSaved(t, queries, seed.aSaved.ID) {
+		t.Fatal("expected saved item to stay saved")
 	}
 	if got := digestStatus(t, queries, seed.drNew.ID, user.ID); got != "read" {
 		t.Fatalf("expected new digest result read, got %q", got)

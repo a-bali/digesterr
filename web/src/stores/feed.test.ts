@@ -72,6 +72,66 @@ describe('feed store', () => {
     expect(store.selectedItem?.status).toBe('read')
   })
 
+  it('re-renders the saved view row when an item is marked unread', async () => {
+    // The reported bug: from the Saved view, marking an article unread left the
+    // row showing its old (read) icon until a reload. The saved list is a
+    // FOURTH place an item is held, and applyUpdatedItem only reached items,
+    // multiItems and selectedItem — so the DB and the content pane updated while
+    // the row did not.
+    const { itemApi } = await import('../services/api')
+    ;(itemApi.updateStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, status: 'unread', is_saved: 1 })
+
+    const store = useFeedStore()
+    store.savedItems = [{ id: 1, title: 'Saved thing', status: 'read', is_saved: 1 }] as any
+
+    await store.updateItemStatus(store.savedItems[0], 'unread')
+
+    // The row is still there — saved-ness and read state are independent, so an
+    // unread-and-saved item stays in the saved list...
+    expect(store.savedItems).toHaveLength(1)
+    // ...and it now carries the new status, which is what the row icon renders.
+    expect(store.savedItems[0].status).toBe('unread')
+  })
+
+  it('sends the saved flag, not a status, when saving', async () => {
+    // Saved is a FLAG on the API now. Sending status:'saved' would be rejected
+    // (400) and would destroy the item's read state.
+    const { itemApi } = await import('../services/api')
+    ;(itemApi.updateStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, status: 'read', is_saved: 1 })
+
+    const store = useFeedStore()
+    const item = { id: 1, title: 't', status: 'unread', is_saved: 0 } as any
+    store.items = [{ ...item }]
+
+    await store.updateItemStatus(store.items[0], undefined, true)
+
+    const lastCall = (itemApi.updateStatus as ReturnType<typeof vi.fn>).mock.calls.slice(-1)[0]
+    expect(lastCall[0]).toBe(1)
+    // One object body: `saved` is the flag and no `status` is sent, so this
+    // cannot be mistaken for a status write (which would 400 and also destroy
+    // the item's read state).
+    expect(lastCall[1]).toEqual({ saved: true })
+  })
+
+  it('unsaving clears the flag and drops the row without writing a read state', async () => {
+    const { itemApi } = await import('../services/api')
+    ;(itemApi.updateStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, status: 'unread', is_saved: 0 })
+
+    const store = useFeedStore()
+    const item = { id: 1, title: 't', status: 'unread', is_saved: 1 } as any
+    store.savedItems = [{ ...item }]
+    store.items = [{ ...item }]
+
+    await store.unsaveItem(store.savedItems[0])
+
+    const lastCall = (itemApi.updateStatus as ReturnType<typeof vi.fn>).mock.calls.slice(-1)[0]
+    // Never invents a read state: the old code sent 'read' here, which is what
+    // made unsaving look like it also un-read the item.
+    expect(lastCall[1]).toEqual({ saved: false })
+    expect(lastCall[1].status).toBeUndefined()
+    expect(store.savedItems).toHaveLength(0)
+  })
+
   it('deleteExtraction clears the extracted body in the list, the multi-view and the selection', async () => {
     const { itemApi } = await import('../services/api')
     ;(itemApi.deleteExtracted as ReturnType<typeof vi.fn>).mockResolvedValue({

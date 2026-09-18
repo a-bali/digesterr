@@ -65,8 +65,16 @@ var streamTimes = struct {
 	drRead:        time.Date(2024, 1, 7, 0, 0, 0, 0, time.UTC),
 }
 
+// createSeedItem seeds an item. The literal "saved" is accepted as a status for
+// readability at the call sites, but saved is a FLAG now: it is created as a
+// read item with is_saved set, which is exactly what the old status='saved'
+// meant to every reader of these fixtures.
 func createSeedItem(t *testing.T, queries *store.Queries, feedID int64, hash, title, status string, published time.Time) store.Item {
 	t.Helper()
+	saved := status == "saved"
+	if saved {
+		status = "read"
+	}
 	item, err := queries.CreateItem(t.Context(), store.CreateItemParams{
 		FeedID:      feedID,
 		Hash:        hash,
@@ -77,6 +85,17 @@ func createSeedItem(t *testing.T, queries *store.Queries, feedID int64, hash, ti
 	})
 	if err != nil {
 		t.Fatalf("failed to create item %q: %v", hash, err)
+	}
+	if saved {
+		if _, err := queries.SetItemSaved(t.Context(), store.SetItemSavedParams{
+			ID: item.ID, Saved: 1, MarkRead: 1,
+		}); err != nil {
+			t.Fatalf("failed to save item %q: %v", hash, err)
+		}
+		item, err = queries.GetItem(t.Context(), item.ID)
+		if err != nil {
+			t.Fatalf("failed to reload item %q: %v", hash, err)
+		}
 	}
 	return item
 }
@@ -247,8 +266,12 @@ func TestReaderStreamRead(t *testing.T) {
 
 	want := []string{
 		digestItemStreamID(seed.drRead.ID), // 2024-01-07
-		itemStreamID(seed.aRead.ID),        // 2024-01-04
-		itemStreamID(seed.aDigested.ID),    // 2024-01-02 (digested maps to read)
+		itemStreamID(seed.aSaved.ID),       // 2024-01-06 — saved is a flag, and this
+		//   item is READ (saving reads an unread item), so it belongs to the read
+		//   stream as well as the starred stream. Under the old status model the
+		//   two streams shared one column and could not overlap.
+		itemStreamID(seed.aRead.ID),     // 2024-01-04
+		itemStreamID(seed.aDigested.ID), // 2024-01-02 (digested maps to read)
 	}
 	if got := refIDs(resp.ItemRefs); !equalStrings(got, want) {
 		t.Fatalf("read stream ids mismatch:\n got %v\nwant %v", got, want)

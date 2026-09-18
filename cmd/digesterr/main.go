@@ -344,6 +344,29 @@ PRAGMA foreign_keys=ON;
 			"add email_messages inbox/received index",
 			"CREATE INDEX IF NOT EXISTS idx_email_messages_inbox_received ON email_messages(inbox_id, received_at)",
 		},
+		{
+			"add items.is_saved flag and backfill from the saved status",
+			// Saved becomes a FLAG, orthogonal to read state, so a read toggle can
+			// no longer destroy saved-ness. Three statements in one migration, in
+			// this order:
+			//
+			//   1. add the column (every existing row defaults to not-saved)
+			//   2. copy the current saved-ness across
+			//   3. retire 'saved' as a status value
+			//
+			// Step 3 maps saved -> 'read' rather than 'unread' because that is
+			// what the old code already reported: itemCategories() mapped a saved
+			// item to [read, starred], so every reader-API client saw it as read
+			// and it was absent from the unread counts. Preserving 'read' keeps
+			// existing clients and every unread badge numerically unchanged.
+			//
+			// Idempotent: re-running copies nothing (step 2 finds no 'saved' rows)
+			// and step 3 is a no-op. migrationSkipped() guards it on new DBs,
+			// where the column comes from schema.sql instead.
+			`ALTER TABLE items ADD COLUMN is_saved INTEGER NOT NULL DEFAULT 0;
+UPDATE items SET is_saved = 1 WHERE status = 'saved';
+UPDATE items SET status = 'read' WHERE status = 'saved';`,
+		},
 	}
 	for _, m := range migrations {
 		if skip, err := migrationSkipped(db, m.name); err != nil {
@@ -394,7 +417,7 @@ PRAGMA foreign_keys=ON;
 		  AND id NOT IN (
 			SELECT MIN(id) FROM items WHERE hash != '' GROUP BY feed_id, hash
 		  )
-		  AND status != 'saved'
+		  AND is_saved = 0
 		  AND NOT EXISTS (SELECT 1 FROM digest_result_items dri WHERE dri.item_id = items.id)
 	`)
 	if err == nil {

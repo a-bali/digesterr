@@ -223,11 +223,15 @@ func (s *Server) streamEntries(r *http.Request, userID int64, stream string, old
 		return page, more, nil
 
 	case stream == readerStreamStarred:
+		// Starred is the is_saved FLAG, so this stream is independent of read
+		// state: a starred item appears here whether it is read or unread.
+		// Status is passed empty because no status filter applies.
 		items, err := s.queries.ListItemsByUserStatusPaginated(ctx, store.ListItemsByUserStatusPaginatedParams{
-			UserID: userID,
-			Status: "saved",
-			Lim:    int64(window),
-			Off:    0,
+			UserID:    userID,
+			Status:    "",
+			SavedOnly: 1,
+			Lim:       int64(window),
+			Off:       0,
 		})
 		if err != nil {
 			return nil, false, err

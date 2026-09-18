@@ -386,13 +386,35 @@ func TestUpdateDigestResultStatus(t *testing.T) {
 		t.Fatalf("expected status 'read', got %s", updated.Status)
 	}
 
-	w = makeRequest(server, http.MethodPatch, "/api/items/"+itoa(item.ID), map[string]string{"status": "saved"}, token)
+	// Saved is a FLAG, so it is not set through `status` any more. The request
+	// carries `saved: true` and the assertion is on the flag — asserting on
+	// `status` here would have pinned the very coupling this release removes.
+	w = makeRequest(server, http.MethodPatch, "/api/items/"+itoa(item.ID), map[string]any{"saved": true}, token)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	json.NewDecoder(w.Body).Decode(&updated)
-	if updated.Status != "saved" {
-		t.Fatalf("expected status 'saved', got %s", updated.Status)
+	if updated.IsSaved != 1 {
+		t.Fatalf("expected is_saved 1, got %d", updated.IsSaved)
+	}
+	// Saving reads an unread item, matching the pre-flag behaviour where a saved
+	// item was absent from the unread counts.
+	if updated.Status != "read" {
+		t.Fatalf("expected saving to mark the item read, got %s", updated.Status)
+	}
+
+	// A plain read-state write must leave the flag alone: this is the reported
+	// bug ("mark unread removes it from saved").
+	w = makeRequest(server, http.MethodPatch, "/api/items/"+itoa(item.ID), map[string]any{"status": "unread"}, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	json.NewDecoder(w.Body).Decode(&updated)
+	if updated.Status != "unread" {
+		t.Fatalf("expected status 'unread', got %s", updated.Status)
+	}
+	if updated.IsSaved != 1 {
+		t.Fatalf("marking unread cleared the saved flag (is_saved=%d)", updated.IsSaved)
 	}
 }
 

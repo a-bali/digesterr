@@ -3,6 +3,7 @@ import { ref, watch, onMounted, onUnmounted, computed, useTemplateRef, type Ref 
 import { useRouter, useRoute } from 'vue-router'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 import Button from '../components/ui/Button.vue'
+import Dialog from '../components/ui/Dialog.vue'
 import FeedSidebar from '../components/FeedSidebar.vue'
 import ItemList from '../components/ItemList.vue'
 import ItemContent from '../components/ItemContent.vue'
@@ -21,8 +22,8 @@ import { useFeedStore } from '../stores/feed'
 import { useDigestStore } from '../stores/digest'
 import { useThemeStore } from '../stores/theme'
 import { useLayoutStore } from '../stores/layout'
-import { feedApi, itemApi } from '../services/api'
-import type { Item } from '../types/api'
+import { itemApi } from '../services/api'
+import type { Item, DigestConfig } from '../types/api'
 import { useBreakpoints } from '../composables/useMediaQuery'
 import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts'
 import { useSwipeGesture } from '../composables/useSwipeGesture'
@@ -39,8 +40,10 @@ const layoutStore = useLayoutStore()
 
 const { isDesktop, isTablet } = useBreakpoints()
 
-const savedItems = ref<Item[]>([])
 const showingSaved = ref(false)
+// The Saved view's list lives in the store so a status change reaches its rows
+// (see savedItems in stores/feed.ts); this is just a readable alias.
+const savedItems = computed(() => feedStore.savedItems)
 const sidebarOpen = ref(false)
 
 // Left-edge swipe walks one pane to the left: content -> list, list ->
@@ -136,8 +139,8 @@ useKeyboardShortcuts({
   selectFeed,
   toggleRead: (item) => feedStore.updateItemStatus(item, item.status === 'read' ? 'unread' : 'read'),
   toggleSaved: (item) => {
-    if (item.status === 'saved') unsaveItem(item)
-    else feedStore.updateItemStatus(item, 'saved')
+    if (item.is_saved === 1) unsaveItem(item)
+    else feedStore.updateItemStatus(item, undefined, true)
   },
   markAllRead: () => {
     // Same dispatch as toggleShowRead: 'A' must act on whichever list is on
@@ -197,7 +200,7 @@ onUnmounted(() => {
 
 function onVisibilityChange() {
   if (document.visibilityState !== 'visible') return
-  if (showingSaved.value) fetchSavedItems()
+  if (showingSaved.value) feedStore.fetchSavedItems()
   // Don't refresh the item list — it causes read items to vanish from a
   // filtered (Unread) view when the server response no longer includes them.
   // The 10s poll already keeps sidebar counts fresh; the list itself stays
@@ -288,7 +291,7 @@ watch(
       feedStore.clearActiveView()
       digestStore.exitAllDigestsMode()
       digestStore.activeConfigId = null; digestStore.selectedResult = null
-      await fetchSavedItems()
+      await feedStore.fetchSavedItems()
     } else if (path === '/') {
       showingSaved.value = false
       feedStore.clearActiveView()
@@ -350,23 +353,16 @@ async function selectItem(item: Item) {
     router.push({ path: `/feeds/category/${encodeURIComponent(feedStore.activeCategory)}/${item.id}` })
   }
   if (item.status === 'unread') {
+    // updateItemStatus -> applyUpdatedItem now reaches savedItems too, so no
+    // local patch is needed here.
     await feedStore.updateItemStatus(item, 'read')
-    const idx = savedItems.value.findIndex(i => i.id === item.id)
-    if (idx !== -1) savedItems.value[idx] = { ...savedItems.value[idx], status: 'read' as const }
   }
 }
 
 async function unsaveItem(item: Item) {
-  await feedStore.updateItemStatus(item, 'read')
-  savedItems.value = savedItems.value.filter(i => i.id !== item.id)
-}
-
-async function fetchSavedItems() {
-  const acc: Item[] = []
-  for (const feed of feedStore.feeds) {
-    try { acc.push(...(await feedApi.getItems(feed.id, { status: 'saved' })).items) } catch { /* skip */ }
-  }
-  savedItems.value = acc
+  // Unsave clears the saved FLAG; it does not touch read state. The store owns
+  // the saved list, so it is the thing that drops the row.
+  await feedStore.unsaveItem(item)
 }
 
 function onSelectDigestResult(result: { id: number; config_id: number }) {
@@ -422,9 +418,30 @@ function markAllReadInCurrentView() {
 // Mark-all-read for the digest list. `A` and DigestResultList's own button must
 // agree on scope, so both end up here: the single config on screen, or every
 // digest in the "All Digests" section.
+//
+// A single config confirms first, like a single feed does. The "All Digests"
+// section does not, matching the "Feeds"/category multi-views, which mark
+// straight away. Without this the key and the pane's button marked a digest read
+// immediately and with no undo, which is the asymmetry the user reported ("'A'
+// in digest view now does not show confirmation popup").
+const digestToMarkRead = ref<DigestConfig | null>(null)
+
 function markAllReadInDigestView() {
-  if (digestStore.activeConfigId != null) return digestStore.markAllRead(digestStore.activeConfigId)
+  if (digestStore.activeConfigId != null) {
+    digestToMarkRead.value = digestStore.activeConfig ?? null
+    return
+  }
   if (digestStore.showingAllDigests) return digestStore.markAllRead()
+}
+
+function closeDigestMarkReadDialog() {
+  digestToMarkRead.value = null
+}
+
+async function confirmDigestMarkRead() {
+  const cfg = digestToMarkRead.value
+  digestToMarkRead.value = null
+  if (cfg) await digestStore.markAllRead(cfg.id)
 }
 
 // ---- Page title ----
@@ -576,7 +593,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
             :inert="listCollapsed || undefined"
             :aria-hidden="listCollapsed || undefined"
           >
-            <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" :class="listCollapsed ? '' : 'border-r'" @select="onSelectDigestResult" @mark-all-read="digestStore.markAllRead(digestStore.activeConfigId ?? undefined)" />
+            <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" :class="listCollapsed ? '' : 'border-r'" @select="onSelectDigestResult" @mark-all-read="markAllReadInDigestView" />
             <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="markAllReadInCurrentView" />
           </SplitterPanel>
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" :class="{ hidden: contentMaximized }" />
@@ -617,7 +634,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
                 :inert="listCollapsed || undefined"
                 :aria-hidden="listCollapsed || undefined"
               >
-                <DigestResultList v-if="digestMode" compact :showing-all="digestStore.showingAllDigests" class="h-full" :class="listCollapsed ? '' : 'border-b'" @select="onSelectDigestResult" @mark-all-read="digestStore.markAllRead(digestStore.activeConfigId ?? undefined)" />
+                <DigestResultList v-if="digestMode" compact :showing-all="digestStore.showingAllDigests" class="h-full" :class="listCollapsed ? '' : 'border-b'" @select="onSelectDigestResult" @mark-all-read="markAllReadInDigestView" />
                 <ItemList v-else compact :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="markAllReadInCurrentView" />
               </SplitterPanel>
               <SplitterResizeHandle class="h-1 hover:h-1.5 bg-border hover:bg-accent transition-all cursor-row-resize" :class="{ hidden: contentMaximized }" />
@@ -657,7 +674,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
             class="absolute inset-0 flex flex-col transition-transform duration-200"
             :class="!isTablet && showContentPane ? '-translate-x-full pointer-events-none' : 'static w-full h-full'"
           >
-              <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="flex-1 min-h-0" @select="onSelectDigestResult" @mark-all-read="digestStore.markAllRead(digestStore.activeConfigId ?? undefined)" />
+              <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="flex-1 min-h-0" @select="onSelectDigestResult" @mark-all-read="markAllReadInDigestView" />
               <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="markAllReadInCurrentView" />
           </div>
         </div>
@@ -678,5 +695,21 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
         </div>
       </template>
     </div>
+
+    <!-- Mark-all-read confirmation for a single digest config, mirroring the
+         per-feed dialog in FeedSidebar. Both the 'A' shortcut and the pane's own
+         button route here via markAllReadInDigestView, so they cannot disagree. -->
+    <Dialog
+      v-if="digestToMarkRead"
+      :open="true"
+      title="Mark all as read?"
+      :description="`Mark all results in “${digestToMarkRead.name || digestToMarkRead.schedule}” as read? This cannot be undone.`"
+      @update:open="v => { if (!v) closeDigestMarkReadDialog() }"
+    >
+      <div class="flex justify-end gap-2">
+        <Button variant="outline" @click="closeDigestMarkReadDialog">Cancel</Button>
+        <Button data-digest-mark-all-read-confirm @click="confirmDigestMarkRead">Mark read</Button>
+      </div>
+    </Dialog>
   </div>
 </template>

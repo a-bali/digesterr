@@ -177,12 +177,62 @@ describe("'A' shortcut in digest views", () => {
 
   it('marks the active digest config read from the keyboard', async () => {
     const { digestApi } = await import('../services/api')
+    vi.mocked(digestApi.listConfigs).mockResolvedValue([
+      { id: 7, user_id: 1, name: 'Morning Brief', schedule: 'daily', config: '{}',
+        last_error: '', last_error_at: null, created_at: '', updated_at: '' },
+    ])
     const { wrapper } = await mountAt('/digests/7')
     await flushPromises()
 
     pressA()
     await flushPromises()
+    // A single config confirms first, exactly like a single feed — the shortcut
+    // must NOT mark anything read until the dialog is confirmed.
+    expect(vi.mocked(digestApi.markAllRead)).not.toHaveBeenCalled()
+    const dlg = document.querySelector('[role="dialog"]')
+    expect(dlg, 'a confirmation dialog should open').not.toBeNull()
+    expect(dlg!.textContent).toContain('Mark all as read?')
+    wrapper.unmount()
+  })
+
+  it('only marks read once the confirmation is accepted', async () => {
+    const { digestApi } = await import('../services/api')
+    vi.mocked(digestApi.listConfigs).mockResolvedValue([
+      { id: 7, user_id: 1, name: 'Morning Brief', schedule: 'daily', config: '{}',
+        last_error: '', last_error_at: null, created_at: '', updated_at: '' },
+    ])
+    const { wrapper } = await mountAt('/digests/7')
+    await flushPromises()
+
+    pressA()
+    await flushPromises()
+    expect(vi.mocked(digestApi.markAllRead)).not.toHaveBeenCalled()
+
+    const confirm = document.querySelector('[data-digest-mark-all-read-confirm]') as HTMLElement
+    expect(confirm, 'the confirm button should exist').not.toBeNull()
+    confirm.click()
+    await flushPromises()
     expect(vi.mocked(digestApi.markAllRead)).toHaveBeenCalledWith(7)
+    wrapper.unmount()
+  })
+
+  it('cancelling marks nothing read', async () => {
+    const { digestApi } = await import('../services/api')
+    vi.mocked(digestApi.listConfigs).mockResolvedValue([
+      { id: 7, user_id: 1, name: 'Morning Brief', schedule: 'daily', config: '{}',
+        last_error: '', last_error_at: null, created_at: '', updated_at: '' },
+    ])
+    const { wrapper } = await mountAt('/digests/7')
+    await flushPromises()
+
+    pressA()
+    await flushPromises()
+    const cancel = [...document.querySelectorAll('[role="dialog"] button')]
+      .find(b => /Cancel/.test(b.textContent || '')) as HTMLElement
+    expect(cancel).not.toBeUndefined()
+    cancel.click()
+    await flushPromises()
+    expect(vi.mocked(digestApi.markAllRead)).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -193,7 +243,7 @@ describe("'A' shortcut in digest views", () => {
 
     pressA()
     await flushPromises()
-    // No config id: the section scope, same call the pane's button makes.
+    // The section scope does not confirm, matching the Feeds/category multi-views.
     expect(vi.mocked(digestApi.markAllRead)).toHaveBeenCalledWith(undefined)
     wrapper.unmount()
   })

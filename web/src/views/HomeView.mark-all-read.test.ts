@@ -185,6 +185,12 @@ describe('mid-pane "Mark all as read" in digest views', () => {
     const { digestApi } = await import('../services/api')
     const markAll = digestApi.markAllRead as ReturnType<typeof vi.fn>
     markAll.mockResolvedValue({ message: 'ok' })
+    // The confirmation dialog renders the config's name, which the store derives
+    // from the fetched config list — so the list must actually contain it.
+    vi.mocked(digestApi.listConfigs).mockResolvedValue([
+      { id: 7, user_id: 1, name: 'Morning Brief', schedule: 'daily', config: '{}',
+        last_error: '', last_error_at: null, created_at: '', updated_at: '' },
+    ])
 
     const wrapper = await mountAt('/digests/7')
     const { useDigestStore } = await import('../stores/digest')
@@ -197,6 +203,14 @@ describe('mid-pane "Mark all as read" in digest views', () => {
     expect(btn, 'the button should render for an unread digest result').toBeTruthy()
 
     await btn!.trigger('click')
+    await flushPromises()
+
+    // A single config confirms first (matching a single feed), so nothing is
+    // marked yet — only the dialog is open.
+    expect(markAll).not.toHaveBeenCalled()
+    const confirm = document.querySelector('[data-digest-mark-all-read-confirm]') as HTMLElement
+    expect(confirm, 'the confirm button should exist').not.toBeNull()
+    confirm.click()
     await flushPromises()
 
     // Scoped to the config on screen — not a blanket "every digest" sweep.

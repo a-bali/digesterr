@@ -4,7 +4,7 @@ import { useFeedStore, type FeedSort, type FeedStatusFilter } from '../stores/fe
 import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
-import { Circle, CircleDot, CircleCheck, Check, ArrowUp, MessageSquare, LoaderCircle, CheckCircle2, ChevronsUp, ChevronsDown } from 'lucide-vue-next'
+import { Circle, CircleDot, Check, ArrowUp, MessageSquare, LoaderCircle, CheckCircle2, ChevronsUp, ChevronsDown } from 'lucide-vue-next'
 import { stripContent, decodeHTMLEntities } from '../lib/utils'
 import { feedIcon } from '../lib/format'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
@@ -133,6 +133,10 @@ const displayItems = computed(() => {
   if (!props.showingSaved) return feedStore.items
   const filtered = feedStore.filter === 'all'
     ? props.savedItems
+    // Every row here IS saved (the list is built from the saved query), so the
+    // only meaningful filter is the READ state. The old `status === 'saved'`
+    // test can never be true now that saved is a flag, which is what left this
+    // view's own "Saved" filter matching nothing.
     : props.savedItems.filter(i => i.status === feedStore.filter)
   return sortSavedItems(filtered, feedStore.sort)
 })
@@ -290,7 +294,7 @@ async function markBelowRead(item: any) {
       :class="[
         compact ? 'h-7' : 'p-2',
         !compact && (feedStore.isMultiView ? 'min-h-[5.5rem]' : 'h-20'),
-        { 'bg-accent/10': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.status === 'saved', 'opacity-50 transition-opacity': feedStore.loading },
+        { 'bg-accent/10': item.id === feedStore.selectedItem?.id, 'text-foreground': item.status === 'unread', 'text-foreground/70': item.status === 'digested', 'text-muted-foreground': item.status === 'read', 'text-accent': item.is_saved === 1, 'opacity-50 transition-opacity': feedStore.loading },
       ]"
       :data-selected-item="item.id === feedStore.selectedItem?.id ? '' : undefined"
       :data-swipe-action="swipeActionFor(item.id) ?? undefined"
@@ -346,10 +350,12 @@ async function markBelowRead(item: any) {
            The title and excerpt are SIBLINGS so the excerpt can only ever sit
            beside the title, never under it. -->
       <div v-if="compact" class="flex items-center gap-1.5 h-full min-w-0 px-2 text-sm">
+        <!-- Read state only: saved is an orthogonal flag, rendered by the
+             <Check> span below, so it must not claim a slot in this chain. -->
         <CircleDot v-if="item.status === 'unread'" class="size-3 shrink-0 text-accent" />
-        <CircleCheck v-else-if="item.status === 'saved'" class="size-3 shrink-0 text-accent" />
         <span v-else-if="item.status === 'digested'" class="size-3 shrink-0 inline-flex items-center justify-center text-[10px] leading-none text-muted-foreground/60" title="digested">◐</span>
         <Circle v-else class="size-3 shrink-0 text-muted-foreground/40" />
+        <span v-if="item.is_saved === 1" class="text-accent shrink-0" title="saved"><Check class="size-3" /></span>
         <img
           v-if="feedStore.isMultiView && feedTypeIcon(item.feed_type)"
           :src="feedTypeIcon(item.feed_type)"
@@ -414,10 +420,9 @@ async function markBelowRead(item: any) {
       <template v-else>
       <div class="flex items-start gap-1 min-w-0">
         <CircleDot v-if="item.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
-        <CircleCheck v-else-if="item.status === 'saved'" class="size-3 shrink-0 mt-0.5 text-accent" />
         <span v-else-if="item.status === 'digested'" class="size-3 shrink-0 mt-0.5 inline-flex items-center justify-center text-[10px] leading-none text-muted-foreground/60" title="digested">◐</span>
         <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
-        <span v-if="item.status === 'saved'" class="text-accent shrink-0 mt-0.5"><Check class="size-3" /></span>
+        <span v-if="item.is_saved === 1" class="text-accent shrink-0 mt-0.5" title="saved"><Check class="size-3" /></span>
         <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ decodeHTMLEntities(item.title) }}</p>
         <!-- Top right corner: the publish time gives way to the mark-read
              chevrons on hover. Every row gets them, whatever its status, so

@@ -264,7 +264,7 @@ func (s *Server) itemContentObject(r *http.Request, item store.Item) readerConte
 		Content:     readerContentBody{Content: body},
 		Author:      item.Author,
 		Origin:      readerOrigin{StreamID: feedStreamID(item.FeedID), Title: feedName, HTMLURL: s.feedWebURL(r, item.FeedID)},
-		Categories:  itemCategories(item.Status),
+		Categories:  itemCategories(item.Status, item.IsSaved != 0),
 		Annotations: []string{},
 	}
 }
@@ -337,16 +337,20 @@ func (s *Server) digestContentObject(r *http.Request, userID int64, dr store.Dig
 	}
 }
 
-// itemCategories maps an item status to its Google Reader state tags.
-func itemCategories(status string) []string {
-	switch status {
-	case "unread":
-		return []string{readerStreamReadingList}
-	case "saved":
-		return []string{readerStreamRead, readerStreamStarred}
-	default: // read, digested
-		return []string{readerStreamRead}
+// itemCategories maps an item to its Google Reader state tags. Starred comes
+// from the is_saved FLAG, not from the status: the two are independent, so an
+// item can be starred-and-unread. Before the flag existed, starring an item set
+// status='saved' (which also read it) and any later read toggle silently
+// unstarred it — the reader API's starred state was a side effect of read state.
+func itemCategories(status string, isSaved bool) []string {
+	cats := []string{readerStreamRead}
+	if status == "unread" {
+		cats = []string{readerStreamReadingList}
 	}
+	if isSaved {
+		cats = append(cats, readerStreamStarred)
+	}
+	return cats
 }
 
 // digestCategories maps a digest result status to its Google Reader state tags.

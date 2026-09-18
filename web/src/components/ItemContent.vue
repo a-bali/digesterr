@@ -450,10 +450,10 @@ onUnmounted(() => {
         <Button v-else size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, 'digested')">
           <Files /> Mark Digested
         </Button>
-        <Button v-if="feedStore.selectedItem!.status === 'saved'" size="sm" variant="outline" @click="unsaveItem(feedStore.selectedItem!)">
+        <Button v-if="feedStore.selectedItem!.is_saved === 1" size="sm" variant="outline" @click="unsaveItem(feedStore.selectedItem!)">
           <BookmarkCheck /> Unsave
         </Button>
-        <Button v-else size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, 'saved')">
+        <Button v-else size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, undefined, true)">
           <Bookmark /> Save
         </Button>
         <Button v-if="extractionSupported" size="sm" variant="outline" :disabled="extracting" @click="doExtract">

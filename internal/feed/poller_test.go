@@ -190,6 +190,14 @@ func TestExpireOldData(t *testing.T) {
 
 	mkItem := func(title, status string) store.Item {
 		t.Helper()
+		// Saved is a FLAG, not a status: the literal "saved" here means "star
+		// this item", so it is created read and then flagged — which is exactly
+		// what the old status='saved' meant to this test (an old item that must
+		// survive expiry because it is starred).
+		saved := status == "saved"
+		if saved {
+			status = "read"
+		}
 		item, err := queries.CreateItem(t.Context(), store.CreateItemParams{
 			FeedID:        feedObj.ID,
 			Hash:          "h-" + title,
@@ -205,6 +213,14 @@ func TestExpireOldData(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("create item %s: %v", title, err)
+		}
+		if saved {
+			item, err = queries.SetItemSaved(t.Context(), store.SetItemSavedParams{
+				ID: item.ID, Saved: 1, MarkRead: 1,
+			})
+			if err != nil {
+				t.Fatalf("save item %s: %v", title, err)
+			}
 		}
 		return item
 	}
