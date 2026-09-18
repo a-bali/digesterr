@@ -53,7 +53,20 @@ const emit = defineEmits<{
         <DialogDescription v-if="props.description" class="shrink-0 px-6 pb-4 text-sm text-muted-foreground">
           {{ props.description }}
         </DialogDescription>
-        <div class="flex-1 min-h-0 overflow-y-auto px-6 pb-6">
+        <!-- `pt-0.5 -mt-0.5`: a scroll container clips at its padding box, so a
+             control sitting flush against the top of this body loses the top band
+             of its focus ring (the ring is a 2px box-shadow spread drawn OUTSIDE
+             the border box). Measured in the "Mark all as read?" dialog: with a
+             focused button the ring drew 2px on the left, right and bottom edges
+             and NOTHING on top — the nearest ring pixel above the button did not
+             exist, while y=518/519 held the bottom band. The zero-sum padding
+             and negative margin move the scrollport's edge up by exactly the
+             2px the ring needs while leaving every child pixel where it was
+             (the button's rect was byte-identical, y=482 before and after), so
+             nothing else in any of the 9 dialogs shifts. `overflow-clip-margin`
+             does NOT fix this — it applies to `overflow: clip`, not to a scroll
+             container, and was measured to change nothing. -->
+        <div class="flex-1 min-h-0 overflow-y-auto pt-0.5 -mt-0.5 px-6 pb-6">
           <slot />
         </div>
       </DialogContent>
