@@ -24,11 +24,27 @@ const noUnread = computed(() => feedStore.unreadCounts[props.feed.id] === 0)
 </script>
 
 <template>
+  <!-- Click handling lives on the ROW, not on an inner button.
+       The row div is the hover surface (`hover:bg-accent/10`), so putting the
+       select handler on it makes the click area identical to the hover area by
+       construction. It previously sat on an inner <button> that was only as tall
+       as its own content (20px) inside a 32px row, so the 6px band at the top and
+       bottom lit up on hover and swallowed the click — the reported "hover
+       works, click does nothing unless I nudge the mouse upward". Padding or
+       `self-stretch` on that button could not fix it, because the row's 32px
+       came from padding around the button's content box.
+       This is also the pattern the other two lists already use: see the
+       `role="button"` row in ItemList.vue and DigestResultList.vue. -->
   <div
-    class="group flex items-center w-full rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors"
+    role="button"
+    tabindex="0"
+    class="group flex items-center w-full cursor-pointer rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors"
     :class="{ 'bg-accent/10 font-medium text-accent': feed.id === feedStore.activeFeedId }"
+    @click="emit('select', feed.id)"
+    @keydown.enter.prevent="emit('select', feed.id)"
+    @keydown.space.prevent="emit('select', feed.id)"
   >
-    <button class="flex items-center gap-2 flex-1 min-w-0" @click="emit('select', feed.id)">
+    <div class="flex items-center gap-2 flex-1 min-w-0">
       <img v-if="feedIcon(feed)" :src="feedIcon(feed)" class="size-3.5 shrink-0 rounded" :class="{ 'opacity-60': noUnread }" @error="($event.target as HTMLImageElement).style.display = 'none'" />
       <!-- Email feeds have an address rather than a URL, so feedIcon() finds no
            favicon for them; an envelope is what identifies the type. -->
@@ -50,7 +66,9 @@ const noUnread = computed(() => feedStore.unreadCounts[props.feed.id] === 0)
         <p v-if="feed.last_error_at">at {{ absoluteTime(feed.last_error_at) }}</p>
       </Tooltip>
       <span v-if="(feedStore.unreadCounts[feed.id] ?? 0) > 0" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-1.5">{{ feedStore.unreadCounts[feed.id] }}</span>
-    </button>
+    </div>
+    <!-- The action buttons sit above the row's click handler and stop
+         propagation, so their clicks never select the feed. -->
     <button class="shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20" title="Settings" @click.stop="emit('edit', feed)">
       <Settings class="size-3" />
     </button>
