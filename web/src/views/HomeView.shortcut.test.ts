@@ -59,6 +59,10 @@ function pressU() {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'u', bubbles: true }))
 }
 
+function pressA() {
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'A', bubbles: true }))
+}
+
 async function mountAt(path: string) {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -156,6 +160,55 @@ describe("'u' shortcut in digest view", () => {
     await flushPromises()
     // The FilterBar renders the active status label.
     expect(wrapper.text()).toContain('Unread')
+    wrapper.unmount()
+  })
+})
+
+// Shift+A must mark read for whichever list is ON SCREEN, exactly like the
+// pane's own button. The bug: HomeView wired the shortcut straight to
+// markAllReadInCurrentView, which only inspects FEED state — and a digest view
+// has cleared it (activeFeedId/activeCategory are null), so every branch fell
+// through and the key was silently a no-op in both digest views.
+describe("'A' shortcut in digest views", () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.clearAllMocks()
+  })
+
+  it('marks the active digest config read from the keyboard', async () => {
+    const { digestApi } = await import('../services/api')
+    const { wrapper } = await mountAt('/digests/7')
+    await flushPromises()
+
+    pressA()
+    await flushPromises()
+    expect(vi.mocked(digestApi.markAllRead)).toHaveBeenCalledWith(7)
+    wrapper.unmount()
+  })
+
+  it('marks every digest read from the keyboard in the All Digests section', async () => {
+    const { digestApi } = await import('../services/api')
+    const { wrapper } = await mountAt('/digests')
+    await flushPromises()
+
+    pressA()
+    await flushPromises()
+    // No config id: the section scope, same call the pane's button makes.
+    expect(vi.mocked(digestApi.markAllRead)).toHaveBeenCalledWith(undefined)
+    wrapper.unmount()
+  })
+
+  it('does nothing when neither a feed nor a digest is on screen', async () => {
+    // A no-op is the correct outcome here — the point is only that it must not
+    // reach for a feed that is not selected.
+    const { digestApi, feedApi } = await import('../services/api')
+    const { wrapper } = await mountAt('/')
+    await flushPromises()
+
+    pressA()
+    await flushPromises()
+    expect(vi.mocked(digestApi.markAllRead)).not.toHaveBeenCalled()
+    expect(vi.mocked(feedApi.markReadAll)).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })

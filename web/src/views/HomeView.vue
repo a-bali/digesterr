@@ -139,7 +139,14 @@ useKeyboardShortcuts({
     if (item.status === 'saved') unsaveItem(item)
     else feedStore.updateItemStatus(item, 'saved')
   },
-  markAllRead: markAllReadInCurrentView,
+  markAllRead: () => {
+    // Same dispatch as toggleShowRead: 'A' must act on whichever list is on
+    // screen. Routing it to markAllReadInCurrentView unconditionally is what
+    // made it a no-op in both digest views — that function only ever inspects
+    // feed state, which a digest view has cleared.
+    if (digestMode.value) return markAllReadInDigestView()
+    markAllReadInCurrentView()
+  },
   markAllReadDialogOpen,
   toggleShowRead: () => {
     // 'u' toggles unread-only for whichever list is on screen. In a digest view
@@ -399,13 +406,25 @@ function markAllReadDialogOpen() {
 // shortcut and the pane's own button both come through here so they cannot
 // disagree on scope. A category marks that category, the "Feeds" section marks
 // every feed; a single feed still asks for confirmation first.
-
+//
+// Digest views are NOT reached here: HomeView routes the shortcut to the digest
+// store instead (see the useKeyboardShortcuts wiring). Feeding digest mode
+// through this function is what silently did nothing, because every branch below
+// tests feed state that the digest view has already cleared.
 function markAllReadInCurrentView() {
   if (feedStore.isMultiView) {
     feedStore.markAllRead(feedStore.activeCategory ?? undefined)
   } else if (feedStore.activeFeedId) {
     requestMarkFeedRead(feedStore.activeFeedId)
   }
+}
+
+// Mark-all-read for the digest list. `A` and DigestResultList's own button must
+// agree on scope, so both end up here: the single config on screen, or every
+// digest in the "All Digests" section.
+function markAllReadInDigestView() {
+  if (digestStore.activeConfigId != null) return digestStore.markAllRead(digestStore.activeConfigId)
+  if (digestStore.showingAllDigests) return digestStore.markAllRead()
 }
 
 // ---- Page title ----
