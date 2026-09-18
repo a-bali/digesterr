@@ -14,6 +14,12 @@ import (
 type Scheduler struct {
 	queries   *store.Queries
 	generator *Generator
+	// resolveLLM picks the LLM client for a digest config's owner: the
+	// owner's per-user model override when set, otherwise the shared
+	// default. Nil means "use the generator's default client" — callers
+	// that predate per-user models pass nothing. Every scheduled run must
+	// go through it, or digests silently generate on the wrong model.
+	resolveLLM func(ctx context.Context, userID int64) Chatter
 	// loc evaluates cron schedules. Nil means server-local time.
 	loc *time.Location
 }
@@ -27,6 +33,13 @@ func NewScheduler(queries *store.Queries, generator *Generator, loc *time.Locati
 		generator: generator,
 		loc:       loc,
 	}
+}
+
+// SetLLMResolver installs the per-user LLM client resolver. The HTTP server
+// sets this to its resolveLLMClient wrapper so scheduled runs honor the
+// same per-user model override as manual generations.
+func (s *Scheduler) SetLLMResolver(resolve func(ctx context.Context, userID int64) Chatter) {
+	s.resolveLLM = resolve
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
@@ -73,11 +86,26 @@ func (s *Scheduler) tick(ctx context.Context) {
 
 		// Run each generation in its own goroutine so one slow LLM call
 		// cannot delay (and skip the minute window of) other configs.
+		//
+		// The owner's LLM client is resolved per config: Generate's variadic
+		// override is opt-in, so omitting it would silently run every
+		// scheduled digest on the generator's default model instead of the
+		// owner's per-user override.
 		wg.Add(1)
 		go func(cfg store.DigestConfig, cfgLogger *slog.Logger) {
 			defer wg.Done()
 			cfgLogger.Info("scheduled digest generation")
-			if _, err := s.generator.Generate(ctx, cfg); err != nil {
+			var llm Chatter
+			if s.resolveLLM != nil {
+				llm = s.resolveLLM(ctx, cfg.UserID)
+			}
+			var err error
+			if llm != nil {
+				_, err = s.generator.Generate(ctx, cfg, llm)
+			} else {
+				_, err = s.generator.Generate(ctx, cfg)
+			}
+			if err != nil {
 				cfgLogger.Error("scheduled digest generation failed", "error", err)
 				s.queries.UpdateDigestConfigError(ctx, store.UpdateDigestConfigErrorParams{
 					ID:    cfg.ID,

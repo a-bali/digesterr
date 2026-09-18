@@ -238,6 +238,12 @@ func (s *Server) StartScheduler(ctx context.Context) {
 		}
 	}
 	scheduler := digest.NewScheduler(s.queries, s.generator, loc)
+	// Scheduled runs must honor the same per-user model override as manual
+	// generations: resolveLLMClient returns the owner's override when set,
+	// otherwise the shared default — and *LLMClient satisfies digest.Chatter.
+	scheduler.SetLLMResolver(func(ctx context.Context, userID int64) digest.Chatter {
+		return s.resolveLLMClient(ctx, userID)
+	})
 	go scheduler.Start(ctx)
 }
 

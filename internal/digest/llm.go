@@ -24,11 +24,17 @@ type LLMClient struct {
 	recordFn LLMRecordFunc
 }
 
-// llmChatter is the subset of the LLM client used by digest generation,
+// Chatter is the subset of the LLM client used by digest generation,
 // declared as an interface so generation can be tested with a fake.
-type llmChatter interface {
+//
+// llmChatter is kept as an alias so existing references keep compiling;
+// new code should name Chatter (exported so the scheduler's per-user
+// resolver can be typed with it from outside this package).
+type Chatter interface {
 	Chat(ctx context.Context, systemPrompt, userPrompt string) (string, error)
 }
+
+type llmChatter = Chatter
 
 // LLMTimeoutDefault bounds a single LLM request when the caller passes no
 // timeout. It matches config.LLMTimeoutDefault.
