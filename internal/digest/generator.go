@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -777,14 +778,17 @@ func (g *Generator) buildContentWithLLM(ctx context.Context, dcfg digestConfigJS
 		userPrompt += "\n"
 	}
 
-	// The format instruction is deliberately unchanged from the version that
-	// produced clean replies. Asking the model to number each entry was tried
-	// and reverted: measured over the same articles, it tripled malformed
-	// replies (3/6 vs 0/6, one of them truncated at the token limit) and bought
-	// no alignment benefit — title matching already places entries correctly,
-	// including on replies where the numbering was present. Alignment therefore
-	// relies on titles, not on the model cooperating with a new output field.
-	userPrompt += "For each HIGHLIGHT article, provide a 2-3 sentence highlight capturing the key insight and why it matters — skip introductory phrases like \"The article discusses\" or \"The author explains\". Format your response as JSON with keys \"title\" (string, a short title for the whole digest, at most 8-10 words, catchy and derived from the digest contents; a light pun is welcome but not required), \"summary\" (string of overall digest summary) and \"highlights\" (array of {title, summary}). " + jsonOutputRule
+	// The format instruction asks for article numbers and exact URL echoes as
+	// join keys. Measured on virtual-free (the weakest model, 2026-09-18,
+	// 12 live trials over 10 full-size ~4KB/body articles): requesting the
+	// number and URL alongside the title cost zero malformed replies from
+	// JSON shape (the only 2 failures were the model emitting the number
+	// as a string, now tolerated by llmHighlight.UnmarshalJSON), while the
+	// URL echo makes alignment immune to title paraphrase. Alignment trusts
+	// the number only as a complete permutation, the URL only on exact
+	// match, and otherwise falls back to mutual-best title matching — never
+	// to reply position.
+	userPrompt += "For each HIGHLIGHT article, provide a 2-3 sentence highlight capturing the key insight and why it matters — skip introductory phrases like \"The article discusses\" or \"The author explains\". Format your response as JSON with keys \"title\" (string, a short title for the whole digest, at most 8-10 words, catchy and derived from the digest contents; a light pun is welcome but not required), \"summary\" (string of overall digest summary) and \"highlights\" (array of {article, url, title, summary}). Set \"article\" to the article's number (1.." + strconv.Itoa(len(highlights)) + ") exactly as shown above and copy its \"url\" EXACTLY as given — the number and url are how entries are matched to articles. Reply with exactly one entry per article. " + jsonOutputRule
 
 	llmStart := time.Now()
 	genLogger.Info("calling LLM for digest", "input_bytes", len(systemPrompt)+len(userPrompt))

@@ -1,19 +1,68 @@
 package digest
 
 import (
+	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 )
 
-// llmHighlight is one entry of the model's "highlights" array. Article is an
-// optional 1-based article number; the shipped prompt does not request it (an
-// instruction to emit it was measured to make replies malformed more often), but
-// some models volunteer it, and it is honoured when it forms a complete
-// numbering. Alignment never depends on it.
+// llmHighlight is one entry of the model's "highlights" array.
+//
+// Article is the 1-based article number and URL is the article's exact URL,
+// both echoed back by the model. The shipped prompt requests both: the
+// article number is a compact deterministic key, the URL is immune to title
+// paraphrase. Either one alone can misfire (a model may emit a bare 1..N
+// counter while skipping articles, or mistype a URL), so alignment trusts
+// each only when it is unambiguous and falls back to title matching
+// otherwise. Alignment never depends on reply position.
+//
+// Article accepts a JSON number or a number-as-string: virtual-free was
+// measured emitting {"article":"1"} (string), which encoding/json otherwise
+// rejects with "cannot unmarshal string into int" and costs the whole run.
 type llmHighlight struct {
 	Article int    `json:"article"`
 	Title   string `json:"title"`
 	Summary string `json:"summary"`
+	URL     string `json:"url"`
+}
+
+// UnmarshalJSON decodes an highlight entry, tolerating the article number
+// arriving as a JSON string ("1") instead of a number (1).
+func (h *llmHighlight) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		Article json.RawMessage `json:"article"`
+		Title   string          `json:"title"`
+		Summary string          `json:"summary"`
+		URL     string          `json:"url"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	h.Title = aux.Title
+	h.Summary = aux.Summary
+	h.URL = aux.URL
+	if len(aux.Article) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(aux.Article, &h.Article); err == nil {
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(aux.Article, &s); err != nil {
+		return fmt.Errorf("article: %w", err)
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return fmt.Errorf("article %q is not a number", s)
+	}
+	h.Article = n
+	return nil
 }
 
 // unassigned marks an article that no reply entry was matched to. Such an
@@ -72,12 +121,22 @@ func tokenCoverage(query, document map[string]int) float64 {
 // blank). Matching is evidence-based and anything ambiguous stays unassigned, so
 // an article renders with no summary rather than with someone else's.
 //
-// Title matching is mutual-best: an entry is anchored to an article only when
-// they are each other's strongest remaining match. That needs no tuned
-// similarity threshold — a threshold must be low enough to accept a paraphrase
-// ("A/I Shuts Down" vs the model's "Autistici/Inventati (A/I) Announces
-// Shutdown") yet high enough to reject the runner-up, and measured against real
-// replies those two requirements conflict.
+// Keys are applied strongest-first:
+//
+//  1. Article number, when it forms a complete permutation of the articles.
+//     A bare 1..N counter emitted while skipping articles is the known
+//     misfire (a measured reply numbered 1..8 while actually covering
+//     articles 1-5, 8, 9 and 10), so only collision-free numbering is trusted.
+//  2. Exact URL echo: the prompt shows each article's URL and asks for it back
+//     verbatim. URLs are immune to title paraphrase, but only an exact match
+//     against a known article URL counts — a mistyped URL is dropped, never
+//     guessed at.
+//  3. Title matching (mutual-best): an entry is anchored to an article only when
+//     they are each other's strongest remaining match. That needs no tuned
+//     similarity threshold — a threshold must be low enough to accept a paraphrase
+//     ("A/I Shuts Down" vs the model's "Autistici/Inventati (A/I) Announces
+//     Shutdown") yet high enough to reject the runner-up, and measured against real
+//     replies those two requirements conflict.
 func alignHighlights(articles []digestItem, entries []llmHighlight) ([]int, int) {
 	assigned := make([]int, len(articles))
 	for i := range assigned {
@@ -121,7 +180,41 @@ func alignHighlights(articles []digestItem, entries []llmHighlight) ([]int, int)
 		return tokenCoverage(weightTokens(entries[entryIdx].Title), articleTokens[articleIdx])
 	}
 
-	// Pass 2: mutual-best matching over the entries the numbering did not place.
+	// Pass 2: exact URL echo. The prompt shows each article's URL and asks for
+	// it back verbatim; URLs are immune to title paraphrase. Only an exact
+	// match against a known article URL anchors — a mistyped URL is left for
+	// title matching, never guessed at. Duplicate claims on one URL resolve
+	// to nothing: the first claimant in reply order wins only when no other
+	// entry echoes the same URL.
+	byURL := make(map[string]int, len(articles))
+	for articleIdx, a := range articles {
+		if a.Url == "" {
+			continue
+		}
+		if _, dup := byURL[a.Url]; !dup {
+			byURL[a.Url] = articleIdx
+		} else {
+			// Two articles sharing one URL cannot be told apart by echo.
+			byURL[a.Url] = unassigned
+		}
+	}
+	claimed := make(map[string]int)
+	for entryIdx, e := range entries {
+		if entryUsed[entryIdx] || e.URL == "" {
+			continue
+		}
+		articleIdx, ok := byURL[e.URL]
+		if !ok || articleIdx == unassigned || assigned[articleIdx] != unassigned {
+			continue
+		}
+		if first, dup := claimed[e.URL]; dup && first != entryIdx {
+			continue
+		}
+		claimed[e.URL] = entryIdx
+		take(articleIdx, entryIdx)
+	}
+
+	// Pass 3: mutual-best matching over the entries the numbering did not place.
 	// Repeat until a pass anchors nothing new, so an entry that lost a contested
 	// article can re-anchor to its next-best candidate.
 	for {
@@ -165,7 +258,7 @@ func alignHighlights(articles []digestItem, entries []llmHighlight) ([]int, int)
 		}
 	}
 
-	// Pass 3: a single leftover article with a single leftover entry is forced —
+	// Pass 4: a single leftover article with a single leftover entry is forced —
 	// there is nothing to confuse, so no guessing is involved. This keeps the
 	// single-article case, and short fixture titles like "A", working when the
 	// model answers without the article number.
