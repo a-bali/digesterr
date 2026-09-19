@@ -832,7 +832,13 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 		}
 	}
 
-	if feed.ExtractContent != 0 {
+	if feed.Readability != 0 {
+		// Readability is the alternative to extraction, not a companion: both write
+		// items.extract_content and both run the same library. A readability feed
+		// already receives the article in its body, so fetching item.url would
+		// discard the good stored body and fetch a worse copy.
+		p.applyReadabilityToItems(ctx, feed, logger)
+	} else if feed.ExtractContent != 0 {
 		p.extractFeedContent(ctx, feed, logger)
 	}
 
@@ -1047,6 +1053,89 @@ func (p *Poller) setItemExtractionPending(ctx context.Context, itemID int64, log
 	})
 	if err != nil {
 		logger.Debug("failed to set extraction pending", "item_id", itemID, "error", err)
+	}
+}
+
+// ReadabilityApplyFailedPrefix marks the extract_content text written when
+// readability REJECTED its own output. Stored like an extraction error log — the
+// consumers all gate on extract_status == "done", so the original body keeps being
+// served everywhere — but worded for the guard's different failure mode.
+const ReadabilityApplyFailedPrefix = "readability declined its output"
+
+// applyReadabilityToItems runs readability over bodies the feed already stored and
+// writes the clean output to items.extract_content.
+//
+// This is the "content we already have" path: nothing is fetched, because the input
+// is items.content. The sibling of extractFeedContent rather than a branch inside it,
+// because the preconditions differ — extraction needs a URL, this needs a body, and a
+// feed that receives full articles in its body wants this one (see the call site).
+//
+// Outcomes, mirroring how extraction reports itself so every existing consumer behaves:
+//
+//	accept      extract_content = cleaned body    extract_status = "done"
+//	no benefit  extract_content = ""              extract_status = "skipped"   (silent)
+//	lossy       extract_content = the reason      extract_status = "failed"
+//	error       extract_content = the error       extract_status = "failed"
+//
+// A rejected or failed result is never retried: the transform is deterministic over
+// a fixed body, so a second attempt would reach the same conclusion forever.
+func (p *Poller) applyReadabilityToItems(ctx context.Context, feed store.Feed, logger *slog.Logger) {
+	items, err := p.queries.ListItemsNeedingReadability(ctx, feed.ID)
+	if err != nil {
+		logger.Debug("failed to list items for readability", "error", err)
+		return
+	}
+	if len(items) == 0 {
+		return
+	}
+	logger.Info("applying readability", "count", len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.Content) == "" {
+			continue
+		}
+		res, verdict, rerr := ApplyReadabilityGuarded(item.Content, item.Url)
+		switch {
+		case rerr != nil:
+			logger.Debug("readability failed", "item_id", item.ID, "error", rerr)
+			p.setReadabilityOutcome(ctx, item.ID, rerr.Error(), "failed", logger)
+		case verdict == ReadabilityLossy:
+			// Content was lost, not just chrome: keep the original. Say so in the
+			// same column an extraction failure uses its error log, so the UI can
+			// show the reason without a new field.
+			reason := fmt.Sprintf("%s: dropped %d%% of the text (kept %d of %d words)",
+				ReadabilityApplyFailedPrefix,
+				100-100*wordCount(res.Content)/max(wordCount(item.Content), 1),
+				wordCount(res.Content), wordCount(item.Content))
+			logger.Info("readability declined its output", "item_id", item.ID, "reason", reason)
+			p.setReadabilityOutcome(ctx, item.ID, reason, "failed", logger)
+		case verdict == ReadabilityNoBenefit:
+			// Silent: the item should look untouched, not broken.
+			p.setReadabilityOutcome(ctx, item.ID, "", "skipped", logger)
+		default:
+			p.setReadabilityOutcome(ctx, item.ID, res.Content, "done", logger)
+		}
+	}
+}
+
+// setReadabilityOutcome persists one readability decision.
+//
+// extract_retries is pinned to 1 on failure so it can never reach the extraction
+// retry budget of 3: a readability rejection is deterministic, not a transient
+// network error, and retrying it would burn the same body three times for the same
+// answer. The status also keeps the item out of ListItemsNeedingReadability, which
+// only takes never-processed items.
+func (p *Poller) setReadabilityOutcome(ctx context.Context, itemID int64, content, status string, logger *slog.Logger) {
+	retries := int64(0)
+	if status == "failed" {
+		retries = 1
+	}
+	if _, err := p.queries.UpdateItemExtraction(ctx, store.UpdateItemExtractionParams{
+		ID:             itemID,
+		ExtractContent: content,
+		ExtractStatus:  status,
+		ExtractRetries: retries,
+	}); err != nil {
+		logger.Debug("failed to store readability outcome", "item_id", itemID, "error", err)
 	}
 }
 

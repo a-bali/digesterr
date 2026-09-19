@@ -1369,6 +1369,64 @@ func (q *Queries) ListItemsNeedingExtraction(ctx context.Context, feedID int64) 
 	return items, nil
 }
 
+const listItemsNeedingReadability = `-- name: ListItemsNeedingReadability :many
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items WHERE feed_id = ? AND content != '' AND extract_status = '' ORDER BY published_at DESC
+`
+
+// Items on a readability feed whose body has not been processed yet.
+//
+// Unlike ListItemsNeedingExtraction this does NOT require url != ”: the input is
+// the stored body, not a fetchable page, and newsletter items often have no URL.
+//
+// Only a never-processed item (”) qualifies. The transform is deterministic over a
+// fixed body, so re-running it cannot change the outcome: 'done' and 'skipped' would
+// repeat identically, and 'failed' (a mangled result) and 'cleared' (a user's
+// deletion) must not be undone by the next poll.
+func (q *Queries) ListItemsNeedingReadability(ctx context.Context, feedID int64) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsNeedingReadability, feedID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+			&i.IsSaved,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnreadItemsForEnrichment = `-- name: ListUnreadItemsForEnrichment :many
 SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY last_enriched_at IS NULL DESC, last_enriched_at ASC, published_at DESC
 `

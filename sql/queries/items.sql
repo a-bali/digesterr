@@ -189,6 +189,18 @@ SELECT * FROM items WHERE feed_id = ? AND url != '' AND extract_status IN ('pend
 -- name: UpdateItemExtraction :one
 UPDATE items SET extract_content = ?, extract_status = ?, extract_retries = ?, extract_date = DATETIME('now'), updated_at = DATETIME('now') WHERE id = ? RETURNING *;
 
+-- name: ListItemsNeedingReadability :many
+-- Items on a readability feed whose body has not been processed yet.
+--
+-- Unlike ListItemsNeedingExtraction this does NOT require url != '': the input is
+-- the stored body, not a fetchable page, and newsletter items often have no URL.
+--
+-- Only a never-processed item ('') qualifies. The transform is deterministic over a
+-- fixed body, so re-running it cannot change the outcome: 'done' and 'skipped' would
+-- repeat identically, and 'failed' (a mangled result) and 'cleared' (a user's
+-- deletion) must not be undone by the next poll.
+SELECT * FROM items WHERE feed_id = ? AND content != '' AND extract_status = '' ORDER BY published_at DESC;
+
 -- name: ClearItemExtraction :one
 -- Drop an extracted body so the item falls back to its original content.
 -- extract_status = 'cleared' is a deliberate marker, not an empty string:
