@@ -327,11 +327,6 @@ const dialogId = Math.random().toString(36).slice(2)
         />
         Clean the article with Readability
       </label>
-      <p class="text-xs text-muted-foreground -mt-2">
-        These two are alternatives: both clean the article. Extraction fetches the page behind the
-        link; Readability cleans the text the feed already sent, so it needs no fetch — use it when
-        the feed delivers the full article.
-      </p>
       <p v-if="form.type === 'twitter'" class="text-xs text-muted-foreground -mt-2">
         Not available for Twitter/X feeds — tweets already carry their full content.
       </p>
