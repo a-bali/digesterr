@@ -82,7 +82,9 @@ func (e *HNEnricher) Enrich(ctx context.Context, item *store.Item) error {
 		return fmt.Errorf("HN item %d not found", hnID)
 	}
 
-	item.Points = int64(hnItem.Score)
+	// Never regress a known score to 0: a 0 from upstream means "unknown
+	// here", not "the story is worthless".
+	applyScore(item, int64(hnItem.Score))
 	item.CommentsCount = int64(hnItem.Descendants)
 	applyHNPostText(item, hnItem.Text)
 	return nil
@@ -155,7 +157,9 @@ func (e *HNEnricher) BulkEnrich(ctx context.Context, items []*store.Item) error 
 
 	for _, hit := range algoliaResp.Hits {
 		if item, ok := idToItem[hit.ObjectID]; ok {
-			item.Points = int64(hit.Points)
+			// Never regress a known score to 0: a 0 from upstream means
+			// "unknown here", not "the story is worthless".
+			applyScore(item, int64(hit.Points))
 			item.CommentsCount = int64(hit.NumComments)
 			applyHNPostText(item, hit.StoryText)
 		}

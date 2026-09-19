@@ -150,7 +150,9 @@ func (e *LobstersEnricher) enrichOne(ctx context.Context, item *store.Item, shor
 		return fmt.Errorf("Lobste.rs story %s not found", shortID)
 	}
 
-	item.Points = int64(lsItem.Score)
+	// Never regress a known score to 0: a 0 from upstream means "unknown
+	// here", not "the story is worthless".
+	applyScore(item, int64(lsItem.Score))
 	item.CommentsCount = int64(lsItem.CommentCount)
 	return nil
 }

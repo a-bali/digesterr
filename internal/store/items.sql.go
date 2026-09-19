@@ -303,10 +303,49 @@ func (q *Queries) GetItemWithFeedOwner(ctx context.Context, arg GetItemWithFeedO
 	return i, err
 }
 
+const getReaderUnreadCounts = `-- name: GetReaderUnreadCounts :many
+SELECT f.id AS feed_id, CAST(COALESCE(COUNT(i.id), 0) AS INTEGER) AS unread_count
+FROM feeds f
+LEFT JOIN items i ON i.feed_id = f.id AND i.status = 'unread'
+WHERE f.user_id = ?
+GROUP BY f.id
+`
+
+type GetReaderUnreadCountsRow struct {
+	FeedID      int64 `json:"feed_id"`
+	UnreadCount int64 `json:"unread_count"`
+}
+
+// Unfiltered twin of GetUnreadCounts for the Google Reader API, which has no
+// min_score parameter: third-party clients see every unread item.
+func (q *Queries) GetReaderUnreadCounts(ctx context.Context, userID int64) ([]GetReaderUnreadCountsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getReaderUnreadCounts, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetReaderUnreadCountsRow{}
+	for rows.Next() {
+		var i GetReaderUnreadCountsRow
+		if err := rows.Scan(&i.FeedID, &i.UnreadCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUnreadCounts = `-- name: GetUnreadCounts :many
 SELECT f.id AS feed_id, CAST(COALESCE(COUNT(i.id), 0) AS INTEGER) AS unread_count
 FROM feeds f
 LEFT JOIN items i ON i.feed_id = f.id AND i.status = 'unread'
+  AND (f.min_score = 0 OR i.points >= f.min_score)
 WHERE f.user_id = ?
 GROUP BY f.id
 `
@@ -317,6 +356,8 @@ type GetUnreadCountsRow struct {
 }
 
 // Single GROUP BY join instead of a correlated subquery per feed.
+// Items below their feed's min_score are invisible to the list views, so
+// they are not counted either: the badge must agree with the pane.
 func (q *Queries) GetUnreadCounts(ctx context.Context, userID int64) ([]GetUnreadCountsRow, error) {
 	rows, err := q.db.QueryContext(ctx, getUnreadCounts, userID)
 	if err != nil {
@@ -401,22 +442,26 @@ const listItemsByCategoryPaginated = `-- name: ListItemsByCategoryPaginated :man
 SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date, i.is_saved FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE f.category = ?1 AND f.user_id = ?2
+  AND (CAST(?3 AS INTEGER) = 0 OR f.min_score = 0 OR i.points >= f.min_score)
 ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at DESC
-LIMIT ?4 OFFSET ?3
+LIMIT ?5 OFFSET ?4
 `
 
 type ListItemsByCategoryPaginatedParams struct {
-	Category string `json:"category"`
-	UserID   int64  `json:"user_id"`
-	Off      int64  `json:"off"`
-	Lim      int64  `json:"lim"`
+	Category       string `json:"category"`
+	UserID         int64  `json:"user_id"`
+	MinScoreFilter int64  `json:"min_score_filter"`
+	Off            int64  `json:"off"`
+	Lim            int64  `json:"lim"`
 }
 
-// Reader-stream page for a label (feed category).
+// Reader-stream page for a label (feed category). @min_score_filter = 1 applies
+// each feed's own min_score threshold.
 func (q *Queries) ListItemsByCategoryPaginated(ctx context.Context, arg ListItemsByCategoryPaginatedParams) ([]Item, error) {
 	rows, err := q.db.QueryContext(ctx, listItemsByCategoryPaginated,
 		arg.Category,
 		arg.UserID,
+		arg.MinScoreFilter,
 		arg.Off,
 		arg.Lim,
 	)
@@ -1021,21 +1066,32 @@ func (q *Queries) ListItemsByFeedSortedScoreDesc(ctx context.Context, arg ListIt
 }
 
 const listItemsByFeedStreamPage = `-- name: ListItemsByFeedStreamPage :many
-SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items WHERE feed_id = ?
-ORDER BY COALESCE(published_at, fetched_at, created_at) DESC, created_at DESC
-LIMIT ? OFFSET ?
+SELECT items.id, items.feed_id, items.hash, items.title, items.url, items.content, items.author, items.comment_url, items.points, items.comments_count, items.published_at, items.status, items.fetched_at, items.created_at, items.updated_at, items.last_enriched_at, items.extract_content, items.extract_status, items.extract_retries, items.extract_date, items.is_saved FROM items
+JOIN feeds f ON f.id = items.feed_id
+WHERE items.feed_id = ?1
+  AND (CAST(?2 AS INTEGER) = 0 OR f.min_score = 0 OR items.points >= f.min_score)
+ORDER BY COALESCE(items.published_at, items.fetched_at, items.created_at) DESC, items.created_at DESC
+LIMIT ?4 OFFSET ?3
 `
 
 type ListItemsByFeedStreamPageParams struct {
-	FeedID int64 `json:"feed_id"`
-	Lim    int64 `json:"lim"`
-	Off    int64 `json:"off"`
+	FeedID         int64 `json:"feed_id"`
+	MinScoreFilter int64 `json:"min_score_filter"`
+	Off            int64 `json:"off"`
+	Lim            int64 `json:"lim"`
 }
 
 // Reader-stream page: newest-first or oldest-first (when oldest_first is 1),
 // offset-based. COALESCE mirrors itemTimestamp's published_at fallback.
+// @min_score_filter = 1 applies the feed's own min_score threshold, matching
+// the web UI's default view for that feed.
 func (q *Queries) ListItemsByFeedStreamPage(ctx context.Context, arg ListItemsByFeedStreamPageParams) ([]Item, error) {
-	rows, err := q.db.QueryContext(ctx, listItemsByFeedStreamPage, arg.FeedID, arg.Lim, arg.Off)
+	rows, err := q.db.QueryContext(ctx, listItemsByFeedStreamPage,
+		arg.FeedID,
+		arg.MinScoreFilter,
+		arg.Off,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1145,7 +1201,8 @@ type ListItemsByUserReadPaginatedParams struct {
 	Lim    int64 `json:"lim"`
 }
 
-// Reader-stream page for the 'read' stream (read + digested).
+// Reader-stream page for the 'read' stream (read + digested). Read items are
+// never threshold-filtered: the threshold governs what is still unread.
 func (q *Queries) ListItemsByUserReadPaginated(ctx context.Context, arg ListItemsByUserReadPaginatedParams) ([]Item, error) {
 	rows, err := q.db.QueryContext(ctx, listItemsByUserReadPaginated, arg.UserID, arg.Off, arg.Lim)
 	if err != nil {
@@ -1254,26 +1311,34 @@ JOIN feeds f ON f.id = i.feed_id
 WHERE f.user_id = ?1
   AND (i.status = ?2 OR ?2 = '')
   AND (CAST(?3 AS INTEGER) = 0 OR i.is_saved = 1)
+  AND (CAST(?4 AS INTEGER) = 0 OR f.min_score = 0 OR i.points >= f.min_score)
 ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at DESC
-LIMIT ?5 OFFSET ?4
+LIMIT ?6 OFFSET ?5
 `
 
 type ListItemsByUserStatusPaginatedParams struct {
-	UserID    int64  `json:"user_id"`
-	Status    string `json:"status"`
-	SavedOnly int64  `json:"saved_only"`
-	Off       int64  `json:"off"`
-	Lim       int64  `json:"lim"`
+	UserID         int64  `json:"user_id"`
+	Status         string `json:"status"`
+	SavedOnly      int64  `json:"saved_only"`
+	MinScoreFilter int64  `json:"min_score_filter"`
+	Off            int64  `json:"off"`
+	Lim            int64  `json:"lim"`
 }
 
 // Reader-stream page for a user-wide status filter. saved_only = 1 selects the
 // starred set instead of a status, which is how the reader API's starred stream
 // stays independent of read state.
+//
+// @min_score_filter = 1 applies each feed's own min_score threshold, so a
+// third-party client sees the same set the web UI's default view shows. The
+// starred stream passes 0: a favourite the user chose to keep must not be
+// hidden by a threshold that later changes.
 func (q *Queries) ListItemsByUserStatusPaginated(ctx context.Context, arg ListItemsByUserStatusPaginatedParams) ([]Item, error) {
 	rows, err := q.db.QueryContext(ctx, listItemsByUserStatusPaginated,
 		arg.UserID,
 		arg.Status,
 		arg.SavedOnly,
+		arg.MinScoreFilter,
 		arg.Off,
 		arg.Lim,
 	)

@@ -170,15 +170,23 @@ func (s *Server) streamEntries(r *http.Request, userID int64, stream string, old
 	// keeps memory bounded while preserving a correct global ordering.
 	window := offset + limit + 1
 
+	// feedMinScoreFilter is passed as @min_score_filter to the stream queries:
+	// 1 makes each feed's own min_score threshold apply, so the reader API's
+	// reading-list/fresh/label/feed streams show what the web UI's default view
+	// shows. The threshold is not a request parameter in this protocol (no
+	// client sends one), so it is a fixed server-side rule.
+	const feedMinScoreFilter = int64(1)
+
 	switch {
 	case stream == readerStreamReadingList || stream == readerStreamFresh:
 		// Unread items across all the user's feeds, merged with 'new' digest
 		// results (fresh is an alias of reading-list).
 		items, err := s.queries.ListItemsByUserStatusPaginated(ctx, store.ListItemsByUserStatusPaginatedParams{
-			UserID: userID,
-			Status: "unread",
-			Lim:    int64(window),
-			Off:    0,
+			UserID:         userID,
+			Status:         "unread",
+			MinScoreFilter: feedMinScoreFilter,
+			Lim:            int64(window),
+			Off:            0,
 		})
 		if err != nil {
 			return nil, false, err
@@ -227,11 +235,12 @@ func (s *Server) streamEntries(r *http.Request, userID int64, stream string, old
 		// state: a starred item appears here whether it is read or unread.
 		// Status is passed empty because no status filter applies.
 		items, err := s.queries.ListItemsByUserStatusPaginated(ctx, store.ListItemsByUserStatusPaginatedParams{
-			UserID:    userID,
-			Status:    "",
-			SavedOnly: 1,
-			Lim:       int64(window),
-			Off:       0,
+			UserID:         userID,
+			Status:         "",
+			SavedOnly:      1,
+			MinScoreFilter: 0,
+			Lim:            int64(window),
+			Off:            0,
 		})
 		if err != nil {
 			return nil, false, err
@@ -251,9 +260,10 @@ func (s *Server) streamEntries(r *http.Request, userID int64, stream string, old
 			return nil, false, nil
 		}
 		items, err := s.queries.ListItemsByFeedStreamPage(ctx, store.ListItemsByFeedStreamPageParams{
-			FeedID: id,
-			Lim:    int64(window),
-			Off:    0,
+			FeedID:         id,
+			MinScoreFilter: feedMinScoreFilter,
+			Lim:            int64(window),
+			Off:            0,
 		})
 		if err != nil {
 			return nil, false, err
@@ -285,10 +295,11 @@ func (s *Server) streamEntries(r *http.Request, userID int64, stream string, old
 	case strings.HasPrefix(stream, "user/-/label/"):
 		name := strings.TrimPrefix(stream, "user/-/label/")
 		items, err := s.queries.ListItemsByCategoryPaginated(ctx, store.ListItemsByCategoryPaginatedParams{
-			Category: name,
-			UserID:   userID,
-			Lim:      int64(window),
-			Off:      0,
+			Category:       name,
+			UserID:         userID,
+			MinScoreFilter: feedMinScoreFilter,
+			Lim:            int64(window),
+			Off:            0,
 		})
 		if err != nil {
 			return nil, false, err

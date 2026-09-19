@@ -172,7 +172,7 @@ describe('feed store', () => {
 
   it('passes min_score and sort to getItems and refetches on change', async () => {
     const { feedApi } = await import('../services/api')
-    ;(feedApi.list as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 1 }])
+    ;(feedApi.list as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 1, type: 'rss', min_score: 0 }])
     const getItems = feedApi.getItems as ReturnType<typeof vi.fn>
     getItems.mockResolvedValue({ items: [], has_more: false })
 
@@ -187,6 +187,44 @@ describe('feed store', () => {
 
     store.changeMinScore(50)
     expect(getItems).toHaveBeenLastCalledWith(1, expect.objectContaining({ min_score: 50 }))
+  })
+
+  it('seeds the score filter from the feed min_score on activation', async () => {
+    const { feedApi } = await import('../services/api')
+    ;(feedApi.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 1, type: 'reddit', min_score: 300 },
+      { id: 2, type: 'rss', min_score: 0 },
+      { id: 3, type: 'reddit', min_score: 50 },
+    ])
+    const getItems = feedApi.getItems as ReturnType<typeof vi.fn>
+    getItems.mockResolvedValue({ items: [], has_more: false })
+
+    const store = useFeedStore()
+    await store.fetchFeeds()
+
+    // The FilterBar label and the request must agree with what the API will
+    // return by default: the feed's own threshold.
+    await store.setActiveFeed(1)
+    expect(store.minScore).toBe(300)
+    expect(getItems).toHaveBeenLastCalledWith(1, expect.objectContaining({ min_score: 300 }))
+
+    // A feed with no threshold clears the filter.
+    await store.setActiveFeed(2)
+    expect(store.minScore).toBe(null)
+    expect(getItems).toHaveBeenLastCalledWith(2, expect.objectContaining({ min_score: undefined }))
+
+    await store.setActiveFeed(3)
+    expect(store.minScore).toBe(50)
+
+    // Multi-feed views carry mixed thresholds server-side, so the client's
+    // single value starts cleared rather than keeping the last feed's seed.
+    const multi = feedApi.multiItems as ReturnType<typeof vi.fn>
+    multi.mockResolvedValue({ items: [], total: 0, has_more: false })
+    await store.setActiveCategory('tech')
+    expect(store.minScore).toBe(null)
+    // Leave no calls behind: a later test in this file asserts that no
+    // multi-items request is ever sent without a scope.
+    multi.mockClear()
   })
 
   it('supportsScore is true only for score-capable feed types', async () => {

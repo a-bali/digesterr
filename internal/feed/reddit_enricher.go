@@ -249,7 +249,9 @@ func (e *RedditEnricher) Enrich(ctx context.Context, item *store.Item) error {
 		return fmt.Errorf("Reddit post %s not found", postID)
 	}
 
-	item.Points = int64(post.Score)
+	// Never regress a known score to 0: a 0 from any endpoint means
+	// "unknown here" (vote fuzzing), not "the post is worthless".
+	applyScore(item, int64(post.Score))
 	item.CommentsCount = int64(post.NumComments)
 
 	if post.Permalink != "" {
@@ -336,7 +338,9 @@ func (e *RedditEnricher) BulkEnrich(ctx context.Context, items []*store.Item) er
 			continue
 		}
 		matched++
-		item.Points = int64(child.Data.Score)
+		// Never regress a known score to 0: a 0 from any endpoint means
+		// "unknown here" (vote fuzzing), not "the post is worthless".
+		applyScore(item, int64(child.Data.Score))
 		item.CommentsCount = int64(child.Data.NumComments)
 		if child.Data.Permalink != "" {
 			item.CommentUrl = "https://www.reddit.com" + child.Data.Permalink

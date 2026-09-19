@@ -23,6 +23,10 @@ type readerUnreadCountResponse struct {
 // shape Google Reader clients poll. Per-feed and per-digest entries are only
 // emitted when their count is non-zero; the two global entries are always
 // present.
+//
+// Reader counts are UNFILTERED by min_score: the protocol has no min_score
+// parameter, so the threshold the web UI applies by default cannot be
+// selectively lifted here. Third-party clients see every unread item.
 func (s *Server) handleReaderUnreadCount(w http.ResponseWriter, r *http.Request) {
 	userID, ok := userIDFromContext(r.Context())
 	if !ok {
@@ -30,7 +34,7 @@ func (s *Server) handleReaderUnreadCount(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	feedCounts, err := s.queries.GetUnreadCounts(r.Context(), userID)
+	feedCounts, err := s.queries.GetReaderUnreadCounts(r.Context(), userID)
 	if err != nil {
 		writeServerError(w, "failed to get unread counts", err)
 		return

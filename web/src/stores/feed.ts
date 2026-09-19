@@ -217,6 +217,15 @@ export const useFeedStore = defineStore('feed', () => {
     items.value = []
     multiItems.value = []
     totalItems.value = 0
+    // Seed the score filter from the feed's own threshold so the FilterBar's
+    // label tells the truth and the pane matches what the API returns by
+    // default. A feed with no threshold clears the filter rather than keeping
+    // the previous feed's value, which would hide most of its items.
+    //
+    // The feeds list may not have loaded yet on a cold deep link, so an
+    // unknown feed leaves the control alone instead of guessing.
+    const feed = feeds.value.find(f => f.id === id)
+    if (feed) minScore.value = feed.min_score > 0 ? feed.min_score : null
     await loadPage(id, true)
   }
 
@@ -228,6 +237,9 @@ export const useFeedStore = defineStore('feed', () => {
     items.value = []
     multiItems.value = []
     totalItems.value = 0
+    // Mixed thresholds live server-side per row here, so the FilterBar's
+    // single value starts cleared rather than carrying the last feed's seed.
+    minScore.value = null
     await loadMultiPage(true)
   }
 
@@ -239,6 +251,8 @@ export const useFeedStore = defineStore('feed', () => {
     items.value = []
     multiItems.value = []
     totalItems.value = 0
+    // Same as categories: mixed thresholds live server-side per row.
+    minScore.value = null
     if (section === 'feeds') {
       await loadMultiPage(true)
     }

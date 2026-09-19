@@ -454,7 +454,7 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	_, err = s.queries.GetFeed(r.Context(), store.GetFeedParams{
+	feedObj, err := s.queries.GetFeed(r.Context(), store.GetFeedParams{
 		ID:     id,
 		UserID: userID,
 	})
@@ -474,8 +474,16 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 		savedOnly = 1
 	}
 
-	// min_score filters out items below the given score. A zero or absent
-	// value disables the filter (mirrors the feed-level min_score semantics).
+	// min_score filters out items below the given score. When the caller does
+	// not pass one, the feed's own min_score applies: the threshold a user set
+	// on the feed governs what its list shows, not only what is inserted.
+	//
+	// Two exemptions:
+	//   - an explicit `min_score` (including `min_score=0`) always wins, so the
+	//     FilterBar's own control still overrides;
+	//   - the starred set is never threshold-filtered — the user chose to keep
+	//     those items, and hiding one behind a threshold set later would make a
+	//     saved item unreachable.
 	minScore := int64(0)
 	if ms := r.URL.Query().Get("min_score"); ms != "" {
 		v, err := strconv.ParseInt(ms, 10, 64)
@@ -484,6 +492,8 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		minScore = v
+	} else if savedOnly == 0 {
+		minScore = feedObj.MinScore
 	}
 
 	// sort selects the ordering; date_desc is the default and matches the
@@ -764,6 +774,12 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 
 	// Parse common query params (same as handleListFeedItems).
 	status := r.URL.Query().Get("status")
+	// min_score: an explicit value is a single threshold across every feed in
+	// the view (the FilterBar's own control). When absent, each feed's OWN
+	// min_score applies per row — one number cannot represent a category whose
+	// feeds have different thresholds, and the default must match what each
+	// feed's single-feed view shows.
+	minScoreExplicit := false
 	minScore := int64(0)
 	if ms := r.URL.Query().Get("min_score"); ms != "" {
 		v, err := strconv.ParseInt(ms, 10, 64)
@@ -772,6 +788,7 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 			return
 		}
 		minScore = v
+		minScoreExplicit = true
 	}
 	sort := r.URL.Query().Get("sort")
 	if sort == "" {
@@ -840,8 +857,10 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 
 	// Add status, min_score filters. `status=saved` is the legacy shape for the
 	// starred set, which is a flag now (matching handleListFeedItems).
+	savedOnly := false
 	if status == "saved" {
 		status = ""
+		savedOnly = true
 		whereClause += " AND i.is_saved = 1"
 	} else if status != "" {
 		whereClause += " AND i.status = ?"
@@ -849,8 +868,16 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 	} else {
 		whereClause += " AND (i.status IS NULL OR i.status IS NOT NULL)"
 	}
+	// An explicit min_score is one threshold across the whole view.
 	whereClause += " AND (i.points >= ? OR ? = 0)"
 	args = append(args, minScore, minScore)
+	// With no explicit threshold, each feed's OWN min_score applies per row:
+	// one number cannot represent a category whose feeds carry different
+	// thresholds, and the default must match what each feed's single-feed view
+	// shows. Skipped for the starred set, which is never threshold-filtered.
+	if !minScoreExplicit && !savedOnly {
+		whereClause += " AND (f.min_score = 0 OR i.points >= f.min_score)"
+	}
 
 	// Sort clause. These orderings are mirrored by the Mark*ReadRelative*
 	// queries in sql/queries/items.sql; keep the two in step.

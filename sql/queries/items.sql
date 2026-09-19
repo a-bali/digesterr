@@ -20,8 +20,13 @@ SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, created_at DES
 -- name: ListItemsByFeedStreamPage :many
 -- Reader-stream page: newest-first or oldest-first (when oldest_first is 1),
 -- offset-based. COALESCE mirrors itemTimestamp's published_at fallback.
-SELECT * FROM items WHERE feed_id = ?
-ORDER BY COALESCE(published_at, fetched_at, created_at) DESC, created_at DESC
+-- @min_score_filter = 1 applies the feed's own min_score threshold, matching
+-- the web UI's default view for that feed.
+SELECT items.* FROM items
+JOIN feeds f ON f.id = items.feed_id
+WHERE items.feed_id = @feed_id
+  AND (CAST(@min_score_filter AS INTEGER) = 0 OR f.min_score = 0 OR items.points >= f.min_score)
+ORDER BY COALESCE(items.published_at, items.fetched_at, items.created_at) DESC, items.created_at DESC
 LIMIT @lim OFFSET @off;
 
 -- name: ListItemsByFeedAndStatus :many
@@ -76,6 +81,18 @@ WHERE i.id = ? AND f.user_id = ?;
 
 -- name: GetUnreadCounts :many
 -- Single GROUP BY join instead of a correlated subquery per feed.
+-- Items below their feed's min_score are invisible to the list views, so
+-- they are not counted either: the badge must agree with the pane.
+SELECT f.id AS feed_id, CAST(COALESCE(COUNT(i.id), 0) AS INTEGER) AS unread_count
+FROM feeds f
+LEFT JOIN items i ON i.feed_id = f.id AND i.status = 'unread'
+  AND (f.min_score = 0 OR i.points >= f.min_score)
+WHERE f.user_id = ?
+GROUP BY f.id;
+
+-- name: GetReaderUnreadCounts :many
+-- Unfiltered twin of GetUnreadCounts for the Google Reader API, which has no
+-- min_score parameter: third-party clients see every unread item.
 SELECT f.id AS feed_id, CAST(COALESCE(COUNT(i.id), 0) AS INTEGER) AS unread_count
 FROM feeds f
 LEFT JOIN items i ON i.feed_id = f.id AND i.status = 'unread'
@@ -428,16 +445,23 @@ ORDER BY i.published_at DESC, i.created_at DESC;
 -- Reader-stream page for a user-wide status filter. saved_only = 1 selects the
 -- starred set instead of a status, which is how the reader API's starred stream
 -- stays independent of read state.
+--
+-- @min_score_filter = 1 applies each feed's own min_score threshold, so a
+-- third-party client sees the same set the web UI's default view shows. The
+-- starred stream passes 0: a favourite the user chose to keep must not be
+-- hidden by a threshold that later changes.
 SELECT i.* FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE f.user_id = @user_id
   AND (i.status = @status OR @status = '')
   AND (CAST(@saved_only AS INTEGER) = 0 OR i.is_saved = 1)
+  AND (CAST(@min_score_filter AS INTEGER) = 0 OR f.min_score = 0 OR i.points >= f.min_score)
 ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at DESC
 LIMIT @lim OFFSET @off;
 
 -- name: ListItemsByUserReadPaginated :many
--- Reader-stream page for the 'read' stream (read + digested).
+-- Reader-stream page for the 'read' stream (read + digested). Read items are
+-- never threshold-filtered: the threshold governs what is still unread.
 SELECT i.* FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE f.user_id = @user_id AND i.status IN ('read', 'digested')
@@ -445,10 +469,12 @@ ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at
 LIMIT @lim OFFSET @off;
 
 -- name: ListItemsByCategoryPaginated :many
--- Reader-stream page for a label (feed category).
+-- Reader-stream page for a label (feed category). @min_score_filter = 1 applies
+-- each feed's own min_score threshold.
 SELECT i.* FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE f.category = @category AND f.user_id = @user_id
+  AND (CAST(@min_score_filter AS INTEGER) = 0 OR f.min_score = 0 OR i.points >= f.min_score)
 ORDER BY COALESCE(i.published_at, i.fetched_at, i.created_at) DESC, i.created_at DESC
 LIMIT @lim OFFSET @off;
 
