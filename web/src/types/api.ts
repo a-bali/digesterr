@@ -17,6 +17,13 @@ export interface Feed {
   last_fetched_at: string | null
   status: string
   extract_content: number
+  /**
+   * Clean the body the feed already delivered with go-readability at ingest, and
+   * store the result in the item's extracted content. An alternative to
+   * `extract_content` (which fetches the page behind the link): the server rejects
+   * both being set, because both write the same field.
+   */
+  readability: number
   last_error: string
   last_error_at: string | null
   last_error_severity: string

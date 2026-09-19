@@ -12,7 +12,7 @@ import type { Feed } from '../types/api'
 const props = defineProps<{ feed: Feed | null }>()
 const emit = defineEmits<{
   (e: 'update:open', open: boolean): void
-  (e: 'save', data: { type: string; name: string; url: string; category: string; extract_content: number; min_score: number }): void
+  (e: 'save', data: { type: string; name: string; url: string; category: string; extract_content: number; readability: number; min_score: number }): void
   (e: 'delete', id: number): void
 }>()
 
@@ -34,7 +34,7 @@ const categoryNames = computed(() => {
   return [...names].sort((a, b) => a.localeCompare(b))
 })
 
-const form = reactive({ type: 'rss', name: '', url: '', category: '', extract_content: 0, min_score: 0 })
+const form = reactive({ type: 'rss', name: '', url: '', category: '', extract_content: 0, readability: 0, min_score: 0 })
 const typeLabel = (t: string) => ({ rss: 'RSS / Atom', hn: 'Hacker News', lobsters: 'Lobste.rs', reddit: 'Reddit', twitter: 'Twitter / X', email: 'Email newsletter' }[t] || t)
 
 // Content extraction fetches the article behind item.url with readability;
@@ -43,6 +43,23 @@ const typeLabel = (t: string) => ({ rss: 'RSS / Atom', hn: 'Hacker News', lobste
 // link is not "the article" either, so extraction would replace a good body
 // with unrelated page chrome.
 const extractionSupported = computed(() => form.type !== 'twitter' && form.type !== 'email')
+
+// Readability and extraction are alternatives, not companions: both clean the
+// article and both write items.extract_content, so the server rejects setting
+// both. The form enforces the same rule as the user toggles, so the rejection is
+// never reachable by clicking.
+//
+// The difference is where the article comes from:
+//   extraction  fetches the page behind item.url, then cleans it
+//   readability cleans the body the feed ALREADY delivered (no fetch)
+// A feed that receives the full article in its body wants readability; one that
+// only receives a teaser wants extraction.
+const readabilitySupported = computed(() => form.type !== 'twitter')
+
+function setExtractionMode(mode: 'extract' | 'readability') {
+  if (mode === 'extract') form.readability = 0
+  else form.extract_content = 0
+}
 
 // ---- Email feeds ----------------------------------------------------------
 //
@@ -100,6 +117,7 @@ function onTypeChange(type: string) {
   if (!SCORE_FEED_TYPES.has(type)) form.min_score = 0
   // Extraction is unsupported for twitter; never leave a stale flag on.
   if (!extractionSupported.value) form.extract_content = 0
+  if (!readabilitySupported.value) form.readability = 0
   // Fixed URLs for the built-in score feed types (shared with FeedSidebar).
   if (type === 'hn' || type === 'lobsters') {
     form.url = feedUrlFor(type, '')
@@ -165,6 +183,7 @@ watch(
             : feed.url
       form.category = feed.category || ''
       form.extract_content = extractionSupported.value ? feed.extract_content : 0
+      form.readability = readabilitySupported.value ? (feed.readability ?? 0) : 0
       form.min_score = feed.min_score
     } else {
       form.type = 'rss'
@@ -172,6 +191,7 @@ watch(
       form.url = ''
       form.category = ''
       form.extract_content = 0
+      form.readability = 0
       form.min_score = 0
     }
   },
@@ -291,9 +311,27 @@ const dialogId = Math.random().toString(36).slice(2)
           :false-value="0"
           :disabled="!extractionSupported"
           class="toggle"
+          @change="setExtractionMode('extract')"
         />
         Auto-extract full article content
       </label>
+      <label class="flex items-center gap-2 text-sm" :class="readabilitySupported ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'">
+        <input
+          type="checkbox"
+          v-model.number="form.readability"
+          :true-value="1"
+          :false-value="0"
+          :disabled="!readabilitySupported"
+          class="toggle"
+          @change="setExtractionMode('readability')"
+        />
+        Clean the article with Readability
+      </label>
+      <p class="text-xs text-muted-foreground -mt-2">
+        These two are alternatives: both clean the article. Extraction fetches the page behind the
+        link; Readability cleans the text the feed already sent, so it needs no fetch — use it when
+        the feed delivers the full article.
+      </p>
       <p v-if="form.type === 'twitter'" class="text-xs text-muted-foreground -mt-2">
         Not available for Twitter/X feeds — tweets already carry their full content.
       </p>

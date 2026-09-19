@@ -53,6 +53,16 @@ const originalCollapsed = ref(false)
 // plain original body — like a never-extracted item — and the action button
 // offers "Extract" again.
 const extractionCleared = computed(() => feedStore.selectedItem?.extract_status === 'cleared')
+// 'skipped' means the server declined to produce a processed body — for extraction
+// that is a Reddit/HN-hosted URL, for readability a body it could not improve. There
+// is nothing to display, so the section must not render at all: the header gate below
+// used to be just "status is set", which drew an "Extracted" header over an empty
+// body for all 593 skipped items in the dev database.
+const extractionSkipped = computed(() => feedStore.selectedItem?.extract_status === 'skipped')
+// Is there a processed-body section to render at all?
+const extractionSectionVisible = computed(() =>
+  Boolean(feedStore.selectedItem?.extract_status) && !extractionCleared.value && !extractionSkipped.value,
+)
 // "Delete extracted" is offered exactly when there is an extracted body to
 // delete — the same condition under which the action button reads "Re-extract".
 const hasExtraction = computed(() => feedStore.selectedItem?.extract_status === 'done')
@@ -521,7 +531,7 @@ onUnmounted(() => {
       <!-- Extracted Content. A cleared extraction has nothing to show and its
            body below renders the original directly, so the split view is
            skipped entirely rather than left as two empty sections. -->
-      <template v-if="feedStore.selectedItem.extract_status && !extractionCleared">
+      <template v-if="extractionSectionVisible">
         <Separator class="mb-4" />
         <button
           type="button"
@@ -540,7 +550,7 @@ onUnmounted(() => {
           </div>
           <div v-else-if="feedStore.selectedItem.extract_status === 'failed'"
             class="p-4 rounded-md bg-warning/10 dark:bg-warning/15 border border-warning/30">
-            <p class="text-xs font-medium text-warning-foreground dark:text-warning mb-1">Extraction failed after {{ feedStore.selectedItem.extract_retries }} attempt{{ feedStore.selectedItem.extract_retries === 1 ? '' : 's' }}</p>
+            <p class="text-xs font-medium text-warning-foreground dark:text-warning mb-1">Content processing failed after {{ feedStore.selectedItem.extract_retries }} attempt{{ feedStore.selectedItem.extract_retries === 1 ? '' : 's' }}</p>
             <pre class="text-xs text-warning-foreground/80 dark:text-warning/90 whitespace-pre-wrap">{{ feedStore.selectedItem.extract_content }}</pre>
           </div>
           <div v-else-if="feedStore.selectedItem.extract_status === 'done'"
@@ -549,7 +559,7 @@ onUnmounted(() => {
       </template>
 
       <!-- Original Content -->
-      <template v-if="feedStore.selectedItem.extract_status && !extractionCleared">
+      <template v-if="extractionSectionVisible">
         <Separator class="mb-4" />
         <button
           type="button"

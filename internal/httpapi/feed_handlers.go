@@ -15,6 +15,11 @@ import (
 	"digesterr/internal/store"
 )
 
+// errExtractReadabilityExclusive is returned when a feed asks for both content
+// sources at once. Both clean the article and both write items.extract_content, so
+// whichever ran last would silently decide what the reader sees.
+const errExtractReadabilityExclusive = "readability and extract_content are mutually exclusive: both clean the article and store it in the same place"
+
 type createFeedRequest struct {
 	Category       string `json:"category"`
 	Type           string `json:"type"`
@@ -22,6 +27,7 @@ type createFeedRequest struct {
 	URL            string `json:"url"`
 	Config         string `json:"config"`
 	ExtractContent int64  `json:"extract_content"`
+	Readability    int64  `json:"readability"`
 	MinScore       int64  `json:"min_score"`
 }
 
@@ -62,6 +68,10 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.ExtractContent != 0 && req.Readability != 0 {
+		writeError(w, http.StatusBadRequest, errExtractReadabilityExclusive)
+		return
+	}
 	feed, err := s.queries.CreateFeed(r.Context(), store.CreateFeedParams{
 		UserID:         userID,
 		Category:       req.Category,
@@ -71,6 +81,7 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 		Config:         req.Config,
 		Status:         "active",
 		ExtractContent: req.ExtractContent,
+		Readability:    req.Readability,
 		MinScore:       req.MinScore,
 	})
 	if err != nil {
@@ -216,6 +227,7 @@ type updateFeedRequest struct {
 	Category       *string `json:"category"`
 	Status         *string `json:"status"`
 	ExtractContent *int64  `json:"extract_content"`
+	Readability    *int64  `json:"readability"`
 	MinScore       *int64  `json:"min_score"`
 }
 
@@ -281,6 +293,14 @@ func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
 	if req.ExtractContent != nil {
 		extractContent = *req.ExtractContent
 	}
+	readability := existing.Readability
+	if req.Readability != nil {
+		readability = *req.Readability
+	}
+	if extractContent != 0 && readability != 0 {
+		writeError(w, http.StatusBadRequest, errExtractReadabilityExclusive)
+		return
+	}
 	minScore := existing.MinScore
 	if req.MinScore != nil {
 		if *req.MinScore < 0 {
@@ -298,6 +318,7 @@ func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
 		Category:       category,
 		Status:         status,
 		ExtractContent: extractContent,
+		Readability:    readability,
 		MinScore:       minScore,
 	})
 	if err != nil {

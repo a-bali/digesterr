@@ -121,8 +121,8 @@ watch(feedToMarkRead, async (feed) => {
 })
 
 // Resolve category name -> payload field and build final URL.
-function buildFeedPayload(form: { type: string; name: string; url: string; category: string; extract_content: number; min_score: number }): any {
-  const data: any = { extract_content: form.extract_content, min_score: form.min_score, type: form.type, name: form.name }
+function buildFeedPayload(form: { type: string; name: string; url: string; category: string; extract_content: number; readability: number; min_score: number }): any {
+  const data: any = { extract_content: form.extract_content, readability: form.readability, min_score: form.min_score, type: form.type, name: form.name }
   data.category = form.category.trim()
   if (form.type === 'reddit') {
     // Reddit form field holds just the subreddit name.
@@ -141,7 +141,7 @@ function buildFeedPayload(form: { type: string; name: string; url: string; categ
   return data
 }
 
-async function addFeed(form: { type: string; name: string; url: string; category: string; extract_content: number; min_score: number }) {
+async function addFeed(form: { type: string; name: string; url: string; category: string; extract_content: number; readability: number; min_score: number }) {
   const newFeed = await feedApi.create(buildFeedPayload(form))
   await feedStore.fetchFeeds()
   showAddFeed.value = false
@@ -155,7 +155,7 @@ async function addFeed(form: { type: string; name: string; url: string; category
   }
 }
 
-async function saveEditFeed(form: { type: string; name: string; url: string; category: string; extract_content: number; min_score: number }) {
+async function saveEditFeed(form: { type: string; name: string; url: string; category: string; extract_content: number; readability: number; min_score: number }) {
   if (!editingFeed.value) return
   await feedApi.update(editingFeed.value.id, buildFeedPayload(form))
   showEditFeed.value = false; editingFeed.value = null
