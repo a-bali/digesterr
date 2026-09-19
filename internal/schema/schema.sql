@@ -32,6 +32,16 @@ CREATE TABLE feeds (
     last_fetched_at     DATETIME,
     status              TEXT    NOT NULL DEFAULT 'active',
     extract_content     INTEGER NOT NULL DEFAULT 0,
+    -- Clean the body the feed already delivered (items.content) with go-readability
+    -- at ingest, and store the result in items.extract_content. Nothing is fetched:
+    -- this is for feeds whose body IS the article (full-text RSS, newsletters),
+    -- where extraction — which fetches the linked page — would throw away the good
+    -- stored body and fetch a worse copy.
+    --
+    -- Mutually exclusive with extract_content: both write items.extract_content, so
+    -- the API rejects setting both. Which one ran last would otherwise decide what
+    -- the reader sees.
+    readability         INTEGER NOT NULL DEFAULT 0,
     last_error          TEXT    NOT NULL DEFAULT '',
     last_error_at       DATETIME,
     last_error_severity TEXT    NOT NULL DEFAULT '',

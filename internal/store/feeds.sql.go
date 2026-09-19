@@ -10,9 +10,9 @@ import (
 )
 
 const createFeed = `-- name: CreateFeed :one
-INSERT INTO feeds (user_id, category, type, name, url, config, min_score, status, extract_content)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, last_error, last_error_at, last_error_severity, created_at, updated_at
+INSERT INTO feeds (user_id, category, type, name, url, config, min_score, status, extract_content, readability)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, created_at, updated_at
 `
 
 type CreateFeedParams struct {
@@ -25,6 +25,7 @@ type CreateFeedParams struct {
 	MinScore       int64  `json:"min_score"`
 	Status         string `json:"status"`
 	ExtractContent int64  `json:"extract_content"`
+	Readability    int64  `json:"readability"`
 }
 
 func (q *Queries) CreateFeed(ctx context.Context, arg CreateFeedParams) (Feed, error) {
@@ -38,6 +39,7 @@ func (q *Queries) CreateFeed(ctx context.Context, arg CreateFeedParams) (Feed, e
 		arg.MinScore,
 		arg.Status,
 		arg.ExtractContent,
+		arg.Readability,
 	)
 	var i Feed
 	err := row.Scan(
@@ -52,6 +54,7 @@ func (q *Queries) CreateFeed(ctx context.Context, arg CreateFeedParams) (Feed, e
 		&i.LastFetchedAt,
 		&i.Status,
 		&i.ExtractContent,
+		&i.Readability,
 		&i.LastError,
 		&i.LastErrorAt,
 		&i.LastErrorSeverity,
@@ -78,7 +81,7 @@ func (q *Queries) DeleteFeed(ctx context.Context, arg DeleteFeedParams) (int64, 
 }
 
 const getFeed = `-- name: GetFeed :one
-SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, last_error, last_error_at, last_error_severity, created_at, updated_at FROM feeds WHERE id = ? AND user_id = ?
+SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, created_at, updated_at FROM feeds WHERE id = ? AND user_id = ?
 `
 
 type GetFeedParams struct {
@@ -101,6 +104,7 @@ func (q *Queries) GetFeed(ctx context.Context, arg GetFeedParams) (Feed, error) 
 		&i.LastFetchedAt,
 		&i.Status,
 		&i.ExtractContent,
+		&i.Readability,
 		&i.LastError,
 		&i.LastErrorAt,
 		&i.LastErrorSeverity,
@@ -111,7 +115,7 @@ func (q *Queries) GetFeed(ctx context.Context, arg GetFeedParams) (Feed, error) 
 }
 
 const getFeedByID = `-- name: GetFeedByID :one
-SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, last_error, last_error_at, last_error_severity, created_at, updated_at FROM feeds WHERE id = ?
+SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, created_at, updated_at FROM feeds WHERE id = ?
 `
 
 func (q *Queries) GetFeedByID(ctx context.Context, id int64) (Feed, error) {
@@ -129,6 +133,7 @@ func (q *Queries) GetFeedByID(ctx context.Context, id int64) (Feed, error) {
 		&i.LastFetchedAt,
 		&i.Status,
 		&i.ExtractContent,
+		&i.Readability,
 		&i.LastError,
 		&i.LastErrorAt,
 		&i.LastErrorSeverity,
@@ -139,7 +144,7 @@ func (q *Queries) GetFeedByID(ctx context.Context, id int64) (Feed, error) {
 }
 
 const listActiveFeeds = `-- name: ListActiveFeeds :many
-SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, last_error, last_error_at, last_error_severity, created_at, updated_at FROM feeds WHERE status IN ('active', 'error') ORDER BY id
+SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, created_at, updated_at FROM feeds WHERE status IN ('active', 'error') ORDER BY id
 `
 
 func (q *Queries) ListActiveFeeds(ctx context.Context) ([]Feed, error) {
@@ -163,6 +168,7 @@ func (q *Queries) ListActiveFeeds(ctx context.Context) ([]Feed, error) {
 			&i.LastFetchedAt,
 			&i.Status,
 			&i.ExtractContent,
+			&i.Readability,
 			&i.LastError,
 			&i.LastErrorAt,
 			&i.LastErrorSeverity,
@@ -183,7 +189,7 @@ func (q *Queries) ListActiveFeeds(ctx context.Context) ([]Feed, error) {
 }
 
 const listAllFeeds = `-- name: ListAllFeeds :many
-SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, last_error, last_error_at, last_error_severity, created_at, updated_at FROM feeds ORDER BY id
+SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, created_at, updated_at FROM feeds ORDER BY id
 `
 
 func (q *Queries) ListAllFeeds(ctx context.Context) ([]Feed, error) {
@@ -207,6 +213,7 @@ func (q *Queries) ListAllFeeds(ctx context.Context) ([]Feed, error) {
 			&i.LastFetchedAt,
 			&i.Status,
 			&i.ExtractContent,
+			&i.Readability,
 			&i.LastError,
 			&i.LastErrorAt,
 			&i.LastErrorSeverity,
@@ -254,7 +261,7 @@ func (q *Queries) ListCategories(ctx context.Context, userID int64) ([]string, e
 }
 
 const listFeeds = `-- name: ListFeeds :many
-SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, last_error, last_error_at, last_error_severity, created_at, updated_at FROM feeds WHERE user_id = ? ORDER BY name
+SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, created_at, updated_at FROM feeds WHERE user_id = ? ORDER BY name
 `
 
 func (q *Queries) ListFeeds(ctx context.Context, userID int64) ([]Feed, error) {
@@ -278,6 +285,7 @@ func (q *Queries) ListFeeds(ctx context.Context, userID int64) ([]Feed, error) {
 			&i.LastFetchedAt,
 			&i.Status,
 			&i.ExtractContent,
+			&i.Readability,
 			&i.LastError,
 			&i.LastErrorAt,
 			&i.LastErrorSeverity,
@@ -298,7 +306,7 @@ func (q *Queries) ListFeeds(ctx context.Context, userID int64) ([]Feed, error) {
 }
 
 const listFeedsByCategory = `-- name: ListFeedsByCategory :many
-SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, last_error, last_error_at, last_error_severity, created_at, updated_at FROM feeds WHERE category = ? AND user_id = ? ORDER BY name
+SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, created_at, updated_at FROM feeds WHERE category = ? AND user_id = ? ORDER BY name
 `
 
 type ListFeedsByCategoryParams struct {
@@ -327,6 +335,7 @@ func (q *Queries) ListFeedsByCategory(ctx context.Context, arg ListFeedsByCatego
 			&i.LastFetchedAt,
 			&i.Status,
 			&i.ExtractContent,
+			&i.Readability,
 			&i.LastError,
 			&i.LastErrorAt,
 			&i.LastErrorSeverity,
@@ -348,9 +357,9 @@ func (q *Queries) ListFeedsByCategory(ctx context.Context, arg ListFeedsByCatego
 
 const updateFeed = `-- name: UpdateFeed :one
 UPDATE feeds
-SET name = ?, url = ?, config = ?, category = ?, status = ?, extract_content = ?, min_score = ?, updated_at = DATETIME('now')
+SET name = ?, url = ?, config = ?, category = ?, status = ?, extract_content = ?, min_score = ?, readability = ?, updated_at = DATETIME('now')
 WHERE id = ? AND user_id = ?
-RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, last_error, last_error_at, last_error_severity, created_at, updated_at
+RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, created_at, updated_at
 `
 
 type UpdateFeedParams struct {
@@ -361,10 +370,13 @@ type UpdateFeedParams struct {
 	Status         string `json:"status"`
 	ExtractContent int64  `json:"extract_content"`
 	MinScore       int64  `json:"min_score"`
+	Readability    int64  `json:"readability"`
 	ID             int64  `json:"id"`
 	UserID         int64  `json:"user_id"`
 }
 
+// extract_content and readability are mutually exclusive (both write
+// items.extract_content); the handler rejects setting both.
 func (q *Queries) UpdateFeed(ctx context.Context, arg UpdateFeedParams) (Feed, error) {
 	row := q.db.QueryRowContext(ctx, updateFeed,
 		arg.Name,
@@ -374,6 +386,7 @@ func (q *Queries) UpdateFeed(ctx context.Context, arg UpdateFeedParams) (Feed, e
 		arg.Status,
 		arg.ExtractContent,
 		arg.MinScore,
+		arg.Readability,
 		arg.ID,
 		arg.UserID,
 	)
@@ -390,6 +403,7 @@ func (q *Queries) UpdateFeed(ctx context.Context, arg UpdateFeedParams) (Feed, e
 		&i.LastFetchedAt,
 		&i.Status,
 		&i.ExtractContent,
+		&i.Readability,
 		&i.LastError,
 		&i.LastErrorAt,
 		&i.LastErrorSeverity,
@@ -403,7 +417,7 @@ const updateFeedFetchTime = `-- name: UpdateFeedFetchTime :one
 UPDATE feeds
 SET last_fetched_at = DATETIME('now'), updated_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, last_error, last_error_at, last_error_severity, created_at, updated_at
+RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, created_at, updated_at
 `
 
 func (q *Queries) UpdateFeedFetchTime(ctx context.Context, id int64) (Feed, error) {
@@ -421,6 +435,7 @@ func (q *Queries) UpdateFeedFetchTime(ctx context.Context, id int64) (Feed, erro
 		&i.LastFetchedAt,
 		&i.Status,
 		&i.ExtractContent,
+		&i.Readability,
 		&i.LastError,
 		&i.LastErrorAt,
 		&i.LastErrorSeverity,
@@ -434,7 +449,7 @@ const updateFeedStatus = `-- name: UpdateFeedStatus :one
 UPDATE feeds
 SET status = ?, updated_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, last_error, last_error_at, last_error_severity, created_at, updated_at
+RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, created_at, updated_at
 `
 
 type UpdateFeedStatusParams struct {
@@ -457,6 +472,7 @@ func (q *Queries) UpdateFeedStatus(ctx context.Context, arg UpdateFeedStatusPara
 		&i.LastFetchedAt,
 		&i.Status,
 		&i.ExtractContent,
+		&i.Readability,
 		&i.LastError,
 		&i.LastErrorAt,
 		&i.LastErrorSeverity,

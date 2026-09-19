@@ -367,6 +367,22 @@ PRAGMA foreign_keys=ON;
 UPDATE items SET is_saved = 1 WHERE status = 'saved';
 UPDATE items SET status = 'read' WHERE status = 'saved';`,
 		},
+		{
+			"add feeds.readability",
+			// Readability becomes a per-feed ingest step: clean the body the feed
+			// ALREADY delivered (items.content) with go-readability and store the
+			// result in items.extract_content, without fetching anything. It exists
+			// for feeds whose body is the full article (full-text RSS, newsletters),
+			// where extraction — which fetches the linked page — would discard the
+			// good stored body and fetch a worse copy.
+			//
+			// Must stay at the END of the list: two earlier migrations rebuild the
+			// feeds table with `INSERT INTO feeds_new SELECT *`, which breaks if the
+			// column count changed before they run. See the note on min_score above.
+			//
+			// Default 0 so every existing feed keeps its current behaviour.
+			"ALTER TABLE feeds ADD COLUMN readability INTEGER NOT NULL DEFAULT 0",
+		},
 	}
 	for _, m := range migrations {
 		if skip, err := migrationSkipped(db, m.name); err != nil {

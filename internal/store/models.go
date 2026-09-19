@@ -75,6 +75,7 @@ type Feed struct {
 	LastFetchedAt     sql.NullTime `json:"last_fetched_at"`
 	Status            string       `json:"status"`
 	ExtractContent    int64        `json:"extract_content"`
+	Readability       int64        `json:"readability"`
 	LastError         string       `json:"last_error"`
 	LastErrorAt       sql.NullTime `json:"last_error_at"`
 	LastErrorSeverity string       `json:"last_error_severity"`
