@@ -779,7 +779,13 @@ func (g *Generator) buildContentWithLLM(ctx context.Context, dcfg digestConfigJS
 		userPrompt += fmt.Sprintf("Title: %s\n", h.Title)
 		userPrompt += fmt.Sprintf("URL: %s\n", h.Url)
 		userPrompt += fmt.Sprintf("Points: %d | Comments: %d\n", h.Points, h.CommentsCount)
-		if h.ExtractContent != "" && h.ExtractContent != "pending" && h.ExtractContent != "failed" {
+		// Only a SUCCESSFUL extraction holds a body worth sending. The column must be
+		// judged by its STATUS: extract_content holds either a body or an error log
+		// (poller.failItemExtraction appends "[timestamp] jina HTTP 403" lines to it),
+		// so comparing the column itself against status literals was always true and
+		// sent the failure log to the model as if it were the article. Same gate as
+		// contentForRendering just below, which is the shape the reader already sees.
+		if h.ExtractStatus == "done" && h.ExtractContent != "" {
 			userPrompt += fmt.Sprintf("Content: %s\n", CleanContentForLLM(h.ExtractContent))
 		} else if h.Content != "" {
 			userPrompt += fmt.Sprintf("Content: %s\n", CleanContentForLLM(h.Content))
