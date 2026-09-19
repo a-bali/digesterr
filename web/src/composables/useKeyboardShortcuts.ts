@@ -114,7 +114,7 @@ export function useKeyboardShortcuts(ctx: {
         break
       case 'v':
       case 'V':
-        if (item?.url) window.open(item.url, '_blank')
+        if (item?.url) window.open(item.url, '_blank', 'noopener,noreferrer')
         break
 
       // --- Feed navigation ---

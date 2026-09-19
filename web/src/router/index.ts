@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { getAuthToken } from '../services/api'
+import { getAuthToken, silentRefresh } from '../services/api'
 import HomeView from '../views/HomeView.vue'
 import LoginView from '../views/LoginView.vue'
 
@@ -18,8 +18,13 @@ export const router = createRouter({
   ],
 })
 
-router.beforeEach((to) => {
-  if (to.meta.requiresAuth && !getAuthToken()) {
-    return '/login'
-  }
+// The access token is memory-only, so a reload always starts with no token —
+// but the HttpOnly refresh cookie may still hold a session. Guard the route
+// with a silent refresh attempt before sending the user to /login, or every
+// reload would log them out.
+router.beforeEach(async (to) => {
+  if (!to.meta.requiresAuth) return
+  if (getAuthToken()) return
+  if (await silentRefresh()) return
+  return '/login'
 })

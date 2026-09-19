@@ -59,7 +59,10 @@ func TestRenderGalleryContent(t *testing.T) {
 				},
 			},
 			wantImgs: 1,
-			want:     "https://preview.redd.it/photo&width=640",
+			// The & is attribute-escaped to &amp; in the src (correct: raw &
+			// would parse as an entity start in HTML). The URL itself is
+			// decoded from &amp; to & before escaping.
+			want: "https://preview.redd.it/photo&amp;width=640",
 		},
 		{
 			name: "empty gallery data returns empty",
@@ -115,7 +118,7 @@ func TestRenderGalleryContent(t *testing.T) {
 				},
 			},
 			wantVid: 1,
-			want:    "https://preview.redd.it/v9bt92qrbknh1.gif?format=mp4&s=abc123",
+			want:    "https://preview.redd.it/v9bt92qrbknh1.gif?format=mp4&amp;s=abc123",
 		},
 		{
 			name: "gallery with animated GIF without MP4 uses GIF URL",
@@ -238,12 +241,17 @@ func TestRenderGalleryContentIntegration(t *testing.T) {
 	if strings.Count(content, "<img src=") != 2 {
 		t.Errorf("expected 2 images, got content: %s", content)
 	}
-	// Verify HTML entities are unescaped
-	if strings.Contains(content, "&amp;") {
-		t.Error("HTML entities should be unescaped in image URLs")
+	// The payload's &amp; entities are decoded to & and then re-escaped for
+	// the attribute context: the src must carry &amp; (a raw & would parse as
+	// an entity start in HTML).
+	if !strings.Contains(content, "&amp;") {
+		t.Error("expected attribute-escaped &amp; in image URLs")
+	}
+	if strings.Contains(content, "format=pjpg&auto") {
+		t.Error("raw & in attribute value: must be escaped as &amp;")
 	}
 	if !strings.Contains(content, "format=pjpg") {
-		t.Error("expected unescaped URL to contain format=pjpg")
+		t.Error("expected URL to contain format=pjpg")
 	}
 }
 
@@ -316,9 +324,11 @@ func TestGalleryAnimatedImageDeserialization(t *testing.T) {
 		t.Errorf("expected 2 video tags, got %d; content: %s", vidCount, content)
 	}
 
-	// Verify HTML entities are unescaped in video URLs
-	if strings.Contains(content, "&amp;") {
-		t.Errorf("HTML entities should be unescaped in video URLs: %s", content)
+	// The payload's &amp; entities are decoded to & and then re-escaped for
+	// the attribute context: a raw & in the src would parse as an entity
+	// start in HTML, so the escaped form is the correct output.
+	if !strings.Contains(content, "&amp;") {
+		t.Errorf("expected attribute-escaped &amp; in video URLs: %s", content)
 	}
 
 	// Verify MP4 URLs are used (not GIF)

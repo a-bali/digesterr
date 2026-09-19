@@ -201,7 +201,10 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Debug("token refreshed", logging.CategoryAttr(logging.CategoryAuth), "user_id", user.ID, "access_token", accessToken[:8]+"...")
+	// The user_id is what operators correlate on; the token prefix is never
+	// logged — even 8 chars aids correlation, and this record is served to
+	// every account through /api/logs.
+	slog.Debug("token refreshed", logging.CategoryAttr(logging.CategoryAuth), "user_id", user.ID)
 
 	http.SetCookie(w, refreshCookie(r, newRefresh, int(auth.RefreshTokenDuration.Seconds())))
 
@@ -256,6 +259,20 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	s.auth.DeleteAllUserRefreshTokens(r.Context(), userID)
 	http.SetCookie(w, refreshCookie(r, "", -1))
 	writeJSON(w, http.StatusOK, map[string]string{"message": "password changed"})
+}
+
+// handleGetCurrentUser returns the authenticated user's safe profile. The
+// access token is memory-only on the client, so after a reload the UI holds a
+// session (via the refresh cookie) but no user object; this endpoint lets it
+// rehydrate the profile (e.g. the account email) without a new signin.
+func (s *Server) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
+	userID := authedUserID(r)
+	user, err := s.queries.GetUserByID(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "user not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, newUserResponse(user))
 }
 
 // handleGetAPIKey returns the current Google Reader API key for the

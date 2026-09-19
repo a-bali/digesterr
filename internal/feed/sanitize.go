@@ -104,6 +104,14 @@ var (
 // It never returns an error: a fragment the parser cannot handle is returned as
 // escaped plain text rather than dropped, because silently rendering nothing
 // looks like a broken feed and is harder to notice than visible text.
+//
+// SanitizeFeedHTML is the same allowlist under the historical feed-content
+// name: RSS/Atom bodies are untrusted publisher HTML on the same live DOM as
+// newsletters, so they get the same treatment.
+func SanitizeFeedHTML(raw string) string {
+	return SanitizeNewsletterHTML(raw)
+}
+
 func SanitizeNewsletterHTML(raw string) string {
 	if strings.TrimSpace(raw) == "" {
 		return ""

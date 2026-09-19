@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"digesterr/internal/metrics"
@@ -44,8 +45,26 @@ type Poller struct {
 	// use. AgentMail configuration is per user, so there is no single sync to
 	// attach: the same mailbox shared by two accounts is still drained once,
 	// because the pair is the same.
-	emailSyncs map[string]*EmailSync
+	//
+	// Guarded by emailSyncsMu: PollAll (background ticker), PollFeed (the
+	// refresh button / post-create auto-fetch), and SetTransport all touch it
+	// concurrently. Entries are evicted after an hour of disuse so API-key
+	// rotations and account churn cannot grow the map without bound.
+	emailSyncsMu sync.Mutex
+	emailSyncs   map[string]*emailSyncEntry
 }
+
+// emailSyncEntry is one memoized AgentMail sync stage plus its last-use time,
+// so idle stages (rotated keys, deleted accounts) can be evicted.
+type emailSyncEntry struct {
+	sync     *EmailSync
+	lastUsed time.Time
+}
+
+// emailSyncTTL bounds how long an unused (inbox, token) stage stays memoized.
+// Rotating an API key orphans the old pair; without eviction every rotation
+// leaks one client for the life of the process.
+const emailSyncTTL = time.Hour
 
 // EmailAccount is one user's AgentMail credentials, resolved from their users
 // row. The email feed type is configured per account, not per instance.
@@ -81,7 +100,7 @@ func NewPoller(queries *store.Queries) *Poller {
 	noop := &NoopEnricher{}
 	return &Poller{
 		queries:    queries,
-		emailSyncs: map[string]*EmailSync{},
+		emailSyncs: map[string]*emailSyncEntry{},
 		fetchers: map[string]Fetcher{
 			"rss":      rssFetcher,
 			"atom":     rssFetcher,
@@ -117,9 +136,11 @@ func NewPoller(queries *store.Queries) *Poller {
 // time and the sync stage is created on first use. Tests use this to point the
 // client at a stub server.
 func (p *Poller) SetEmailClientFactory(f EmailClientFactory) {
+	p.emailSyncsMu.Lock()
+	defer p.emailSyncsMu.Unlock()
 	p.emailClientFactory = f
 	// Drop the memoized syncs: they hold clients built by the previous factory.
-	p.emailSyncs = map[string]*EmailSync{}
+	p.emailSyncs = map[string]*emailSyncEntry{}
 }
 
 // defaultEmailClientFactory builds a client against the real AgentMail API,
@@ -152,10 +173,27 @@ func (p *Poller) emailAccountFor(ctx context.Context, userID int64) (EmailAccoun
 // accounts sharing one mailbox share the drain (it is keyed by inbox_id
 // server-side anyway), while a token changed in the settings dialog yields a
 // fresh client instead of reusing one bound to the old credential.
+//
+// The whole lookup-create-evict sequence holds emailSyncsMu: emailSyncFor runs
+// on both the background poll ticker and request-driven PollFeed calls, so an
+// unlocked map read+write here is a fatal concurrent-map panic. Stages idle
+// past emailSyncTTL are evicted on the way through, so rotated keys and
+// deleted accounts cannot accumulate clients forever. The factory call runs
+// under the lock — it is a pure constructor (no I/O), so this cannot block
+// polling.
 func (p *Poller) emailSyncFor(acct EmailAccount) *EmailSync {
 	key := acct.InboxID + "\x00" + acct.APIKey
-	if s, ok := p.emailSyncs[key]; ok {
-		return s
+	now := time.Now()
+	p.emailSyncsMu.Lock()
+	defer p.emailSyncsMu.Unlock()
+	for k, e := range p.emailSyncs {
+		if now.Sub(e.lastUsed) > emailSyncTTL {
+			delete(p.emailSyncs, k)
+		}
+	}
+	if e, ok := p.emailSyncs[key]; ok {
+		e.lastUsed = now
+		return e.sync
 	}
 	factory := p.emailClientFactory
 	if factory == nil {
@@ -174,7 +212,7 @@ func (p *Poller) emailSyncFor(acct EmailAccount) *EmailSync {
 	if p.sharedTransport != nil {
 		s.setTransport(p.sharedTransport)
 	}
-	p.emailSyncs[key] = s
+	p.emailSyncs[key] = &emailSyncEntry{sync: s, lastUsed: now}
 	return s
 }
 
@@ -246,9 +284,12 @@ func (p *Poller) SetTransport(transport http.RoundTripper) {
 	// The email syncs are not in any of those maps (they are a stage, not a
 	// fetcher) but they are what actually issue the AgentMail requests. They are
 	// created lazily, so apply the transport to the ones that already exist —
-	// emailSyncFor does the same on creation.
-	for _, s := range p.emailSyncs {
-		s.setTransport(transport)
+	// emailSyncFor does the same on creation. Locked: these entries are read
+	// and written by concurrent poll paths (see emailSyncFor).
+	p.emailSyncsMu.Lock()
+	defer p.emailSyncsMu.Unlock()
+	for _, e := range p.emailSyncs {
+		e.sync.setTransport(transport)
 	}
 }
 

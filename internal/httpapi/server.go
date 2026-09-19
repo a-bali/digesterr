@@ -139,6 +139,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	mux.HandleFunc("POST /api/auth/signin", s.handleSignin)
 	mux.HandleFunc("POST /api/auth/refresh", s.handleRefresh)
 
+	mux.HandleFunc("GET /api/auth/me", s.requireAuth(s.handleGetCurrentUser))
 	mux.HandleFunc("POST /api/auth/change-password", s.requireAuth(s.handleChangePassword))
 	mux.HandleFunc("POST /api/auth/signout", s.requireAuth(s.handleSignout))
 	mux.HandleFunc("GET /api/auth/api-key", s.requireAuth(s.handleGetAPIKey))

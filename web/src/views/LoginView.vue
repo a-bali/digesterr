@@ -23,6 +23,10 @@ async function submit() {
     router.push('/')
   } catch (e: any) {
     error.value = e.message || 'An error occurred'
+  } finally {
+    // The credential must not linger in JS memory/DOM after the attempt —
+    // clear it on both success and failure.
+    password.value = ''
   }
 }
 </script>

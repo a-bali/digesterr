@@ -1,30 +1,45 @@
-import type { AllDigestResultsResponse, AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, HealthInfo, Item, LogsResponse, MarkRelativeOptions, MetricsSummary, MultiFeedItemsResponse } from '../types/api'
+import type { AllDigestResultsResponse, AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, HealthInfo, Item, LogsResponse, MarkRelativeOptions, MetricsSummary, MultiFeedItemsResponse, User } from '../types/api'
 
-const TOKEN_KEY = 'digesterr-token'
-
+// The access token lives in memory only — never localStorage. Any XSS that
+// reaches the page (e.g. through feed HTML) could otherwise read it straight
+// out of storage and impersonate the account; an in-memory token dies with
+// the tab. Persistence across reloads comes from the HttpOnly refresh cookie
+// (credentials: same-origin on tryRefresh), not from a readable token copy.
 let token: string | null = null
-let onUnauthorized: (() => void) | null = null
+type UnauthorizedCallback = () => void
+let onUnauthorized: UnauthorizedCallback | null = null
 
 export function setAuthToken(t: string | null) {
   token = t
-  if (t) {
-    localStorage.setItem(TOKEN_KEY, t)
-  } else {
-    localStorage.removeItem(TOKEN_KEY)
+  // Best-effort cleanup of tokens persisted by older versions: they are no
+  // longer written, but a stale copy must not survive the upgrade.
+  try {
+    localStorage.removeItem('digesterr-token')
+  } catch {
+    // Storage unavailable (private mode) — nothing to clean.
   }
 }
 
 export function getAuthToken() {
-  if (token) return token
-  const saved = localStorage.getItem(TOKEN_KEY)
-  if (saved) {
-    token = saved
-    return token
-  }
-  return null
+  return token
 }
 
-export function setOnUnauthorized(cb: () => void) {
+// hasAuthToken reports whether an access token (or a refresh attempt worth
+// making) exists. After reload the in-memory token is gone, but the refresh
+// cookie may still hold a session — so "no token" means "try silent refresh",
+// not "definitely logged out".
+export function hasAuthToken() {
+  return token != null
+}
+
+async function silentRefresh(): Promise<boolean> {
+  // tryRefresh already serializes concurrent refresh attempts.
+  return tryRefresh()
+}
+
+export { silentRefresh }
+
+export function setOnUnauthorized(cb: UnauthorizedCallback) {
   onUnauthorized = cb
 }
 
@@ -106,6 +121,9 @@ function qs(params: Record<string, string | number | undefined>): string {
 }
 
 export const authApi = {
+  // Rehydrates the profile after a reload: the access token is memory-only, so
+  // the client must ask for the user rather than decode a stored one.
+  me: () => api<User>('/auth/me'),
   signup: (email: string, password: string) =>
     api<AuthResponse>('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password }) }),
   signin: (email: string, password: string) =>

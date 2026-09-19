@@ -619,6 +619,14 @@ func spaHandler(api http.Handler, fs http.FileSystem) http.Handler {
 	}
 	fileServer := http.FileServer(fs)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Defense in depth behind the sanitizers: the SPA serves no inline
+		// scripts/styles (Vite emits hashed external assets only), so block
+		// inline execution, plugins, and framing outright. Feed images still
+		// load from anywhere; the connect-src 'self' keeps fetch/XHR on-origin.
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' https: data:; font-src 'self' data:; "+
+				"connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'")
 		if len(r.URL.Path) >= 4 && r.URL.Path[:4] == "/api" {
 			api.ServeHTTP(w, r)
 			return

@@ -185,7 +185,7 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
                 class="p-4 rounded-lg border bg-card"
               >
                 <div class="flex items-start gap-2 mb-2">
-                  <a :href="item.url" target="_blank" class="text-sm font-medium hover:text-accent flex-1">
+                  <a :href="item.url" target="_blank" rel="noopener noreferrer" class="text-sm font-medium hover:text-accent flex-1">
                     {{ item.title }}
                     <ExternalLink class="size-3 inline opacity-50" />
                   </a>
@@ -193,7 +193,7 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
                 <div class="flex flex-wrap items-center gap-3 text-xs text-muted-foreground mb-3">
                   <span class="flex items-center gap-1"><Clock class="size-3" /> {{ absoluteTime(item.published_at) }}</span>
                   <span class="flex items-center gap-1"><ArrowUp class="size-3" /> {{ item.points }}</span>
-                  <a v-if="item.comment_url" :href="item.comment_url" target="_blank"
+                  <a v-if="item.comment_url" :href="item.comment_url" target="_blank" rel="noopener noreferrer"
                     class="flex items-center gap-1 hover:text-accent">
                     <MessageCircle class="size-3" /> {{ item.comments_count }}
                   </a>
@@ -208,7 +208,7 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
                     <span class="font-medium text-muted-foreground">{{ c.author }}</span>
                     <span v-if="c.points != null" class="ml-1 text-accent text-[10px]">[{{ c.points }}]</span>
                     <span class="mx-1 text-muted-foreground/40">–</span>
-                    <a v-if="c.url" :href="c.url" target="_blank" class="text-foreground/80 hover:text-accent whitespace-pre-wrap">{{ c.text }}</a>
+                    <a v-if="c.url" :href="c.url" target="_blank" rel="noopener noreferrer" class="text-foreground/80 hover:text-accent whitespace-pre-wrap">{{ c.text }}</a>
                     <span v-else class="text-foreground/80 whitespace-pre-wrap">{{ c.text }}</span>
                   </div>
                 </div>
@@ -224,6 +224,7 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
                   :key="item.item_id"
                   :href="item.url"
                   target="_blank"
+                  rel="noopener noreferrer"
                   class="group flex items-center justify-between p-2 rounded-md hover:bg-muted transition-colors border"
                 >
                   <div class="flex-1 min-w-0">
@@ -231,7 +232,7 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
                     <div class="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
                       <span class="flex items-center gap-1"><Clock class="size-3" /> {{ absoluteTime(item.published_at) }}</span>
                       <span class="flex items-center gap-1"><ArrowUp class="size-3" /> {{ item.points }}</span>
-                      <a v-if="item.comment_url" :href="item.comment_url" target="_blank" class="flex items-center gap-1 hover:text-accent">
+                      <a v-if="item.comment_url" :href="item.comment_url" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1 hover:text-accent">
                         <MessageCircle class="size-3" /> {{ item.comments_count }}
                       </a>
                     </div>

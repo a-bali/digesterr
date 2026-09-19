@@ -377,12 +377,24 @@ func renderGalleryContent(p redditPostData) string {
 			continue
 		}
 		// Animated images (e) == "AnimatedImage": prefer MP4 for smoother playback,
-		// fall back to GIF. Static images always get <img>.
+		// fall back to GIF. Static images always get <img>. URLs come from the
+		// Reddit API payload (untrusted): scheme-check and escape before
+		// interpolating, or a crafted media URL breaks out of the attribute.
+		// All media URLs here are absolute https CDN links, so the absolute-URL
+		// variant applies.
 		if mi.E == "AnimatedImage" && mi.S.MP4 != "" {
 			mp4 := html.UnescapeString(mi.S.MP4)
-			fmt.Fprintf(&b, `<p><video src="%s" autoplay loop muted playsinline style="max-width:100%%;border-radius:4px"><a href="%s" target="_blank" rel="noopener">Watch video ↗</a></video></p>`, mp4, src)
+			mp4Safe, srcSafe := safeRedditURL(mp4), safeRedditURL(src)
+			if mp4Safe == "" || srcSafe == "" {
+				continue
+			}
+			fmt.Fprintf(&b, `<p><video src="%s" autoplay loop muted playsinline style="max-width:100%%;border-radius:4px"><a href="%s" target="_blank" rel="noopener noreferrer">Watch video ↗</a></video></p>`, redditAttrEscape(mp4Safe), redditAttrEscape(srcSafe))
 		} else {
-			fmt.Fprintf(&b, `<p><img src="%s" loading="lazy" style="max-width:100%%;border-radius:4px" /></p>`, src)
+			srcSafe := safeRedditURL(src)
+			if srcSafe == "" {
+				continue
+			}
+			fmt.Fprintf(&b, `<p><img src="%s" loading="lazy" style="max-width:100%%;border-radius:4px" /></p>`, redditAttrEscape(srcSafe))
 		}
 	}
 	return b.String()
@@ -403,10 +415,18 @@ func renderPostContent(p redditPostData, mediaURL string) string {
 		if p.IsVideo && p.Media.RedditVideo != nil && p.Media.RedditVideo.FallbackURL != "" {
 			videoURL = p.Media.RedditVideo.FallbackURL
 		}
-		content = `<p><video src="` + videoURL + `" controls style="max-width:100%;border-radius:4px"><a href="` + mediaURL + `" target="_blank" rel="noopener">Watch video ↗</a></video></p>`
+		// mediaURL/videoURL derive from the post payload (untrusted): escape
+		// and scheme-check before interpolating into attributes. Both are
+		// absolute https media URLs, so the absolute-URL variant applies.
+		videoSafe, mediaSafe := safeRedditURL(videoURL), safeRedditURL(mediaURL)
+		if videoSafe != "" && mediaSafe != "" {
+			content = `<p><video src="` + redditAttrEscape(videoSafe) + `" controls style="max-width:100%;border-radius:4px"><a href="` + redditAttrEscape(mediaSafe) + `" target="_blank" rel="noopener noreferrer">Watch video ↗</a></video></p>`
+		}
 	}
 	if content == "" && isRedditImageURL(mediaURL) {
-		content = `<p><img src="` + mediaURL + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
+		if mediaSafe := safeRedditURL(mediaURL); mediaSafe != "" {
+			content = `<p><img src="` + redditAttrEscape(mediaSafe) + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
+		}
 	}
 	// Append selftext after any media — posts often include explanatory text
 	// that must not be silently dropped.
@@ -477,14 +497,19 @@ func (f *RedditFetcher) parseListing(data []byte, subreddit string) ([]Item, err
 			content += renderPostContent(parent, parentURL)
 			linkURL = parentURL
 		}
-		// Still nothing renderable (e.g. a plain link post): fall back to a link.
-		if content == "" && !p.IsSelf && linkURL != "" {
-			if isRedditImageURL(linkURL) {
-				content = `<p><img src="` + linkURL + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
+	// Still nothing renderable (e.g. a plain link post): fall back to a link.
+	// linkURL is an absolute post/media URL (possibly attacker-influenced via
+	// the payload): escape and scheme-check before interpolating. Absolute
+	// links only — a relative path would resolve against the reader.
+	if content == "" && !p.IsSelf && linkURL != "" {
+		if linkSafe := safeRedditURL(linkURL); linkSafe != "" {
+			if isRedditImageURL(linkSafe) {
+				content = `<p><img src="` + redditAttrEscape(linkSafe) + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
 			} else {
-				content = `<p><a href="` + linkURL + `" target="_blank" rel="noopener">` + linkURL + `</a></p>`
+				content = `<p><a href="` + redditAttrEscape(linkSafe) + `" target="_blank" rel="noopener noreferrer">` + redditTextEscape(linkSafe) + `</a></p>`
 			}
 		}
+	}
 
 		pubAt := time.Time{}
 		if p.CreatedUTC > 0 {
@@ -535,12 +560,21 @@ func redditAttrEscape(s string) string {
 }
 
 // safeMarkdownURL returns the URL when it is safe to place in an href/src
-// attribute, and "" when it is not. Only http, https, mailto and scheme-less
-// (relative) targets are allowed: javascript:, data: and similar would execute
-// in the reader, since this HTML is inserted with v-html.
+// attribute, and "" when it is not. Absolute http(s) and mailto targets are
+// allowed; javascript:, data: and similar would execute in the reader, since
+// this HTML is inserted with v-html. Scheme-less relative links ("", "/path",
+// "#frag") are safe to render but cannot be judged here — they resolve against
+// the document base, which differs per caller (newsletter archive vs reddit) —
+// so they pass through unchanged and each caller decides whether its base makes
+// them meaningful. The URL must not contain whitespace or the quote /
+// angle-bracket characters that would break out of a double-quoted attribute,
+// even when the caller escapes afterwards.
 func safeMarkdownURL(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
+		return ""
+	}
+	if strings.ContainsAny(trimmed, " \t\r\n\"'<>") {
 		return ""
 	}
 	u, err := urlpkg.Parse(trimmed)
@@ -553,6 +587,23 @@ func safeMarkdownURL(raw string) string {
 	default:
 		return ""
 	}
+}
+
+// safeRedditURL is safeMarkdownURL restricted to URLs that resolve meaningfully
+// from the digesterr origin: only absolute http(s)/mailto targets. Reddit
+// selftext can contain scheme-less relative paths ("/r/foo"), which would
+// resolve against the reader's own host (the SPA) rather than reddit, so they
+// degrade to plain text instead of becoming broken links.
+func safeRedditURL(raw string) string {
+	v := safeMarkdownURL(raw)
+	if v == "" {
+		return ""
+	}
+	lower := strings.ToLower(v)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "mailto:") {
+		return v
+	}
+	return ""
 }
 
 // renderRedditMarkdown converts Reddit-flavored selftext to HTML.
@@ -600,9 +651,10 @@ func renderRedditMarkdown(text string) string {
 	reImg := regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
 	s = reImg.ReplaceAllStringFunc(s, func(m string) string {
 		parts := reImg.FindStringSubmatch(m)
-		src := safeMarkdownURL(parts[2])
+		src := safeRedditURL(parts[2])
 		if src == "" {
-			// Unsafe scheme: drop the image but keep the alt text readable.
+			// Unsafe scheme (or a relative path that would resolve against
+			// the reader): drop the image but keep the alt text readable.
 			return ph(redditTextEscape(parts[1]))
 		}
 		return ph(`<img src="` + redditAttrEscape(src) + `" alt="` + redditAttrEscape(parts[1]) + `" loading="lazy" style="max-width:100%;border-radius:4px" />`)
@@ -612,9 +664,10 @@ func renderRedditMarkdown(text string) string {
 	reLink := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 	s = reLink.ReplaceAllStringFunc(s, func(m string) string {
 		parts := reLink.FindStringSubmatch(m)
-		href := safeMarkdownURL(parts[2])
+		href := safeRedditURL(parts[2])
 		if href == "" {
-			// Unsafe scheme: keep the label as plain text, no link.
+			// Unsafe scheme (or a relative path that would resolve against
+			// the reader): keep the label as plain text, no link.
 			return ph(redditTextEscape(parts[1]))
 		}
 		return ph(`<a href="` + redditAttrEscape(href) + `" target="_blank" rel="noopener">` + redditTextEscape(parts[1]) + `</a>`)

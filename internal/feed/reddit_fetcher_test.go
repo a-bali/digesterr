@@ -534,7 +534,7 @@ func TestParseListingCrosspost(t *testing.T) {
 	if strings.Count(item.Content, "<a href=") > 0 && !strings.Contains(item.Content, "<img") {
 		t.Errorf("content degraded to a bare link: %s", item.Content)
 	}
-	if strings.Contains(item.Content, `rel="noopener">https://www.reddit.com/gallery/1wbr3af</a>`) {
+	if strings.Contains(item.Content, `rel="noopener noreferrer">https://www.reddit.com/gallery/1wbr3af</a>`) {
 		t.Errorf("content is the bare parent gallery link: %s", item.Content)
 	}
 	// The item still points at the crosspost's own target and comment thread.
@@ -635,7 +635,7 @@ func TestParseListingCrosspostDoesNotAffectNormalPosts(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("got %d items, want 1", len(items))
 	}
-	want := `<p><a href="https://example.com/story" target="_blank" rel="noopener">https://example.com/story</a></p>`
+	want := `<p><a href="https://example.com/story" target="_blank" rel="noopener noreferrer">https://example.com/story</a></p>`
 	if items[0].Content != want {
 		t.Errorf("content = %q, want %q", items[0].Content, want)
 	}
@@ -852,6 +852,21 @@ func TestRenderRedditMarkdownEscapesUserContent(t *testing.T) {
 			excludes: []string{`onerror="`, "onerror=\""},
 		},
 		{
+			name:     "image src with whitespace is not rendered as an image",
+			input:    "![alt](https://example.com/a b.png)",
+			excludes: []string{"<img "},
+		},
+		{
+			name:     "relative image URL is not rendered as an image",
+			input:    `![alt](/r/foo/a.png)`,
+			excludes: []string{"<img "},
+		},
+		{
+			name:     "relative link is not linked",
+			input:    `[click](/r/foo)`,
+			excludes: []string{"<a "},
+		},
+		{
 			// Angle brackets must be escaped, so the payload renders as literal
 			// text rather than becoming an <img> element. Asserting on the raw
 			// tag is the meaningful check: an escaped "&lt;img ... onerror=...&gt;"
@@ -911,9 +926,11 @@ func TestRenderRedditMarkdownKeepsLegitimateMarkup(t *testing.T) {
 			contains: []string{`<a href="https://example.com/a?x=1&amp;y=2"`},
 		},
 		{
+			// Relative links resolve against the reader, not reddit, so they
+			// degrade to plain text rather than a link that goes nowhere.
 			name:     "relative link",
 			input:    `[click](/r/foo)`,
-			contains: []string{`<a href="/r/foo"`},
+			contains: []string{`click`},
 		},
 		{
 			name:     "mailto link",

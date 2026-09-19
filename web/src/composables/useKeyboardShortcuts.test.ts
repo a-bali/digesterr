@@ -125,12 +125,19 @@ describe('useKeyboardShortcuts', () => {
     wrapper.unmount()
   })
 
-  it('v opens the item URL', () => {
+  it('v opens the item URL without an opener', () => {
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
     const ctx = makeCtx({ selectedItem: () => ({ id: 1, url: 'https://example.com/x' }) })
     const { press, wrapper } = mountHarness(ctx)
     press({ key: 'v' })
-    expect(openSpy).toHaveBeenCalledWith('https://example.com/x', '_blank')
+    // jsdom's window.open ignores the features arg, so assert on the call's
+    // first two args plus the raw third — the noopener protection is in the
+    // features string, not in something jsdom models.
+    expect(openSpy).toHaveBeenCalledTimes(1)
+    const [url, target, features] = openSpy.mock.calls[0]
+    expect(url).toBe('https://example.com/x')
+    expect(target).toBe('_blank')
+    expect(features).toContain('noopener')
     openSpy.mockRestore()
     wrapper.unmount()
   })

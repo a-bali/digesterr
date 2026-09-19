@@ -20,6 +20,7 @@ import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
 import GoogleReaderApiDialog from '../components/GoogleReaderApiDialog.vue'
 import { useFeedStore } from '../stores/feed'
 import { useDigestStore } from '../stores/digest'
+import { useAuthStore } from '../stores/auth'
 import { useThemeStore } from '../stores/theme'
 import { useLayoutStore } from '../stores/layout'
 import { itemApi } from '../services/api'
@@ -33,6 +34,7 @@ import { Newspaper, Menu, ArrowLeft, CircleHelp, Columns3, Rows2, Settings } fro
 
 const router = useRouter()
 const route = useRoute()
+const authStore = useAuthStore()
 const feedStore = useFeedStore()
 const digestStore = useDigestStore()
 const themeStore = useThemeStore()
@@ -178,6 +180,9 @@ useKeyboardShortcuts({
 let pollInterval: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
+  // Rehydrate the profile for reloads: the access token is memory-only, so
+  // auth.user is null even though the router guard restored the session.
+  void authStore.loadUser()
   feedStore.fetchFeeds()
   // The saved badge is part of the initial paint, not just a poll refresh: the
   // sidebar renders before any item is touched.

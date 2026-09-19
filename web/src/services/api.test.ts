@@ -5,29 +5,37 @@ import { setAuthToken, getAuthToken, setOnUnauthorized, api, ApiError } from './
 let currentToken: string | null = null
 
 beforeEach(() => {
-  localStorage.clear()
+  ;(globalThis as any).localStorage?.clear()
   currentToken = null
   setAuthToken(null)
   setOnUnauthorized(() => {})
 })
 
 describe('setAuthToken / getAuthToken', () => {
-  it('stores token in memory and localStorage', () => {
+  it('stores token in memory only, never localStorage', () => {
     setAuthToken('test-token')
     expect(getAuthToken()).toBe('test-token')
-    expect(localStorage.getItem('digesterr-token')).toBe('test-token')
+    expect((globalThis as any).localStorage?.getItem('digesterr-token') ?? null).toBeNull()
   })
 
-  it('removes token from localStorage', () => {
+  it('clears the in-memory token', () => {
     setAuthToken('test-token')
     setAuthToken(null)
     expect(getAuthToken()).toBeNull()
-    expect(localStorage.getItem('digesterr-token')).toBeNull()
   })
 
-  it('falls back to localStorage on page reload', () => {
-    localStorage.setItem('digesterr-token', 'saved-token')
-    expect(getAuthToken()).toBe('saved-token')
+  it('removes tokens persisted by older versions', () => {
+    const ls = (globalThis as any).localStorage as Storage | undefined
+    if (!ls) {
+      // No Storage in this runner — setAuthToken must still keep the token.
+      setAuthToken('fresh-token')
+      expect(getAuthToken()).toBe('fresh-token')
+      return
+    }
+    ls.setItem('digesterr-token', 'stale-token')
+    setAuthToken('fresh-token')
+    expect(ls.getItem('digesterr-token')).toBeNull()
+    expect(getAuthToken()).toBe('fresh-token')
   })
 })
 
