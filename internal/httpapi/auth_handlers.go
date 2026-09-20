@@ -65,6 +65,10 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "email and password are required")
 		return
 	}
+	if err := auth.CheckPasswordLength(req.Password); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
@@ -228,6 +232,10 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.OldPassword == "" || req.NewPassword == "" {
 		writeError(w, http.StatusBadRequest, "old_password and new_password are required")
+		return
+	}
+	if err := auth.CheckPasswordLength(req.NewPassword); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

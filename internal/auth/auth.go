@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 
 	"digesterr/internal/store"
@@ -24,7 +25,26 @@ const (
 	AccessTokenDuration  = 15 * time.Minute
 	RefreshTokenDuration = 7 * 24 * time.Hour
 	BcryptCost           = 12
+	// MinPasswordLength is the shortest accepted password. Bcrypt inputs
+	// longer than MaxPasswordLength are silently truncated to 72 bytes, so
+	// longer passwords are rejected rather than accepted with weakened
+	// entropy the user does not know about.
+	MinPasswordLength = 8
+	MaxPasswordLength = 72
 )
+
+// CheckPasswordLength reports whether a password is acceptable: at least
+// MinPasswordLength bytes and at most MaxPasswordLength, beyond which bcrypt
+// would silently truncate.
+func CheckPasswordLength(password string) error {
+	if len(password) < MinPasswordLength {
+		return fmt.Errorf("password must be at least %d characters", MinPasswordLength)
+	}
+	if len(password) > MaxPasswordLength {
+		return fmt.Errorf("password must be at most %d characters", MaxPasswordLength)
+	}
+	return nil
+}
 
 type Claims struct {
 	UserID int64  `json:"user_id"`
@@ -74,6 +94,12 @@ func (s *Service) GenerateAccessToken(user *store.User) (string, error) {
 
 func (s *Service) ValidateAccessToken(tokenStr string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (interface{}, error) {
+		// Enforce the signing method: without this check a token forged with
+		// alg=none or a different algorithm (e.g. RS256 with the HMAC secret
+		// as the public key) would be accepted.
+		if t.Method != jwt.SigningMethodHS256 {
+			return nil, ErrTokenInvalid
+		}
 		return s.secret, nil
 	})
 	if err != nil {
@@ -90,9 +116,12 @@ func (s *Service) ValidateAccessToken(tokenStr string) (*Claims, error) {
 }
 
 func (s *Service) CreateRefreshToken(ctx context.Context, userID int64) (string, error) {
-	raw := generateToken()
+	raw, err := generateToken()
+	if err != nil {
+		return "", err
+	}
 	hash := hashToken(raw)
-	_, err := s.queries.CreateRefreshToken(ctx, store.CreateRefreshTokenParams{
+	_, err = s.queries.CreateRefreshToken(ctx, store.CreateRefreshTokenParams{
 		UserID:    userID,
 		TokenHash: hash,
 		ExpiresAt: time.Now().Add(RefreshTokenDuration),
@@ -136,7 +165,10 @@ func (s *Service) RotateRefreshToken(ctx context.Context, oldRawToken string, us
 	defer tx.Rollback()
 	qtx := s.queries.WithTx(tx)
 
-	raw := generateToken()
+	raw, err := generateToken()
+	if err != nil {
+		return "", err
+	}
 	if _, err := qtx.CreateRefreshToken(ctx, store.CreateRefreshTokenParams{
 		UserID:    userID,
 		TokenHash: hashToken(raw),
@@ -153,10 +185,15 @@ func (s *Service) RotateRefreshToken(ctx context.Context, oldRawToken string, us
 	return raw, nil
 }
 
-func generateToken() string {
+// generateToken returns a random 256-bit token, hex-encoded. The rand.Read
+// error is propagated rather than ignored: CSPRNG failure would otherwise
+// produce an all-zero token, i.e. a predictable credential.
+func generateToken() (string, error) {
 	b := make([]byte, 32)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generating random token: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func hashToken(token string) string {
