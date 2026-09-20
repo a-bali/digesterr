@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // handleHealthz answers 200 "ok" for liveness probes. It intentionally does
@@ -37,7 +39,10 @@ func bearerToken(r *http.Request) string {
 // payload is byte-identical with and without a token, so a probe response cannot
 // vary with credentials.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	// Bound the ping so a wedged database cannot hang the readiness probe
+	// (and therefore the orchestrator's shutdown decision) indefinitely.
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
 	if err := s.queries.DB().PingContext(ctx); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "database unavailable")
 		return

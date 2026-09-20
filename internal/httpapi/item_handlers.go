@@ -143,10 +143,24 @@ func (s *Server) handleExtractItem(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, "failed to set extraction status", err)
 		return
 	}
+	// Extract in background, bounded by the extraction semaphore: without it
+	// one burst of requests fans out unbounded goroutines + HTTP clients. The
+	// semaphore acquire is ctx-aware, so a client that disconnects before its
+	// turn stops waiting instead of leaking a slot.
+	select {
+	case s.extractSem <- struct{}{}:
+	case <-r.Context().Done():
+		writeError(w, http.StatusServiceUnavailable, "server busy, try again")
+		return
+	}
 	writeJSON(w, http.StatusAccepted, item)
 
-	// Extract in background
-	go s.doExtractItem(id, item.Url)
+	s.bg.Add(1)
+	go func() {
+		defer s.bg.Done()
+		defer func() { <-s.extractSem }()
+		s.doExtractItem(s.extractCtx(), id, item.Url)
+	}()
 }
 
 // handleDeleteItemExtraction drops an item's extracted body so it falls back to
@@ -484,10 +498,9 @@ func (s *Server) handleSummarizeItem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, parseSummaryResponse(result))
 }
 
-func (s *Server) doExtractItem(itemID int64, url string) {
+func (s *Server) doExtractItem(ctx context.Context, itemID int64, url string) {
 	// Delegate to the poller's extraction implementation — same meta-line
 	// format, retry accounting, and persistence as feed-level extraction.
-	ctx := context.Background()
 	item, err := s.queries.GetItem(ctx, itemID)
 	if err != nil {
 		slog.Error("failed to fetch item for extraction", logging.CategoryAttr(logging.CategoryItem), "item_id", itemID, "error", err)

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"digesterr/internal/auth"
@@ -56,6 +57,32 @@ type Server struct {
 	// the real endpoint; tests substitute a function. The list is advisory, so a
 	// failure is swallowed rather than surfaced.
 	llmModels func(ctx context.Context) ([]string, error)
+	// bg tracks background work the server owns: the feed poller, the digest
+	// scheduler, and detached per-item extractions. Shutdown waits on it so
+	// in-flight DB writes finish instead of being killed mid-transaction.
+	bg sync.WaitGroup
+	// extractSem bounds concurrent detached content extractions. Without it,
+	// one burst of extract requests fans out one goroutine + one 30s HTTP
+	// client each, with no upper bound.
+	extractSem chan struct{}
+	// baseCtx is the process lifetime context: detached work uses it so a
+	// client disconnect does not abort an extraction in progress, while
+	// shutdown (which cancels it) does.
+	baseCtx context.Context
+}
+
+// SetBaseContext installs the process lifetime context used by detached work.
+// Main calls it with the signal-aware root ctx before starting the poller.
+func (s *Server) SetBaseContext(ctx context.Context) {
+	s.baseCtx = ctx
+}
+
+// extractCtx returns the base context for detached extraction.
+func (s *Server) extractCtx() context.Context {
+	if s.baseCtx != nil {
+		return s.baseCtx
+	}
+	return context.Background()
 }
 
 func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *logbuf.Buffer, cfg config.Config) *Server {
@@ -73,6 +100,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 		schedulerTimezone: cfg.Digest.SchedulerTimezone,
 		summaryPrompt:     cfg.LLM.SummaryPrompt,
 		llmDefaultModel:   cfg.LLM.Model,
+		extractSem:        make(chan struct{}, extractConcurrency(cfg)),
 	}
 
 	llmClient := digest.NewLLMClient(cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model, cfg.LLM.Timeout.Duration())
@@ -225,8 +253,23 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	return s
 }
 
+// extractConcurrency bounds detached per-item extractions. Zero or negative
+// config falls back to the default: extraction is I/O-bound (30s upstream
+// timeout), so a small multiple of the single SQLite writer keeps throughput
+// without queueing unbounded goroutines.
+func extractConcurrency(cfg config.Config) int {
+	if n := cfg.Feed.ExtractConcurrency; n > 0 {
+		return n
+	}
+	return 4
+}
+
 func (s *Server) StartPoller(ctx context.Context, interval time.Duration) {
-	go s.poller.Start(ctx, interval)
+	s.bg.Add(1)
+	go func() {
+		defer s.bg.Done()
+		s.poller.Start(ctx, interval)
+	}()
 }
 
 func (s *Server) StartScheduler(ctx context.Context) {
@@ -246,7 +289,27 @@ func (s *Server) StartScheduler(ctx context.Context) {
 	scheduler.SetLLMResolver(func(ctx context.Context, userID int64) digest.Chatter {
 		return s.resolveLLMClient(ctx, userID)
 	})
-	go scheduler.Start(ctx)
+	s.bg.Add(1)
+	go func() {
+		defer s.bg.Done()
+		scheduler.Start(ctx)
+	}()
+}
+
+// WaitBackground blocks until the poller, scheduler, and detached extractions
+// finish, or ctx expires. Main calls it during shutdown after the HTTP server
+// stops accepting connections, so in-flight work drains instead of dying
+// mid-write.
+func (s *Server) WaitBackground(ctx context.Context) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.bg.Wait()
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

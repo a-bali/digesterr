@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,7 +12,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -114,10 +118,28 @@ func main() {
 	queries := store.New(db)
 	authSvc := auth.NewService(cfg.Server.JWTSecret, queries, db)
 	server := httpapi.NewServer(db, queries, authSvc, logBuf, cfg)
-	server.StartPoller(context.Background(), cfg.Feed.SyncInterval.Duration())
-	server.StartScheduler(context.Background())
+
+	// Cancelled on SIGINT/SIGTERM: stops the poller and scheduler on their next
+	// tick and is the lifetime context for detached extraction work.
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	server.SetBaseContext(rootCtx)
+	server.StartPoller(rootCtx, cfg.Feed.SyncInterval.Duration())
+	server.StartScheduler(rootCtx)
 
 	handler := spaHandler(server, staticFileSystem())
+
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", cfg.Server.Port),
+		Handler: handler,
+		// Bounds a slow or stalled client without touching response time:
+		// WriteTimeout is deliberately 0 because summarize/generate call the
+		// LLM with a multi-minute budget, and any finite response deadline
+		// would sever those replies. Handler-level context timeouts cover them.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 
 	// Log the effective LLM model. Environment variables override the config
 	// file (applyEnv runs last), so the value the binary actually uses is not
@@ -125,10 +147,36 @@ func main() {
 	// way to tell which model is in effect. The API key is never logged.
 	slog.Info("starting digesterr", "port", cfg.Server.Port, "log_level", resolveLogLevel(cfg.Logging.Level).String(), "config", path,
 		"llm_model", cfg.LLM.Model, "llm_configured", cfg.LLM.APIKey != "")
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", cfg.Server.Port), handler); err != nil {
+
+	errCh := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	select {
+	case err := <-errCh:
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
+	case <-rootCtx.Done():
 	}
+
+	// Shutdown: stop accepting connections, let in-flight requests finish, then
+	// let background writers drain before the database is closed. Without this,
+	// a signal kills the process mid-transaction and can leave WAL work torn.
+	stop() // restore default signal handling so a second signal force-quits
+	slog.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("http shutdown did not complete cleanly", "error", err)
+	}
+	server.WaitBackground(shutdownCtx)
+	if err := db.Close(); err != nil {
+		slog.Warn("closing database", "error", err)
+	}
+	slog.Info("shutdown complete")
 }
 
 func initSchema(db *sql.DB) error {

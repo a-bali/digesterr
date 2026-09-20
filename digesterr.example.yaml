@@ -97,6 +97,10 @@ feed:
   #                                   [FEED_LOBSTERS_ENRICH_COUNT]
   # lobsters_enrich_count: 0
 
+  # Max concurrent on-demand content extractions (Extract button).
+  # Zero = 4 (default).                              [FEED_EXTRACT_CONCURRENCY]
+  # extract_concurrency: 4
+
 digest:
   # IANA timezone used to evaluate digest cron schedules (e.g. Europe/Paris).
   # Empty means the server's local timezone.            [DIGEST_SCHEDULER_TIMEZONE]

@@ -172,6 +172,9 @@ type FeedConfig struct {
 	// LobstersEnrichCount is the max number of Lobste.rs stories to
 	// enrich per poll. Zero means all items returned by the RSS feed.
 	LobstersEnrichCount int `yaml:"lobsters_enrich_count"`
+	// ExtractConcurrency bounds concurrent on-demand content extractions
+	// (the per-item Extract button). Zero means 4 (default).
+	ExtractConcurrency int `yaml:"extract_concurrency"`
 }
 
 // DigestConfig holds digest scheduling settings.
@@ -236,6 +239,7 @@ func Default() Config {
 			CommentCacheTTL:     Duration(5 * time.Minute),
 			HNEnrichCount:       0,
 			LobstersEnrichCount: 0,
+			ExtractConcurrency:  4,
 		},
 		Reddit:  RedditConfig{},
 		Twitter: TwitterConfig{},
@@ -375,6 +379,7 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 	setDuration(&cfg.Feed.CommentCacheTTL, "FEED_COMMENT_CACHE_TTL")
 	setInt(&cfg.Feed.HNEnrichCount, "FEED_HN_ENRICH_COUNT", "")
 	setInt(&cfg.Feed.LobstersEnrichCount, "FEED_LOBSTERS_ENRICH_COUNT", "")
+	setInt(&cfg.Feed.ExtractConcurrency, "FEED_EXTRACT_CONCURRENCY", "")
 
 	setString(&cfg.Reddit.ClientID, "REDDIT_CLIENT_ID", "")
 	setString(&cfg.Reddit.ClientSecret, "REDDIT_CLIENT_SECRET", "")

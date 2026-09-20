@@ -28,6 +28,7 @@ func clearEnv(t *testing.T) {
 		"LOGGING_BUFFER_SIZE", "LOG_BUFFER_SIZE",
 		"LLM_ENDPOINT", "LLM_API_KEY", "LLM_MODEL", "LLM_TIMEOUT",
 		"FEED_SYNC_INTERVAL", "FEED_EXPIRE_ITEMS", "FEED_EXPIRE_DIGESTS",
+		"FEED_EXTRACT_CONCURRENCY",
 		"REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET",
 	} {
 		t.Setenv(k, "")
@@ -245,6 +246,7 @@ func TestCanonicalEnvNames(t *testing.T) {
 	t.Setenv("FEED_SYNC_INTERVAL", "45s")
 	t.Setenv("FEED_EXPIRE_ITEMS", "2y")
 	t.Setenv("FEED_EXPIRE_DIGESTS", "1d")
+	t.Setenv("FEED_EXTRACT_CONCURRENCY", "6")
 	t.Setenv("REDDIT_CLIENT_ID", "canonical-rid")
 	t.Setenv("REDDIT_CLIENT_SECRET", "canonical-rsecret")
 
@@ -269,6 +271,9 @@ func TestCanonicalEnvNames(t *testing.T) {
 	}
 	if cfg.Feed.SyncInterval.Duration() != 45*time.Second {
 		t.Errorf("feed.sync_interval = %v", cfg.Feed.SyncInterval.Duration())
+	}
+	if cfg.Feed.ExtractConcurrency != 6 {
+		t.Errorf("feed.extract_concurrency = %d, want env 6", cfg.Feed.ExtractConcurrency)
 	}
 	if cfg.Feed.ExpireItems.Duration() != 2*365*24*time.Hour {
 		t.Errorf("feed.expire_items = %v, want 2y", cfg.Feed.ExpireItems.Duration())
