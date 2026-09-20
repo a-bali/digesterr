@@ -56,13 +56,13 @@ func (s *Server) handleReaderSubscriptionList(w http.ResponseWriter, r *http.Req
 
 	feeds, err := s.queries.ListFeeds(r.Context(), userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list feeds")
+		writeServerError(w, "failed to list feeds", err)
 		return
 	}
 
 	configs, err := s.queries.ListDigestConfigs(r.Context(), userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list digest configs")
+		writeServerError(w, "failed to list digest configs", err)
 		return
 	}
 
@@ -128,7 +128,7 @@ func (s *Server) handleReaderTagList(w http.ResponseWriter, r *http.Request) {
 
 	categories, err := s.queries.ListCategories(r.Context(), userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list categories")
+		writeServerError(w, "failed to list categories", err)
 		return
 	}
 	for _, name := range categories {
@@ -165,13 +165,13 @@ func (s *Server) handleReaderSubscriptionExport(w http.ResponseWriter, r *http.R
 
 	feeds, err := s.queries.ListFeeds(r.Context(), userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list feeds")
+		writeServerError(w, "failed to list feeds", err)
 		return
 	}
 
 	configs, err := s.queries.ListDigestConfigs(r.Context(), userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list digest configs")
+		writeServerError(w, "failed to list digest configs", err)
 		return
 	}
 

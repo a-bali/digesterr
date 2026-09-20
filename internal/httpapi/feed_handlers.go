@@ -34,8 +34,7 @@ type createFeedRequest struct {
 func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
 	var req createFeedRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	if req.Name == "" || req.Type == "" {
@@ -107,8 +106,7 @@ const discoverTimeout = 20 * time.Second
 // rather than an error — the user simply types the name.
 func (s *Server) handleDiscoverFeed(w http.ResponseWriter, r *http.Request) {
 	var req discoverFeedRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	req.Type = strings.TrimSpace(req.Type)
@@ -247,8 +245,7 @@ func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req updateFeedRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	name := existing.Name

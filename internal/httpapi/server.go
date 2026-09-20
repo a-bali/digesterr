@@ -312,8 +312,16 @@ func (s *Server) WaitBackground(ctx context.Context) {
 	}
 }
 
+// maxRequestBody bounds how many bytes a client may send on any API request.
+// The largest legitimate body is a digest config JSON blob (tens of KB), so
+// 1 MiB leaves generous headroom while stopping a memory-exhaustion upload.
+const maxRequestBody = 1 << 20
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	// Cap request bodies before any handler reads them. The Reader API shares
+	// this path (its form posts are tiny), and static files bypass it entirely.
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 	rec := &responseRecorder{ResponseWriter: w}
 	defer func() {
 		if err := recover(); err != nil {

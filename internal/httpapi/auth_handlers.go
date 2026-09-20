@@ -57,8 +57,7 @@ type signupRequest struct {
 
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	var req signupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	if req.Email == "" || req.Password == "" {
@@ -119,8 +118,7 @@ type signinRequest struct {
 
 func (s *Server) handleSignin(w http.ResponseWriter, r *http.Request) {
 	var req signinRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeBody(w, r, &req) {
 		return
 	}
 
@@ -226,8 +224,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
 
 	var req changePasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	if req.OldPassword == "" || req.NewPassword == "" {

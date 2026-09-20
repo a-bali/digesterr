@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -109,8 +108,7 @@ func (s *Server) handleUpdateEmailSettings(w http.ResponseWriter, r *http.Reques
 		Inbox  string  `json:"inbox"`
 		APIKey *string `json:"api_key"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeBody(w, r, &req) {
 		return
 	}
 

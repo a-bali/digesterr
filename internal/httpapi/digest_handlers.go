@@ -33,8 +33,7 @@ func (s *Server) handleListDigestConfigs(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleCreateDigestConfig(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
 	var req createDigestConfigRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	if req.Schedule == "" {
@@ -87,8 +86,7 @@ func (s *Server) handleUpdateDigestConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req createDigestConfigRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	if req.Config == "" {
@@ -228,8 +226,7 @@ func (s *Server) handleUpdateDigestResultStatus(w http.ResponseWriter, r *http.R
 		return
 	}
 	var req updateDigestResultStatusRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	if req.Status != "new" && req.Status != "unread" && req.Status != "read" {
@@ -417,12 +414,16 @@ func (s *Server) handleGenerateDigest(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.generator.Generate(r.Context(), cfg, s.resolveLLMClient(r.Context(), userID))
 	if err != nil {
+		// The full error is server-side only. Upstream LLM bodies can be long
+		// and carry provider internals, and the config error column is surfaced
+		// in the UI — so both the client and the stored copy get a stable,
+		// truncated message instead of the raw error chain.
 		slog.Error("digest generation failed", "config_id", configID, "config_name", cfg.Name, "user_id", userID, "error", err)
 		s.queries.UpdateDigestConfigError(r.Context(), store.UpdateDigestConfigErrorParams{
 			ID:    configID,
-			Error: err.Error(),
+			Error: truncateError(err, 500),
 		})
-		writeError(w, http.StatusInternalServerError, "failed to generate digest: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to generate digest")
 		return
 	}
 	s.queries.ClearDigestConfigError(r.Context(), configID)

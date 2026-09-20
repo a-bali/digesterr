@@ -107,9 +107,15 @@ func (s *Scheduler) tick(ctx context.Context) {
 			}
 			if err != nil {
 				cfgLogger.Error("scheduled digest generation failed", "error", err)
+				// Truncated like the manual path: this column is rendered in
+				// the UI, and upstream LLM bodies are unbounded.
+				msg := err.Error()
+				if len(msg) > 500 {
+					msg = msg[:500] + "…"
+				}
 				s.queries.UpdateDigestConfigError(ctx, store.UpdateDigestConfigErrorParams{
 					ID:    cfg.ID,
-					Error: err.Error(),
+					Error: msg,
 				})
 			} else {
 				_ = s.queries.ClearDigestConfigError(ctx, cfg.ID)

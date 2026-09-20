@@ -65,14 +65,17 @@ Use `devenv shell` to enter a shell with all tools. Use `devenv up` to run both 
 - LLM integration uses any OpenAI-compatible API (user supplies endpoint, key, model)
 - DB schema: `internal/schema/schema.sql` is applied on first start (embedded
   via `internal/schema/`). Existing databases are upgraded at startup by
-  ordered migrations in `cmd/digesterr/main.go` (`migrateSchema`); migration
-  failures are logged at warn. To fully reset during development, delete the
+  versioned migrations in `internal/migrate/` (each runs once inside a
+  transaction, recorded in `schema_migrations`; a failure aborts startup).
+  Add new migrations by appending to `internal/migrate/migrations.go` — never
+  edit existing entries. To fully reset during development, delete the
   DB file (`make clean` removes both the repo-root and `data/` dev DBs).
 
 ## Key files
 
-- `cmd/digesterr/main.go` — entrypoint, DB init
+- `cmd/digesterr/main.go` — entrypoint, config load, graceful shutdown
 - `internal/auth/` — JWT, bcrypt, refresh tokens
+- `internal/migrate/` — versioned schema migrations (`schema_migrations`)
 - `internal/schema/` — embedded DB schema (single source of truth)
 - `internal/store/` — sqlc-generated DB access (do not edit manually)
 - `internal/httpapi/` — HTTP handlers and routing

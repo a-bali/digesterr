@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -118,8 +117,7 @@ func (s *Server) handleUpdateLLMSettings(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		Model string `json:"model"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	model := strings.TrimSpace(req.Model)

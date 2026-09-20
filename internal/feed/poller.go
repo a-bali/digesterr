@@ -717,9 +717,15 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	}
 	if err != nil {
 		logger.Warn("failed to fetch feed", "error", err)
+		// feeds.last_error is rendered in the sidebar tooltip: keep the full
+		// error in the log, but store a bounded copy like digest configs do.
+		msg := err.Error()
+		if len(msg) > 500 {
+			msg = msg[:500] + "…"
+		}
 		p.queries.UpdateFeedError(ctx, store.UpdateFeedErrorParams{
 			ID:    feed.ID,
-			Error: err.Error(),
+			Error: msg,
 		})
 		if _, ue := p.queries.UpdateFeedStatus(ctx, store.UpdateFeedStatusParams{
 			ID:     feed.ID,

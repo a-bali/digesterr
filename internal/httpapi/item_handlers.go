@@ -43,8 +43,7 @@ func (s *Server) handleUpdateItemStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req updateItemStatusRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	if req.Status == "" && req.Saved == nil {
@@ -423,8 +422,7 @@ func (s *Server) handleSummarizeItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req summarizeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	if req.SentenceCount <= 0 {
