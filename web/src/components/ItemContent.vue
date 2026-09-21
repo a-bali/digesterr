@@ -7,7 +7,7 @@ import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
 import DropdownMenu from './ui/DropdownMenu.vue'
 import Skeleton from './ui/Skeleton.vue'
-import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown, Sparkles, Trash2, FileText, X } from 'lucide-vue-next'
+import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown, Sparkles, Trash2, X } from 'lucide-vue-next'
 import { absoluteTime } from '../lib/format'
 import { decodeHTMLEntities } from '../lib/utils'
 import { setItemCommentsScroller, clearItemCommentsScroller } from '../lib/itemComments'
@@ -72,18 +72,35 @@ const shownBody = computed(() => {
 })
 
 // Only offer the toggle when both bodies are real and differ. Identical bodies
-// would make the button a no-op, and an empty original (HN/link posts carry no
-// text) means "Show original" would reveal nothing.
+// would make it a no-op, and an empty original (HN/link posts carry no text)
+// means selecting "Original" would reveal nothing.
 const canToggleOriginal = computed(() => {
   const item = feedStore.selectedItem
   if (!item || !hasExtraction.value) return false
   return Boolean(item.content?.trim()) && item.content !== item.extract_content
 })
 
-// Show the original instead of the extraction. Colored when it is the active
-// view, so the button's own state says which body you are looking at.
-function toggleOriginal() {
-  contentView.value = contentView.value === 'original' ? 'extracted' : 'original'
+// Two-position toggle: left is the original, right is the extracted body. It is a
+// radiogroup rather than two independent buttons because exactly one body is on
+// screen — mutually exclusive options with `aria-checked` saying which.
+const viewOptions = [
+  { value: 'original', label: 'Original' },
+  { value: 'extracted', label: 'Extracted' },
+] as const
+
+function selectView(value: 'original' | 'extracted') {
+  contentView.value = value
+}
+
+// Roving focus: only the checked segment is in the tab order, and the arrow keys
+// move between the two — the standard radiogroup keyboard contract.
+function onViewKeydown(e: KeyboardEvent) {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+  e.preventDefault()
+  const idx = viewOptions.findIndex(o => o.value === contentView.value)
+  const next = e.key === 'ArrowRight' ? idx + 1 : idx - 1
+  // Wrap, so the toggle keeps working when held in one direction.
+  selectView(viewOptions[(next + viewOptions.length) % viewOptions.length].value)
 }
 
 // Note on the other extract_status values, now that one body section renders
@@ -364,7 +381,7 @@ async function doExtract() {
   extracting.value = true
   // Asking for an extraction is asking to read it, so switch the view up front
   // rather than leaving the user on the body they just replaced — and rather than
-  // making them click Show extracted once it lands.
+  // making them move the toggle themselves once it lands.
   contentView.value = 'extracted'
   const token = ++extractToken
   try {
@@ -650,24 +667,46 @@ onUnmounted(() => {
 
       <!-- The content. One section, one body: the extracted text when one exists
            (extraction exists to improve on the original, so it is the default),
-           otherwise the original. The button above switches, and is colored while
-           the original is the active view so the control states which you see. -->
-      <div v-if="canToggleOriginal" class="flex items-center justify-between gap-2 mb-2">
-        <!-- When extraction happened, kept from the old section header so the
-             reader can still tell how fresh the extracted body is. -->
-        <span v-if="feedStore.selectedItem.extract_date" class="text-xs text-muted-foreground/70">
+           otherwise the original. A two-position toggle switches between them,
+           aligned right; left = original, right = extracted. The selected segment
+           carries the accent, so the control shows which body is on screen instead
+           of naming an action that then misleads. -->
+      <div v-if="canToggleOriginal" class="flex flex-col items-end gap-1 mb-3">
+        <div
+          class="inline-flex rounded-md border border-border bg-muted/40 p-0.5"
+          role="radiogroup"
+          aria-label="Content view"
+          data-view-toggle
+          @keydown="onViewKeydown"
+        >
+          <button
+            v-for="opt in viewOptions"
+            :key="opt.value"
+            type="button"
+            role="radio"
+            :aria-checked="contentView === opt.value"
+            :tabindex="contentView === opt.value ? 0 : -1"
+            :data-view-option="opt.value"
+            :class="[
+              'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+              contentView === opt.value
+                ? 'bg-accent text-accent-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            ]"
+            @click="selectView(opt.value)"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
+        <!-- How fresh the extracted body is. Showing the extraction is when its age
+             matters, so the date appears only in that position. -->
+        <span
+          v-if="contentView === 'extracted' && feedStore.selectedItem.extract_date"
+          data-extract-date
+          class="text-xs text-muted-foreground/70"
+        >
           Extracted {{ absoluteTime(feedStore.selectedItem.extract_date) }}
         </span>
-        <span v-else />
-        <Button
-          size="sm"
-          :variant="contentView === 'original' ? 'default' : 'outline'"
-          data-toggle-original
-          :aria-pressed="contentView === 'original' ? 'true' : 'false'"
-          @click="toggleOriginal"
-        >
-          <FileText /> {{ contentView === 'original' ? 'Show extracted' : 'Show original' }}
-        </Button>
       </div>
       <!-- Extraction still running and nothing to show yet: hold the space rather
            than flashing an empty body. -->
