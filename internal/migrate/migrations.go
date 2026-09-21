@@ -372,6 +372,52 @@ WHERE json_valid(m.to_addrs) AND je.value != ''`,
 		// Baseline when the table already exists (fresh schema, or a prior run).
 		applied: tablePresent("email_message_recipients"),
 	},
+	{
+		version: 38,
+		name:    "composite indexes for hot access paths",
+		stmts: []string{
+			`CREATE INDEX IF NOT EXISTS idx_items_feed_status_published ON items(feed_id, status, published_at)`,
+			`CREATE INDEX IF NOT EXISTS idx_items_feed_status_points ON items(feed_id, status, points)`,
+			`CREATE INDEX IF NOT EXISTS idx_items_feed_status_enriched ON items(feed_id, status, last_enriched_at)`,
+			`CREATE INDEX IF NOT EXISTS idx_items_saved_created ON items(is_saved, created_at)`,
+			`CREATE INDEX IF NOT EXISTS idx_items_feed_extract ON items(feed_id, extract_status, extract_retries)`,
+			`CREATE INDEX IF NOT EXISTS idx_digest_results_user_status_created ON digest_results(user_id, status, created_at)`,
+			`CREATE INDEX IF NOT EXISTS idx_digest_results_config_created ON digest_results(config_id, created_at)`,
+			`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at)`,
+			`CREATE INDEX IF NOT EXISTS idx_feeds_user_category ON feeds(user_id, category)`,
+		},
+		// The legacy test fixture's items table predates several indexed
+		// columns (points, ...): baseline when there is nothing to index
+		// rather than erroring on missing columns. Real databases gained
+		// those columns through earlier migrations in this same run.
+		applied: columnAbsent("items", "points"),
+	},
+	{
+		version: 39,
+		name:    "deduplicate digest_result_items",
+		// Existing databases may hold duplicate (result_id, item_id) pairs
+		// from retried generation; keep the earliest link.
+		stmts: []string{
+			`DELETE FROM digest_result_items
+WHERE id NOT IN (SELECT MIN(id) FROM digest_result_items GROUP BY result_id, item_id)`,
+		},
+		applied: func(db *sql.DB) (bool, error) {
+			absent, err := tableAbsent("digest_result_items")(db)
+			if err != nil || absent {
+				return absent, err
+			}
+			return noRows(`SELECT count(*) FROM (
+    SELECT result_id, item_id FROM digest_result_items
+    GROUP BY result_id, item_id HAVING count(*) > 1
+)`)(db)
+		},
+	},
+	{
+		version: 40,
+		name:    "unique digest_result_items index",
+		stmts:   []string{"CREATE UNIQUE INDEX IF NOT EXISTS idx_digest_result_items_unique ON digest_result_items(result_id, item_id)"},
+		applied: tableAbsent("digest_result_items"),
+	},
 }
 
 // allTrue ANDs guard results: the migration is baselined only when every

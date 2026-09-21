@@ -53,9 +53,12 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 }
 
 const getUserByAPIKey = `-- name: GetUserByAPIKey :one
-SELECT id, email, password_hash, api_key, llm_model, email_inbox, email_api_key, created_at, updated_at FROM users WHERE api_key = ?
+SELECT id, email, password_hash, api_key, llm_model, email_inbox, email_api_key, created_at, updated_at FROM users WHERE api_key = ? AND api_key != ''
 `
 
+// The api_key != ” predicate mirrors the partial unique index
+// idx_users_api_key: without it SQLite cannot use the index and falls back to
+// a full users scan on every authenticated request.
 func (q *Queries) GetUserByAPIKey(ctx context.Context, apiKey string) (User, error) {
 	row := q.db.QueryRowContext(ctx, getUserByAPIKey, apiKey)
 	var i User

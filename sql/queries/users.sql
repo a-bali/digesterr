@@ -7,7 +7,10 @@ RETURNING *;
 SELECT * FROM users WHERE id = ?;
 
 -- name: GetUserByAPIKey :one
-SELECT * FROM users WHERE api_key = ?;
+-- The api_key != '' predicate mirrors the partial unique index
+-- idx_users_api_key: without it SQLite cannot use the index and falls back to
+-- a full users scan on every authenticated request.
+SELECT * FROM users WHERE api_key = ? AND api_key != '';
 
 -- name: GetUserByEmail :one
 SELECT * FROM users WHERE email = ?;

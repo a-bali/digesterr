@@ -223,3 +223,18 @@ CREATE UNIQUE INDEX idx_feeds_email_url ON feeds(url) WHERE type = 'email';
 
 CREATE INDEX idx_email_messages_inbox_received ON email_messages(inbox_id, received_at);
 CREATE INDEX idx_email_recipients_inbox_address ON email_message_recipients(inbox_id, address);
+-- Composite indexes for the hot access paths. Single-column indexes above do
+-- not cover the actual predicates: feed lists filter (feed_id, status) and
+-- sort by date or score; digest streams filter (user_id, status) and sort by
+-- date; the enrichment sweep filters (feed_id, status) on fetched/enriched
+-- timestamps; expiry scans (is_saved, created_at).
+CREATE INDEX idx_items_feed_status_published ON items(feed_id, status, published_at);
+CREATE INDEX idx_items_feed_status_points ON items(feed_id, status, points);
+CREATE INDEX idx_items_feed_status_enriched ON items(feed_id, status, last_enriched_at);
+CREATE INDEX idx_items_saved_created ON items(is_saved, created_at);
+CREATE INDEX idx_items_feed_extract ON items(feed_id, extract_status, extract_retries);
+CREATE INDEX idx_digest_results_user_status_created ON digest_results(user_id, status, created_at);
+CREATE INDEX idx_digest_results_config_created ON digest_results(config_id, created_at);
+CREATE UNIQUE INDEX idx_digest_result_items_unique ON digest_result_items(result_id, item_id);
+CREATE INDEX idx_refresh_tokens_expires ON refresh_tokens(expires_at);
+CREATE INDEX idx_feeds_user_category ON feeds(user_id, category);
