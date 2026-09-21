@@ -188,8 +188,7 @@ func (s *Server) handleListFeeds(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
 	feeds, err := s.queries.ListFeeds(r.Context(), userID)
 	if err != nil {
-		slog.Error("failed to list feeds", "user_id", userID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to list feeds")
+		writeServerError(w, "failed to list feeds", err)
 		return
 	}
 	if feeds == nil {
@@ -317,7 +316,7 @@ func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
 		MinScore:       minScore,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update feed")
+		writeServerError(w, "failed to update feed", err)
 		return
 	}
 

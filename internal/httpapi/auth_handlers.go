@@ -71,13 +71,13 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to hash password")
+		writeServerError(w, "failed to hash password", err)
 		return
 	}
 
 	apiKey, err := generateAPIKey()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate api key")
+		writeServerError(w, "failed to generate api key", err)
 		return
 	}
 
@@ -93,12 +93,12 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 
 	accessToken, err := s.auth.GenerateAccessToken(&user)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		writeServerError(w, "failed to generate token", err)
 		return
 	}
 	refreshToken, err := s.auth.CreateRefreshToken(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create refresh token")
+		writeServerError(w, "failed to create refresh token", err)
 		return
 	}
 
@@ -134,12 +134,12 @@ func (s *Server) handleSignin(w http.ResponseWriter, r *http.Request) {
 
 	accessToken, err := s.auth.GenerateAccessToken(&user)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		writeServerError(w, "failed to generate token", err)
 		return
 	}
 	refreshToken, err := s.auth.CreateRefreshToken(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create refresh token")
+		writeServerError(w, "failed to create refresh token", err)
 		return
 	}
 
@@ -248,7 +248,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	newHash, err := auth.HashPassword(req.NewPassword)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to hash password")
+		writeServerError(w, "failed to hash password", err)
 		return
 	}
 
@@ -257,7 +257,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		PasswordHash: newHash,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update password")
+		writeServerError(w, "failed to update password", err)
 		return
 	}
 

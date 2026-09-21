@@ -218,7 +218,7 @@ func (s *Server) handleFetchFeed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.poller.PollFeed(r.Context(), f); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to fetch feed")
+		writeServerError(w, "failed to fetch feed", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "feed fetched"})

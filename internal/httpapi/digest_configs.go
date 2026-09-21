@@ -19,7 +19,7 @@ func (s *Server) handleListDigestConfigs(w http.ResponseWriter, r *http.Request)
 	userID := authedUserID(r)
 	configs, err := s.queries.ListDigestConfigs(r.Context(), userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list digest configs")
+		writeServerError(w, "failed to list digest configs", err)
 		return
 	}
 	if configs == nil {
@@ -52,7 +52,7 @@ func (s *Server) handleCreateDigestConfig(w http.ResponseWriter, r *http.Request
 		Config:   req.Config,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create digest config")
+		writeServerError(w, "failed to create digest config", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, cfg)
@@ -154,7 +154,7 @@ func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request)
 		Offset:   int64(offset),
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list digest results")
+		writeServerError(w, "failed to list digest results", err)
 		return
 	}
 	if results == nil {
@@ -247,7 +247,7 @@ func (s *Server) handleUpdateDigestResultStatus(w http.ResponseWriter, r *http.R
 	// move from digested to read.
 	if req.Status == "read" {
 		if err := s.queries.MarkDigestResultItemsRead(r.Context(), result.ID); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update linked items")
+			writeServerError(w, "failed to update linked items", err)
 			return
 		}
 	}

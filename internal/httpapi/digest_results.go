@@ -183,7 +183,7 @@ func (s *Server) handleListDigestResultItemsWithData(w http.ResponseWriter, r *h
 
 	items, err := s.queries.ListDigestResultItemsWithData(r.Context(), resultID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list digest result items")
+		writeServerError(w, "failed to list digest result items", err)
 		return
 	}
 	if items == nil {
@@ -231,7 +231,7 @@ func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Reque
 		Offset: int64(offset),
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list digest results")
+		writeServerError(w, "failed to list digest results", err)
 		return
 	}
 
@@ -244,7 +244,7 @@ func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Reque
 	if hasMore || offset > 0 {
 		total, err = s.queries.CountAllDigestResultsByUser(r.Context(), userID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to count digest results")
+			writeServerError(w, "failed to count digest results", err)
 			return
 		}
 	}
