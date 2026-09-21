@@ -416,6 +416,9 @@ WHERE id NOT IN (SELECT MIN(id) FROM digest_result_items GROUP BY result_id, ite
 		version: 40,
 		name:    "unique digest_result_items index",
 		stmts:   []string{"CREATE UNIQUE INDEX IF NOT EXISTS idx_digest_result_items_unique ON digest_result_items(result_id, item_id)"},
+		// Legacy databases may predate digest_results entirely: no table, no
+		// index, nothing to do.
+		applied: tableAbsent("digest_result_items"),
 	},
 	{
 		version: 41,
