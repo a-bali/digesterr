@@ -4,7 +4,7 @@ import Dialog from './ui/Dialog.vue'
 import Button from './ui/Button.vue'
 import Skeleton from './ui/Skeleton.vue'
 import { metricsApi } from '../services/api'
-import { toastError } from '../lib/toast'
+import { toastSuccess, toastError } from '../lib/toast'
 import type { MetricsSummary, MetricsGroup, MetricsBucket, ProviderQuota } from '../types/api'
 import { BarChart3, RefreshCw } from 'lucide-vue-next'
 
@@ -156,7 +156,9 @@ async function confirmReset() {
     showResetConfirm.value = false
     data.value = null
     await load()
+    toastSuccess('Metrics reset')
   } catch (e: any) {
+    toastError(e, 'Failed to reset metrics')
     error.value = e instanceof Error ? e.message : 'Failed to reset metrics'
   } finally {
     resetting.value = false

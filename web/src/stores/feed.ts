@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { feedApi, itemApi, settingsApi } from '../services/api'
 import type { Feed, Item, MultiItem, ItemSort, MarkRelativeOptions } from '../types/api'
-import { toastError } from '../lib/toast'
+import { toastError, toastSuccess } from '../lib/toast'
 import { SCORE_FEED_TYPES } from '../lib/feeds'
 
 const PAGE_SIZE = 50
@@ -460,6 +460,12 @@ export const useFeedStore = defineStore('feed', () => {
   // updateItemStatus writes read state and/or the saved flag. They are separate
   // fields on the API — `saved` is NOT a status — so each caller sends only what
   // it means to change: marking read must not alter savedness, and vice versa.
+  //
+  // Deliberately NO success toast: this is the highest-frequency action in the app
+  // (every row click, every star toggle, every swipe) and the row's own badge and
+  // dimming already report the outcome inline. A toast per click would bury the
+  // messages that do need attention. Failures still toast, because a click that
+  // silently does nothing is the case a user must hear about.
   async function updateItemStatus(item: Item, status?: string, saved?: boolean) {
     try {
       const body: { status?: string; saved?: boolean } = {}
@@ -486,6 +492,7 @@ export const useFeedStore = defineStore('feed', () => {
   async function deleteExtraction(item: Item) {
     try {
       applyUpdatedItem(await itemApi.deleteExtracted(item.id))
+      toastSuccess('Extracted content removed')
     } catch (e) {
       toastError(e, 'Failed to delete extracted content')
     }
@@ -509,11 +516,19 @@ export const useFeedStore = defineStore('feed', () => {
     }
   }
 
+  // Every mark-read path reports both outcomes. These used to have no error
+  // handling at all, so a failure rejected into the caller's `await` and the user
+  // saw the panes simply not change.
   async function markAllRead(category?: string) {
-    await feedApi.markReadAll(category)
-    // Refresh items and unread counts after marking read.
-    await fetchFirstPage()
-    await fetchUnreadCounts()
+    try {
+      await feedApi.markReadAll(category)
+      // Refresh items and unread counts after marking read.
+      await fetchFirstPage()
+      await fetchUnreadCounts()
+      toastSuccess(category ? `"${category}" marked read` : 'All feeds marked read')
+    } catch (e) {
+      toastError(e, 'Failed to mark read')
+    }
   }
 
   // The server resolves "above"/"below" in SQL, so it needs the ordering and
@@ -527,15 +542,25 @@ export const useFeedStore = defineStore('feed', () => {
   }
 
   async function markReadAbove(item: any) {
-    await itemApi.markReadAbove(item.id, markRelativeOptions())
-    await fetchFirstPage()
-    await fetchUnreadCounts()
+    try {
+      await itemApi.markReadAbove(item.id, markRelativeOptions())
+      await fetchFirstPage()
+      await fetchUnreadCounts()
+      toastSuccess('Marked above as read')
+    } catch (e) {
+      toastError(e, 'Failed to mark above as read')
+    }
   }
 
   async function markReadBelow(item: any) {
-    await itemApi.markReadBelow(item.id, markRelativeOptions())
-    await fetchFirstPage()
-    await fetchUnreadCounts()
+    try {
+      await itemApi.markReadBelow(item.id, markRelativeOptions())
+      await fetchFirstPage()
+      await fetchUnreadCounts()
+      toastSuccess('Marked below as read')
+    } catch (e) {
+      toastError(e, 'Failed to mark below as read')
+    }
   }
 
   // unsaveItem clears the saved flag and drops the row from the Saved view.
@@ -544,6 +569,10 @@ export const useFeedStore = defineStore('feed', () => {
   // change, and the old code forced 'read' here, which silently un-read nothing
   // but also meant a saved-and-unread item could never stay unread. The item
   // keeps whatever read state it had.
+  //
+  // Like updateItemStatus, no success toast: the row leaves the list, which is
+  // its own confirmation. (updateItemStatus's error toast still covers failure,
+  // since it is the one that performs the write.)
   async function unsaveItem(item: Item) {
     await updateItemStatus(item, undefined, false)
     savedItems.value = savedItems.value.filter(i => i.id !== item.id)

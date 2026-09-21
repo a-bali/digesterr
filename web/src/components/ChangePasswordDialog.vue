@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref, computed, watch } from 'vue'
-import { toast } from 'vue-sonner'
+import { toastSuccess, toastError } from '../lib/toast'
 import Dialog from './ui/Dialog.vue'
 import Input from './ui/Input.vue'
 import Button from './ui/Button.vue'
@@ -41,9 +41,10 @@ async function submit() {
   error.value = ''
   try {
     await authApi.changePassword(form.current, form.next)
-    toast.success('Password changed')
+    toastSuccess('Password changed')
     emit('update:open', false)
   } catch (e) {
+    toastError(e, 'Failed to change password')
     error.value = e instanceof Error ? e.message : 'Failed to change password'
   } finally {
     submitting.value = false

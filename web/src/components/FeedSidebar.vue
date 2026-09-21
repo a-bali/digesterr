@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, useTemplateRef } from 'vue'
-import { toast } from 'vue-sonner'
+import { toastSuccess, toastError } from '../lib/toast'
 import { useFeedStore } from '../stores/feed'
 import { useDigestStore } from '../stores/digest'
 import { feedApi } from '../services/api'
 import { feedUrlFor, emailAddressFor } from '../lib/feeds'
-import { toastError } from '../lib/toast'
 import { absoluteTime } from '../lib/format'
 import type { DigestConfig, Feed } from '../types/api'
 import { useRoute } from 'vue-router'
@@ -48,9 +47,9 @@ async function refreshFeed(id: number) {
     await feedApi.fetch(id)
     await feedStore.fetchFirstPage()
     await feedStore.fetchFeeds()
-    toast.success('Feed refreshed')
+    toastSuccess('Feed refreshed')
   } catch (e: any) {
-    toast.error('Failed to refresh feed', { description: e.message })
+    toastError(e, 'Failed to refresh feed')
   } finally {
     const next = new Set(refreshingFeeds.value); next.delete(id); refreshingFeeds.value = next
   }
@@ -61,7 +60,7 @@ async function markFeedRead(id: number) {
     await feedApi.markRead(id)
     await feedStore.fetchFeeds()
     if (feedStore.activeFeedId === id) await feedStore.fetchFirstPage()
-    toast.success('Feed marked read')
+    toastSuccess('Feed marked read')
   } catch (e: any) {
     toastError(e, 'Failed to mark feed read')
   }
@@ -71,7 +70,7 @@ async function markSectionRead(category?: string) {
   try {
     await feedStore.markAllRead(category)
     await feedStore.fetchFeeds()
-    toast.success(category ? `"${category}" marked read` : 'All feeds marked read')
+    toastSuccess(category ? `"${category}" marked read` : 'All feeds marked read')
   } catch (e: any) {
     toastError(e, 'Failed to mark read')
   }
@@ -142,36 +141,51 @@ function buildFeedPayload(form: { type: string; name: string; url: string; categ
 }
 
 async function addFeed(form: { type: string; name: string; url: string; category: string; extract_content: number; readability: number; min_score: number }) {
-  const newFeed = await feedApi.create(buildFeedPayload(form))
-  await feedStore.fetchFeeds()
-  showAddFeed.value = false
-  // Auto-fetch the new feed immediately with spinner animation
-  refreshingFeeds.value = new Set(refreshingFeeds.value).add(newFeed.id)
   try {
-    await feedApi.fetch(newFeed.id)
+    const newFeed = await feedApi.create(buildFeedPayload(form))
     await feedStore.fetchFeeds()
-  } catch { /* fire-and-forget errors are ok */ } finally {
-    const next = new Set(refreshingFeeds.value); next.delete(newFeed.id); refreshingFeeds.value = next
+    showAddFeed.value = false
+    toastSuccess('Feed added', newFeed?.name)
+    // Auto-fetch the new feed immediately with spinner animation
+    refreshingFeeds.value = new Set(refreshingFeeds.value).add(newFeed.id)
+    try {
+      await feedApi.fetch(newFeed.id)
+      await feedStore.fetchFeeds()
+    } catch { /* fire-and-forget errors are ok */ } finally {
+      const next = new Set(refreshingFeeds.value); next.delete(newFeed.id); refreshingFeeds.value = next
+    }
+  } catch (e) {
+    toastError(e, 'Failed to add feed')
   }
 }
 
 async function saveEditFeed(form: { type: string; name: string; url: string; category: string; extract_content: number; readability: number; min_score: number }) {
   if (!editingFeed.value) return
-  await feedApi.update(editingFeed.value.id, buildFeedPayload(form))
-  showEditFeed.value = false; editingFeed.value = null
-  await feedStore.fetchFeeds()
+  try {
+    await feedApi.update(editingFeed.value.id, buildFeedPayload(form))
+    showEditFeed.value = false; editingFeed.value = null
+    await feedStore.fetchFeeds()
+    toastSuccess('Feed updated')
+  } catch (e) {
+    toastError(e, 'Failed to update feed')
+  }
 }
 
 async function deleteFeed(id: number) {
-  await feedApi.delete(id)
-  showEditFeed.value = false; editingFeed.value = null
-  // Clear middle/right panes if the deleted feed was active
-  if (feedStore.activeFeedId === id) {
-    feedStore.activeFeedId = null
-    feedStore.items = []
-    feedStore.selectedItem = null
+  try {
+    await feedApi.delete(id)
+    showEditFeed.value = false; editingFeed.value = null
+    // Clear middle/right panes if the deleted feed was active
+    if (feedStore.activeFeedId === id) {
+      feedStore.activeFeedId = null
+      feedStore.items = []
+      feedStore.selectedItem = null
+    }
+    await feedStore.fetchFeeds()
+    toastSuccess('Feed deleted')
+  } catch (e) {
+    toastError(e, 'Failed to delete feed')
   }
-  await feedStore.fetchFeeds()
 }
 
 async function addDigest(data: { name: string; schedule: string; config: string }) {

@@ -114,7 +114,11 @@ describe('ChangePasswordDialog', () => {
     await flushPromises()
 
     expect(mockedChangePassword).toHaveBeenCalledWith('old-pass', 'new-pass')
-    expect(toast.success).toHaveBeenCalledWith('Password changed')
+    // The success toast now carries the green-check icon (see lib/toast.ts).
+    expect(toast.success).toHaveBeenCalledWith(
+      'Password changed',
+      expect.objectContaining({ icon: expect.anything() }),
+    )
     expect(wrapper.emitted('update:open')).toEqual([[false]])
   })
 

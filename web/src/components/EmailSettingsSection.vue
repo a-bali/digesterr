@@ -23,6 +23,7 @@
 import { computed, ref, watch } from 'vue'
 import Input from './ui/Input.vue'
 import { settingsApi } from '../services/api'
+import { toastError } from '../lib/toast'
 import { useFeedStore } from '../stores/feed'
 
 // MASK marks the field as "a key is stored". A constant, not a length-revealing
@@ -168,6 +169,9 @@ async function save(): Promise<boolean> {
     await feedStore.refreshEmailConfig()
     return true
   } catch (e) {
+    // The parent returns early on `false`, so without this the only signal would
+    // be an inline line the reader may never scroll back to.
+    toastError(e, 'Failed to save email settings')
     error.value = e instanceof Error ? e.message : 'Failed to save email settings'
     return false
   } finally {

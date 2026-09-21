@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { toast } from 'vue-sonner'
+import { toastSuccess, toastError } from '../lib/toast'
 import Dialog from './ui/Dialog.vue'
 import Input from './ui/Input.vue'
 import Button from './ui/Button.vue'
@@ -172,9 +172,12 @@ async function save() {
     // whether it has anything to write.
     const emailOk = (await emailSection.value?.save()) ?? true
     if (!emailOk) return
-    toast.success('Settings saved')
+    toastSuccess('Settings saved')
     emit('update:open', false)
   } catch (e) {
+    // Inline message stays for the form itself; the toast is what the user sees
+    // if they have already scrolled away from the field.
+    toastError(e, 'Failed to save settings')
     error.value = e instanceof Error ? e.message : 'Failed to save settings'
   } finally {
     saving.value = false

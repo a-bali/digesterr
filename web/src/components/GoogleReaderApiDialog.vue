@@ -4,6 +4,7 @@ import Dialog from './ui/Dialog.vue'
 import Button from './ui/Button.vue'
 import Input from './ui/Input.vue'
 import { authApi } from '../services/api'
+import { toastSuccess, toastError } from '../lib/toast'
 import { Check, Copy, RefreshCw, TriangleAlert } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -67,7 +68,9 @@ async function confirmRotate() {
     apiKey.value = res.api_key
     confirming.value = false
     success.value = 'API key rotated. The previous key no longer works — update your Google Reader clients.'
+    toastSuccess('API key rotated')
   } catch (e) {
+    toastError(e, 'Failed to rotate API key')
     error.value = e instanceof Error ? e.message : 'Failed to rotate API key'
   } finally {
     rotating.value = false

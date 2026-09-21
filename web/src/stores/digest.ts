@@ -1,9 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { toast } from 'vue-sonner'
 import { digestApi } from '../services/api'
 import type { DigestConfig, DigestResult, DigestResultItemWithData, DigestResultWithConfigName } from '../types/api'
-import { toastError } from '../lib/toast'
+import { toastSuccess, toastError } from '../lib/toast'
 
 const PAGE_SIZE = 50
 
@@ -55,6 +54,7 @@ export const useDigestStore = defineStore('digest', () => {
     try {
       const cfg = await digestApi.createConfig({ name, schedule, config })
       configs.value.push(cfg)
+      toastSuccess('Digest config created')
       return cfg
     } catch (e) {
       toastError(e, 'Failed to create digest config')
@@ -67,6 +67,7 @@ export const useDigestStore = defineStore('digest', () => {
       const updated = await digestApi.updateConfig(id, { name, schedule, config })
       const idx = configs.value.findIndex(c => c.id === id)
       if (idx !== -1) configs.value[idx] = updated
+      toastSuccess('Digest config updated')
     } catch (e) {
       toastError(e, 'Failed to update digest config')
     }
@@ -84,6 +85,7 @@ export const useDigestStore = defineStore('digest', () => {
         selectedResult.value = null
         resultItems.value = []
       }
+      toastSuccess('Digest config deleted')
     } catch (e) {
       toastError(e, 'Failed to delete digest config')
     }
@@ -142,7 +144,7 @@ export const useDigestStore = defineStore('digest', () => {
       if (activeConfigId.value === configId) {
         results.value.unshift(result)
       }
-      toast.success('Digest generated')
+      toastSuccess('Digest generated')
       return result
     } catch (e) {
       toastError(e, 'Digest generation failed')
@@ -159,6 +161,7 @@ export const useDigestStore = defineStore('digest', () => {
       if (idx !== -1) results.value[idx] = updated
       if (selectedResult.value?.id === resultId) selectedResult.value = updated
       fetchUnreadCounts()
+      toastSuccess('Digest marked read')
     } catch (e) {
       toastError(e, 'Failed to mark digest as read')
     }
@@ -172,6 +175,7 @@ export const useDigestStore = defineStore('digest', () => {
         selectedResult.value = null
         resultItems.value = []
       }
+      toastSuccess('Digest deleted')
     } catch (e) {
       toastError(e, 'Failed to delete digest')
     }
@@ -271,37 +275,52 @@ export const useDigestStore = defineStore('digest', () => {
   }
 
   async function markAllRead(configId?: number) {
-    await digestApi.markAllRead(configId)
-    await fetchUnreadCounts()
-    // Refresh results if we're in the affected view.
-    if (configId != null && activeConfigId.value === configId) {
-      await setActiveConfig(configId)
-    } else if (configId == null && showingAllDigests.value) {
-      await loadAllResults(true)
+    try {
+      await digestApi.markAllRead(configId)
+      await fetchUnreadCounts()
+      // Refresh results if we're in the affected view.
+      if (configId != null && activeConfigId.value === configId) {
+        await setActiveConfig(configId)
+      } else if (configId == null && showingAllDigests.value) {
+        await loadAllResults(true)
+      }
+      toastSuccess(configId != null ? 'Digest marked read' : 'All digests marked read')
+    } catch (e) {
+      toastError(e, 'Failed to mark digest as read')
     }
   }
 
   async function markReadAbove(result: DigestResult) {
-    const opts: { config_id?: number } = {}
-    if (activeConfigId.value) opts.config_id = activeConfigId.value
-    await digestApi.markReadAbove(result.id, opts)
-    await fetchUnreadCounts()
-    if (activeConfigId.value) {
-      await setActiveConfig(activeConfigId.value)
-    } else if (showingAllDigests.value) {
-      await loadAllResults(true)
+    try {
+      const opts: { config_id?: number } = {}
+      if (activeConfigId.value) opts.config_id = activeConfigId.value
+      await digestApi.markReadAbove(result.id, opts)
+      await fetchUnreadCounts()
+      if (activeConfigId.value) {
+        await setActiveConfig(activeConfigId.value)
+      } else if (showingAllDigests.value) {
+        await loadAllResults(true)
+      }
+      toastSuccess('Marked above as read')
+    } catch (e) {
+      toastError(e, 'Failed to mark above as read')
     }
   }
 
   async function markReadBelow(result: DigestResult) {
-    const opts: { config_id?: number } = {}
-    if (activeConfigId.value) opts.config_id = activeConfigId.value
-    await digestApi.markReadBelow(result.id, opts)
-    await fetchUnreadCounts()
-    if (activeConfigId.value) {
-      await setActiveConfig(activeConfigId.value)
-    } else if (showingAllDigests.value) {
-      await loadAllResults(true)
+    try {
+      const opts: { config_id?: number } = {}
+      if (activeConfigId.value) opts.config_id = activeConfigId.value
+      await digestApi.markReadBelow(result.id, opts)
+      await fetchUnreadCounts()
+      if (activeConfigId.value) {
+        await setActiveConfig(activeConfigId.value)
+      } else if (showingAllDigests.value) {
+        await loadAllResults(true)
+      }
+      toastSuccess('Marked below as read')
+    } catch (e) {
+      toastError(e, 'Failed to mark below as read')
     }
   }
 

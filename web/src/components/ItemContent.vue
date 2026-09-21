@@ -2,7 +2,7 @@
 import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import { itemApi } from '../services/api'
-import { toastError } from '../lib/toast'
+import { toastSuccess, toastError } from '../lib/toast'
 import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
 import DropdownMenu from './ui/DropdownMenu.vue'
@@ -144,6 +144,7 @@ async function doSummarize() {
     // The summary replaces the bodies it was built from, so fold them away.
     extractedCollapsed.value = true
     originalCollapsed.value = true
+    toastSuccess('Summary generated')
   } catch (e) {
     if (token === summaryToken) {
       toastError(e, 'Failed to generate summary')
@@ -340,6 +341,9 @@ async function doExtract() {
           const idx = feedStore.items.findIndex(i => i.id === updated.id)
           if (idx !== -1) feedStore.items[idx] = updated
           if (feedStore.selectedItem?.id === updated.id) feedStore.selectedItem = updated
+          // Report the outcome the poll observed, so extraction is not silent.
+          if (updated.extract_status === 'failed') toastError(new Error('extraction failed'), 'Extraction failed')
+          else toastSuccess('Content extracted')
         }
       } catch {
         // poll failed, will retry
