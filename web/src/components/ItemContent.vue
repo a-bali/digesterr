@@ -67,6 +67,14 @@ const extractionSectionVisible = computed(() =>
 // delete — the same condition under which the action button reads "Re-extract".
 const hasExtraction = computed(() => feedStore.selectedItem?.extract_status === 'done')
 
+// Read state for the read toggle. `digested` counts as read: the Reader API maps
+// item `digested` → read, and only digesting treats it as a distinct state for
+// filtering. Testing `status === 'read'` alone therefore reported a digested item
+// as unread, showing "Mark Read" on an item that was already read.
+const isRead = computed(() =>
+  feedStore.selectedItem?.status === 'read' || feedStore.selectedItem?.status === 'digested',
+)
+
 // On-demand top comments (experimental).
 const topComments = ref<ItemComment[]>([])
 const commentsLoading = ref(false)
@@ -499,8 +507,14 @@ onUnmounted(() => {
         </span>
       </div>
       <div class="flex gap-2 mb-4 flex-wrap">
-        <Button size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, feedStore.selectedItem!.status === 'read' ? 'unread' : 'read')">
-          <Check /> {{ feedStore.selectedItem?.status === 'read' ? 'Mark Unread' : 'Mark Read' }}
+        <!-- One read-state toggle. `digested` counts as READ (AGENTS.md: "item
+             digested → read"), so a digested item must offer "Mark Unread" and
+             clicking it must clear to unread — the old `status === 'read'` test
+             treated digested as unread, so the button read "Mark Read" on an item
+             that was already read and clicking it flipped to read, i.e. it
+             appeared to do nothing. -->
+        <Button size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, isRead ? 'unread' : 'read')">
+          <Check /> {{ isRead ? 'Mark Unread' : 'Mark Read' }}
         </Button>
         <Button v-if="feedStore.selectedItem?.status === 'digested'" size="sm" variant="outline" @click="feedStore.updateItemStatus(feedStore.selectedItem!, 'unread')">
           <Files /> Mark Undigested

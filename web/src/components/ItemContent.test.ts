@@ -81,6 +81,43 @@ function toggleButtons(wrapper: ReturnType<typeof mountItemContent>) {
   })
 }
 
+// The read-state toggle. `digested` counts as READ (AGENTS.md: item digested →
+// read), so a digested item must offer "Mark Unread". The old test was
+// `status === 'read'`, which treated digested as unread: the button read "Mark
+// Read" on an item that was already read, and clicking it wrote 'read' — the same
+// state the app already considered it to be in — so it looked like a dead button.
+describe('ItemContent read toggle', () => {
+  function readButton(wrapper: ReturnType<typeof mountItemContent>) {
+    return wrapper.findAll('button').find(b => /^Mark (Read|Unread)$/.test(b.text().trim()))
+  }
+
+  it('offers "Mark Read" for an unread item', () => {
+    const wrapper = mountItemContent(makeItem({ status: 'unread' }))
+    expect(readButton(wrapper)!.text().trim()).toBe('Mark Read')
+  })
+
+  it('offers "Mark Unread" for a read item', () => {
+    const wrapper = mountItemContent(makeItem({ status: 'read' }))
+    expect(readButton(wrapper)!.text().trim()).toBe('Mark Unread')
+  })
+
+  it('offers "Mark Unread" for a DIGESTED item, which is a read item', () => {
+    const wrapper = mountItemContent(makeItem({ status: 'digested' }))
+    expect(readButton(wrapper)!.text().trim()).toBe('Mark Unread')
+  })
+
+  it('clicking the toggle on a digested item clears it to unread, not to read', () => {
+    const wrapper = mountItemContent(makeItem({ status: 'digested' }))
+    const store = useFeedStore()
+    // Record what the button writes without a network round trip.
+    const writes: Array<string | undefined> = []
+    store.updateItemStatus = async (_item: any, status?: string) => { writes.push(status) }
+
+    readButton(wrapper)!.trigger('click')
+    expect(writes).toEqual(['unread'])
+  })
+})
+
 describe('ItemContent collapsible blocks', () => {
   let wrapper: ReturnType<typeof mountItemContent>
 

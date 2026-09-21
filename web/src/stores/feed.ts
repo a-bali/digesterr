@@ -400,12 +400,30 @@ export const useFeedStore = defineStore('feed', () => {
     await loadPage(activeFeedId.value, false)
   }
 
+  // Bumped on every local status write (see updateItemStatus). A select-time fetch
+  // captures it so a response built BEFORE a write cannot overwrite that write.
+  let itemWriteSeq = 0
+
   async function selectItem(item: Item) {
     // Set preview immediately so the content pane renders while we fetch.
     selectedItem.value = item
+    const seqAtFetch = itemWriteSeq
     try {
       const full = await itemApi.getItem(item.id)
-      selectedItem.value = full
+      // Guard the assignment: the fetch is asynchronous, and the caller may write
+      // this item while it is in flight — HomeView.selectItem marks an unread row
+      // read right after selecting it. The GET response was built from a row that
+      // predates that write, so applying it would resurrect the OLD status and the
+      // content pane's Mark Read/Unread button would show the pre-write label on an
+      // item the user just marked read.
+      //
+      // Only a response that started AFTER the last local write may replace the
+      // item. Comparing sequence numbers (rather than the statuses themselves)
+      // keeps the fresh response when the CHANGE came from the server — another
+      // client marking it read — where applying it is correct.
+      if (selectedItem.value?.id === full.id && itemWriteSeq === seqAtFetch) {
+        selectedItem.value = full
+      }
     } catch {
       // Preview data stays — already set above.
     }
@@ -473,6 +491,9 @@ export const useFeedStore = defineStore('feed', () => {
       if (status !== undefined) body.status = status
       if (saved !== undefined) body.saved = saved
       const updated = await itemApi.updateStatus(item.id, body)
+      // Mark a local write so any select-time fetch already in flight knows its
+      // response predates this change and must not overwrite it.
+      itemWriteSeq++
       applyUpdatedItem(updated)
       // Keep the saved badge in step without a round trip: the transition is
       // already known here. Clamped because the counter is a total maintained

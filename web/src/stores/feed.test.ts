@@ -15,12 +15,54 @@ vi.mock('../services/api', () => ({
   itemApi: {
     updateStatus: vi.fn(),
     deleteExtracted: vi.fn(),
+    getItem: vi.fn(),
   },
   ApiError: class extends Error { constructor(public status: number, body: any) { super(body?.error) } },
 }))
 
 beforeEach(() => {
   setActivePinia(createPinia())
+})
+
+// A select-time fetch must not overwrite a write that happened while it was in
+// flight. HomeView.selectItem marks an unread row read immediately after
+// selecting it, so the GET (started first, resolved later) returned the OLD
+// status and clobbered the fresh one — leaving the content pane's read toggle
+// showing "Mark Read" on an item the user had just marked read.
+describe('feed store selectItem vs a concurrent status write', () => {
+  it('a slow GET does not resurrect the pre-write status', async () => {
+    const { itemApi } = await import('../services/api')
+    const store = useFeedStore()
+    const rowItem = { id: 9, title: 'X', status: 'unread' } as any
+    ;(itemApi.updateStatus as any).mockResolvedValue({ id: 9, title: 'X', status: 'read' })
+    let resolveGet!: (v: any) => void
+    ;(itemApi.getItem as any).mockReturnValue(new Promise(r => { resolveGet = r }))
+
+    store.selectItem(rowItem)
+    await store.updateItemStatus(rowItem, 'read')
+    expect(store.selectedItem?.status).toBe('read')
+
+    // The stale response lands after the write.
+    resolveGet({ id: 9, title: 'X', status: 'unread' })
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(store.selectedItem?.status).toBe('read')
+  })
+
+  // The guard must not be so blunt that it drops a fetch when nothing was written:
+  // the full item (extracted body, comments) still has to load.
+  it('still applies the fetched item when no write intervened', async () => {
+    const { itemApi } = await import('../services/api')
+    const store = useFeedStore()
+    ;(itemApi.getItem as any).mockResolvedValue({
+      id: 9, title: 'X', status: 'unread', extract_content: '<p>full body</p>',
+    })
+
+    store.selectItem({ id: 9, title: 'X', status: 'unread' } as any)
+    await new Promise(r => setTimeout(r, 0))
+
+    expect((store.selectedItem as any)?.extract_content).toBe('<p>full body</p>')
+  })
 })
 
 describe('feed store', () => {
