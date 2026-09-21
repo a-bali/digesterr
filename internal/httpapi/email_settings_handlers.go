@@ -20,6 +20,10 @@ const maxEmailInboxLength = 320
 // this request, so it must fail rather than hang behind a slow API.
 const emailVerifyTimeout = 15 * time.Second
 
+// errEmailNoDB is returned when a multi-statement email-settings transaction is
+// requested on a Queries not backed by *sql.DB (tests always use *sql.DB).
+var errEmailNoDB = fmt.Errorf("email settings change requires a *sql.DB-backed Queries")
+
 // emailSettingsResponse is the JSON shape of GET /api/settings/email.
 //
 // The API key is deliberately ABSENT — not empty-string, absent. A stored
@@ -196,7 +200,40 @@ func (s *Server) handleUpdateEmailSettings(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleResetEmailSettings(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
 
-	if err := s.queries.ClearUserEmailConfig(r.Context(), userID); err != nil {
+	// Resolve the inbox first: clearing the config orphans the staged mail
+	// and sync watermark, so they must be deleted in the same transaction.
+	inbox, _, err := s.emailConfigFor(r.Context(), userID)
+	if err != nil {
+		writeServerError(w, "failed to load email settings", err)
+		return
+	}
+	db := s.queries.DB()
+	if db == nil {
+		writeServerError(w, "failed to clear email settings", errEmailNoDB)
+		return
+	}
+	tx, err := db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeServerError(w, "failed to clear email settings", err)
+		return
+	}
+	defer tx.Rollback()
+	qtx := s.queries.WithTx(tx)
+	if err := qtx.ClearUserEmailConfig(r.Context(), userID); err != nil {
+		writeServerError(w, "failed to clear email settings", err)
+		return
+	}
+	if inbox != "" {
+		if _, err := qtx.DeleteEmailMessagesForInbox(r.Context(), inbox); err != nil {
+			writeServerError(w, "failed to clear staged mail", err)
+			return
+		}
+		if _, err := qtx.DeleteEmailSyncStateForInbox(r.Context(), inbox); err != nil {
+			writeServerError(w, "failed to clear sync state", err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		writeServerError(w, "failed to clear email settings", err)
 		return
 	}

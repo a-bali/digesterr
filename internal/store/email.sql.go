@@ -50,6 +50,45 @@ func (q *Queries) CreateEmailMessageIfNotExists(ctx context.Context, arg CreateE
 	return id, err
 }
 
+const deleteEmailMessagesForInbox = `-- name: DeleteEmailMessagesForInbox :execrows
+DELETE FROM email_messages WHERE inbox_id = ?
+`
+
+func (q *Queries) DeleteEmailMessagesForInbox(ctx context.Context, inboxID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteEmailMessagesForInbox, inboxID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteEmailSyncStateForInbox = `-- name: DeleteEmailSyncStateForInbox :execrows
+DELETE FROM email_sync_state WHERE inbox_id = ?
+`
+
+func (q *Queries) DeleteEmailSyncStateForInbox(ctx context.Context, inboxID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteEmailSyncStateForInbox, inboxID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteExpiredEmailMessages = `-- name: DeleteExpiredEmailMessages :execrows
+DELETE FROM email_messages WHERE received_at IS NOT NULL AND received_at < ?
+`
+
+// Retention sweep: staged mail older than the cutoff. received_at is TEXT
+// holding RFC3339, so the cutoff is passed in the same format (see the
+// timestamp note on ListEmailMessagesByRecipient).
+func (q *Queries) DeleteExpiredEmailMessages(ctx context.Context, receivedAt sql.NullString) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteExpiredEmailMessages, receivedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getEmailMessageByMessageID = `-- name: GetEmailMessageByMessageID :one
 SELECT id, inbox_id, message_id, thread_id, from_addr, to_addrs, subject, text, html, raw_headers, received_at, created_at FROM email_messages WHERE inbox_id = ? AND message_id = ?
 `

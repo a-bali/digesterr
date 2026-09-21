@@ -69,3 +69,15 @@ SELECT id, user_id, url FROM feeds WHERE type = 'email' AND url != '' ORDER BY u
 UPDATE email_messages
 SET text = ?, html = ?
 WHERE inbox_id = ? AND message_id = ?;
+
+-- name: DeleteEmailMessagesForInbox :execrows
+DELETE FROM email_messages WHERE inbox_id = ?;
+
+-- name: DeleteEmailSyncStateForInbox :execrows
+DELETE FROM email_sync_state WHERE inbox_id = ?;
+
+-- name: DeleteExpiredEmailMessages :execrows
+-- Retention sweep: staged mail older than the cutoff. received_at is TEXT
+-- holding RFC3339, so the cutoff is passed in the same format (see the
+-- timestamp note on ListEmailMessagesByRecipient).
+DELETE FROM email_messages WHERE received_at IS NOT NULL AND received_at < ?;

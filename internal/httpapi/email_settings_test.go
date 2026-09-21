@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -264,6 +265,44 @@ func TestEmailSettingsResetClearsAndLeavesFeeds(t *testing.T) {
 	// failure, not a reason to delete the user's subscription.
 	if _, err := queries.GetFeed(t.Context(), store.GetFeedParams{ID: feed.ID, UserID: user.ID}); err != nil {
 		t.Errorf("the email feed was removed by DELETE: %v", err)
+	}
+}
+
+// Reset also drops the orphaned staging rows and sync watermark: without the
+// inbox there is no reader left for them, and a later re-configuration must
+// start from a clean watermark rather than resuming a stale window.
+func TestEmailSettingsResetDropsStagedData(t *testing.T) {
+	s, queries, _, token := emailSettingsTestServer(t)
+
+	w := makeRequest(s, http.MethodPut, "/api/settings/email", map[string]any{
+		"inbox": "fresh@agentmail.to", "api_key": testAgentMailToken,
+	}, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("seed PUT = %d", w.Code)
+	}
+	if _, err := queries.CreateEmailMessageIfNotExists(t.Context(), store.CreateEmailMessageIfNotExistsParams{
+		InboxID: "fresh@agentmail.to", MessageID: "<a@x>", ToAddrs: `["fresh+news@agentmail.to"]`,
+		Subject: "s", ReceivedAt: sql.NullString{String: "2026-01-01T00:00:00Z", Valid: true},
+	}); err != nil {
+		t.Fatalf("stage message: %v", err)
+	}
+	if err := queries.UpsertEmailSyncState(t.Context(), store.UpsertEmailSyncStateParams{
+		InboxID: "fresh@agentmail.to", LastSyncedAt: sql.NullString{String: "2026-01-02T00:00:00Z", Valid: true},
+	}); err != nil {
+		t.Fatalf("seed sync state: %v", err)
+	}
+
+	w = makeRequest(s, http.MethodDelete, "/api/settings/email", nil, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("DELETE = %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := queries.GetEmailMessageByMessageID(t.Context(), store.GetEmailMessageByMessageIDParams{
+		InboxID: "fresh@agentmail.to", MessageID: "<a@x>",
+	}); err == nil {
+		t.Error("staged message survived config reset")
+	}
+	if _, err := queries.GetEmailSyncState(t.Context(), "fresh@agentmail.to"); err == nil {
+		t.Error("sync state survived config reset")
 	}
 }
 
