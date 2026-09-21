@@ -258,6 +258,7 @@ describe('mid-pane "Mark all as read" in digest views', () => {
     // ...but the user is told. A missing import here would throw instead.
     expect(spy, 'the empty-scope path must report something to the user').toHaveBeenCalledWith(
       expect.stringContaining('Nothing unread'),
+      expect.stringContaining('tech'),
     )
     spy.mockRestore()
   })

@@ -47,14 +47,17 @@ const showEditDigest = ref(false)
 const editingDigest = ref<DigestConfig | null>(null)
 
 async function refreshFeed(id: number) {
+  // The name is needed for the toast, and it may disappear mid-flight if the feed
+  // is deleted, so capture it before the request.
+  const name = feedStore.feeds.find(f => f.id === id)?.name
   refreshingFeeds.value = new Set(refreshingFeeds.value).add(id)
   try {
     await feedApi.fetch(id)
     await feedStore.fetchFirstPage()
     await feedStore.fetchFeeds()
-    toastSuccess('Feed refreshed')
+    toastSuccess('Feed refreshed', name)
   } catch (e: any) {
-    toastError(e, 'Failed to refresh feed')
+    toastError(e, 'Failed to refresh feed', name)
   } finally {
     const next = new Set(refreshingFeeds.value); next.delete(id); refreshingFeeds.value = next
   }
@@ -108,17 +111,23 @@ async function addFeed(form: { type: string; name: string; url: string; category
 
 async function saveEditFeed(form: { type: string; name: string; url: string; category: string; extract_content: number; readability: number; min_score: number }) {
   if (!editingFeed.value) return
+  // The form holds the name being SAVED, which is what the user recognises (it may
+  // differ from the stored one when they just renamed the feed).
+  const name = form.name || editingFeed.value.name
   try {
     await feedApi.update(editingFeed.value.id, buildFeedPayload(form))
     showEditFeed.value = false; editingFeed.value = null
     await feedStore.fetchFeeds()
-    toastSuccess('Feed updated')
+    toastSuccess('Feed updated', name)
   } catch (e) {
-    toastError(e, 'Failed to update feed')
+    toastError(e, 'Failed to update feed', name)
   }
 }
 
 async function deleteFeed(id: number) {
+  // Capture the name before the delete: after it succeeds the feed is gone from
+  // the store and the toast could not name it.
+  const name = feedStore.feeds.find(f => f.id === id)?.name
   try {
     await feedApi.delete(id)
     showEditFeed.value = false; editingFeed.value = null
@@ -129,9 +138,9 @@ async function deleteFeed(id: number) {
       feedStore.selectedItem = null
     }
     await feedStore.fetchFeeds()
-    toastSuccess('Feed deleted')
+    toastSuccess('Feed deleted', name)
   } catch (e) {
-    toastError(e, 'Failed to delete feed')
+    toastError(e, 'Failed to delete feed', name)
   }
 }
 

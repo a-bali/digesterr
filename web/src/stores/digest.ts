@@ -34,6 +34,29 @@ export const useDigestStore = defineStore('digest', () => {
   // Monotonic request id to drop stale responses (config switches, refreshes).
   let resultsReq = 0
 
+  // Names for toasts. Both resolve against what the store already holds, so a
+  // toast can always say WHICH config or digest was acted on.
+  //
+  // configName falls back to undefined when the config is unknown (deleted, or
+  // configs not loaded yet) — the toast helper treats that as "no second line"
+  // rather than rendering "undefined".
+  function configName(configId?: number | null): string | undefined {
+    if (configId == null) return undefined
+    return configs.value.find(c => c.id === configId)?.name || undefined
+  }
+
+  // A result's own title, with the config name as context: results often share a
+  // generated title across runs, so "which config" is the useful disambiguator.
+  // Falls back to the config name alone for an untitled result.
+  function resultLabel(resultId: number): string | undefined {
+    const result = results.value.find(r => r.id === resultId)
+      ?? allResults.value.find(r => r.id === resultId)
+    const config = configName(result?.config_id)
+    const title = (result as { title?: string } | undefined)?.title || undefined
+    if (title && config) return `${title} (${config})`
+    return title || config
+  }
+
   // Maps the API's "new" status to "unread". Generic over the result shape: the
   // per-config list and the All-Digests list are different interfaces, and both
   // need this mapping.
@@ -54,10 +77,10 @@ export const useDigestStore = defineStore('digest', () => {
     try {
       const cfg = await digestApi.createConfig({ name, schedule, config })
       configs.value.push(cfg)
-      toastSuccess('Digest config created')
+      toastSuccess('Digest config created', cfg.name || name)
       return cfg
     } catch (e) {
-      toastError(e, 'Failed to create digest config')
+      toastError(e, 'Failed to create digest config', name)
       return null
     }
   }
@@ -67,13 +90,16 @@ export const useDigestStore = defineStore('digest', () => {
       const updated = await digestApi.updateConfig(id, { name, schedule, config })
       const idx = configs.value.findIndex(c => c.id === id)
       if (idx !== -1) configs.value[idx] = updated
-      toastSuccess('Digest config updated')
+      toastSuccess('Digest config updated', name)
     } catch (e) {
-      toastError(e, 'Failed to update digest config')
+      toastError(e, 'Failed to update digest config', name)
     }
   }
 
   async function deleteConfig(id: number) {
+    // Capture the name first: after the delete it is gone from `configs`, and the
+    // toast has to name what was deleted.
+    const name = configs.value.find(c => c.id === id)?.name
     try {
       await digestApi.deleteConfig(id)
       configs.value = configs.value.filter(c => c.id !== id)
@@ -85,9 +111,9 @@ export const useDigestStore = defineStore('digest', () => {
         selectedResult.value = null
         resultItems.value = []
       }
-      toastSuccess('Digest config deleted')
+      toastSuccess('Digest config deleted', name)
     } catch (e) {
-      toastError(e, 'Failed to delete digest config')
+      toastError(e, 'Failed to delete digest config', name)
     }
   }
 
@@ -144,10 +170,10 @@ export const useDigestStore = defineStore('digest', () => {
       if (activeConfigId.value === configId) {
         results.value.unshift(result)
       }
-      toastSuccess('Digest generated')
+      toastSuccess('Digest generated', configName(configId))
       return result
     } catch (e) {
-      toastError(e, 'Digest generation failed')
+      toastError(e, 'Digest generation failed', configName(configId))
       return null
     } finally {
       generating.value = false
@@ -161,13 +187,16 @@ export const useDigestStore = defineStore('digest', () => {
       if (idx !== -1) results.value[idx] = updated
       if (selectedResult.value?.id === resultId) selectedResult.value = updated
       fetchUnreadCounts()
-      toastSuccess('Digest marked read')
+      toastSuccess('Digest marked read', resultLabel(resultId))
     } catch (e) {
-      toastError(e, 'Failed to mark digest as read')
+      toastError(e, 'Failed to mark digest as read', resultLabel(resultId))
     }
   }
 
   async function deleteResult(resultId: number) {
+    // Capture the label first: the result is removed from both lists below, and the
+    // toast must still be able to name it.
+    const label = resultLabel(resultId)
     try {
       await digestApi.deleteResult(resultId)
       results.value = results.value.filter(r => r.id !== resultId)
@@ -175,9 +204,9 @@ export const useDigestStore = defineStore('digest', () => {
         selectedResult.value = null
         resultItems.value = []
       }
-      toastSuccess('Digest deleted')
+      toastSuccess('Digest deleted', label)
     } catch (e) {
-      toastError(e, 'Failed to delete digest')
+      toastError(e, 'Failed to delete digest', label)
     }
   }
 
@@ -284,9 +313,9 @@ export const useDigestStore = defineStore('digest', () => {
       } else if (configId == null && showingAllDigests.value) {
         await loadAllResults(true)
       }
-      toastSuccess(configId != null ? 'Digest marked read' : 'All digests marked read')
+      toastSuccess(configId != null ? 'Digest marked read' : 'All digests marked read', configName(configId))
     } catch (e) {
-      toastError(e, 'Failed to mark digest as read')
+      toastError(e, 'Failed to mark digest as read', configName(configId))
     }
   }
 
@@ -294,6 +323,7 @@ export const useDigestStore = defineStore('digest', () => {
     try {
       const opts: { config_id?: number } = {}
       if (activeConfigId.value) opts.config_id = activeConfigId.value
+      const label = resultLabel(result.id)
       await digestApi.markReadAbove(result.id, opts)
       await fetchUnreadCounts()
       if (activeConfigId.value) {
@@ -301,9 +331,9 @@ export const useDigestStore = defineStore('digest', () => {
       } else if (showingAllDigests.value) {
         await loadAllResults(true)
       }
-      toastSuccess('Marked above as read')
+      toastSuccess('Marked above as read', label)
     } catch (e) {
-      toastError(e, 'Failed to mark above as read')
+      toastError(e, 'Failed to mark above as read', label)
     }
   }
 
@@ -311,6 +341,7 @@ export const useDigestStore = defineStore('digest', () => {
     try {
       const opts: { config_id?: number } = {}
       if (activeConfigId.value) opts.config_id = activeConfigId.value
+      const label = resultLabel(result.id)
       await digestApi.markReadBelow(result.id, opts)
       await fetchUnreadCounts()
       if (activeConfigId.value) {
@@ -318,9 +349,9 @@ export const useDigestStore = defineStore('digest', () => {
       } else if (showingAllDigests.value) {
         await loadAllResults(true)
       }
-      toastSuccess('Marked below as read')
+      toastSuccess('Marked below as read', label)
     } catch (e) {
-      toastError(e, 'Failed to mark below as read')
+      toastError(e, 'Failed to mark below as read', label)
     }
   }
 

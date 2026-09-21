@@ -125,6 +125,12 @@ function selectSummaryLength(length: SummaryLength) {
   if (summaryData.value) void doSummarize()
 }
 
+// Item title for naming it in a toast; undefined when blank so no empty line renders.
+function itemLabel(item: any): string | undefined {
+  const title = typeof item?.title === 'string' ? item.title.trim() : ''
+  return title || undefined
+}
+
 async function doSummarize() {
   const item = feedStore.selectedItem
   if (!item || summaryLoading.value) return
@@ -144,7 +150,7 @@ async function doSummarize() {
     // The summary replaces the bodies it was built from, so fold them away.
     extractedCollapsed.value = true
     originalCollapsed.value = true
-    toastSuccess('Summary generated')
+    toastSuccess('Summary generated', itemLabel(item))
   } catch (e) {
     if (token === summaryToken) {
       toastError(e, 'Failed to generate summary')
@@ -326,7 +332,7 @@ async function doExtract() {
       }
       polls++
       if (polls > MAX_EXTRACT_POLLS) {
-        toastError(new Error('Extraction did not complete'), 'Extraction timed out')
+        toastError(new Error('Extraction did not complete'), 'Extraction timed out', itemLabel(item))
         stopExtractPoll()
         return
       }
@@ -342,8 +348,8 @@ async function doExtract() {
           if (idx !== -1) feedStore.items[idx] = updated
           if (feedStore.selectedItem?.id === updated.id) feedStore.selectedItem = updated
           // Report the outcome the poll observed, so extraction is not silent.
-          if (updated.extract_status === 'failed') toastError(new Error('extraction failed'), 'Extraction failed')
-          else toastSuccess('Content extracted')
+          if (updated.extract_status === 'failed') toastError(new Error('extraction failed'), 'Extraction failed', itemLabel(updated))
+          else toastSuccess('Content extracted', itemLabel(updated))
         }
       } catch {
         // poll failed, will retry
@@ -352,7 +358,7 @@ async function doExtract() {
   } catch (e) {
     if (token === extractToken) {
       extracting.value = false
-      toastError(e, 'Failed to start extraction')
+      toastError(e, 'Failed to start extraction', itemLabel(item))
     }
   }
 }

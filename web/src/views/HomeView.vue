@@ -435,6 +435,19 @@ type MarkAllScope =
   | { kind: 'digest-config'; id: number; name: string }
   | { kind: 'all-digests' }
 
+// A short noun for a scope, for toast second lines. Deliberately terse — the
+// confirmation dialog spells the scope out in a sentence, a toast only needs to say
+// which one.
+function scopeLabel(scope: MarkAllScope): string {
+  switch (scope.kind) {
+    case 'feed': return scope.name
+    case 'category': return `category “${scope.name}”`
+    case 'feeds-section': return 'all feeds'
+    case 'digest-config': return scope.name || 'digest'
+    case 'all-digests': return 'all digests'
+  }
+}
+
 interface MarkAllTarget {
   scope: MarkAllScope
   /**
@@ -502,7 +515,10 @@ function requestMarkAllRead(explicit?: MarkAllScope) {
   // be a no-op, so do not ask and do not claim success. The earlier code toasted
   // "marked read" for a category with nothing unread in it.
   if (target.unread === 0) {
-    toastSuccess('Nothing unread here')
+    // Name the scope: "Nothing unread here" alone does not say whether it means the
+    // category, the section or the whole list. scopeLabel collapses the dialog copy
+    // to the scope noun ("probecat", "All Digests", "Hacker News").
+    toastSuccess('Nothing unread', scopeLabel(target.scope))
     return
   }
   markAllTarget.value = target

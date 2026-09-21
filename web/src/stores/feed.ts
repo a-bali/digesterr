@@ -492,9 +492,9 @@ export const useFeedStore = defineStore('feed', () => {
   async function deleteExtraction(item: Item) {
     try {
       applyUpdatedItem(await itemApi.deleteExtracted(item.id))
-      toastSuccess('Extracted content removed')
+      toastSuccess('Extracted content removed', itemTitle(item))
     } catch (e) {
-      toastError(e, 'Failed to delete extracted content')
+      toastError(e, 'Failed to delete extracted content', itemTitle(item))
     }
   }
 
@@ -521,15 +521,22 @@ export const useFeedStore = defineStore('feed', () => {
   // mark-all-read scope (feed, category, section) through one place, so the store
   // has to expose the single-feed action too.
   async function markFeedRead(id: number) {
+    const name = feeds.value.find(f => f.id === id)?.name
     try {
       await feedApi.markRead(id)
       await fetchFeeds()
       if (activeFeedId.value === id) await fetchFirstPage()
       await fetchUnreadCounts()
-      toastSuccess('Feed marked read')
+      toastSuccess('Feed marked read', name)
     } catch (e) {
-      toastError(e, 'Failed to mark feed read')
+      toastError(e, 'Failed to mark feed read', name)
     }
+  }
+
+  // The scope the reader is looking at, named for the toast. The category is the
+  // useful label when one is active; otherwise the "All Feeds" section.
+  function markAllReadScope(category?: string): string {
+    return category ? `category “${category}”` : 'all feeds'
   }
 
   // Every mark-read path reports both outcomes. These used to have no error
@@ -541,9 +548,9 @@ export const useFeedStore = defineStore('feed', () => {
       // Refresh items and unread counts after marking read.
       await fetchFirstPage()
       await fetchUnreadCounts()
-      toastSuccess(category ? `"${category}" marked read` : 'All feeds marked read')
+      toastSuccess('Marked all as read', markAllReadScope(category))
     } catch (e) {
-      toastError(e, 'Failed to mark read')
+      toastError(e, 'Failed to mark read', markAllReadScope(category))
     }
   }
 
@@ -558,25 +565,43 @@ export const useFeedStore = defineStore('feed', () => {
   }
 
   async function markReadAbove(item: any) {
+    const label = relativeScopeLabel(item)
     try {
       await itemApi.markReadAbove(item.id, markRelativeOptions())
       await fetchFirstPage()
       await fetchUnreadCounts()
-      toastSuccess('Marked above as read')
+      toastSuccess('Marked above as read', label)
     } catch (e) {
-      toastError(e, 'Failed to mark above as read')
+      toastError(e, 'Failed to mark above as read', label)
     }
   }
 
   async function markReadBelow(item: any) {
+    const label = relativeScopeLabel(item)
     try {
       await itemApi.markReadBelow(item.id, markRelativeOptions())
       await fetchFirstPage()
       await fetchUnreadCounts()
-      toastSuccess('Marked below as read')
+      toastSuccess('Marked below as read', label)
     } catch (e) {
-      toastError(e, 'Failed to mark below as read')
+      toastError(e, 'Failed to mark below as read', label)
     }
+  }
+
+  // The item's title, for naming it in a toast. Undefined when the title is absentor
+  // blank, so the helper renders no second line rather than an empty one.
+  function itemTitle(item: any): string | undefined {
+    const title = typeof item?.title === 'string' ? item.title.trim() : ''
+    return title || undefined
+  }
+
+  // "from <item title>" — the range is anchored on the clicked row, so its title is
+  // what tells the reader which boundary was used. Truncated because titles are
+  // arbitrary length and this is one line of a toast.
+  function relativeScopeLabel(item: any): string | undefined {
+    const title = typeof item?.title === 'string' ? item.title.trim() : ''
+    if (!title) return undefined
+    return `from “${title.length > 40 ? title.slice(0, 40) + '…' : title}”`
   }
 
   // unsaveItem clears the saved flag and drops the row from the Saved view.

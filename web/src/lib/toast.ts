@@ -54,15 +54,24 @@ function CrossIcon() {
  * Success toast, always with the green check. Every successful user action that
  * reports back goes through here so success and failure stay symmetrical and no
  * call site can forget the icon.
+ *
+ * `entity` names WHAT was acted on ("Hacker News", "Daily Tech"), rendered as the
+ * toast's second line. A bare "Feed refreshed" leaves the reader guessing which of
+ * a dozen feeds they just refreshed, and the same action is reachable from several
+ * places (sidebar row, mid-pane button, keyboard), so the entity is not implied by
+ * context.
  */
-export function toastSuccess(msg: string, description?: string) {
-  toast.success(msg, { icon: CheckIcon, description })
+export function toastSuccess(msg: string, entity?: string) {
+  toast.success(msg, { icon: CheckIcon, description: entity || undefined })
 }
 
 /**
  * Failure toast, always with the red X. Shows `fallbackMsg` (or a generic
  * message) and, when the error carries a server message, that message as the
  * description.
+ *
+ * The description carries BOTH the entity and the server message when both exist,
+ * so the user learns what failed and why on one line.
  *
  * The server message is read structurally rather than with `instanceof ApiError`.
  * Importing ApiError here makes this module depend on the api module just to
@@ -73,11 +82,18 @@ export function toastSuccess(msg: string, description?: string) {
  * Every error the api layer raises is an Error, so `message` is the reliable
  * signal.
  */
-export function toastError(e: unknown, fallbackMsg = 'Something went wrong') {
+export function toastError(e: unknown, fallbackMsg = 'Something went wrong', entity?: string) {
   toast.error(fallbackMsg, {
     icon: CrossIcon,
-    description: serverMessage(e),
+    description: composeDescription(entity, serverMessage(e)),
   })
+}
+
+// "Hacker News — rate limited" / "Hacker News" / "rate limited" / undefined.
+// The em dash separator matches the existing detail style elsewhere in the UI.
+function composeDescription(entity?: string, detail?: string): string | undefined {
+  const parts = [entity, detail].filter((p): p is string => typeof p === 'string' && p.length > 0)
+  return parts.length ? parts.join(' — ') : undefined
 }
 
 function serverMessage(e: unknown): string | undefined {

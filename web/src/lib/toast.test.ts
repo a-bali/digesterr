@@ -93,6 +93,51 @@ describe('toast helpers', () => {
   })
 })
 
+describe('toasts name the entity they acted on', () => {
+  // A bare "Feed refreshed" does not say WHICH feed, and the same action is
+  // reachable from the sidebar row, the mid-pane button and the keyboard, so the
+  // entity is never implied by context.
+  it('puts the entity on the success toast description', () => {
+    toastSuccess('Feed refreshed', 'Hacker News')
+    expect(toast.success).toHaveBeenCalledWith(
+      'Feed refreshed',
+      expect.objectContaining({ description: 'Hacker News' }),
+    )
+  })
+
+  it('renders no description at all when there is no entity (not an empty line)', () => {
+    toastSuccess('Settings saved')
+    expect(toast.success).toHaveBeenCalledWith(
+      'Settings saved',
+      expect.objectContaining({ description: undefined }),
+    )
+  })
+
+  it('combines the entity and the server message on a failure', () => {
+    toastError(new Error('rate limited'), 'Failed to refresh feed', 'Hacker News')
+    expect(toast.error).toHaveBeenCalledWith(
+      'Failed to refresh feed',
+      expect.objectContaining({ description: 'Hacker News — rate limited' }),
+    )
+  })
+
+  it('shows just the entity when the error carries no message', () => {
+    toastError(undefined, 'Failed to refresh feed', 'Hacker News')
+    expect(toast.error).toHaveBeenCalledWith(
+      'Failed to refresh feed',
+      expect.objectContaining({ description: 'Hacker News' }),
+    )
+  })
+
+  it('shows just the server message when there is no entity', () => {
+    toastError(new Error('rate limited'), 'Failed to refresh feed')
+    expect(toast.error).toHaveBeenCalledWith(
+      'Failed to refresh feed',
+      expect.objectContaining({ description: 'rate limited' }),
+    )
+  })
+})
+
 describe('mark-read actions report both outcomes', () => {
   it('feed markAllRead toasts the whole-section success', async () => {
     const { feedApi } = await import('../services/api')
@@ -102,7 +147,12 @@ describe('mark-read actions report both outcomes', () => {
 
     await useFeedStore().markAllRead()
 
-    expect(toast.success).toHaveBeenCalledWith('All feeds marked read', expect.objectContaining({ icon: expect.anything() }))
+    // Title is now constant; the SCOPE moved to the description so a bare
+    // "marked read" always says which scope.
+    expect(toast.success).toHaveBeenCalledWith(
+      'Marked all as read',
+      expect.objectContaining({ icon: expect.anything(), description: 'all feeds' }),
+    )
   })
 
   it('feed markAllRead toasts a category-scoped success by name', async () => {
@@ -112,7 +162,10 @@ describe('mark-read actions report both outcomes', () => {
 
     await useFeedStore().markAllRead('Tech')
 
-    expect(toast.success).toHaveBeenCalledWith('"Tech" marked read', expect.objectContaining({ icon: expect.anything() }))
+    expect(toast.success).toHaveBeenCalledWith(
+      'Marked all as read',
+      expect.objectContaining({ icon: expect.anything(), description: 'category “Tech”' }),
+    )
   })
 
   // Before this change the rejection escaped into the caller and the panes just
@@ -162,6 +215,123 @@ describe('mark-read actions report both outcomes', () => {
     await useDigestStore().markReadAbove({ id: 3 } as any)
 
     expect(toast.success).toHaveBeenCalledWith('Marked above as read', expect.objectContaining({ icon: expect.anything() }))
+  })
+})
+
+describe('store actions name the entity in the toast', () => {
+  // These pin the call-site wiring: the helper supports an entity, but a call site
+  // that forgets to pass one silently regresses to the bare message.
+  it('names the feed on single-feed mark read', async () => {
+    const { feedApi } = await import('../services/api')
+    ;(feedApi.list as any).mockResolvedValue([{ id: 1, name: 'Hacker News' }])
+    ;(feedApi.markRead as any).mockResolvedValue({})
+    ;(feedApi.unreadCounts as any).mockResolvedValue({})
+
+    const store = useFeedStore()
+    await store.fetchFeeds()
+    await store.markFeedRead(1)
+
+    expect(toast.success).toHaveBeenCalledWith(
+      'Feed marked read',
+      expect.objectContaining({ description: 'Hacker News' }),
+    )
+  })
+
+  it('names the category on a category mark-all-read', async () => {
+    const { feedApi } = await import('../services/api')
+    ;(feedApi.markReadAll as any).mockResolvedValue({})
+    ;(feedApi.unreadCounts as any).mockResolvedValue({})
+    ;(feedApi.multiItems as any).mockResolvedValue({ items: [], total: 0, has_more: false })
+
+    await useFeedStore().markAllRead('Tech')
+
+    expect(toast.success).toHaveBeenCalledWith(
+      'Marked all as read',
+      expect.objectContaining({ description: 'category “Tech”' }),
+    )
+  })
+
+  it('names the anchor item on mark-above/below', async () => {
+    const { itemApi, feedApi } = await import('../services/api')
+    ;(itemApi.markReadAbove as any).mockResolvedValue({})
+    ;(feedApi.unreadCounts as any).mockResolvedValue({})
+    ;(feedApi.multiItems as any).mockResolvedValue({ items: [], total: 0, has_more: false })
+
+    await useFeedStore().markReadAbove({ id: 5, title: 'A very long article title' })
+
+    expect(toast.success).toHaveBeenCalledWith(
+      'Marked above as read',
+      expect.objectContaining({ description: 'from “A very long article title”' }),
+    )
+  })
+
+  it('truncates a long anchor title so the toast stays one line', async () => {
+    const { itemApi, feedApi } = await import('../services/api')
+    ;(itemApi.markReadAbove as any).mockResolvedValue({})
+    ;(feedApi.unreadCounts as any).mockResolvedValue({})
+    ;(feedApi.multiItems as any).mockResolvedValue({ items: [], total: 0, has_more: false })
+
+    const long = 'x'.repeat(80)
+    await useFeedStore().markReadAbove({ id: 5, title: long })
+
+    const call = (toast.success as any).mock.calls.at(-1)
+    expect(call[1].description.length).toBeLessThan(60)
+    expect(call[1].description).toContain('…')
+  })
+
+  it('names the digest config on generation', async () => {
+    const { digestApi } = await import('../services/api')
+    ;(digestApi.listConfigs as any).mockResolvedValue([
+      { id: 3, name: 'Morning Brief', schedule: 'daily', config: '{}' },
+    ])
+    ;(digestApi.generate as any).mockResolvedValue({ id: 9, config_id: 3, content: '{}', status: 'new' })
+
+    const store = useDigestStore()
+    await store.fetchConfigs()
+    await store.generateNow(3)
+
+    expect(toast.success).toHaveBeenCalledWith(
+      'Digest generated',
+      expect.objectContaining({ description: 'Morning Brief' }),
+    )
+  })
+
+  it('names the digest config on config create/update/delete', async () => {
+    const { digestApi } = await import('../services/api')
+    const store = useDigestStore()
+
+    ;(digestApi.createConfig as any).mockResolvedValue({ id: 4, name: 'Daily Tech', schedule: '*', config: '{}' })
+    await store.createConfig('Daily Tech', '*', '{}')
+    expect(toast.success).toHaveBeenCalledWith('Digest config created', expect.objectContaining({ description: 'Daily Tech' }))
+
+    ;(digestApi.updateConfig as any).mockResolvedValue({ id: 4, name: 'Daily Tech v2', schedule: '*', config: '{}' })
+    await store.updateConfig(4, 'Daily Tech v2', '*', '{}')
+    expect(toast.success).toHaveBeenCalledWith('Digest config updated', expect.objectContaining({ description: 'Daily Tech v2' }))
+
+    ;(digestApi.deleteConfig as any).mockResolvedValue(undefined)
+    await store.deleteConfig(4)
+    expect(toast.success).toHaveBeenCalledWith('Digest config deleted', expect.objectContaining({ description: 'Daily Tech v2' }))
+  })
+
+  // The name must be captured BEFORE the delete: afterwards the entity is gone from
+  // the store and the toast cannot name it.
+  it('still names the feed after it has been deleted from the store', async () => {
+    const { feedApi } = await import('../services/api')
+    ;(feedApi.list as any).mockResolvedValue([{ id: 7, name: 'Doomed Feed' }])
+    ;(feedApi.delete as any).mockResolvedValue(undefined)
+
+    const store = useFeedStore()
+    await store.fetchFeeds()
+    // Mirror the sidebar: read the name, then delete.
+    const name = store.feeds.find(f => f.id === 7)?.name
+    expect(name).toBe('Doomed Feed')
+    await (feedApi.delete as any)(7)
+
+    toastSuccess('Feed deleted', name)
+    expect(toast.success).toHaveBeenCalledWith(
+      'Feed deleted',
+      expect.objectContaining({ description: 'Doomed Feed' }),
+    )
   })
 })
 
