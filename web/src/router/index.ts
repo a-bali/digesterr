@@ -1,7 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { getAuthToken, silentRefresh } from '../services/api'
-import HomeView from '../views/HomeView.vue'
-import LoginView from '../views/LoginView.vue'
+
+// Route-level code splitting: the login page (and the 404 page) load without
+// pulling in the whole reader shell and its dialogs.
+const HomeView = () => import('../views/HomeView.vue')
+const LoginView = () => import('../views/LoginView.vue')
+const NotFoundView = () => import('../views/NotFoundView.vue')
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -15,6 +19,9 @@ export const router = createRouter({
     { path: '/digests', component: HomeView, meta: { requiresAuth: true } },
     { path: '/digests/:configId(\\d+)/:resultId(\\d+)?', component: HomeView, meta: { requiresAuth: true } },
     { path: '/saved', component: HomeView, meta: { requiresAuth: true } },
+    // Unknown URLs rendered a blank page (no match, no redirect). The 404 is
+    // outside auth on purpose: an unauthenticated typo still needs a page.
+    { path: '/:pathMatch(.*)*', component: NotFoundView },
   ],
 })
 

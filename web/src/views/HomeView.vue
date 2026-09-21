@@ -9,6 +9,7 @@ import ItemList from '../components/ItemList.vue'
 import ItemContent from '../components/ItemContent.vue'
 import DigestContent from '../components/DigestContent.vue'
 import DigestResultList from '../components/DigestResultList.vue'
+import ErrorBoundary from '../components/ErrorBoundary.vue'
 import LogsDialog from '../components/LogsDialog.vue'
 import MetricsDialog from '../components/MetricsDialog.vue'
 import ShortcutsDialog from '../components/ShortcutsDialog.vue'
@@ -188,6 +189,9 @@ onMounted(() => {
   // sidebar renders before any item is touched.
   feedStore.fetchSavedCount()
   pollInterval = setInterval(() => {
+    // A backgrounded tab has nothing to show: skip the tick and let the
+    // visibilitychange handler refresh on return instead.
+    if (document.hidden) return
     feedStore.fetchUnreadCounts()
     digestStore.fetchUnreadCounts()
     feedStore.fetchSavedCount()
@@ -604,8 +608,10 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" :class="{ hidden: contentMaximized }" />
 
           <SplitterPanel :default-size="52" :min-size="30">
-            <DigestContent v-if="digestMode" />
-            <ItemContent v-else :unsave-item="unsaveItem" />
+            <ErrorBoundary>
+              <DigestContent v-if="digestMode" />
+              <ItemContent v-else :unsave-item="unsaveItem" />
+            </ErrorBoundary>
           </SplitterPanel>
         </SplitterGroup>
 

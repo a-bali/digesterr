@@ -261,10 +261,18 @@ const scrollMemory: Map<number, number> =
   ((globalThis as any).__itemScrollMemory ??= new Map())
 // Continuous capture via @scroll (bound in template): the watcher approach can't
 // save on back-navigation because Vue unmounts this component before the
-// selected-item watcher job runs, leaving scroller.value null.
+// selected-item watcher job runs, leaving scroller.value null. Capped: a long
+// session would otherwise grow the map without bound.
+const SCROLL_MEMORY_LIMIT = 200
 function onScroll() {
   const id = feedStore.selectedItem?.id
-  if (id != null && scroller.value) scrollMemory.set(id, scroller.value.scrollTop)
+  if (id != null && scroller.value) {
+    if (scrollMemory.size >= SCROLL_MEMORY_LIMIT) {
+      const oldest = scrollMemory.keys().next()
+      if (!oldest.done) scrollMemory.delete(oldest.value)
+    }
+    scrollMemory.set(id, scroller.value.scrollTop)
+  }
 }
 watch(
   () => feedStore.selectedItem?.id,

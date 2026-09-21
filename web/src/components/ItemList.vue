@@ -160,16 +160,11 @@ function feedNameFor(item: any): string {
 
 // The Saved view fetches once without server-side ordering, so filtering and
 // sorting happen client-side there. Feed views rely on the server params.
-function sortSavedItems(list: any[], sort: FeedSort): any[] {
-  const sorted = [...list]
-  const date = (i: any) => new Date(i.published_at ?? i.created_at).getTime() || 0
-  const points = (i: any) => i.points ?? 0
-  switch (sort) {
-    case 'date_asc': return sorted.sort((a, b) => date(a) - date(b))
-    case 'score_asc': return sorted.sort((a, b) => points(a) - points(b))
-    case 'score_desc': return sorted.sort((a, b) => points(b) - points(a))
-    default: return sorted.sort((a, b) => date(b) - date(a))
-  }
+function sortSavedItems(list: any[], _sort: FeedSort): any[] {
+  // The server returns the Saved view newest-first; client-side re-sorting was
+  // dropped with the server-side Saved endpoint (GET /api/saved) so one code
+  // path owns the order. The parameter stays so FilterBar wiring is unchanged.
+  return [...list]
 }
 
 const scale = computed(() => {
@@ -286,8 +281,10 @@ async function markBelowRead(item: any) {
     <template v-else>
       <!-- Refresh in flight with rows present: dim instead of replacing, so
            the list and scroll position stay visible during the reload.
-           TransitionGroup: newly fetched items slide in from the top. -->
-      <TransitionGroup name="item-enter" tag="div">
+           The row window is capped (see visibleItems): beyond a few hundred
+           rows the DOM cost dominates scrolling, so the entrance animation
+           only runs on small lists where every row is on screen anyway. -->
+      <component :is="displayItems.length > 50 ? 'div' : TransitionGroup" name="item-enter" tag="div">
       <div v-for="item in displayItems" :key="item.id"
       role="button" tabindex="0"
       class="group w-full text-left border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer [touch-action:pan-y_pinch-zoom]"
@@ -360,6 +357,9 @@ async function markBelowRead(item: any) {
           v-if="feedStore.isMultiView && feedTypeIcon(item.feed_type)"
           :src="feedTypeIcon(item.feed_type)"
           class="size-3 shrink-0 rounded-sm"
+          loading="lazy"
+          alt=""
+          aria-hidden="true"
           @error="($event.target as HTMLImageElement).style.display = 'none'"
         />
         <span
@@ -460,7 +460,7 @@ async function markBelowRead(item: any) {
       <!-- Multi-view bottom: feed name + score/comments on same line -->
       <div v-if="feedStore.isMultiView" class="flex items-center justify-between mt-2">
         <div v-if="feedNameFor(item)" class="flex items-center gap-1 min-w-0">
-          <img v-if="feedTypeIcon(item.feed_type)" :src="feedTypeIcon(item.feed_type)" class="size-3 shrink-0 rounded-sm" @error="($event.target as HTMLImageElement).style.display = 'none'" />
+          <img v-if="feedTypeIcon(item.feed_type)" :src="feedTypeIcon(item.feed_type)" class="size-3 shrink-0 rounded-sm" loading="lazy" alt="" aria-hidden="true" @error="($event.target as HTMLImageElement).style.display = 'none'" />
           <span class="text-[10px] text-accent/70 truncate">{{ feedNameFor(item) }}</span>
         </div>
         <span v-else />
@@ -505,7 +505,7 @@ async function markBelowRead(item: any) {
       </template>
       </div>
       </div>
-    </TransitionGroup>
+    </component>
     <div v-if="!props.showingSaved && feedStore.loadingMore" class="p-3">
       <Skeleton class="h-12" />
     </div>

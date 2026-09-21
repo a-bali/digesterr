@@ -45,7 +45,7 @@ const noUnread = computed(() => feedStore.unreadCounts[props.feed.id] === 0)
     @keydown.space.prevent="emit('select', feed.id)"
   >
     <div class="flex items-center gap-2 flex-1 min-w-0">
-      <img v-if="feedIcon(feed)" :src="feedIcon(feed)" class="size-3.5 shrink-0 rounded" :class="{ 'opacity-60': noUnread }" @error="($event.target as HTMLImageElement).style.display = 'none'" />
+      <img v-if="feedIcon(feed)" :src="feedIcon(feed)" class="size-3.5 shrink-0 rounded" :class="{ 'opacity-60': noUnread }" loading="lazy" alt="" aria-hidden="true" @error="($event.target as HTMLImageElement).style.display = 'none'" />
       <!-- Email feeds have an address rather than a URL, so feedIcon() finds no
            favicon for them; an envelope is what identifies the type. -->
       <Mail v-else-if="feed.type === 'email'" class="size-3.5 shrink-0 text-accent" :class="{ 'opacity-60': noUnread }" />

@@ -292,23 +292,17 @@ describe('ItemList filter/sort controls', () => {
       scoreItems.forEach(i => expect(isDisabled(i)).toBe(true))
     })
 
-    it('sorts saved items client-side by date', async () => {
+    it('renders saved items in server order (newest first)', async () => {
       const saved = [
-        makeItem({ id: 1, title: 'Older', published_at: '2026-08-10T08:00:00Z' }),
-        makeItem({ id: 2, title: 'Newer', published_at: '2026-08-14T08:00:00Z' }),
+        makeItem({ id: 1, title: 'Newer', published_at: '2026-08-14T08:00:00Z' }),
+        makeItem({ id: 2, title: 'Older', published_at: '2026-08-10T08:00:00Z' }),
       ]
       const { wrapper } = mountList({ showingSaved: true, savedItems: saved, activeFeedId: null })
 
-      // Default sort: newest first.
-      let rows = resultRows(wrapper)
+      // GET /api/saved returns newest-first; the view renders that order as-is.
+      const rows = resultRows(wrapper)
       expect(rows[0].text()).toContain('Newer')
       expect(rows[1].text()).toContain('Older')
-
-      await openMenu(wrapper, 'Sort items')
-      await clickItem('Oldest')
-      rows = resultRows(wrapper)
-      expect(rows[0].text()).toContain('Older')
-      expect(rows[1].text()).toContain('Newer')
     })
 
     it('filters saved items client-side by status', async () => {

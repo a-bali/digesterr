@@ -24,10 +24,18 @@ const scrollMemory: Map<number, number> =
   ((globalThis as any).__digestScrollMemory ??= new Map())
 // Continuous capture via @scroll (bound in template): the watcher approach can't
 // save on back-navigation because Vue unmounts this component before the
-// selected-result watcher job runs, leaving scroller.value null.
+// selected-result watcher job runs, leaving scroller.value null. Capped like
+// the item pane's map.
+const SCROLL_MEMORY_LIMIT = 200
 function onScroll() {
   const id = store.selectedResult?.id
-  if (id != null && scroller.value) scrollMemory.set(id, scroller.value.scrollTop)
+  if (id != null && scroller.value) {
+    if (scrollMemory.size >= SCROLL_MEMORY_LIMIT) {
+      const oldest = scrollMemory.keys().next()
+      if (!oldest.done) scrollMemory.delete(oldest.value)
+    }
+    scrollMemory.set(id, scroller.value.scrollTop)
+  }
 }
 watch(
   () => store.selectedResult?.id,
@@ -173,7 +181,7 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
             data-feed-section
           >
             <h3 class="text-sm font-semibold mb-3 flex items-center gap-1 text-accent">
-              <img v-if="iconForFeedId(section.feed_id || 0)" :src="iconForFeedId(section.feed_id || 0)" class="size-3.5 shrink-0 rounded" @error="($event.target as HTMLImageElement).style.display = 'none'" />
+              <img v-if="iconForFeedId(section.feed_id || 0)" :src="iconForFeedId(section.feed_id || 0)" class="size-3.5 shrink-0 rounded" loading="lazy" alt="" aria-hidden="true" @error="($event.target as HTMLImageElement).style.display = 'none'" />
               <RouterLink :to="`/feeds/${section.feed_id}`" class="hover:underline">{{ section.name }}</RouterLink>
             </h3>
 
