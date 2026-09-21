@@ -974,10 +974,11 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 	}
 
 	// Fetch limit+1 to detect has_more. Only select columns needed for the
-	// middle pane — excludes hash, url, author, and internal metadata.
+	// middle pane — excludes hash, url, author, and internal metadata. Bodies
+	// are 500-char previews; the full body comes from GET /api/items/{id}.
 	queryStr := fmt.Sprintf(
-		"SELECT i.id, i.title, i.content, i.comment_url, i.points, i.comments_count, "+
-			"i.published_at, i.status, i.is_saved, i.extract_content, i.extract_status, "+
+		"SELECT i.id, i.title, substr(i.content, 1, 500), i.comment_url, i.points, i.comments_count, "+
+			"i.published_at, i.status, i.is_saved, substr(i.extract_content, 1, 500), i.extract_status, "+
 			"f.name AS feed_name, f.type AS feed_type FROM items i "+
 			"JOIN feeds f ON f.id = i.feed_id WHERE %s ORDER BY %s LIMIT ? OFFSET ?",
 		whereClause, orderClause,
