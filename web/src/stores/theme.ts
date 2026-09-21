@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const STORAGE_KEY = 'digesterr-theme'
 
@@ -28,13 +28,20 @@ export const useThemeStore = defineStore('theme', () => {
   const mode = ref(saved.mode || 'system')
   const accent = ref(saved.accent || 'blue')
 
+  // Resolved light/dark, independent of the `mode` ('system' included). Exposed so
+  // non-CSS consumers that cannot read the `.dark` class can follow the theme —
+  // vue-sonner's Toaster paints its own palette from a `theme` prop and does NOT
+  // inherit the root class, so it must be told explicitly.
+  const isDark = computed(() =>
+    mode.value === 'dark' || (mode.value === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  )
+
   function apply() {
     const root = document.documentElement
-    const isDark = mode.value === 'dark' || (mode.value === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
 
     // Dark mode + all neutral colors come from the :root / .dark CSS blocks
     // in index.css; the store only flips the class and the accent.
-    root.classList.toggle('dark', isDark)
+    root.classList.toggle('dark', isDark.value)
     const [ac, fg] = accents[accent.value] || accents.blue
     root.style.setProperty('--accent', ac)
     root.style.setProperty('--accent-foreground', fg)
@@ -47,5 +54,5 @@ export const useThemeStore = defineStore('theme', () => {
   function setMode(m: string) { mode.value = m }
   function setAccent(a: string) { accent.value = a }
 
-  return { mode, accent, setMode, setAccent, apply }
+  return { mode, accent, isDark, setMode, setAccent, apply }
 })
