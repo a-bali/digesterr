@@ -55,6 +55,13 @@ type EmailMessage struct {
 	CreatedAt  time.Time      `json:"created_at"`
 }
 
+type EmailMessageRecipient struct {
+	ID        int64  `json:"id"`
+	InboxID   string `json:"inbox_id"`
+	MessageID string `json:"message_id"`
+	Address   string `json:"address"`
+}
+
 type EmailSyncState struct {
 	InboxID      string         `json:"inbox_id"`
 	LastSyncedAt sql.NullString `json:"last_synced_at"`
