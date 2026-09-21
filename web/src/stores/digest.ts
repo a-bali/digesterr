@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { digestApi } from '../services/api'
 import type { DigestConfig, DigestResult, DigestResultItemWithData, DigestResultWithConfigName } from '../types/api'
 import { toastSuccess, toastError } from '../lib/toast'
+import { MARK_SUCCESS_TITLE, MARK_FAILURE_TITLE } from '../lib/markAllRead'
 
 const PAGE_SIZE = 50
 
@@ -43,6 +44,12 @@ export const useDigestStore = defineStore('digest', () => {
   function configName(configId?: number | null): string | undefined {
     if (configId == null) return undefined
     return configs.value.find(c => c.id === configId)?.name || undefined
+  }
+
+  // The digest scope as a phrase: the config's name, or "all digests".
+  function digestScopeLabel(configId?: number | null): string {
+    if (configId == null) return 'all digests'
+    return configName(configId) ?? 'this digest'
   }
 
   // A result's own title, with the config name as context: results often share a
@@ -187,9 +194,9 @@ export const useDigestStore = defineStore('digest', () => {
       if (idx !== -1) results.value[idx] = updated
       if (selectedResult.value?.id === resultId) selectedResult.value = updated
       fetchUnreadCounts()
-      toastSuccess('Digest marked read', resultLabel(resultId))
+      toastSuccess(MARK_SUCCESS_TITLE, resultLabel(resultId))
     } catch (e) {
-      toastError(e, 'Failed to mark digest as read', resultLabel(resultId))
+      toastError(e, MARK_FAILURE_TITLE, resultLabel(resultId))
     }
   }
 
@@ -313,9 +320,9 @@ export const useDigestStore = defineStore('digest', () => {
       } else if (configId == null && showingAllDigests.value) {
         await loadAllResults(true)
       }
-      toastSuccess(configId != null ? 'Digest marked read' : 'All digests marked read', configName(configId))
+      toastSuccess(MARK_SUCCESS_TITLE, digestScopeLabel(configId))
     } catch (e) {
-      toastError(e, 'Failed to mark digest as read', configName(configId))
+      toastError(e, MARK_FAILURE_TITLE, digestScopeLabel(configId))
     }
   }
 
@@ -331,9 +338,9 @@ export const useDigestStore = defineStore('digest', () => {
       } else if (showingAllDigests.value) {
         await loadAllResults(true)
       }
-      toastSuccess('Marked above as read', label)
+      toastSuccess(MARK_SUCCESS_TITLE, `above ${label ?? 'this digest'}`)
     } catch (e) {
-      toastError(e, 'Failed to mark above as read', label)
+      toastError(e, MARK_FAILURE_TITLE, `above ${label ?? 'this digest'}`)
     }
   }
 
@@ -349,9 +356,9 @@ export const useDigestStore = defineStore('digest', () => {
       } else if (showingAllDigests.value) {
         await loadAllResults(true)
       }
-      toastSuccess('Marked below as read', label)
+      toastSuccess(MARK_SUCCESS_TITLE, `below ${label ?? 'this digest'}`)
     } catch (e) {
-      toastError(e, 'Failed to mark below as read', label)
+      toastError(e, MARK_FAILURE_TITLE, `below ${label ?? 'this digest'}`)
     }
   }
 

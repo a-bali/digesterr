@@ -27,7 +27,7 @@ const groups: { title: string; bindings: [string, string][] }[] = [
     title: 'General',
     bindings: [
       ['u', 'Toggle unread-only filter'],
-      ['Shift+A', 'Mark feed as read'],
+      ['Shift+A', 'Mark as read (whichever scope is on screen)'],
       ['x', 'Maximize content pane'],
       ['r', 'Refresh unread counts'],
       ['Shift+D', 'Toggle dark/light theme'],

@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { feedApi, itemApi, settingsApi } from '../services/api'
 import type { Feed, Item, MultiItem, ItemSort, MarkRelativeOptions } from '../types/api'
 import { toastError, toastSuccess } from '../lib/toast'
+import { MARK_SUCCESS_TITLE, MARK_FAILURE_TITLE } from '../lib/markAllRead'
 import { SCORE_FEED_TYPES } from '../lib/feeds'
 
 const PAGE_SIZE = 50
@@ -527,9 +528,9 @@ export const useFeedStore = defineStore('feed', () => {
       await fetchFeeds()
       if (activeFeedId.value === id) await fetchFirstPage()
       await fetchUnreadCounts()
-      toastSuccess('Feed marked read', name)
+      toastSuccess(MARK_SUCCESS_TITLE, name ?? 'this feed')
     } catch (e) {
-      toastError(e, 'Failed to mark feed read', name)
+      toastError(e, MARK_FAILURE_TITLE, name ?? 'this feed')
     }
   }
 
@@ -548,9 +549,9 @@ export const useFeedStore = defineStore('feed', () => {
       // Refresh items and unread counts after marking read.
       await fetchFirstPage()
       await fetchUnreadCounts()
-      toastSuccess('Marked all as read', markAllReadScope(category))
+      toastSuccess(MARK_SUCCESS_TITLE, markAllReadScope(category))
     } catch (e) {
-      toastError(e, 'Failed to mark read', markAllReadScope(category))
+      toastError(e, MARK_FAILURE_TITLE, markAllReadScope(category))
     }
   }
 
@@ -570,9 +571,9 @@ export const useFeedStore = defineStore('feed', () => {
       await itemApi.markReadAbove(item.id, markRelativeOptions())
       await fetchFirstPage()
       await fetchUnreadCounts()
-      toastSuccess('Marked above as read', label)
+      toastSuccess(MARK_SUCCESS_TITLE, `above ${label ?? 'this item'}`)
     } catch (e) {
-      toastError(e, 'Failed to mark above as read', label)
+      toastError(e, MARK_FAILURE_TITLE, `above ${label ?? 'this item'}`)
     }
   }
 
@@ -582,9 +583,9 @@ export const useFeedStore = defineStore('feed', () => {
       await itemApi.markReadBelow(item.id, markRelativeOptions())
       await fetchFirstPage()
       await fetchUnreadCounts()
-      toastSuccess('Marked below as read', label)
+      toastSuccess(MARK_SUCCESS_TITLE, `below ${label ?? 'this item'}`)
     } catch (e) {
-      toastError(e, 'Failed to mark below as read', label)
+      toastError(e, MARK_FAILURE_TITLE, `below ${label ?? 'this item'}`)
     }
   }
 

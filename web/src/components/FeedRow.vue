@@ -5,6 +5,7 @@ import Tooltip from './ui/Tooltip.vue'
 import { Rss, Check, Settings, RefreshCw, Mail } from 'lucide-vue-next'
 import { feedIcon, absoluteTime } from '../lib/format'
 import type { Feed } from '../types/api'
+import { scopeActionLabel } from '../lib/markAllRead'
 
 const props = defineProps<{ feed: Feed; refreshing: boolean }>()
 const emit = defineEmits<{
@@ -73,7 +74,7 @@ const noUnread = computed(() => feedStore.unreadCounts[props.feed.id] === 0)
     <button class="shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20" title="Settings" @click.stop="emit('edit', feed)">
       <Settings class="size-3" />
     </button>
-    <button class="shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20" title="Mark read" @click.stop="emit('markRead', feed.id)">
+    <button class="shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20" :title="scopeActionLabel({ kind: 'feed', id: feed.id, name: feed.name })" @click.stop="emit('markRead', feed.id)">
       <Check class="size-3" />
     </button>
     <button class="shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20" title="Refresh" @click.stop="emit('refresh', feed.id)">

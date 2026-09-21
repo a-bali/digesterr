@@ -98,8 +98,12 @@ async function mountAt(path: string) {
   return wrapper
 }
 
+// The end-of-list button's label comes from the shared vocabulary, so it reads
+// "Mark all feeds as read" in an items pane and "Mark all digests as read" in a
+// digest pane. Match either rather than one hardcoded phrase — pinning the exact
+// string here is what let the label drift out of sync before.
 function markAllButton(wrapper: ReturnType<typeof mount>) {
-  return wrapper.findAll('button').find(b => (b.text() || '').includes('Mark all as read'))
+  return wrapper.findAll('button').find(b => /^Mark all (feeds|digests) as read$/.test((b.text() || '').trim()))
 }
 
 // Every mark-all-read now confirms first (the user reported that 'A' and the
@@ -213,7 +217,7 @@ describe('mid-pane "Mark all as read" in digest views', () => {
     store.results = [{ id: 1, config_id: 7, config_name: 'Morning Brief', status: 'new' } as never]
     await flushPromises()
 
-    const btn = wrapper.findAll('button').find(b => (b.text() || '').includes('Mark all as read'))
+    const btn = wrapper.findAll('button').find(b => /^Mark all (feeds|digests) as read$/.test((b.text() || '').trim()))
     expect(btn, 'the button should render for an unread digest result').toBeTruthy()
 
     await btn!.trigger('click')
@@ -255,10 +259,12 @@ describe('mid-pane "Mark all as read" in digest views', () => {
     // Nothing to mark: no confirmation and no API call...
     expect(markReadAll).not.toHaveBeenCalled()
     expect(document.body.querySelector('[data-mark-all-read-confirm]')).toBeNull()
-    // ...but the user is told. A missing import here would throw instead.
+    // ...but the user is told. Exact arguments, not stringContaining: a loose match
+    // here passed for both the bare scope and the full sentence, so it could not
+    // catch the subtitle drifting out of the title/scope pattern.
     expect(spy, 'the empty-scope path must report something to the user').toHaveBeenCalledWith(
-      expect.stringContaining('Nothing unread'),
-      expect.stringContaining('tech'),
+      'Nothing to mark as read',
+      'category “tech”',
     )
     spy.mockRestore()
   })
@@ -357,7 +363,7 @@ describe('mid-pane "Mark all as read" in digest views', () => {
     store.allResults = [{ id: 1, config_id: 7, config_name: 'Morning Brief', status: 'new' } as never]
     await flushPromises()
 
-    const btn = wrapper.findAll('button').find(b => (b.text() || '').includes('Mark all as read'))
+    const btn = wrapper.findAll('button').find(b => /^Mark all (feeds|digests) as read$/.test((b.text() || '').trim()))
     expect(btn, 'the button should render for an unread digest result').toBeTruthy()
 
     await btn!.trigger('click')

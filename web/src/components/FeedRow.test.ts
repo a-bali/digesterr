@@ -108,7 +108,7 @@ describe('FeedRow click surface', () => {
 
   it('does not select when an action button is clicked', async () => {
     const wrapper = mountFeedRow(makeFeed())
-    const markRead = wrapper.find('button[title="Mark read"]')
+    const markRead = wrapper.find('button[title="Mark “Test Feed” as read"]')
     expect(markRead.exists()).toBe(true)
 
     await markRead.trigger('click')

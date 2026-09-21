@@ -26,6 +26,10 @@ import { useThemeStore } from '../stores/theme'
 import { useLayoutStore } from '../stores/layout'
 import { itemApi } from '../services/api'
 import { toastSuccess } from '../lib/toast'
+import {
+  type MarkAllScope, scopeLabel, scopeActionLabel, scopeEmptyLabel, scopeCount,
+  MARK_SUCCESS_TITLE, MARK_FAILURE_TITLE, MARK_EMPTY_TITLE, MARK_DIALOG_TITLE,
+} from '../lib/markAllRead'
 import type { Item, DigestConfig } from '../types/api'
 import { useBreakpoints } from '../composables/useMediaQuery'
 import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts'
@@ -428,26 +432,6 @@ function onSidebarMarkAllRead(scope: MarkAllScope) {
 //
 // The confirmation names its scope and, for a scoped mark, how many items it will
 // touch, so "Mark all as read?" is never ambiguous about what it covers.
-type MarkAllScope =
-  | { kind: 'feed'; id: number; name: string }
-  | { kind: 'category'; name: string }
-  | { kind: 'feeds-section' }
-  | { kind: 'digest-config'; id: number; name: string }
-  | { kind: 'all-digests' }
-
-// A short noun for a scope, for toast second lines. Deliberately terse — the
-// confirmation dialog spells the scope out in a sentence, a toast only needs to say
-// which one.
-function scopeLabel(scope: MarkAllScope): string {
-  switch (scope.kind) {
-    case 'feed': return scope.name
-    case 'category': return `category “${scope.name}”`
-    case 'feeds-section': return 'all feeds'
-    case 'digest-config': return scope.name || 'digest'
-    case 'all-digests': return 'all digests'
-  }
-}
-
 interface MarkAllTarget {
   scope: MarkAllScope
   /**
@@ -509,125 +493,79 @@ function plural(n: number | null, one: string): string {
 // the confirmation otherwise.
 function requestMarkAllRead(explicit?: MarkAllScope) {
   if (markAllTarget.value) return
-  const target = explicit ? targetForScope(explicit) : resolveMarkAllTarget()
+  const scope = explicit ?? resolveMarkAllScope()
+  if (!scope) return
+  const target = targetForScope(scope)
   if (!target) return
   // Provably empty scope, and the FIRST unread could be counted: the action would
   // be a no-op, so do not ask and do not claim success. The earlier code toasted
   // "marked read" for a category with nothing unread in it.
   if (target.unread === 0) {
-    // Name the scope: "Nothing unread here" alone does not say whether it means the
-    // category, the section or the whole list. scopeLabel collapses the dialog copy
-    // to the scope noun ("probecat", "All Digests", "Hacker News").
-    toastSuccess('Nothing unread', scopeLabel(target.scope))
+    // Same shape as every other toast: title = outcome, subtitle = the SCOPE.
+    // Using the full sentence here ("Nothing unread in X") repeated the title and
+    // broke the pattern the success/failure toasts follow.
+    toastSuccess(MARK_EMPTY_TITLE, scopeLabel(target.scope))
     return
   }
   markAllTarget.value = target
 }
 
-// Builds the confirmation for an explicitly requested scope (a sidebar control),
-// so the sidebar can ask for any scope without duplicating dialog copy or counts.
+// Builds the confirmation for a scope. This is the SINGLE source of the wording:
+// the dialog title, the dialog body, the "nothing to mark" toast and the
+// control's tooltip all derive from the scope, so they cannot drift apart. An
+// earlier version built the same target twice (once per entry point) and the copy
+// diverged — the scope ended up in the toast TITLE for digests but in the SUBTITLE
+// for feeds.
 function targetForScope(scope: MarkAllScope): MarkAllTarget | null {
-  switch (scope.kind) {
-    case 'feed': {
-      const feed = feedStore.feeds.find(f => f.id === scope.id)
-      if (!feed) return null
-      const n = feedStore.unreadCounts[feed.id]
-      return {
-        scope: { kind: 'feed', id: feed.id, name: feed.name },
-        unread: typeof n === 'number' ? n : null,
-        title: 'Mark all as read?',
-        description: `Mark all items in “${feed.name}” as read? This cannot be undone.`,
-      }
-    }
-    case 'category': {
-      const n = feedUnreadInScope(scope.name)
-      return {
-        scope,
-        unread: n,
-        title: 'Mark all as read?',
-        description: `Mark all ${plural(n, 'item')} in “${scope.name}” as read? This cannot be undone.`,
-      }
-    }
-    case 'feeds-section': {
-      const n = feedUnreadInScope()
-      return {
-        scope,
-        unread: n,
-        title: 'Mark all as read?',
-        description: `Mark every unread item in all ${plural(feedStore.feeds.length, 'feed')} as read? This cannot be undone.`,
-      }
-    }
-    case 'digest-config': {
-      const cfg = digestStore.configs.find(c => c.id === scope.id)
-      const name = cfg?.name ?? scope.name
-      return {
-        scope: { kind: 'digest-config', id: scope.id, name },
-        unread: digestUnreadInScope(scope.id),
-        title: 'Mark all as read?',
-        description: `Mark all results in “${name}” as read? This cannot be undone.`,
-      }
-    }
-    case 'all-digests':
-      return {
-        scope,
-        unread: digestUnreadInScope(),
-        title: 'Mark all digests as read?',
-        description: 'Mark every unread digest result as read? This cannot be undone.',
-      }
+  const unread = unreadInScope(scope)
+  // A scope whose entity cannot be resolved (feed deleted, configs not loaded) has
+  // no confirmation to offer.
+  if (unread === undefined) return null
+  return {
+    scope,
+    unread,
+    title: MARK_DIALOG_TITLE,
+    description: `Mark ${scopeCount(scope, unread)} in ${scopeLabel(scope)} as read? This cannot be undone.`,
   }
 }
 
-function resolveMarkAllTarget(): MarkAllTarget | null {
+// Unread count for a scope, or undefined when the entity itself is unknown.
+// `null` (inside the returned object) already means "count not loaded yet".
+function unreadInScope(scope: MarkAllScope): number | null | undefined {
+  switch (scope.kind) {
+    case 'feed': {
+      const feed = feedStore.feeds.find(f => f.id === scope.id)
+      if (!feed) return undefined
+      const n = feedStore.unreadCounts[feed.id]
+      return typeof n === 'number' ? n : null
+    }
+    case 'category': return feedUnreadInScope(scope.name)
+    case 'feeds-section': return feedUnreadInScope()
+    case 'digest-config':
+      return digestStore.configs.some(c => c.id === scope.id) ? digestUnreadInScope(scope.id) : undefined
+    case 'all-digests': return digestUnreadInScope()
+  }
+}
+
+// The scope the CURRENT view points at. Deliberately only decides WHICH scope;
+// every word comes from targetForScope, so the two entry points (key/button vs
+// sidebar control) cannot produce different copy for the same scope.
+function resolveMarkAllScope(): MarkAllScope | null {
   if (digestMode.value) {
     if (digestStore.activeConfigId != null) {
       const cfg = digestStore.activeConfig
       if (!cfg) return null
-      return {
-        scope: { kind: 'digest-config', id: cfg.id, name: cfg.name },
-        unread: digestUnreadInScope(cfg.id),
-        title: 'Mark all as read?',
-        description: `Mark all results in “${cfg.name}” as read? This cannot be undone.`,
-      }
+      return { kind: 'digest-config', id: cfg.id, name: cfg.name }
     }
-    if (digestStore.showingAllDigests) {
-      return {
-        scope: { kind: 'all-digests' },
-        unread: digestUnreadInScope(),
-        title: 'Mark all digests as read?',
-        description: 'Mark every unread digest result as read? This cannot be undone.',
-      }
-    }
+    if (digestStore.showingAllDigests) return { kind: 'all-digests' }
     return null
   }
-  if (feedStore.activeCategory) {
-    const name = feedStore.activeCategory
-    const n = feedUnreadInScope(name)
-    return {
-      scope: { kind: 'category', name },
-      unread: n,
-      title: 'Mark all as read?',
-      description: `Mark all ${plural(n, 'item')} in “${name}” as read? This cannot be undone.`,
-    }
-  }
-  if (feedStore.activeSection === 'feeds') {
-    const n = feedUnreadInScope()
-    return {
-      scope: { kind: 'feeds-section' },
-      unread: n,
-      title: 'Mark all as read?',
-      description: `Mark every unread item in all ${plural(feedStore.feeds.length, 'feed')} as read? This cannot be undone.`,
-    }
-  }
+  if (feedStore.activeCategory) return { kind: 'category', name: feedStore.activeCategory }
+  if (feedStore.activeSection === 'feeds') return { kind: 'feeds-section' }
   if (feedStore.activeFeedId) {
     const feed = feedStore.activeFeed
     if (!feed) return null
-    const n = feedStore.unreadCounts[feed.id]
-    return {
-      scope: { kind: 'feed', id: feed.id, name: feed.name },
-      unread: typeof n === 'number' ? n : null,
-      title: 'Mark all as read?',
-      description: `Mark all items in “${feed.name}” as read? This cannot be undone.`,
-    }
+    return { kind: 'feed', id: feed.id, name: feed.name }
   }
   return null
 }
@@ -968,7 +906,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
     >
       <div class="flex justify-end gap-2">
         <Button variant="outline" @click="closeMarkAllReadDialog">Cancel</Button>
-        <Button ref="markAllConfirm" data-mark-all-read-confirm :disabled="markAllBusy" @click="confirmMarkAllRead" @keydown="onMarkAllConfirmKeyDown">Mark read</Button>
+        <Button ref="markAllConfirm" data-mark-all-read-confirm :disabled="markAllBusy" @click="confirmMarkAllRead" @keydown="onMarkAllConfirmKeyDown">Mark as read</Button>
       </div>
     </Dialog>
   </div>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { toastSuccess, toastError } from '../lib/toast'
+import { scopeActionLabel, scopeEmptyLabel } from '../lib/markAllRead'
 import { useFeedStore } from '../stores/feed'
 import { useDigestStore } from '../stores/digest'
 import { feedApi } from '../services/api'
@@ -276,7 +277,9 @@ const categoryUnreadCounts = computed(() => {
       <button
         class="shrink-0 opacity-0 group-hover/section:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default"
         :disabled="totalDigestUnread === 0"
-        :title="totalDigestUnread > 0 ? 'Mark all digests as read' : 'Nothing unread'"
+        :title="totalDigestUnread > 0
+          ? scopeActionLabel({ kind: 'all-digests' })
+          : scopeEmptyLabel({ kind: 'all-digests' })"
         data-mark-all-digests
         @click="emit('markAllRead', { kind: 'all-digests' })"
       >
@@ -313,7 +316,9 @@ const categoryUnreadCounts = computed(() => {
           <button
             class="p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default"
             :disabled="(digestStore.unreadCounts[cfg.id] ?? 0) === 0"
-            :title="(digestStore.unreadCounts[cfg.id] ?? 0) > 0 ? 'Mark digest as read' : 'Nothing unread'"
+            :title="(digestStore.unreadCounts[cfg.id] ?? 0) > 0
+              ? scopeActionLabel({ kind: 'digest-config', id: cfg.id, name: cfg.name })
+              : scopeEmptyLabel({ kind: 'digest-config', id: cfg.id, name: cfg.name })"
             :data-mark-digest-read="cfg.id"
             @click.stop="emit('markAllRead', { kind: 'digest-config', id: cfg.id, name: cfg.name })"
           >
@@ -348,7 +353,9 @@ const categoryUnreadCounts = computed(() => {
       <button
         class="shrink-0 opacity-0 group-hover/section:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default"
         :disabled="totalFeedUnread === 0"
-        :title="totalFeedUnread > 0 ? 'Mark all feeds as read' : 'Nothing unread'"
+        :title="totalFeedUnread > 0
+          ? scopeActionLabel({ kind: 'feeds-section' })
+          : scopeEmptyLabel({ kind: 'feeds-section' })"
         data-mark-feeds-section-read
         @click="emit('markAllRead', { kind: 'feeds-section' })"
       >
@@ -390,7 +397,9 @@ const categoryUnreadCounts = computed(() => {
         <button
           class="shrink-0 opacity-0 group-hover/cat:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default"
           :disabled="(categoryUnreadCounts[catName] ?? 0) === 0"
-          :title="(categoryUnreadCounts[catName] ?? 0) > 0 ? 'Mark category as read' : 'Nothing unread in this category'"
+          :title="(categoryUnreadCounts[catName] ?? 0) > 0
+            ? scopeActionLabel({ kind: 'category', name: catName })
+            : scopeEmptyLabel({ kind: 'category', name: catName })"
           :data-mark-category-read="catName"
           @click="emit('markAllRead', { kind: 'category', name: catName })"
         >

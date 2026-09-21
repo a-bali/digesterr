@@ -11,6 +11,7 @@ import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { usePullToRefresh } from '../composables/usePullToRefresh'
 import { useSwipeAction } from '../composables/useSwipeAction'
 import { relativeTime, absoluteTime } from '../lib/format'
+import { scopeActionLabel, scopeEmptyLabel, markRelativeLabel, markRelativeShortLabel } from '../lib/markAllRead'
 
 const props = defineProps<{
   savedItems: any[]
@@ -326,26 +327,26 @@ async function markBelowRead(item: any) {
           class="absolute inset-y-0 right-0 w-36 flex items-center justify-center gap-1 px-2 text-[11px] font-medium bg-accent text-accent-foreground transition-transform duration-150"
           :class="swipeActionFor(item.id) === 'below' ? 'translate-x-0' : 'translate-x-full'"
           data-swipe-below
-          aria-label="Mark all items below as read"
+          :aria-label="markRelativeLabel('below')"
           :aria-hidden="swipeActionFor(item.id) === 'below' ? undefined : 'true'"
           :tabindex="swipeActionFor(item.id) === 'below' ? undefined : -1"
           @click.stop="confirmSwipeAction(item)"
         >
           <ChevronsDown class="size-3.5 shrink-0" />
-          <span class="leading-tight">Mark all read below</span>
+          <span class="leading-tight">{{ markRelativeShortLabel('below') }}</span>
         </button>
         <button
           type="button"
           class="absolute inset-y-0 left-0 w-36 flex items-center justify-center gap-1 px-2 text-[11px] font-medium bg-accent text-accent-foreground transition-transform duration-150"
           :class="swipeActionFor(item.id) === 'above' ? 'translate-x-0' : '-translate-x-full'"
           data-swipe-above
-          aria-label="Mark all items above as read"
+          :aria-label="markRelativeLabel('above')"
           :aria-hidden="swipeActionFor(item.id) === 'above' ? undefined : 'true'"
           :tabindex="swipeActionFor(item.id) === 'above' ? undefined : -1"
           @click.stop="confirmSwipeAction(item)"
         >
           <ChevronsUp class="size-3.5 shrink-0" />
-          <span class="leading-tight">Mark all read above</span>
+          <span class="leading-tight">{{ markRelativeShortLabel('above') }}</span>
         </button>
       </template>
 
@@ -411,8 +412,8 @@ async function markBelowRead(item: any) {
           <span v-if="!props.showingSaved" class="hidden group-hover:flex items-center gap-0.5" data-mark-actions>
             <button
               class="text-muted-foreground/50 hover:text-accent p-0.5"
-              title="Mark everything above as read, except this item"
-              aria-label="Mark everything above as read, except this item"
+              :title="markRelativeLabel('above')"
+              :aria-label="markRelativeLabel('above')"
               data-mark-above
               @click.stop="markAboveRead(item)"
             >
@@ -420,8 +421,8 @@ async function markBelowRead(item: any) {
             </button>
             <button
               class="text-muted-foreground/50 hover:text-accent p-0.5"
-              title="Mark everything below as read, except this item"
-              aria-label="Mark everything below as read, except this item"
+              :title="markRelativeLabel('below')"
+              :aria-label="markRelativeLabel('below')"
               data-mark-below
               @click.stop="markBelowRead(item)"
             >
@@ -450,8 +451,8 @@ async function markBelowRead(item: any) {
           <span v-if="!props.showingSaved" class="hidden group-hover:flex items-center gap-0.5" data-mark-actions>
             <button
               class="text-muted-foreground/50 hover:text-accent p-0.5"
-              title="Mark everything above as read, except this item"
-              aria-label="Mark everything above as read, except this item"
+              :title="markRelativeLabel('above')"
+              :aria-label="markRelativeLabel('above')"
               data-mark-above
               @click.stop="markAboveRead(item)"
             >
@@ -459,8 +460,8 @@ async function markBelowRead(item: any) {
             </button>
             <button
               class="text-muted-foreground/50 hover:text-accent p-0.5"
-              title="Mark everything below as read, except this item"
-              aria-label="Mark everything below as read, except this item"
+              :title="markRelativeLabel('below')"
+              :aria-label="markRelativeLabel('below')"
               data-mark-below
               @click.stop="markBelowRead(item)"
             >
@@ -529,12 +530,12 @@ async function markBelowRead(item: any) {
       <button
         class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-accent/20 bg-accent/5 text-accent text-sm font-medium hover:bg-accent/10 active:bg-accent/20 transition-colors disabled:opacity-40 disabled:cursor-default disabled:hover:bg-accent/5"
         :disabled="markAllReadDisabled"
-        :title="markAllReadDisabled ? 'Nothing unread here' : 'Mark all as read'"
+        :title="markAllReadDisabled ? scopeEmptyLabel({ kind: 'feeds-section' }) : scopeActionLabel({ kind: 'feeds-section' })"
         data-mark-all-read
         @click="emit('markAllRead')"
       >
         <CheckCircle2 class="size-4" />
-        Mark all as read
+        {{ scopeActionLabel({ kind: 'feeds-section' }) }}
       </button>
     </div>
   </div>

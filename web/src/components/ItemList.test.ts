@@ -457,7 +457,7 @@ describe('ItemList swipe action panels', () => {
     expect(row.attributes('data-swipe-action')).toBe('below')
     expect(row.find('[data-swipe-below]').classes()).toContain('translate-x-0')
     expect(row.find('[data-swipe-below]').classes()).toContain('right-0')
-    expect(row.find('[data-swipe-below]').text()).toContain('Mark all read below')
+    expect(row.find('[data-swipe-below]').text()).toContain('Mark below read')
     expect(row.find('[data-swipe-above]').classes()).toContain('-translate-x-full')
   })
 
@@ -469,7 +469,7 @@ describe('ItemList swipe action panels', () => {
     expect(row.attributes('data-swipe-action')).toBe('above')
     expect(row.find('[data-swipe-above]').classes()).toContain('translate-x-0')
     expect(row.find('[data-swipe-above]').classes()).toContain('left-0')
-    expect(row.find('[data-swipe-above]').text()).toContain('Mark all read above')
+    expect(row.find('[data-swipe-above]').text()).toContain('Mark above read')
   })
 
   it('shifts the row content aside by the panel width while open', async () => {

@@ -12,9 +12,9 @@ export type SwipeActionDirection = 'above' | 'below'
  * swiping the row instead:
  *
  *  - **Swipe right-to-left** (finger travels left) opens a panel that slides in
- *    from the row's right edge reading "Mark all read below".
+ *    from the row's right edge reading "Mark below read" (markRelativeShortLabel).
  *  - **Swipe left-to-right** opens the mirror panel from the left edge reading
- *    "Mark all read above".
+ *    "Mark above read" (markRelativeShortLabel).
  *
  * The panel then STAYS open until the user taps it — the two-step shape the
  * user chose, so a gesture that catches hundreds of items is never committed by

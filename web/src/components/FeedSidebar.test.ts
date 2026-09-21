@@ -117,7 +117,7 @@ describe('FeedSidebar hover actions', () => {
     feedStore.feeds.push(feed)
     await flushPromises()
 
-    for (const title of ['Settings', 'Mark read', 'Refresh']) {
+    for (const title of ['Settings', 'Mark “Example Feed” as read', 'Refresh']) {
       const btn = wrapper.find(`button[title="${title}"]`)
       expect(btn.exists()).toBe(true)
       expect(btn.classes()).toContain('pointer-coarse:opacity-100')
@@ -158,7 +158,7 @@ describe('FeedSidebar mark-all-as-read confirmation', () => {
     useFeedStore().feeds.push(feed)
     await flushPromises()
 
-    await wrapper.find('button[title="Mark read"]').trigger('click')
+    await wrapper.find('button[title="Mark “Example Feed” as read"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.emitted('markAllRead')?.[0]).toEqual([{ kind: 'feed', id: feed.id }])

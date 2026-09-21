@@ -7,6 +7,7 @@ import { Circle, CircleDot, LoaderCircle, CheckCircle2, ChevronsUp, ChevronsDown
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { absoluteTime, relativeTime } from '../lib/format'
 import type { DigestResult, DigestResultWithConfigName } from '../types/api'
+import { scopeActionLabel, scopeEmptyLabel, markRelativeLabel, markRelativeShortLabel } from '../lib/markAllRead'
 
 const props = defineProps<{
   showingAll?: boolean
@@ -150,8 +151,8 @@ function onSelect(e: MouseEvent, result: DigestResult) {
             <span class="hidden group-hover:flex items-center gap-0.5" data-mark-actions>
               <button
                 class="text-muted-foreground/50 hover:text-accent p-0.5"
-                title="Mark everything above as read, except this item"
-                aria-label="Mark everything above as read, except this item"
+                :title="markRelativeLabel('above')"
+                :aria-label="markRelativeLabel('above')"
                 data-mark-above
                 @click.stop="markAboveRead(result)"
               >
@@ -159,8 +160,8 @@ function onSelect(e: MouseEvent, result: DigestResult) {
               </button>
               <button
                 class="text-muted-foreground/50 hover:text-accent p-0.5"
-                title="Mark everything below as read, except this item"
-                aria-label="Mark everything below as read, except this item"
+                :title="markRelativeLabel('below')"
+                :aria-label="markRelativeLabel('below')"
                 data-mark-below
                 @click.stop="markBelowRead(result)"
               >
@@ -190,8 +191,8 @@ function onSelect(e: MouseEvent, result: DigestResult) {
             <span class="hidden group-hover:flex items-center gap-0.5" data-mark-actions>
               <button
                 class="text-muted-foreground/50 hover:text-accent p-0.5"
-                title="Mark everything above as read, except this item"
-                aria-label="Mark everything above as read, except this item"
+                :title="markRelativeLabel('above')"
+                :aria-label="markRelativeLabel('above')"
                 data-mark-above
                 @click.stop="markAboveRead(result)"
               >
@@ -199,8 +200,8 @@ function onSelect(e: MouseEvent, result: DigestResult) {
               </button>
               <button
                 class="text-muted-foreground/50 hover:text-accent p-0.5"
-                title="Mark everything below as read, except this item"
-                aria-label="Mark everything below as read, except this item"
+                :title="markRelativeLabel('below')"
+                :aria-label="markRelativeLabel('below')"
                 data-mark-below
                 @click.stop="markBelowRead(result)"
               >
@@ -220,12 +221,12 @@ function onSelect(e: MouseEvent, result: DigestResult) {
       <button
         class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-accent/20 bg-accent/5 text-accent text-sm font-medium hover:bg-accent/10 active:bg-accent/20 transition-colors disabled:opacity-40 disabled:cursor-default disabled:hover:bg-accent/5"
         :disabled="markAllReadDisabled"
-        :title="markAllReadDisabled ? 'Nothing unread here' : 'Mark all as read'"
+        :title="markAllReadDisabled ? scopeEmptyLabel({ kind: 'all-digests' }) : scopeActionLabel({ kind: 'all-digests' })"
         data-mark-all-read
         @click="emit('markAllRead')"
       >
         <CheckCircle2 class="size-4" />
-        Mark all as read
+        {{ scopeActionLabel({ kind: 'all-digests' }) }}
       </button>
     </div>
   </div>

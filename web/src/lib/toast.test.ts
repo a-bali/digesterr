@@ -150,7 +150,7 @@ describe('mark-read actions report both outcomes', () => {
     // Title is now constant; the SCOPE moved to the description so a bare
     // "marked read" always says which scope.
     expect(toast.success).toHaveBeenCalledWith(
-      'Marked all as read',
+      'Marked as read',
       expect.objectContaining({ icon: expect.anything(), description: 'all feeds' }),
     )
   })
@@ -163,7 +163,7 @@ describe('mark-read actions report both outcomes', () => {
     await useFeedStore().markAllRead('Tech')
 
     expect(toast.success).toHaveBeenCalledWith(
-      'Marked all as read',
+      'Marked as read',
       expect.objectContaining({ icon: expect.anything(), description: 'category “Tech”' }),
     )
   })
@@ -176,7 +176,7 @@ describe('mark-read actions report both outcomes', () => {
 
     await expect(useFeedStore().markAllRead()).resolves.toBeUndefined()
 
-    expect(toast.error).toHaveBeenCalledWith('Failed to mark read', expect.objectContaining({ icon: expect.anything() }))
+    expect(toast.error).toHaveBeenCalledWith('Failed to mark as read', expect.objectContaining({ icon: expect.anything() }))
   })
 
   it('feed markReadAbove reports success', async () => {
@@ -186,7 +186,7 @@ describe('mark-read actions report both outcomes', () => {
 
     await useFeedStore().markReadAbove({ id: 5 })
 
-    expect(toast.success).toHaveBeenCalledWith('Marked above as read', expect.objectContaining({ icon: expect.anything() }))
+    expect(toast.success).toHaveBeenCalledWith('Marked as read', expect.objectContaining({ icon: expect.anything() }))
   })
 
   it('feed markReadBelow reports failure instead of rejecting', async () => {
@@ -195,7 +195,7 @@ describe('mark-read actions report both outcomes', () => {
 
     await expect(useFeedStore().markReadBelow({ id: 5 })).resolves.toBeUndefined()
 
-    expect(toast.error).toHaveBeenCalledWith('Failed to mark below as read', expect.objectContaining({ icon: expect.anything() }))
+    expect(toast.error).toHaveBeenCalledWith('Failed to mark as read', expect.objectContaining({ icon: expect.anything() }))
   })
 
   it('digest markAllRead reports failure instead of rejecting', async () => {
@@ -204,7 +204,7 @@ describe('mark-read actions report both outcomes', () => {
 
     await expect(useDigestStore().markAllRead()).resolves.toBeUndefined()
 
-    expect(toast.error).toHaveBeenCalledWith('Failed to mark digest as read', expect.objectContaining({ icon: expect.anything() }))
+    expect(toast.error).toHaveBeenCalledWith('Failed to mark as read', expect.objectContaining({ icon: expect.anything() }))
   })
 
   it('digest markReadAbove reports success', async () => {
@@ -214,7 +214,7 @@ describe('mark-read actions report both outcomes', () => {
 
     await useDigestStore().markReadAbove({ id: 3 } as any)
 
-    expect(toast.success).toHaveBeenCalledWith('Marked above as read', expect.objectContaining({ icon: expect.anything() }))
+    expect(toast.success).toHaveBeenCalledWith('Marked as read', expect.objectContaining({ icon: expect.anything() }))
   })
 })
 
@@ -232,7 +232,7 @@ describe('store actions name the entity in the toast', () => {
     await store.markFeedRead(1)
 
     expect(toast.success).toHaveBeenCalledWith(
-      'Feed marked read',
+      'Marked as read',
       expect.objectContaining({ description: 'Hacker News' }),
     )
   })
@@ -246,7 +246,7 @@ describe('store actions name the entity in the toast', () => {
     await useFeedStore().markAllRead('Tech')
 
     expect(toast.success).toHaveBeenCalledWith(
-      'Marked all as read',
+      'Marked as read',
       expect.objectContaining({ description: 'category “Tech”' }),
     )
   })
@@ -260,8 +260,8 @@ describe('store actions name the entity in the toast', () => {
     await useFeedStore().markReadAbove({ id: 5, title: 'A very long article title' })
 
     expect(toast.success).toHaveBeenCalledWith(
-      'Marked above as read',
-      expect.objectContaining({ description: 'from “A very long article title”' }),
+      'Marked as read',
+      expect.objectContaining({ description: 'above from “A very long article title”' }),
     )
   })
 
