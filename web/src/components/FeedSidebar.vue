@@ -260,6 +260,7 @@ const categoryUnreadCounts = computed(() => {
 </script>
 
 <template>
+  <nav aria-label="Feeds">
   <div>
     <!-- Saved -->
     <button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/10 transition-colors mb-3" :class="{ 'bg-accent/10 font-medium text-accent': route.path === '/saved' }" @click="emit('showSaved')">
@@ -453,4 +454,5 @@ const categoryUnreadCounts = computed(() => {
       </div>
     </Dialog>
   </div>
+  </nav>
 </template>

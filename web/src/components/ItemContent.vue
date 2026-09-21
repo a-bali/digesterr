@@ -549,8 +549,8 @@ onUnmounted(() => {
         </button>
         <template v-if="!summaryCollapsed">
           <!-- Loading spinner -->
-          <div v-if="summaryLoading" class="flex items-center gap-2 py-4 text-sm text-muted-foreground">
-            <RefreshCw class="size-4 animate-spin" />
+          <div v-if="summaryLoading" class="flex items-center gap-2 py-4 text-sm text-muted-foreground" role="status" aria-live="polite">
+            <RefreshCw class="size-4 animate-spin" aria-hidden="true" />
             <span>Generating summary…</span>
           </div>
           <!-- Summary content -->

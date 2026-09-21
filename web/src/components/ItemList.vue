@@ -273,8 +273,9 @@ async function markBelowRead(item: any) {
       />
     </div>
     <!-- Empty + in flight: centered spinner. -->
-    <div v-if="feedStore.loading && displayItems.length === 0" class="flex justify-center py-10" data-loading-spinner>
-      <LoaderCircle class="size-6 animate-spin text-muted-foreground" />
+    <div v-if="feedStore.loading && displayItems.length === 0" class="flex justify-center py-10" data-loading-spinner role="status" aria-live="polite">
+      <LoaderCircle class="size-6 animate-spin text-muted-foreground" aria-hidden="true" />
+      <span class="sr-only">Loading items</span>
     </div>
     <div v-else-if="!feedStore.activeFeedId && !feedStore.isMultiView && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
     <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
@@ -287,6 +288,8 @@ async function markBelowRead(item: any) {
       <component :is="displayItems.length > 50 ? 'div' : TransitionGroup" name="item-enter" tag="div">
       <div v-for="item in displayItems" :key="item.id"
       role="button" tabindex="0"
+      :aria-label="item.title"
+      :aria-selected="item.id === feedStore.selectedItem?.id ? 'true' : undefined"
       class="group w-full text-left border-b hover:bg-accent/10 transition-colors relative overflow-hidden cursor-pointer [touch-action:pan-y_pinch-zoom]"
       :class="[
         compact ? 'h-7' : 'p-2',

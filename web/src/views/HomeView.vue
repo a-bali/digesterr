@@ -509,6 +509,9 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
 
 <template>
   <div class="flex h-dvh flex-col">
+    <!-- Skip link for keyboard and screen-reader users: jumps past the
+         sidebar and list straight to the content pane. -->
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:bg-background focus:px-3 focus:py-2 focus:text-sm">Skip to content</a>
     <!-- Header -->
     <header class="flex h-12 items-center gap-2 border-b bg-background px-4 shrink-0">
       <Button v-if="!isDesktop" variant="ghost" size="icon" @click="sidebarOpen = !sidebarOpen">
@@ -608,10 +611,12 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" :class="{ hidden: contentMaximized }" />
 
           <SplitterPanel :default-size="52" :min-size="30">
-            <ErrorBoundary>
-              <DigestContent v-if="digestMode" />
-              <ItemContent v-else :unsave-item="unsaveItem" />
-            </ErrorBoundary>
+            <main id="main-content" class="h-full min-h-0">
+              <ErrorBoundary>
+                <DigestContent v-if="digestMode" />
+                <ItemContent v-else :unsave-item="unsaveItem" />
+              </ErrorBoundary>
+            </main>
           </SplitterPanel>
         </SplitterGroup>
 
