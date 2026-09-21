@@ -73,9 +73,12 @@ const feedLabel = computed(() => {
   return digestStore.activeConfig?.name ?? null
 })
 
-const showMarkAllRead = computed(() =>
-  visibleResults.value.some(r => r.status !== 'read')
-)
+// Same rule as the item list and the sidebar: keep the control present while the
+// list has rows and disable it once nothing is unread, so it never silently
+// disappears.
+const hasUnreadVisible = computed(() => visibleResults.value.some(r => r.status !== 'read'))
+const showMarkAllRead = computed(() => visibleResults.value.length > 0)
+const markAllReadDisabled = computed(() => !hasUnreadVisible.value)
 
 // Hover actions: the two chevrons in the top right corner mark everything
 // above or below a row as read. Identical to the item list — same icons, same
@@ -215,7 +218,10 @@ function onSelect(e: MouseEvent, result: DigestResult) {
     <!-- End-of-list mark-all-read button -->
     <div v-if="showMarkAllRead" class="px-4 py-6 flex items-center justify-center">
       <button
-        class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-accent/20 bg-accent/5 text-accent text-sm font-medium hover:bg-accent/10 active:bg-accent/20 transition-colors"
+        class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-accent/20 bg-accent/5 text-accent text-sm font-medium hover:bg-accent/10 active:bg-accent/20 transition-colors disabled:opacity-40 disabled:cursor-default disabled:hover:bg-accent/5"
+        :disabled="markAllReadDisabled"
+        :title="markAllReadDisabled ? 'Nothing unread here' : 'Mark all as read'"
+        data-mark-all-read
         @click="emit('markAllRead')"
       >
         <CheckCircle2 class="size-4" />

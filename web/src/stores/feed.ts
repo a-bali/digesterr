@@ -516,6 +516,22 @@ export const useFeedStore = defineStore('feed', () => {
     }
   }
 
+  // Mark a single feed read. Lives in the store rather than the sidebar because
+  // the sidebar no longer owns the confirmation dialog — HomeView funnels every
+  // mark-all-read scope (feed, category, section) through one place, so the store
+  // has to expose the single-feed action too.
+  async function markFeedRead(id: number) {
+    try {
+      await feedApi.markRead(id)
+      await fetchFeeds()
+      if (activeFeedId.value === id) await fetchFirstPage()
+      await fetchUnreadCounts()
+      toastSuccess('Feed marked read')
+    } catch (e) {
+      toastError(e, 'Failed to mark feed read')
+    }
+  }
+
   // Every mark-read path reports both outcomes. These used to have no error
   // handling at all, so a failure rejected into the caller's `await` and the user
   // saw the panes simply not change.
@@ -594,7 +610,7 @@ export const useFeedStore = defineStore('feed', () => {
     feeds, activeFeedId, activeCategory, activeSection, items, multiItems, selectedItem, savedItems, savedCount, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
     activeFeed, isMultiView, supportsScore, unreadCounts, backgroundRefreshing,
     fetchFeeds, setActiveFeed, setActiveCategory, setActiveSection, clearActiveView, fetchFirstPage, refreshItems, fetchMoreItems,
-    selectItem, updateItemStatus, unsaveItem, deleteExtraction, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, fetchSavedItems, fetchSavedCount, markAllRead, markReadAbove, markReadBelow,
+    selectItem, updateItemStatus, unsaveItem, deleteExtraction, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, fetchSavedItems, fetchSavedCount, markFeedRead, markAllRead, markReadAbove, markReadBelow,
     emailInbox, ensureEmailConfig, refreshEmailConfig,
   }
 })

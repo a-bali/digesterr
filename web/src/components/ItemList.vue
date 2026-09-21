@@ -118,9 +118,19 @@ const loadedCount = computed(() => {
 })
 const totalCount = computed(() => (props.showingSaved ? displayItems.value.length : feedStore.totalItems))
 
-const showMarkAllRead = computed(() =>
-  (feedStore.activeFeedId != null || feedStore.isMultiView) && !props.showingSaved && !feedStore.loadingMore && feedStore.totalItems > 0,
+// Whether a mark-all-read is offered here at all. The button stays RENDERED
+// whenever the list has items but is disabled once nothing is unread, so it never
+// silently disappears (the sidebar controls follow the same rule). An unread item
+// may sit outside the loaded page, so `totalItems` gates presence and the loaded
+// rows gate enabled-ness.
+const markAllReadApplies = computed(() =>
+  (feedStore.activeFeedId != null || feedStore.isMultiView) && !props.showingSaved && feedStore.totalItems > 0,
 )
+const hasUnreadLoaded = computed(() => displayItems.value.some(i => i.status === 'unread'))
+const showMarkAllRead = computed(() =>
+  markAllReadApplies.value && !feedStore.loadingMore && (hasUnreadLoaded.value || feedStore.totalItems > 0),
+)
+const markAllReadDisabled = computed(() => feedStore.loadingMore || !hasUnreadLoaded.value)
 
 function onFilterStatus(v: FilterStatus) { feedStore.changeFilter(v as FeedStatusFilter) }
 function onSortValue(v: FilterSort) { feedStore.changeSort(SCORE_MAP[v] ?? 'date_desc') }
@@ -513,10 +523,14 @@ async function markBelowRead(item: any) {
       <Skeleton class="h-12" />
     </div>
     </template>
-    <!-- End-of-list mark-all-read button -->
+    <!-- End-of-list mark-all-read button. Present-but-disabled once nothing is
+         unread, matching the sidebar controls, so the action never looks absent. -->
     <div v-if="showMarkAllRead" class="px-4 py-6 flex items-center justify-center">
       <button
-        class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-accent/20 bg-accent/5 text-accent text-sm font-medium hover:bg-accent/10 active:bg-accent/20 transition-colors"
+        class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-accent/20 bg-accent/5 text-accent text-sm font-medium hover:bg-accent/10 active:bg-accent/20 transition-colors disabled:opacity-40 disabled:cursor-default disabled:hover:bg-accent/5"
+        :disabled="markAllReadDisabled"
+        :title="markAllReadDisabled ? 'Nothing unread here' : 'Mark all as read'"
+        data-mark-all-read
         @click="emit('markAllRead')"
       >
         <CheckCircle2 class="size-4" />

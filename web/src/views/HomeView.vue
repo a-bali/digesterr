@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, computed, useTemplateRef, type Ref } from 'vue'
+import { ref, watch, onMounted, onUnmounted, computed, useTemplateRef, nextTick, type Ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 import Button from '../components/ui/Button.vue'
@@ -25,6 +25,7 @@ import { useAuthStore } from '../stores/auth'
 import { useThemeStore } from '../stores/theme'
 import { useLayoutStore } from '../stores/layout'
 import { itemApi } from '../services/api'
+import { toastSuccess } from '../lib/toast'
 import type { Item, DigestConfig } from '../types/api'
 import { useBreakpoints } from '../composables/useMediaQuery'
 import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts'
@@ -145,15 +146,13 @@ useKeyboardShortcuts({
     if (item.is_saved === 1) unsaveItem(item)
     else feedStore.updateItemStatus(item, undefined, true)
   },
-  markAllRead: () => {
-    // Same dispatch as toggleShowRead: 'A' must act on whichever list is on
-    // screen. Routing it to markAllReadInCurrentView unconditionally is what
-    // made it a no-op in both digest views — that function only ever inspects
-    // feed state, which a digest view has cleared.
-    if (digestMode.value) return markAllReadInDigestView()
-    markAllReadInCurrentView()
-  },
-  markAllReadDialogOpen,
+  // 'A' and the mid-pane button now share requestMarkAllRead with every sidebar
+  // control, so the key cannot disagree with the button about confirming.
+  markAllRead: requestMarkAllRead,
+  // A function, not the computed ref: useKeyboardShortcuts CALLS this, and a
+  // ref object is always truthy, so passing it made the guard dead and 'A'
+  // re-opened the dialog while it was already open.
+  markAllReadDialogOpen: () => markAllDialogOpen.value,
   toggleShowRead: () => {
     // 'u' toggles unread-only for whichever list is on screen. In a digest view
     // the item filter is not what the user is looking at, and flipping it had
@@ -400,11 +399,11 @@ function onHelpClick() {
 
 // Keyboard Shift+A routes through the same confirmation as the sidebar action.
 const sidebarRef = useTemplateRef<InstanceType<typeof FeedSidebar>>('sidebar')
-function requestMarkFeedRead(id: number) {
-  sidebarRef.value?.requestMarkFeedRead(id)
-}
-function markAllReadDialogOpen() {
-  return sidebarRef.value?.markAllReadDialogOpen ?? false
+// The sidebar declares the scope it wants marked; the dialog and the action both
+// live here, so a sidebar control cannot mark a scope read without the same
+// confirmation the key and the mid-pane button use.
+function onSidebarMarkAllRead(scope: MarkAllScope) {
+  requestMarkAllRead(scope)
 }
 
 // "Mark all as read" for whatever the middle pane is showing. The keyboard
@@ -416,42 +415,270 @@ function markAllReadDialogOpen() {
 // store instead (see the useKeyboardShortcuts wiring). Feeding digest mode
 // through this function is what silently did nothing, because every branch below
 // tests feed state that the digest view has already cleared.
-function markAllReadInCurrentView() {
-  if (feedStore.isMultiView) {
-    feedStore.markAllRead(feedStore.activeCategory ?? undefined)
-  } else if (feedStore.activeFeedId) {
-    requestMarkFeedRead(feedStore.activeFeedId)
-  }
+// Mark-all-read confirmation. Every mark-all-read entry point funnels through
+// here — the `A` shortcut, the mid-pane end-of-list button, and all four sidebar
+// controls — so they cannot disagree about whether to confirm or what scope they
+// cover.
+//
+// The rule the user asked for: ANY mark-all-read that can destroy more than one
+// unread item confirms first. That means every multi-view (category, "Feeds"
+// section, "All Digests" section) plus a single feed and a single digest config.
+// Marking a single item stays immediate, and marking an already-empty scope does
+// not confirm at all (see requestMarkAllRead).
+//
+// The confirmation names its scope and, for a scoped mark, how many items it will
+// touch, so "Mark all as read?" is never ambiguous about what it covers.
+type MarkAllScope =
+  | { kind: 'feed'; id: number; name: string }
+  | { kind: 'category'; name: string }
+  | { kind: 'feeds-section' }
+  | { kind: 'digest-config'; id: number; name: string }
+  | { kind: 'all-digests' }
+
+interface MarkAllTarget {
+  scope: MarkAllScope
+  /**
+   * Unread items the action will mark. `null` means the count is not known yet
+   * (unread counts arrive separately from the lists). 0 means provably nothing to
+   * mark, which is the only case that skips the confirmation.
+   */
+  unread: number | null
+  title: string
+  description: string
 }
 
-// Mark-all-read for the digest list. `A` and DigestResultList's own button must
-// agree on scope, so both end up here: the single config on screen, or every
-// digest in the "All Digests" section.
-//
-// A single config confirms first, like a single feed does. The "All Digests"
-// section does not, matching the "Feeds"/category multi-views, which mark
-// straight away. Without this the key and the pane's button marked a digest read
-// immediately and with no undo, which is the asymmetry the user reported ("'A'
-// in digest view now does not show confirmation popup").
-const digestToMarkRead = ref<DigestConfig | null>(null)
+const markAllTarget = ref<MarkAllTarget | null>(null)
+const markAllDialogOpen = computed(() => markAllTarget.value !== null)
+const markAllBusy = ref(false)
 
-function markAllReadInDigestView() {
-  if (digestStore.activeConfigId != null) {
-    digestToMarkRead.value = digestStore.activeConfig ?? null
+// Unread items in the scope on screen. Returns null when the count cannot be
+// determined (digest unread counts arrive from a separate request, so a missing
+// key means "not loaded yet", not zero) — in that case the action proceeds
+// without a confirmation rather than blocking on data that may never arrive.
+function feedUnreadInScope(category?: string): number | null {
+  const feeds = category
+    ? feedStore.feeds.filter(f => f.category === category)
+    : feedStore.feeds
+  if (feeds.length === 0) return null
+  let total = 0
+  let known = false
+  for (const f of feeds) {
+    const n = feedStore.unreadCounts[f.id]
+    if (typeof n === 'number') { total += n; known = true }
+  }
+  return known ? total : null
+}
+
+function digestUnreadInScope(configId?: number): number | null {
+  const cfgId = configId ?? null
+  if (cfgId != null) {
+    const n = digestStore.unreadCounts[cfgId]
+    return typeof n === 'number' ? n : null
+  }
+  const ids = digestStore.configs.map(c => c.id)
+  if (ids.length === 0) return null
+  let total = 0
+  let known = false
+  for (const id of ids) {
+    const n = digestStore.unreadCounts[id]
+    if (typeof n === 'number') { total += n; known = true }
+  }
+  return known ? total : null
+}
+
+function plural(n: number | null, one: string): string {
+  const count = n ?? 0
+  return `${count} ${one}${count === 1 ? '' : 's'}`
+}
+
+// Single funnel for every mark-all-read request. Decides the scope from the view
+// on screen, skips the dialog when there is provably nothing to mark, and opens
+// the confirmation otherwise.
+function requestMarkAllRead(explicit?: MarkAllScope) {
+  if (markAllTarget.value) return
+  const target = explicit ? targetForScope(explicit) : resolveMarkAllTarget()
+  if (!target) return
+  // Provably empty scope, and the FIRST unread could be counted: the action would
+  // be a no-op, so do not ask and do not claim success. The earlier code toasted
+  // "marked read" for a category with nothing unread in it.
+  if (target.unread === 0) {
+    toastSuccess('Nothing unread here')
     return
   }
-  if (digestStore.showingAllDigests) return digestStore.markAllRead()
+  markAllTarget.value = target
 }
 
-function closeDigestMarkReadDialog() {
-  digestToMarkRead.value = null
+// Builds the confirmation for an explicitly requested scope (a sidebar control),
+// so the sidebar can ask for any scope without duplicating dialog copy or counts.
+function targetForScope(scope: MarkAllScope): MarkAllTarget | null {
+  switch (scope.kind) {
+    case 'feed': {
+      const feed = feedStore.feeds.find(f => f.id === scope.id)
+      if (!feed) return null
+      const n = feedStore.unreadCounts[feed.id]
+      return {
+        scope: { kind: 'feed', id: feed.id, name: feed.name },
+        unread: typeof n === 'number' ? n : null,
+        title: 'Mark all as read?',
+        description: `Mark all items in “${feed.name}” as read? This cannot be undone.`,
+      }
+    }
+    case 'category': {
+      const n = feedUnreadInScope(scope.name)
+      return {
+        scope,
+        unread: n,
+        title: 'Mark all as read?',
+        description: `Mark all ${plural(n, 'item')} in “${scope.name}” as read? This cannot be undone.`,
+      }
+    }
+    case 'feeds-section': {
+      const n = feedUnreadInScope()
+      return {
+        scope,
+        unread: n,
+        title: 'Mark all as read?',
+        description: `Mark every unread item in all ${plural(feedStore.feeds.length, 'feed')} as read? This cannot be undone.`,
+      }
+    }
+    case 'digest-config': {
+      const cfg = digestStore.configs.find(c => c.id === scope.id)
+      const name = cfg?.name ?? scope.name
+      return {
+        scope: { kind: 'digest-config', id: scope.id, name },
+        unread: digestUnreadInScope(scope.id),
+        title: 'Mark all as read?',
+        description: `Mark all results in “${name}” as read? This cannot be undone.`,
+      }
+    }
+    case 'all-digests':
+      return {
+        scope,
+        unread: digestUnreadInScope(),
+        title: 'Mark all digests as read?',
+        description: 'Mark every unread digest result as read? This cannot be undone.',
+      }
+  }
 }
 
-async function confirmDigestMarkRead() {
-  const cfg = digestToMarkRead.value
-  digestToMarkRead.value = null
-  if (cfg) await digestStore.markAllRead(cfg.id)
+function resolveMarkAllTarget(): MarkAllTarget | null {
+  if (digestMode.value) {
+    if (digestStore.activeConfigId != null) {
+      const cfg = digestStore.activeConfig
+      if (!cfg) return null
+      return {
+        scope: { kind: 'digest-config', id: cfg.id, name: cfg.name },
+        unread: digestUnreadInScope(cfg.id),
+        title: 'Mark all as read?',
+        description: `Mark all results in “${cfg.name}” as read? This cannot be undone.`,
+      }
+    }
+    if (digestStore.showingAllDigests) {
+      return {
+        scope: { kind: 'all-digests' },
+        unread: digestUnreadInScope(),
+        title: 'Mark all digests as read?',
+        description: 'Mark every unread digest result as read? This cannot be undone.',
+      }
+    }
+    return null
+  }
+  if (feedStore.activeCategory) {
+    const name = feedStore.activeCategory
+    const n = feedUnreadInScope(name)
+    return {
+      scope: { kind: 'category', name },
+      unread: n,
+      title: 'Mark all as read?',
+      description: `Mark all ${plural(n, 'item')} in “${name}” as read? This cannot be undone.`,
+    }
+  }
+  if (feedStore.activeSection === 'feeds') {
+    const n = feedUnreadInScope()
+    return {
+      scope: { kind: 'feeds-section' },
+      unread: n,
+      title: 'Mark all as read?',
+      description: `Mark every unread item in all ${plural(feedStore.feeds.length, 'feed')} as read? This cannot be undone.`,
+    }
+  }
+  if (feedStore.activeFeedId) {
+    const feed = feedStore.activeFeed
+    if (!feed) return null
+    const n = feedStore.unreadCounts[feed.id]
+    return {
+      scope: { kind: 'feed', id: feed.id, name: feed.name },
+      unread: typeof n === 'number' ? n : null,
+      title: 'Mark all as read?',
+      description: `Mark all items in “${feed.name}” as read? This cannot be undone.`,
+    }
+  }
+  return null
 }
+
+async function confirmMarkAllRead() {
+  const target = markAllTarget.value
+  markAllTarget.value = null
+  if (!target || markAllBusy.value) return
+  markAllBusy.value = true
+  try {
+    await runMarkAllScope(target.scope)
+  } finally {
+    markAllBusy.value = false
+  }
+}
+
+async function runMarkAllScope(scope: MarkAllScope) {
+  switch (scope.kind) {
+    case 'feed':
+      await feedStore.markFeedRead(scope.id)
+      break
+    case 'category':
+      await feedStore.markAllRead(scope.name)
+      await feedStore.fetchFeeds()
+      break
+    case 'feeds-section':
+      await feedStore.markAllRead()
+      await feedStore.fetchFeeds()
+      break
+    case 'digest-config':
+      await digestStore.markAllRead(scope.id)
+      break
+    case 'all-digests':
+      await digestStore.markAllRead()
+      break
+  }
+}
+
+function closeMarkAllReadDialog() {
+  markAllTarget.value = null
+}
+
+// Focus the confirm button when the dialog opens, so the keyboard flow is
+// 'A' then Enter. The dialog was moved here from FeedSidebar and must keep the
+// focus behaviour it had there.
+const markAllConfirmRef = useTemplateRef<InstanceType<typeof Button>>('markAllConfirm')
+watch(markAllTarget, async (target) => {
+  if (!target) return
+  await nextTick()
+  ;(markAllConfirmRef.value?.$el as HTMLElement | undefined)?.focus()
+})
+
+// Enter must confirm from the keyboard. It cannot be left to the native
+// activate-focused-button behaviour: useKeyboardShortcuts blurs any focused
+// BUTTON on keydown (so shortcuts keep working after a click), and that blur
+// cancels the default action. Handle Enter here, and guard the microtask so the
+// keydown and the click it would otherwise trigger do not both run the action.
+let markAllConfirmKeyHandled = false
+function onMarkAllConfirmKeyDown(e: KeyboardEvent) {
+  if (e.key !== 'Enter') return
+  e.preventDefault()
+  if (markAllConfirmKeyHandled) return
+  markAllConfirmKeyHandled = true
+  queueMicrotask(() => { markAllConfirmKeyHandled = false })
+  void confirmMarkAllRead()
+}
+
 
 // ---- Page title ----
 const totalUnread = computed(() => {
@@ -590,7 +817,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
           >
             <div class="h-full flex flex-col">
               <aside class="flex-1 min-h-0 bg-sidebar overflow-y-auto p-3" :class="sidebarCollapsed ? '' : 'border-r'">
-                <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @select-category="selectCategory" @select-section="selectSection" @show-saved="showSaved" />
+                <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @select-category="selectCategory" @select-section="selectSection" @show-saved="showSaved" @mark-all-read="onSidebarMarkAllRead" />
               </aside>
               <div class="shrink-0 flex justify-center bg-sidebar py-1.5" :class="sidebarCollapsed ? '' : 'border-r'">
                 <VersionBadge />
@@ -605,8 +832,8 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
             :inert="listCollapsed || undefined"
             :aria-hidden="listCollapsed || undefined"
           >
-            <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" :class="listCollapsed ? '' : 'border-r'" @select="onSelectDigestResult" @mark-all-read="markAllReadInDigestView" />
-            <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="markAllReadInCurrentView" />
+            <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" :class="listCollapsed ? '' : 'border-r'" @select="onSelectDigestResult" @mark-all-read="requestMarkAllRead" />
+            <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="requestMarkAllRead" />
           </SplitterPanel>
           <SplitterResizeHandle class="w-1 hover:w-1.5 bg-border hover:bg-accent transition-all cursor-col-resize" :class="{ hidden: contentMaximized }" />
 
@@ -633,7 +860,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
           >
             <div class="h-full flex flex-col">
               <aside class="flex-1 min-h-0 bg-sidebar overflow-y-auto p-3" :class="sidebarCollapsed ? '' : 'border-r'">
-                <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @select-category="selectCategory" @select-section="selectSection" @show-saved="showSaved" />
+                <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @select-category="selectCategory" @select-section="selectSection" @show-saved="showSaved" @mark-all-read="onSidebarMarkAllRead" />
               </aside>
               <div class="shrink-0 flex justify-center bg-sidebar py-1.5" :class="sidebarCollapsed ? '' : 'border-r'">
                 <VersionBadge />
@@ -650,8 +877,8 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
                 :inert="listCollapsed || undefined"
                 :aria-hidden="listCollapsed || undefined"
               >
-                <DigestResultList v-if="digestMode" compact :showing-all="digestStore.showingAllDigests" class="h-full" :class="listCollapsed ? '' : 'border-b'" @select="onSelectDigestResult" @mark-all-read="markAllReadInDigestView" />
-                <ItemList v-else compact :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="markAllReadInCurrentView" />
+                <DigestResultList v-if="digestMode" compact :showing-all="digestStore.showingAllDigests" class="h-full" :class="listCollapsed ? '' : 'border-b'" @select="onSelectDigestResult" @mark-all-read="requestMarkAllRead" />
+                <ItemList v-else compact :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="requestMarkAllRead" />
               </SplitterPanel>
               <SplitterResizeHandle class="h-1 hover:h-1.5 bg-border hover:bg-accent transition-all cursor-row-resize" :class="{ hidden: contentMaximized }" />
               <SplitterPanel :default-size="65" :min-size="25">
@@ -671,7 +898,7 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
           :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
         >
           <div class="flex-1 min-h-0 overflow-y-auto p-3">
-            <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @select-category="selectCategory" @select-section="selectSection" @show-saved="showSaved" />
+            <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @select-category="selectCategory" @select-section="selectSection" @show-saved="showSaved" @mark-all-read="onSidebarMarkAllRead" />
           </div>
           <div class="shrink-0 flex justify-center border-t border-border/50 py-1.5">
             <VersionBadge />
@@ -690,8 +917,8 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
             class="absolute inset-0 flex flex-col transition-transform duration-200"
             :class="!isTablet && showContentPane ? '-translate-x-full pointer-events-none' : 'static w-full h-full'"
           >
-              <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="flex-1 min-h-0" @select="onSelectDigestResult" @mark-all-read="markAllReadInDigestView" />
-              <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="markAllReadInCurrentView" />
+              <DigestResultList v-if="digestMode" :showing-all="digestStore.showingAllDigests" class="flex-1 min-h-0" @select="onSelectDigestResult" @mark-all-read="requestMarkAllRead" />
+              <ItemList v-else :saved-items="savedItems" :showing-saved="showingSaved" @select-item="selectItem" @mark-all-read="requestMarkAllRead" />
           </div>
         </div>
 
@@ -712,19 +939,20 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
       </template>
     </div>
 
-    <!-- Mark-all-read confirmation for a single digest config, mirroring the
-         per-feed dialog in FeedSidebar. Both the 'A' shortcut and the pane's own
-         button route here via markAllReadInDigestView, so they cannot disagree. -->
+    <!-- The one mark-all-read confirmation. Every trigger — the 'A' shortcut, the
+         mid-pane end-of-list button, and all four sidebar controls (feed, category,
+         "Feeds" section, digest config, "All Digests") — routes through
+         requestMarkAllRead, so scope and confirmation cannot drift apart. -->
     <Dialog
-      v-if="digestToMarkRead"
+      v-if="markAllTarget"
       :open="true"
-      title="Mark all as read?"
-      :description="`Mark all results in “${digestToMarkRead.name || digestToMarkRead.schedule}” as read? This cannot be undone.`"
-      @update:open="v => { if (!v) closeDigestMarkReadDialog() }"
+      :title="markAllTarget.title"
+      :description="markAllTarget.description"
+      @update:open="v => { if (!v) closeMarkAllReadDialog() }"
     >
       <div class="flex justify-end gap-2">
-        <Button variant="outline" @click="closeDigestMarkReadDialog">Cancel</Button>
-        <Button data-digest-mark-all-read-confirm @click="confirmDigestMarkRead">Mark read</Button>
+        <Button variant="outline" @click="closeMarkAllReadDialog">Cancel</Button>
+        <Button ref="markAllConfirm" data-mark-all-read-confirm :disabled="markAllBusy" @click="confirmMarkAllRead" @keydown="onMarkAllConfirmKeyDown">Mark read</Button>
       </div>
     </Dialog>
   </div>

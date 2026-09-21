@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, watch, nextTick, onMounted, useTemplateRef } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { toastSuccess, toastError } from '../lib/toast'
 import { useFeedStore } from '../stores/feed'
 import { useDigestStore } from '../stores/digest'
@@ -12,8 +12,6 @@ import { BookmarkCheck, Plus, MessageSquare, Rss, Settings, Sparkles, ChevronDow
 import FeedRow from './FeedRow.vue'
 import FeedDialog from './FeedDialog.vue'
 import DigestDialog from './DigestDialog.vue'
-import Dialog from './ui/Dialog.vue'
-import Button from './ui/Button.vue'
 import Tooltip from './ui/Tooltip.vue'
 
 withDefaults(defineProps<{ showingSaved?: boolean }>(), { showingSaved: false })
@@ -24,6 +22,13 @@ const emit = defineEmits<{
   (e: 'selectCategory', name: string): void
   (e: 'selectSection', section: 'feeds' | 'digests'): void
   (e: 'showSaved'): void
+  // Mark-all-read asks the parent to run the shared confirmation. The sidebar
+  // never marks a scope read itself, so every entry point gets the same dialog.
+  (e: 'markAllRead', scope: { kind: 'feed'; id: number }
+    | { kind: 'category'; name: string }
+    | { kind: 'feeds-section' }
+    | { kind: 'digest-config'; id: number; name: string }
+    | { kind: 'all-digests' }): void
 }>()
 
 const feedStore = useFeedStore()
@@ -55,70 +60,12 @@ async function refreshFeed(id: number) {
   }
 }
 
-async function markFeedRead(id: number) {
-  try {
-    await feedApi.markRead(id)
-    await feedStore.fetchFeeds()
-    if (feedStore.activeFeedId === id) await feedStore.fetchFirstPage()
-    toastSuccess('Feed marked read')
-  } catch (e: any) {
-    toastError(e, 'Failed to mark feed read')
-  }
-}
-
-async function markSectionRead(category?: string) {
-  try {
-    await feedStore.markAllRead(category)
-    await feedStore.fetchFeeds()
-    toastSuccess(category ? `"${category}" marked read` : 'All feeds marked read')
-  } catch (e: any) {
-    toastError(e, 'Failed to mark read')
-  }
-}
-
-// Marking a feed read marks ALL of its items read — confirm first.
-const feedToMarkRead = ref<Feed | null>(null)
-
-function requestMarkFeedRead(id: number) {
-  const feed = feedStore.feeds.find(f => f.id === id)
-  if (feed) feedToMarkRead.value = feed
-}
-
-const markAllReadDialogOpen = computed(() => feedToMarkRead.value !== null)
-defineExpose({ requestMarkFeedRead, markAllReadDialogOpen })
-
-function closeMarkReadDialog() {
-  feedToMarkRead.value = null
-}
-
-async function confirmMarkFeedRead() {
-  const feed = feedToMarkRead.value
-  feedToMarkRead.value = null
-  if (feed) await markFeedRead(feed.id)
-}
-
-// When the confirm button is focused, Enter fires both the keydown handler
-// below and the native button click. Use a microtask guard so only one path
-// executes confirmMarkFeedRead.
-let confirmKeyHandled = false
-function onConfirmKeyDown(e: KeyboardEvent) {
-  if (e.key !== 'Enter') return
-  if (confirmKeyHandled) { e.preventDefault(); return }
-  confirmKeyHandled = true
-  queueMicrotask(() => { confirmKeyHandled = false })
-  e.preventDefault()
-  confirmMarkFeedRead()
-}
-
-const confirmBtnRef = useTemplateRef<InstanceType<typeof Button>>('confirmBtn')
-watch(feedToMarkRead, async (feed) => {
-  if (feed) {
-    await nextTick()
-    const el = (confirmBtnRef.value?.$el as HTMLElement | undefined)
-    el?.focus()
-  }
-})
-
+// Marking a feed read marks ALL of its items read, so it confirms first. The
+// dialog lives in HomeView alongside the digest and multi-view confirmations:
+// one dialog owns every mark-all-read scope, and the sidebar only declares WHICH
+// scope it is asking about. Duplicating the dialog here is what let the sidebar
+// controls mark scopes read with no confirmation while the key and the mid-pane
+// button did confirm.
 // Resolve category name -> payload field and build final URL.
 function buildFeedPayload(form: { type: string; name: string; url: string; category: string; extract_content: number; readability: number; min_score: number }): any {
   const data: any = { extract_content: form.extract_content, readability: form.readability, min_score: form.min_score, type: form.type, name: form.name }
@@ -318,10 +265,11 @@ const categoryUnreadCounts = computed(() => {
         >{{ totalDigestUnread }}</span>
       </button>
       <button
-        v-if="totalDigestUnread > 0"
-        class="shrink-0 opacity-0 group-hover/section:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20"
-        title="Mark all digests as read"
-        @click="digestStore.markAllRead()"
+        class="shrink-0 opacity-0 group-hover/section:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default"
+        :disabled="totalDigestUnread === 0"
+        :title="totalDigestUnread > 0 ? 'Mark all digests as read' : 'Nothing unread'"
+        data-mark-all-digests
+        @click="emit('markAllRead', { kind: 'all-digests' })"
       >
         <Check class="size-3" />
       </button>
@@ -354,10 +302,11 @@ const categoryUnreadCounts = computed(() => {
         </div>
         <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity">
           <button
-            v-if="(digestStore.unreadCounts[cfg.id] ?? 0) > 0"
-            class="p-1 rounded hover:bg-accent/20"
-            title="Mark digest as read"
-            @click.stop="digestStore.markAllRead(cfg.id)"
+            class="p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default"
+            :disabled="(digestStore.unreadCounts[cfg.id] ?? 0) === 0"
+            :title="(digestStore.unreadCounts[cfg.id] ?? 0) > 0 ? 'Mark digest as read' : 'Nothing unread'"
+            :data-mark-digest-read="cfg.id"
+            @click.stop="emit('markAllRead', { kind: 'digest-config', id: cfg.id, name: cfg.name })"
           >
             <Check class="size-3" />
           </button>
@@ -388,10 +337,11 @@ const categoryUnreadCounts = computed(() => {
         >{{ totalFeedUnread }}</span>
       </button>
       <button
-        v-if="totalFeedUnread > 0"
-        class="shrink-0 opacity-0 group-hover/section:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20"
-        title="Mark all feeds as read"
-        @click="markSectionRead()"
+        class="shrink-0 opacity-0 group-hover/section:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default"
+        :disabled="totalFeedUnread === 0"
+        :title="totalFeedUnread > 0 ? 'Mark all feeds as read' : 'Nothing unread'"
+        data-mark-feeds-section-read
+        @click="emit('markAllRead', { kind: 'feeds-section' })"
       >
         <Check class="size-3" />
       </button>
@@ -406,7 +356,7 @@ const categoryUnreadCounts = computed(() => {
         :feed="feed" :refreshing="refreshingFeeds.has(feed.id)"
         @select="emit('selectFeed', $event)"
         @edit="editingFeed = $event; showEditFeed = true"
-        @mark-read="requestMarkFeedRead"
+        @mark-read="id => emit('markAllRead', { kind: 'feed', id })"
         @refresh="refreshFeed"
       />
     </div>
@@ -429,10 +379,11 @@ const categoryUnreadCounts = computed(() => {
           >{{ categoryUnreadCounts[catName] }}</span>
         </button>
         <button
-          v-if="(categoryUnreadCounts[catName] ?? 0) > 0"
-          class="shrink-0 opacity-0 group-hover/cat:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20"
-          title="Mark category as read"
-          @click="markSectionRead(catName)"
+          class="shrink-0 opacity-0 group-hover/cat:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default"
+          :disabled="(categoryUnreadCounts[catName] ?? 0) === 0"
+          :title="(categoryUnreadCounts[catName] ?? 0) > 0 ? 'Mark category as read' : 'Nothing unread in this category'"
+          :data-mark-category-read="catName"
+          @click="emit('markAllRead', { kind: 'category', name: catName })"
         >
           <Check class="size-3" />
         </button>
@@ -444,7 +395,7 @@ const categoryUnreadCounts = computed(() => {
             :feed="feed" :refreshing="refreshingFeeds.has(feed.id)"
             @select="emit('selectFeed', $event)"
             @edit="editingFeed = $event; showEditFeed = true"
-            @mark-read="requestMarkFeedRead"
+            @mark-read="id => emit('markAllRead', { kind: 'feed', id })"
             @refresh="refreshFeed"
           />
         </div>
@@ -455,18 +406,6 @@ const categoryUnreadCounts = computed(() => {
     <FeedDialog v-if="showEditFeed && editingFeed" :feed="editingFeed" @update:open="showEditFeed = $event" @save="saveEditFeed" @delete="deleteFeed" />
     <DigestDialog v-if="showAddDigest" :config="null" @update:open="showAddDigest = $event" @save="addDigest" />
     <DigestDialog v-if="showEditDigest" :config="editingDigest" @update:open="showEditDigest = $event" @save="saveEditDigest" @delete="deleteDigest" />
-    <Dialog
-      v-if="feedToMarkRead"
-      :open="true"
-      title="Mark all as read?"
-      :description="`Mark all items in “${feedToMarkRead.name}” as read? This cannot be undone.`"
-      @update:open="v => { if (!v) closeMarkReadDialog() }"
-    >
-      <div class="flex justify-end gap-2">
-        <Button variant="outline" @click="closeMarkReadDialog">Cancel</Button>
-        <Button ref="confirmBtn" data-mark-all-read-confirm @click="confirmMarkFeedRead" @keydown="onConfirmKeyDown">Mark read</Button>
-      </div>
-    </Dialog>
   </div>
   </nav>
 </template>

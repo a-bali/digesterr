@@ -14,6 +14,7 @@ vi.mock('../services/api', () => ({
     getItems: vi.fn().mockResolvedValue({ items: [] }),
     fetch: vi.fn(),
     markRead: vi.fn(),
+    markReadAll: vi.fn(),
     unreadCounts: vi.fn().mockResolvedValue({}),
     savedCount: vi.fn().mockResolvedValue({ count: 0 }),
   },
@@ -67,6 +68,10 @@ const feed: Feed = {
   last_error: '', last_error_at: null, last_error_severity: '',
   created_at: '', updated_at: '',
 }
+
+// A categorised copy: the shared `feed` fixture has category '', so it renders
+// under the uncategorised group and no category header exists for it.
+const foodFeed: Feed = { ...feed, id: 2, category: 'Food', name: 'Food Feed' }
 
 const digestConfig: DigestConfig = {
   id: 7, user_id: 1, name: 'Morning Brief', schedule: '0 8 * * *', config: '{}',
@@ -143,132 +148,119 @@ describe('FeedSidebar mark-all-as-read confirmation', () => {
     vi.mocked(digestApi.listConfigs).mockResolvedValue([])
   })
 
-  it('opens a confirmation dialog before marking a feed read, without calling the API yet', async () => {
+  // The sidebar no longer owns the confirmation dialog. It declares WHICH scope
+  // to mark and the parent (HomeView) runs one shared dialog for every scope, so
+  // a sidebar control cannot mark a scope read while the 'A' key confirms. These
+  // tests pin that contract: emit the scope, never call the API.
+  it('asks the parent to mark a single feed, without calling the API', async () => {
     const wrapper = await mountSidebar()
     const { useFeedStore } = await import('../stores/feed')
-    const feedStore = useFeedStore()
-    feedStore.feeds.push(feed)
+    useFeedStore().feeds.push(feed)
     await flushPromises()
 
     await wrapper.find('button[title="Mark read"]').trigger('click')
     await flushPromises()
 
-    expect(dialogText()).toContain('Mark all as read?')
-    expect(dialogText()).toContain('Example Feed')
-    expect(confirmButton()).not.toBeNull()
+    expect(wrapper.emitted('markAllRead')?.[0]).toEqual([{ kind: 'feed', id: feed.id }])
     expect(feedApi.markRead).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
-  it('cancelling closes the dialog without marking read', async () => {
+  it('asks the parent to mark a category, without calling the API', async () => {
     const wrapper = await mountSidebar()
     const { useFeedStore } = await import('../stores/feed')
-    const feedStore = useFeedStore()
-    feedStore.feeds.push(feed)
+    useFeedStore().feeds.push(foodFeed)
+    useFeedStore().unreadCounts = { [foodFeed.id]: 4 }
     await flushPromises()
 
-    await wrapper.find('button[title="Mark read"]').trigger('click')
+    await wrapper.find('button[data-mark-category-read="Food"]').trigger('click')
     await flushPromises()
 
-    const cancel = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.trim() === 'Cancel')
-    expect(cancel).toBeDefined()
-    cancel!.click()
-    await flushPromises()
-
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-    expect(feedApi.markRead).not.toHaveBeenCalled()
+    expect(wrapper.emitted('markAllRead')?.[0]).toEqual([{ kind: 'category', name: 'Food' }])
+    expect(feedApi.markReadAll).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
-  it('confirming marks the feed read and closes the dialog', async () => {
+  it('asks the parent to mark the whole feeds section', async () => {
     const wrapper = await mountSidebar()
     const { useFeedStore } = await import('../stores/feed')
-    const feedStore = useFeedStore()
-    feedStore.feeds.push(feed)
+    useFeedStore().feeds.push(feed)
+    useFeedStore().unreadCounts = { [feed.id]: 5 }
     await flushPromises()
 
-    await wrapper.find('button[title="Mark read"]').trigger('click')
+    await wrapper.find('button[data-mark-feeds-section-read]').trigger('click')
     await flushPromises()
 
-    confirmButton()!.click()
-    await flushPromises()
-
-    expect(feedApi.markRead).toHaveBeenCalledWith(feed.id)
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(wrapper.emitted('markAllRead')?.[0]).toEqual([{ kind: 'feeds-section' }])
     wrapper.unmount()
   })
 
-  it('closes on Escape without marking read', async () => {
+  it('asks the parent to mark every digest', async () => {
+    const { digestApi: dApi } = await import('../services/api')
+    vi.mocked(dApi.listConfigs).mockResolvedValue([digestConfig])
+    vi.mocked(dApi.unreadCounts).mockResolvedValue({ [digestConfig.id]: 2 })
     const wrapper = await mountSidebar()
-    const { useFeedStore } = await import('../stores/feed')
-    const feedStore = useFeedStore()
-    feedStore.feeds.push(feed)
     await flushPromises()
 
-    await wrapper.find('button[title="Mark read"]').trigger('click')
-    await flushPromises()
-    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
-
-    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await wrapper.find('button[data-mark-all-digests]').trigger('click')
     await flushPromises()
 
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-    expect(feedApi.markRead).not.toHaveBeenCalled()
+    expect(wrapper.emitted('markAllRead')?.[0]).toEqual([{ kind: 'all-digests' }])
     wrapper.unmount()
   })
 
-  it('Enter on the focused confirm button marks the feed read', async () => {
+  it('asks the parent to mark one digest config', async () => {
+    const { digestApi: dApi } = await import('../services/api')
+    vi.mocked(dApi.listConfigs).mockResolvedValue([digestConfig])
+    vi.mocked(dApi.unreadCounts).mockResolvedValue({ [digestConfig.id]: 2 })
     const wrapper = await mountSidebar()
-    const { useFeedStore } = await import('../stores/feed')
-    const feedStore = useFeedStore()
-    feedStore.feeds.push(feed)
     await flushPromises()
 
-    await wrapper.find('button[title="Mark read"]').trigger('click')
+    await wrapper.find(`button[data-mark-digest-read="${digestConfig.id}"]`).trigger('click')
     await flushPromises()
 
-    const btn = confirmButton() as HTMLElement
-    expect(btn).not.toBeNull()
-    btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
-    await flushPromises()
-
-    expect(feedApi.markRead).toHaveBeenCalledWith(feed.id)
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(wrapper.emitted('markAllRead')?.[0]).toEqual([
+      { kind: 'digest-config', id: digestConfig.id, name: digestConfig.name },
+    ])
     wrapper.unmount()
   })
 
-  it('Enter does not call markRead twice when both keydown and click fire', async () => {
+  // The user's report: a category with nothing unread showed no hover button at
+  // all, while every other row keeps its buttons. It must be present and
+  // disabled instead, so the control does not appear to be missing.
+  it('keeps the category mark-read button present but disabled at zero unread', async () => {
+    const { digestApi: dApi } = await import('../services/api')
+    vi.mocked(dApi.listConfigs).mockResolvedValue([])
     const wrapper = await mountSidebar()
     const { useFeedStore } = await import('../stores/feed')
-    const feedStore = useFeedStore()
-    feedStore.feeds.push(feed)
+    useFeedStore().feeds.push(foodFeed)
+    useFeedStore().unreadCounts = { [foodFeed.id]: 0 }
     await flushPromises()
 
-    await wrapper.find('button[title="Mark read"]').trigger('click')
-    await flushPromises()
+    const btn = wrapper.find('button[data-mark-category-read="Food"]')
+    expect(btn.exists()).toBe(true)
+    expect((btn.element as HTMLButtonElement).disabled).toBe(true)
 
-    const btn = confirmButton() as HTMLElement
-    btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
-    btn.click()
+    await btn.trigger('click')
     await flushPromises()
-
-    expect(feedApi.markRead).toHaveBeenCalledTimes(1)
+    // A disabled control must not fire the action.
+    expect(wrapper.emitted('markAllRead')).toBeUndefined()
     wrapper.unmount()
   })
 
-  it('auto-focuses the confirm button when the dialog opens', async () => {
+  it('enables the category mark-read button when it has unread items', async () => {
     const wrapper = await mountSidebar()
     const { useFeedStore } = await import('../stores/feed')
-    const feedStore = useFeedStore()
-    feedStore.feeds.push(feed)
+    useFeedStore().feeds.push(foodFeed)
+    useFeedStore().unreadCounts = { [foodFeed.id]: 3 }
     await flushPromises()
 
-    await wrapper.find('button[title="Mark read"]').trigger('click')
-    await flushPromises()
+    const btn = wrapper.find('button[data-mark-category-read="Food"]')
+    expect((btn.element as HTMLButtonElement).disabled).toBe(false)
 
-    // Wait for watcher's nextTick + focus to settle.
-    await new Promise(r => setTimeout(r, 0))
-    expect(document.activeElement).toBe(confirmButton())
+    await btn.trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('markAllRead')?.[0]).toEqual([{ kind: 'category', name: 'Food' }])
     wrapper.unmount()
   })
 })

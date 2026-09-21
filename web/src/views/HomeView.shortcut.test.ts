@@ -208,7 +208,7 @@ describe("'A' shortcut in digest views", () => {
     await flushPromises()
     expect(vi.mocked(digestApi.markAllRead)).not.toHaveBeenCalled()
 
-    const confirm = document.querySelector('[data-digest-mark-all-read-confirm]') as HTMLElement
+    const confirm = document.querySelector('[data-mark-all-read-confirm]') as HTMLElement
     expect(confirm, 'the confirm button should exist').not.toBeNull()
     confirm.click()
     await flushPromises()
@@ -243,7 +243,16 @@ describe("'A' shortcut in digest views", () => {
 
     pressA()
     await flushPromises()
-    // The section scope does not confirm, matching the Feeds/category multi-views.
+
+    // The All Digests section now confirms as well. It used to mark every digest
+    // read straight from the keyboard, which is the inconsistency reported for
+    // 'A' in a digest view: the key destroyed the section with no undo.
+    expect(vi.mocked(digestApi.markAllRead), 'nothing is marked before confirming').not.toHaveBeenCalled()
+    const confirm = document.querySelector('[data-mark-all-read-confirm]') as HTMLElement
+    expect(confirm, 'All Digests must confirm before marking').not.toBeNull()
+    confirm.click()
+    await flushPromises()
+
     expect(vi.mocked(digestApi.markAllRead)).toHaveBeenCalledWith(undefined)
     wrapper.unmount()
   })
