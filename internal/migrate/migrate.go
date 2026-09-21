@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"digesterr/internal/schema"
 )
@@ -27,6 +28,11 @@ type migration struct {
 	version int
 	name    string
 	stmts   []string
+	// build computes the statements at run time, for a migration whose SQL
+	// depends on the current shape of the database (a table rebuild must copy
+	// only the columns that actually exist — an older database may predate
+	// several of them). Takes precedence over stmts.
+	build func(*sql.DB) ([]string, error)
 	// applied reports whether the database already reflects this migration's
 	// end state. Used to baseline legacy databases without re-running. Nil
 	// means the statements are inherently idempotent (IF NOT EXISTS) and are
@@ -113,7 +119,15 @@ func Run(db *sql.DB) error {
 // different pooled connection. A migration with no statements (baseline-only,
 // e.g. legacy table rebuilds) is simply recorded.
 func runMigration(ctx context.Context, db *sql.DB, m migration) error {
-	if len(m.stmts) == 0 {
+	stmts := m.stmts
+	if m.build != nil {
+		computed, err := m.build(db)
+		if err != nil {
+			return fmt.Errorf("building statements: %w", err)
+		}
+		stmts = computed
+	}
+	if len(stmts) == 0 {
 		_, err := db.ExecContext(ctx,
 			"INSERT INTO schema_migrations (version, name) VALUES (?, ?)", m.version, m.name)
 		return err
@@ -139,7 +153,7 @@ func runMigration(ctx context.Context, db *sql.DB, m migration) error {
 	}
 	defer tx.Rollback()
 
-	for _, stmt := range m.stmts {
+	for _, stmt := range stmts {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
@@ -225,6 +239,39 @@ func columnPresent(table, column string) func(*sql.DB) (bool, error) {
 	return func(db *sql.DB) (bool, error) {
 		return HasColumn(db, table, column)
 	}
+}
+
+// columnNotNull returns an applied-guard that reports true when a column exists
+// and is declared NOT NULL. Used to baseline a table-rebuild migration: a
+// database whose column already carries the constraint needs no rebuild.
+//
+// A missing column reports false, so the migration runs and the rebuild creates
+// it — but callers should be guarding a table that exists, since the copy step
+// reads the old rows.
+func columnNotNull(table, column string) func(*sql.DB) (bool, error) {
+	return func(db *sql.DB) (bool, error) {
+		ok, err := HasColumn(db, table, column)
+		if err != nil || !ok {
+			return false, err
+		}
+		// pragma_table_info takes its table as an identifier, not a bound value,
+		// so the name is interpolated. It comes from this package's own call
+		// sites, never from user input. "notnull" is a keyword and must be
+		// quoted, and the column is matched with quote() to keep the comparison
+		// exact.
+		q := fmt.Sprintf("SELECT `notnull` FROM pragma_table_info(%s) WHERE name = ?", quoteIdent(table))
+		var notNull int
+		if err := db.QueryRow(q, column).Scan(&notNull); err != nil {
+			return false, err
+		}
+		return notNull == 1, nil
+	}
+}
+
+// quoteIdent wraps a SQL identifier in double quotes, doubling any embedded
+// quote, so an interpolated name cannot break out of its position.
+func quoteIdent(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 // noRows returns an applied-guard that reports true when the query matches no

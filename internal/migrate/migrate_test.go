@@ -325,3 +325,190 @@ func TestRunFailsClosedOnBadMigration(t *testing.T) {
 		t.Errorf("broken migration recorded a version: %d -> %d", before, n)
 	}
 }
+
+// TestItemsPointsNotNullNormalisesLegacyNulls covers migration 42. schema.sql has
+// always declared items.points/comments_count NOT NULL DEFAULT 0, but a database
+// built from an older definition can hold a nullable column, and the Go side scans
+// them into a plain int64 — so ONE NULL row aborts the whole list request
+// ("converting NULL to int64 is unsupported"), 500ing every endpoint that reaches
+// it. The migration rebuilds the table with the constraints the schema specifies
+// and COALESCEs the legacy NULLs to 0.
+func TestItemsPointsNotNullNormalisesLegacyNulls(t *testing.T) {
+	db := openTestDB(t)
+	if err := Run(db); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Simulate the legacy shape: rebuild items with nullable points, then put a
+	// NULL in it. Doing it by hand is the only way to reach a state the current
+	// code cannot produce (every Go param is a plain int64).
+	if _, err := db.Exec(`INSERT INTO users (email, password_hash) VALUES ('nn@example.com', 'h')`); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO feeds (user_id, type, name, url) VALUES (1, 'rss', 'F', 'https://example.com/f')`); err != nil {
+		t.Fatalf("seed feed: %v", err)
+	}
+	// Force the nullable shape and a NULL value. (The table is dropped, so any
+	// row seeded before this point would not survive — seed after the rebuild.)
+	if _, err := db.Exec(`DROP TABLE items`); err != nil {
+		t.Fatalf("drop items: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    feed_id INTEGER NOT NULL,
+    hash TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL,
+    url TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '',
+    author TEXT NOT NULL DEFAULT '',
+    comment_url TEXT NOT NULL DEFAULT '',
+    points INTEGER,
+    comments_count INTEGER,
+    published_at DATETIME,
+    status TEXT NOT NULL DEFAULT 'unread',
+    fetched_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    created_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    updated_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    last_enriched_at DATETIME,
+    extract_content TEXT NOT NULL DEFAULT '',
+    extract_status TEXT NOT NULL DEFAULT '',
+    extract_retries INTEGER NOT NULL DEFAULT 0,
+    extract_date DATETIME,
+    is_saved INTEGER NOT NULL DEFAULT 0
+)`); err != nil {
+		t.Fatalf("recreate nullable items: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO items (feed_id, hash, title, points, comments_count) VALUES (1, 'h2', 'nulls', NULL, NULL)`); err != nil {
+		t.Fatalf("seed null-point item: %v", err)
+	}
+	// Re-open v42 so it runs again against the legacy shape.
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = 42`); err != nil {
+		t.Fatalf("clear v42: %v", err)
+	}
+
+	if err := Run(db); err != nil {
+		t.Fatalf("Run after reintroducing the legacy shape: %v", err)
+	}
+
+	// The NULLs are gone and the constraint is enforced.
+	var nulls int
+	if err := db.QueryRow(`SELECT count(*) FROM items WHERE points IS NULL OR comments_count IS NULL`).Scan(&nulls); err != nil {
+		t.Fatalf("count nulls: %v", err)
+	}
+	if nulls != 0 {
+		t.Errorf("%d rows still hold NULL points/comments_count", nulls)
+	}
+	for _, col := range []string{"points", "comments_count"} {
+		guard := columnNotNull("items", col)
+		ok, err := guard(db)
+		if err != nil {
+			t.Fatalf("columnNotNull(%s): %v", col, err)
+		}
+		if !ok {
+			t.Errorf("items.%s is not NOT NULL after migration 42", col)
+		}
+	}
+	// The row survives, with its NULLs read as 0 rather than the row dropped.
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM items`).Scan(&n); err != nil {
+		t.Fatalf("count items: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected the row preserved, got %d", n)
+	}
+	var pts int
+	if err := db.QueryRow(`SELECT points FROM items WHERE hash = 'h2'`).Scan(&pts); err != nil {
+		t.Fatalf("read normalised points: %v", err)
+	}
+	if pts != 0 {
+		t.Errorf("NULL points normalised to %d, want 0", pts)
+	}
+	// The build helper must report NOT NULL (=1) rather than 0, or the migration
+	// would re-run on every startup.
+	if ok, err := columnNotNull("items", "status")(db); err != nil || !ok {
+		t.Errorf("columnNotNull on an existing NOT NULL column = %v, %v; want true", ok, err)
+	}
+}
+
+// TestMigration42IsRestartable proves a rebuild interrupted between CREATE and
+// RENAME (a kill mid-migration) does not wedge the database permanently on
+// "table items_new already exists".
+//
+// The interrupted state is specifically: the column is STILL nullable AND a stray
+// items_new exists. Once the column carries NOT NULL the applied-guard baselines
+// the migration and it never runs again, so planting the table after a clean Run
+// would test nothing.
+func TestMigration42IsRestartable(t *testing.T) {
+	db := openTestDB(t)
+	if err := Run(db); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO users (email, password_hash) VALUES ('re@example.com', 'h')`); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO feeds (user_id, type, name, url) VALUES (1, 'rss', 'F', 'https://example.com/f')`); err != nil {
+		t.Fatalf("seed feed: %v", err)
+	}
+	// Recreate the interrupted state: nullable column + stray items_new. The seed
+	// item is inserted AFTER the rebuild, since DROP TABLE discards anything that
+	// existed before it.
+	if _, err := db.Exec(`DROP TABLE items`); err != nil {
+		t.Fatalf("drop items: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    feed_id INTEGER NOT NULL,
+    hash TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL,
+    url TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '',
+    author TEXT NOT NULL DEFAULT '',
+    comment_url TEXT NOT NULL DEFAULT '',
+    points INTEGER,
+    comments_count INTEGER,
+    published_at DATETIME,
+    status TEXT NOT NULL DEFAULT 'unread',
+    fetched_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    created_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    updated_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    last_enriched_at DATETIME,
+    extract_content TEXT NOT NULL DEFAULT '',
+    extract_status TEXT NOT NULL DEFAULT '',
+    extract_retries INTEGER NOT NULL DEFAULT 0,
+    extract_date DATETIME,
+    is_saved INTEGER NOT NULL DEFAULT 0
+)`); err != nil {
+		t.Fatalf("recreate nullable items: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO items (feed_id, hash, title) VALUES (1, 'h2', 't2')`); err != nil {
+		t.Fatalf("seed item 2: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = 42`); err != nil {
+		t.Fatalf("clear v42: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE items_new (id INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatalf("plant stray items_new: %v", err)
+	}
+
+	if err := Run(db); err != nil {
+		t.Fatalf("Run with a stray items_new present: %v", err)
+	}
+
+	var stray int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'items_new'`).Scan(&stray); err != nil {
+		t.Fatalf("check items_new: %v", err)
+	}
+	if stray != 0 {
+		t.Error("items_new still present after the migration")
+	}
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM items`).Scan(&n); err != nil {
+		t.Fatalf("count items: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected the row preserved through the retry, got %d", n)
+	}
+	if ok, err := columnNotNull("items", "points")(db); err != nil || !ok {
+		t.Errorf("retry did not apply NOT NULL: %v, %v", ok, err)
+	}
+}

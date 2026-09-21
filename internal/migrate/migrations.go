@@ -1,6 +1,10 @@
 package migrate
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+	"strings"
+)
 
 // migrations is the full ordered history of schema changes. New changes are
 // appended here, never edited: old entries are what legacy databases get
@@ -434,6 +438,155 @@ WHERE id NOT IN (SELECT MIN(id) FROM digest_result_items GROUP BY result_id, ite
 			)
 		},
 	},
+	{
+		version:   42,
+		name:      "enforce NOT NULL on items.points and items.comments_count",
+		disableFK: true,
+		build:     itemsPointsNotNullRebuild,
+		// Baseline when the column is already NOT NULL: nothing to rebuild, so a
+		// current database is left untouched.
+		applied: columnNotNull("items", "points"),
+	},
+}
+
+// itemsPointsNotNullRebuild returns the statements for migration 42.
+//
+// schema.sql has always declared items.points and items.comments_count as
+// NOT NULL DEFAULT 0, but a database created from an older table definition can
+// still hold them as nullable. The Go side scans them into a plain int64, so ONE
+// NULL row aborts the whole request — "sql: Scan error on column index 8, name
+// \"points\": converting NULL to int64 is unsupported" — and every endpoint whose
+// result set reaches that row 500s. SQLite cannot add NOT NULL to an existing
+// column, so the table is rebuilt with the constraints the schema specifies,
+// COALESCE-ing legacy NULLs to 0.
+//
+// The copy is generated from the columns actually present: a legacy database may
+// predate comment_url, is_saved, extract_* and others, and a static column list
+// would fail with "no such column". Columns the destination has but the source
+// lacks are simply omitted, taking the destination's DEFAULT.
+func itemsPointsNotNullRebuild(db *sql.DB) ([]string, error) {
+	present, err := columnsOf(db, "items")
+	if err != nil {
+		return nil, err
+	}
+	var cols []string
+	for _, c := range itemsColumns {
+		if present[c] {
+			cols = append(cols, c)
+		}
+	}
+	// Without these there is nothing to key the rows on; rebuilding a table
+	// that lacks them would be meaningless.
+	for _, required := range []string{"id", "feed_id", "title"} {
+		if !present[required] {
+			return nil, fmt.Errorf("items table has no %s column; refusing to rebuild", required)
+		}
+	}
+	// COALESCE only the columns this migration is about; they are the ones that
+	// can hold NULL while the Go side expects an int64. Everything else is
+	// copied as-is so the rebuild does not silently rewrite unrelated data.
+	exprs := make([]string, 0, len(cols))
+	for _, c := range cols {
+		switch c {
+		case "points", "comments_count":
+			exprs = append(exprs, fmt.Sprintf("COALESCE(%s, 0)", c))
+		default:
+			exprs = append(exprs, c)
+		}
+	}
+	quoted := make([]string, len(cols))
+	for i, c := range cols {
+		quoted[i] = quoteIdent(c)
+	}
+	quotedExprs := make([]string, len(exprs))
+	for i, e := range exprs {
+		quotedExprs[i] = e
+	}
+
+	stmts := []string{
+		// A rebuild left half-done by an interrupted run (a kill between the
+		// CREATE and the RENAME) strands items_new. Drop it first so the
+		// migration is restartable rather than failing forever on
+		// "table items_new already exists".
+		`DROP TABLE IF EXISTS items_new`,
+		makeItemsTableDDL("items_new"),
+		fmt.Sprintf("INSERT INTO items_new (%s) SELECT %s FROM items",
+			strings.Join(quoted, ", "), strings.Join(quotedExprs, ", ")),
+		`DROP TABLE items`,
+		`ALTER TABLE items_new RENAME TO items`,
+	}
+	// Indexes live on the table, so the rebuild took them with it. Recreate the
+	// current set plus the unique hash index; IF NOT EXISTS keeps this a no-op
+	// for any that somehow survived.
+	stmts = append(stmts, itemsIndexDDL...)
+	return stmts, nil
+}
+
+// itemsColumns is the canonical column order for a rebuilt items table.
+var itemsColumns = []string{
+	"id", "feed_id", "hash", "title", "url", "content", "author", "comment_url",
+	"points", "comments_count", "published_at", "status", "fetched_at",
+	"created_at", "updated_at", "last_enriched_at", "extract_content",
+	"extract_status", "extract_retries", "extract_date", "is_saved",
+}
+
+// itemsIndexDDL recreates every index the items table carries, so a rebuild does
+// not silently drop query performance.
+var itemsIndexDDL = []string{
+	`CREATE INDEX IF NOT EXISTS idx_items_created_at ON items(created_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_items_feed_status_published ON items(feed_id, status, published_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_items_feed_status_points ON items(feed_id, status, points)`,
+	`CREATE INDEX IF NOT EXISTS idx_items_feed_status_enriched ON items(feed_id, status, last_enriched_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_items_saved_created ON items(is_saved, created_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_items_feed_extract ON items(feed_id, extract_status, extract_retries)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_items_feed_hash ON items(feed_id, hash)`,
+}
+
+// makeItemsTableDDL returns the CREATE TABLE statement for the items table under
+// the given name, matching schema.sql.
+func makeItemsTableDDL(name string) string {
+	return fmt.Sprintf(`CREATE TABLE %s (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    feed_id         INTEGER NOT NULL,
+    hash            TEXT    NOT NULL DEFAULT '',
+    title           TEXT    NOT NULL,
+    url             TEXT    NOT NULL DEFAULT '',
+    content         TEXT    NOT NULL DEFAULT '',
+    author          TEXT    NOT NULL DEFAULT '',
+    comment_url     TEXT    NOT NULL DEFAULT '',
+    points          INTEGER NOT NULL DEFAULT 0,
+    comments_count  INTEGER NOT NULL DEFAULT 0,
+    published_at    DATETIME,
+    status          TEXT    NOT NULL DEFAULT 'unread',
+    fetched_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    created_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    updated_at      DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    last_enriched_at DATETIME,
+    extract_content  TEXT    NOT NULL DEFAULT '',
+    extract_status   TEXT    NOT NULL DEFAULT '',
+    extract_retries  INTEGER NOT NULL DEFAULT 0,
+    extract_date     DATETIME,
+    is_saved         INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
+)`, quoteIdent(name))
+}
+
+// columnsOf returns the set of column names on a table.
+func columnsOf(db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.Query(fmt.Sprintf("SELECT name FROM pragma_table_info(%s)", quoteIdent(table)))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out[name] = true
+	}
+	return out, rows.Err()
 }
 
 // allTrue ANDs guard results: the migration is baselined only when every
