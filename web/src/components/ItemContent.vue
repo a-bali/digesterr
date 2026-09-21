@@ -7,7 +7,7 @@ import Button from './ui/Button.vue'
 import Separator from './ui/Separator.vue'
 import DropdownMenu from './ui/DropdownMenu.vue'
 import Skeleton from './ui/Skeleton.vue'
-import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown, Sparkles, Trash2 } from 'lucide-vue-next'
+import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown, Sparkles, Trash2, FileText, X } from 'lucide-vue-next'
 import { absoluteTime } from '../lib/format'
 import { decodeHTMLEntities } from '../lib/utils'
 import { setItemCommentsScroller, clearItemCommentsScroller } from '../lib/itemComments'
@@ -44,28 +44,64 @@ const extractionSupported = computed(() => {
 })
 
 const extracting = ref(false)
-const extractedCollapsed = ref(false)
-const originalCollapsed = ref(false)
 
-// A deleted extraction keeps its status as 'cleared' so the server knows the
-// item must not be re-extracted by a later pass (see ClearItemExtraction). To
-// the reader there is no extraction at all any more, so the pane renders the
-// plain original body — like a never-extracted item — and the action button
-// offers "Extract" again.
-const extractionCleared = computed(() => feedStore.selectedItem?.extract_status === 'cleared')
-// 'skipped' means the server declined to produce a processed body — for extraction
-// that is a Reddit/HN-hosted URL, for readability a body it could not improve. There
-// is nothing to display, so the section must not render at all: the header gate below
-// used to be just "status is set", which drew an "Extracted" header over an empty
-// body for all 593 skipped items in the dev database.
-const extractionSkipped = computed(() => feedStore.selectedItem?.extract_status === 'skipped')
-// Is there a processed-body section to render at all?
-const extractionSectionVisible = computed(() =>
-  Boolean(feedStore.selectedItem?.extract_status) && !extractionCleared.value && !extractionSkipped.value,
-)
+// Which body the single content section shows. One section replaced the two
+// independently-collapsible Extracted/Original blocks: with both open the user
+// read the same article twice, and folding one away left a header with no useful
+// purpose. Exactly one body is shown, and when an extraction exists the button
+// above it toggles between them.
+//
+// 'extracted' is deliberately NOT a remembered preference: extraction exists to
+// improve on the original, so it is the view you want by default. An item with no
+// extraction is always 'original', whatever was selected on the previous item.
+const contentView = ref<'original' | 'extracted'>('original')
+
+// Is there a third section to switch to at all?
+const hasExtraction = computed(() => feedStore.selectedItem?.extract_status === 'done')
+
+// What to actually render. `hasExtraction` is the single source of truth: the
+// extraction poll and the Re-extract flow both dismiss an in-flight failure
+// banner the moment a body lands, and gating on the status alone left that banner
+// with nothing to clear on success.
+const shownBody = computed(() => {
+  const item = feedStore.selectedItem
+  if (!item) return ''
+  return contentView.value === 'extracted' && hasExtraction.value
+    ? item.extract_content
+    : item.content
+})
+
+// Only offer the toggle when both bodies are real and differ. Identical bodies
+// would make the button a no-op, and an empty original (HN/link posts carry no
+// text) means "Show original" would reveal nothing.
+const canToggleOriginal = computed(() => {
+  const item = feedStore.selectedItem
+  if (!item || !hasExtraction.value) return false
+  return Boolean(item.content?.trim()) && item.content !== item.extract_content
+})
+
+// Show the original instead of the extraction. Colored when it is the active
+// view, so the button's own state says which body you are looking at.
+function toggleOriginal() {
+  contentView.value = contentView.value === 'original' ? 'extracted' : 'original'
+}
+
+// Note on the other extract_status values, now that one body section renders
+// whatever `hasExtraction` says:
+//   'cleared' — the user deleted the extraction; the server keeps the status so a
+//     later pass will not re-extract, but to the reader there is no extraction at
+//     all, so the pane shows the original and the action button offers "Extract".
+//   'skipped' — the server declined to produce a body (Reddit/HN-hosted URL, or
+//     text it could not improve). Nothing to display: the old code needed an
+//     explicit gate for this, because a header gated only on "status is set" drew
+//     an "Extracted" header over an empty body for all 593 such items in the dev
+//     database. `hasExtraction` only accepts 'done', so an empty extracted body can
+//     no longer be shown.
+//   'pending'/'failed' — no body yet; the section renders the in-progress or
+//     failure banner instead (see the template).
 // "Delete extracted" is offered exactly when there is an extracted body to
 // delete — the same condition under which the action button reads "Re-extract".
-const hasExtraction = computed(() => feedStore.selectedItem?.extract_status === 'done')
+// (`hasExtraction` above is that condition; it is also what the view toggle uses.)
 
 // Read state for the read toggle. `digested` counts as read: the Reader API maps
 // item `digested` → read, and only digesting treats it as a distinct state for
@@ -100,7 +136,10 @@ setItemCommentsScroller(scrollToComments)
 // --- LLM Summary ---
 const summaryLoading = ref(false)
 const summaryData = ref<ItemSummaryResponse | null>(null)
-const summaryCollapsed = ref(false)
+// The summary is a dismissible box above the body, not a collapsible section:
+// closing it hides the box for this item without discarding the text, so
+// re-running summarize (or reopening the item) brings it back.
+const summaryDismissed = ref(false)
 let summaryToken = 0
 
 // Summary length is offered as three presets rather than a free slider. Each
@@ -154,10 +193,8 @@ async function doSummarize() {
     })
     if (token !== summaryToken) return
     summaryData.value = resp
-    summaryCollapsed.value = false
-    // The summary replaces the bodies it was built from, so fold them away.
-    extractedCollapsed.value = true
-    originalCollapsed.value = true
+    // There is only one body section now, so generating a summary no longer folds
+    // anything away — it sits above the body as a dismissible box.
     toastSuccess('Summary generated', itemLabel(item))
   } catch (e) {
     if (token === summaryToken) {
@@ -325,6 +362,10 @@ async function doExtract() {
   const item = feedStore.selectedItem
   if (!item || extracting.value) return
   extracting.value = true
+  // Asking for an extraction is asking to read it, so switch the view up front
+  // rather than leaving the user on the body they just replaced — and rather than
+  // making them click Show extracted once it lands.
+  contentView.value = 'extracted'
   const token = ++extractToken
   try {
     await itemApi.extract(item.id)
@@ -356,8 +397,14 @@ async function doExtract() {
           if (idx !== -1) feedStore.items[idx] = updated
           if (feedStore.selectedItem?.id === updated.id) feedStore.selectedItem = updated
           // Report the outcome the poll observed, so extraction is not silent.
-          if (updated.extract_status === 'failed') toastError(new Error('extraction failed'), 'Extraction failed', itemLabel(updated))
-          else toastSuccess('Content extracted', itemLabel(updated))
+          // A landed body means the previous attempt's failure banner is stale, so
+          // drop it; on failure stay on the banner rather than flipping back.
+          if (updated.extract_status === 'failed') {
+            toastError(new Error('extraction failed'), 'Extraction failed', itemLabel(updated))
+          } else {
+            contentView.value = 'extracted'
+            toastSuccess('Content extracted', itemLabel(updated))
+          }
         }
       } catch {
         // poll failed, will retry
@@ -378,6 +425,10 @@ async function doDeleteExtraction() {
   // it first: otherwise its next tick would write the freshly extracted body
   // back over the item we are about to clear.
   stopExtractPoll()
+  // Deleting the extracted body removes the view it was showing, so fall back to
+  // the original — otherwise the pane would render the deleted text from a
+  // contentView that no longer has anything behind it.
+  contentView.value = 'original'
   await feedStore.deleteExtraction(item)
 }
 
@@ -432,17 +483,18 @@ watch(
     commentsCollapsed.value = false
     commentsCached.value = false
     fetchTopComments()
-    // Reset summary state, including the block-collapse flags the summary
-    // action set. Those flags are per-item UI state: summarizing folds the
-    // Extracted/Original bodies away, and without resetting them here the
-    // *next* item opened with both bodies already collapsed.
+    // Reset summary state. The dismissal is per-item UI state: leaving it set
+    // would open the next item with its summary box already hidden.
     summaryData.value = null
     summaryLength.value = 'medium'
-    summaryCollapsed.value = false
+    summaryDismissed.value = false
     summaryLoading.value = false
     summaryToken++
-    extractedCollapsed.value = false
-    originalCollapsed.value = false
+    // The body view is per-item too. Reset to the item's natural default:
+    // 'extracted' when there is an extraction (it exists to improve on the
+    // original, so it is the view you want), otherwise 'original'. Carrying the
+    // previous item's choice over would open a fresh item on the wrong body.
+    contentView.value = hasExtraction.value ? 'extracted' : 'original'
   },
   { immediate: true },
 )
@@ -558,83 +610,78 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- LLM Summary -->
-      <template v-if="summaryData || summaryLoading">
-        <Separator class="mb-4" />
-        <button
-          type="button"
-          class="flex w-full items-center gap-1.5 text-left text-xs font-semibold text-muted-foreground uppercase mb-2 hover:text-foreground transition-colors"
-          :aria-expanded="!summaryCollapsed"
-          @click="summaryCollapsed = !summaryCollapsed"
-        >
-          <ChevronDown class="size-3.5 shrink-0 transition-transform" :class="summaryCollapsed ? '-rotate-90' : ''" />
-          <Sparkles class="size-3" />
-          <span>LLM Summary</span>
-        </button>
-        <template v-if="!summaryCollapsed">
-          <!-- Loading spinner -->
-          <div v-if="summaryLoading" class="flex items-center gap-2 py-4 text-sm text-muted-foreground" role="status" aria-live="polite">
-            <RefreshCw class="size-4 animate-spin" aria-hidden="true" />
-            <span>Generating summary…</span>
-          </div>
-          <!-- Summary content -->
-          <div v-else-if="summaryData" class="space-y-3">
-            <p v-if="summaryData.content_summary" class="text-sm leading-relaxed">{{ summaryData.content_summary }}</p>
-            <p v-if="summaryData.comments_summary" class="text-sm leading-relaxed">{{ summaryData.comments_summary }}</p>
-            <!-- The reply was unusable (undecodable JSON is dropped rather than
-                 rendered), so say so instead of showing an empty section. -->
-            <p v-if="!summaryData.content_summary && !summaryData.comments_summary" data-summary-empty class="text-sm text-muted-foreground">
-              The model did not return a usable summary. Try again.
-            </p>
-          </div>
-        </template>
-      </template>
+      <!-- LLM Summary: a tinted box above the body, dismissible with the close
+           button. Not a collapsible section — the copy is short and either worth
+           reading or worth hiding, so there is no half state to toggle into. -->
+      <section v-if="(summaryData || summaryLoading) && !summaryDismissed" data-summary-box
+        class="mb-4 rounded-md border border-accent/20 bg-accent/5 px-3 py-2.5">
+        <div class="flex items-center gap-1.5 mb-1.5">
+          <Sparkles class="size-3 shrink-0 text-accent" />
+          <span class="flex-1 text-xs font-semibold text-muted-foreground uppercase">LLM Summary</span>
+          <!-- Close. Hides the box for this item; the text is not discarded, so
+               re-running Summarize brings it back with the new result. -->
+          <button
+            type="button"
+            class="shrink-0 -mr-1 p-0.5 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/10 transition-colors"
+            title="Hide summary"
+            aria-label="Hide summary"
+            data-summary-close
+            @click="summaryDismissed = true"
+          >
+            <X class="size-3.5" />
+          </button>
+        </div>
+        <!-- Loading spinner -->
+        <div v-if="summaryLoading" class="flex items-center gap-2 py-1 text-sm text-muted-foreground" role="status" aria-live="polite">
+          <RefreshCw class="size-4 animate-spin" aria-hidden="true" />
+          <span>Generating summary…</span>
+        </div>
+        <!-- Summary content -->
+        <div v-else-if="summaryData" class="space-y-3">
+          <p v-if="summaryData.content_summary" class="text-sm leading-relaxed">{{ summaryData.content_summary }}</p>
+          <p v-if="summaryData.comments_summary" class="text-sm leading-relaxed">{{ summaryData.comments_summary }}</p>
+          <!-- The reply was unusable (undecodable JSON is dropped rather than
+               rendered), so say so instead of showing an empty section. -->
+          <p v-if="!summaryData.content_summary && !summaryData.comments_summary" data-summary-empty class="text-sm text-muted-foreground">
+            The model did not return a usable summary. Try again.
+          </p>
+        </div>
+      </section>
 
-      <!-- Extracted Content. A cleared extraction has nothing to show and its
-           body below renders the original directly, so the split view is
-           skipped entirely rather than left as two empty sections. -->
-      <template v-if="extractionSectionVisible">
-        <Separator class="mb-4" />
-        <button
-          type="button"
-          class="flex w-full items-center gap-1.5 text-left text-xs font-semibold text-muted-foreground uppercase mb-2 hover:text-foreground transition-colors"
-          :aria-expanded="!extractedCollapsed"
-          @click="extractedCollapsed = !extractedCollapsed"
+      <!-- The content. One section, one body: the extracted text when one exists
+           (extraction exists to improve on the original, so it is the default),
+           otherwise the original. The button above switches, and is colored while
+           the original is the active view so the control states which you see. -->
+      <div v-if="canToggleOriginal" class="flex items-center justify-between gap-2 mb-2">
+        <!-- When extraction happened, kept from the old section header so the
+             reader can still tell how fresh the extracted body is. -->
+        <span v-if="feedStore.selectedItem.extract_date" class="text-xs text-muted-foreground/70">
+          Extracted {{ absoluteTime(feedStore.selectedItem.extract_date) }}
+        </span>
+        <span v-else />
+        <Button
+          size="sm"
+          :variant="contentView === 'original' ? 'default' : 'outline'"
+          data-toggle-original
+          :aria-pressed="contentView === 'original' ? 'true' : 'false'"
+          @click="toggleOriginal"
         >
-          <ChevronDown class="size-3.5 shrink-0 transition-transform" :class="extractedCollapsed ? '-rotate-90' : ''" />
-          <span>Extracted</span>
-          <span v-if="feedStore.selectedItem.extract_status === 'done' && feedStore.selectedItem.extract_date" class="font-normal text-muted-foreground/60 ml-1">{{ absoluteTime(feedStore.selectedItem.extract_date) }}</span>
-        </button>
-        <template v-if="!extractedCollapsed">
-          <div v-if="feedStore.selectedItem.extract_status === 'pending'"
-            class="p-4 text-sm text-muted-foreground bg-muted/30 rounded-md">
-            <RefreshCw class="size-3 inline animate-spin mr-1" /> Extraction in progress…
-          </div>
-          <div v-else-if="feedStore.selectedItem.extract_status === 'failed'"
-            class="p-4 rounded-md bg-warning/10 dark:bg-warning/15 border border-warning/30">
-            <p class="text-xs font-medium text-warning-foreground dark:text-warning mb-1">Content processing failed after {{ feedStore.selectedItem.extract_retries }} attempt{{ feedStore.selectedItem.extract_retries === 1 ? '' : 's' }}</p>
-            <pre class="text-xs text-warning-foreground/80 dark:text-warning/90 whitespace-pre-wrap">{{ feedStore.selectedItem.extract_content }}</pre>
-          </div>
-          <div v-else-if="feedStore.selectedItem.extract_status === 'done'"
-            :class="proseClass" v-html="feedStore.selectedItem.extract_content" v-external-links />
-        </template>
-      </template>
-
-      <!-- Original Content -->
-      <template v-if="extractionSectionVisible">
-        <Separator class="mb-4" />
-        <button
-          type="button"
-          class="flex w-full items-center gap-1.5 text-left text-xs font-semibold text-muted-foreground uppercase mb-2 hover:text-foreground transition-colors"
-          :aria-expanded="!originalCollapsed"
-          @click="originalCollapsed = !originalCollapsed"
-        >
-          <ChevronDown class="size-3.5 shrink-0 transition-transform" :class="originalCollapsed ? '-rotate-90' : ''" />
-          <span>Original</span>
-        </button>
-        <div v-if="!originalCollapsed" :class="proseClass" v-html="feedStore.selectedItem.content" v-external-links />
-      </template>
-      <div v-else :class="proseClass" v-html="feedStore.selectedItem.content" v-external-links />
+          <FileText /> {{ contentView === 'original' ? 'Show extracted' : 'Show original' }}
+        </Button>
+      </div>
+      <!-- Extraction still running and nothing to show yet: hold the space rather
+           than flashing an empty body. -->
+      <div v-if="extracting && !shownBody" class="p-4 text-sm text-muted-foreground bg-muted/30 rounded-md">
+        <RefreshCw class="size-3 inline animate-spin mr-1" /> Extraction in progress…
+      </div>
+      <!-- Failed extraction: the error text IS the body the server stored, so it
+           renders here rather than in a separate section. -->
+      <div v-else-if="feedStore.selectedItem.extract_status === 'failed' && contentView === 'extracted' && !hasExtraction"
+        class="p-4 rounded-md bg-warning/10 dark:bg-warning/15 border border-warning/30">
+        <p class="text-xs font-medium text-warning-foreground dark:text-warning mb-1">Content processing failed after {{ feedStore.selectedItem.extract_retries }} attempt{{ feedStore.selectedItem.extract_retries === 1 ? '' : 's' }}</p>
+        <pre class="text-xs text-warning-foreground/80 dark:text-warning/90 whitespace-pre-wrap">{{ feedStore.selectedItem.extract_content }}</pre>
+      </div>
+      <div v-else :class="proseClass" v-html="shownBody" v-external-links />
 
       <!-- Top Comments (experimental) -->
       <div ref="commentsRef" data-comments-section>

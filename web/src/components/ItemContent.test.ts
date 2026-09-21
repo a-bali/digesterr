@@ -1,4 +1,17 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+
+// Summarize is the one action here that calls the API directly (not via the
+// store), so it needs a mock to drive. Summaries persist per request only: the
+// pane does not cache them, so every test starts from an empty box.
+const summarizeMock = vi.fn()
+vi.mock('../services/api', () => ({
+  itemApi: {
+    summarize: (...args: unknown[]) => summarizeMock(...args),
+    extract: vi.fn(),
+    getItem: vi.fn(),
+    getComments: vi.fn(async () => ({ comments: [], cached: false })),
+  },
+}))
 import { mount } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'
@@ -74,11 +87,10 @@ function mountItemContent(item: Item | null, feeds: Feed[] = []) {
   })
 }
 
-function toggleButtons(wrapper: ReturnType<typeof mountItemContent>) {
-  return wrapper.findAll('button').filter(b => {
-    const t = b.text().trim()
-    return t.startsWith('Extracted') || t.startsWith('Original')
-  })
+// The one button that switches the content section between the extracted body
+// and the original. There used to be two section-header toggles instead.
+function toggleOriginalButton(wrapper: ReturnType<typeof mountItemContent>) {
+  return wrapper.find('[data-toggle-original]')
 }
 
 // The read-state toggle. `digested` counts as READ (AGENTS.md: item digested →
@@ -118,77 +130,132 @@ describe('ItemContent read toggle', () => {
   })
 })
 
-describe('ItemContent collapsible blocks', () => {
+describe('ItemContent single content section', () => {
   let wrapper: ReturnType<typeof mountItemContent>
 
   beforeEach(() => {
     wrapper = mountItemContent(makeItem())
   })
 
-  it('shows a toggle control on both the extracted and original blocks', () => {
-    const toggles = toggleButtons(wrapper)
-    expect(toggles[0].text()).toContain('Extracted')
-    expect(toggles[1].text()).toBe('Original')
-    // Both blocks are expanded by default.
+  // The extracted/original blocks became ONE section with a toggle. With both
+  // open the user read the same article twice; folding one away left a header
+  // with nothing useful behind it.
+  it('shows the extracted body by default and the original behind one button', () => {
     expect(wrapper.text()).toContain('Extracted body')
+    expect(wrapper.text()).not.toContain('Original body')
+    expect(toggleOriginalButton(wrapper).text().trim()).toBe('Show original')
+  })
+
+  it('switches to the original body when the button is pressed', async () => {
+    await toggleOriginalButton(wrapper).trigger('click')
+
     expect(wrapper.text()).toContain('Original body')
-  })
-
-  it('collapses the extracted block body while keeping its header visible', async () => {
-    const [extracted] = toggleButtons(wrapper)
-    await extracted.trigger('click')
-
     expect(wrapper.text()).not.toContain('Extracted body')
-    expect(wrapper.text()).toContain('Original body')
-    // Header stays visible and still toggles back.
-    const [extractedAgain] = toggleButtons(wrapper)
-    expect(extractedAgain.text()).toContain('Extracted')
-    await extractedAgain.trigger('click')
-    expect(wrapper.text()).toContain('Extracted body')
+    // Label flips so the button always says what pressing it will do.
+    expect(toggleOriginalButton(wrapper).text().trim()).toBe('Show extracted')
   })
 
-  it('collapses the original block body independently', async () => {
-    const [, original] = toggleButtons(wrapper)
-    await original.trigger('click')
+  it('returns to the extracted body when pressed again', async () => {
+    const btn = toggleOriginalButton(wrapper)
+    await btn.trigger('click')
+    await toggleOriginalButton(wrapper).trigger('click')
 
     expect(wrapper.text()).toContain('Extracted body')
     expect(wrapper.text()).not.toContain('Original body')
+    expect(toggleOriginalButton(wrapper).text().trim()).toBe('Show original')
   })
 
-  it('keeps collapsed state per block without affecting the other', async () => {
-    const [extracted, original] = toggleButtons(wrapper)
-    await extracted.trigger('click')
-    await original.trigger('click')
-
-    expect(wrapper.text()).not.toContain('Extracted body')
-    expect(wrapper.text()).not.toContain('Original body')
-
-    // Expanding extracted leaves original collapsed.
-    const [extractedAgain] = toggleButtons(wrapper)
-    await extractedAgain.trigger('click')
-    expect(wrapper.text()).toContain('Extracted body')
-    expect(wrapper.text()).not.toContain('Original body')
+  // "Colored to enabled state" — the user asked for the pressed state to be
+  // visible, not just implied by the label. `default` is the accent-filled
+  // variant and `outline` the plain bordered one, so the variant IS the cue:
+  // the button is colored exactly while the original is the body on screen.
+  it('colors the button only while the original is the shown body', async () => {
+    // Extracted is the shown body, so the button is in its plain state.
+    expect(toggleOriginalButton(wrapper).classes()).toContain('bg-background')
+    await toggleOriginalButton(wrapper).trigger('click')
+    // Original is now shown: the button is filled with the accent.
+    const cls = toggleOriginalButton(wrapper).classes()
+    expect(cls).toContain('text-accent-foreground')
+    expect(cls).not.toContain('bg-background')
   })
 
-  it('does not mutate the underlying item data when collapsing', async () => {
-    const [extracted] = toggleButtons(wrapper)
-    await extracted.trigger('click')
+  it('publishes the shown body as aria-pressed for assistive tech', async () => {
+    expect(toggleOriginalButton(wrapper).attributes('aria-pressed')).toBe('false')
+    await toggleOriginalButton(wrapper).trigger('click')
+    expect(toggleOriginalButton(wrapper).attributes('aria-pressed')).toBe('true')
+  })
+
+  it('never renders both bodies at once', async () => {
+    const both = () => wrapper.text().includes('Extracted body') && wrapper.text().includes('Original body')
+    expect(both()).toBe(false)
+    await toggleOriginalButton(wrapper).trigger('click')
+    expect(both()).toBe(false)
+    await toggleOriginalButton(wrapper).trigger('click')
+    expect(both()).toBe(false)
+  })
+
+  it('offers no toggle when the item has no extraction', () => {
+    const plain = mountItemContent(makeItem({ extract_status: '' }))
+    expect(plain.find('[data-toggle-original]').exists()).toBe(false)
+    expect(plain.text()).toContain('Original body')
+  })
+
+  it('offers no toggle when the extraction is identical to the original', () => {
+    // Identical bodies would make the button a no-op.
+    const same = mountItemContent(makeItem({ content: '<p>Same</p>', extract_content: '<p>Same</p>' }))
+    expect(same.find('[data-toggle-original]').exists()).toBe(false)
+    expect(same.text()).toContain('Same')
+  })
+
+  it('offers no toggle when the original body is empty', () => {
+    // HN/link posts carry no text: "Show original" would reveal nothing.
+    const empty = mountItemContent(makeItem({ content: '' }))
+    expect(empty.find('[data-toggle-original]').exists()).toBe(false)
+    expect(empty.text()).toContain('Extracted body')
+  })
+
+  it('does not mutate the underlying item data when switching views', async () => {
+    await toggleOriginalButton(wrapper).trigger('click')
     const item = useFeedStore().selectedItem!
     expect(item.extract_content).toBe('<p>Extracted body</p>')
     expect(item.content).toBe('<p>Original body</p>')
     expect(item.extract_status).toBe('done')
   })
 
-  it('keeps existing actions visible and functional while expanded', async () => {
-    expect(wrapper.text()).toContain('Extracted body')
+  it('keeps existing actions visible and functional while switched', async () => {
+    await toggleOriginalButton(wrapper).trigger('click')
+    expect(wrapper.text()).toContain('Original body')
     expect(wrapper.text()).toContain('Mark Read')
     expect(wrapper.text()).toContain('Re-extract')
   })
 
-  it('renders raw content without toggle controls when no extraction exists', () => {
-    const plain = mountItemContent(makeItem({ extract_status: '' }))
-    expect(plain.text()).toContain('Original body')
-    expect(toggleButtons(plain).length).toBe(0)
+  // A cleared extraction is not a view: the original is all there is.
+  it('shows only the original for a cleared extraction, with no toggle', () => {
+    const cleared = mountItemContent(makeItem({ extract_status: 'cleared' }))
+    expect(cleared.find('[data-toggle-original]').exists()).toBe(false)
+    expect(cleared.text()).toContain('Original body')
+    expect(cleared.text()).not.toContain('Extracted body')
+  })
+
+  // 'skipped' means the server produced no body at all. The old header gated only
+  // on "status is set", which drew a header over an empty body for 593 real items.
+  it('shows only the original for a skipped extraction, with no toggle', () => {
+    const skipped = mountItemContent(makeItem({ extract_status: 'skipped', extract_content: '' }))
+    expect(skipped.find('[data-toggle-original]').exists()).toBe(false)
+    expect(skipped.text()).toContain('Original body')
+  })
+
+  // The view is per-item UI state: carrying 'original' over from the previous
+  // item would open the next item on the body extraction exists to replace.
+  it('resets to the extracted view when a different item is opened', async () => {
+    await toggleOriginalButton(wrapper).trigger('click')
+    expect(wrapper.text()).toContain('Original body')
+
+    useFeedStore().selectedItem = makeItem({ id: 2, title: 'Another item' })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('Extracted body')
+    expect(wrapper.text()).not.toContain('Original body')
   })
 
   it('constrains the pane width and uses reduced mobile padding', () => {
@@ -252,5 +319,119 @@ describe('ItemContent feed link', () => {
     const wrapper = mountItemContent(makeItem(), [makeFeed()])
     const time = wrapper.find('span.text-xs')
     expect(time.text()).toBe(absoluteTime(makeItem().published_at))
+  })
+})
+
+describe('ItemContent LLM summary box', () => {
+  let wrapper: ReturnType<typeof mountItemContent>
+
+  beforeEach(() => {
+    summarizeMock.mockReset()
+    summarizeMock.mockResolvedValue({ content_summary: 'A summary.', comments_summary: '' })
+    wrapper = mountItemContent(makeItem())
+  })
+
+  async function summarize() {
+    const btn = wrapper.findAll('button').find(b => b.text().trim() === 'Summarize')!
+    await btn.trigger('click')
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+  }
+
+  it('renders no summary box before one is generated', () => {
+    expect(wrapper.find('[data-summary-box]').exists()).toBe(false)
+  })
+
+  it('shows the summary in a tinted box above the body with a close button', async () => {
+    await summarize()
+
+    const box = wrapper.find('[data-summary-box]')
+    expect(box.exists()).toBe(true)
+    expect(box.text()).toContain('A summary.')
+    // Tinted: the accent mixed into the card, matching the toast treatment rather
+    // than a solid fill.
+    expect(box.classes()).toContain('bg-accent/5')
+    // A real close control, labelled for assistive tech.
+    const close = box.find('[data-summary-close]')
+    expect(close.exists()).toBe(true)
+    expect(close.attributes('aria-label')).toBe('Hide summary')
+    // The box sits above the content body.
+    const html = wrapper.html()
+    expect(html.indexOf('data-summary-box')).toBeLessThan(html.indexOf('data-toggle-original'))
+  })
+
+  it('hides the box when the close button is pressed', async () => {
+    await summarize()
+    await wrapper.find('[data-summary-close]').trigger('click')
+
+    expect(wrapper.find('[data-summary-box]').exists()).toBe(false)
+  })
+
+  it('is not a collapsible section: there is no header toggle to fold it', async () => {
+    await summarize()
+    // The old summary had an aria-expanded header. A dismiss-only box must not.
+    expect(wrapper.find('[data-summary-box] [aria-expanded]').exists()).toBe(false)
+  })
+
+  it('resets the dismissed state for the next item', async () => {
+    await summarize()
+    await wrapper.find('[data-summary-close]').trigger('click')
+    expect(wrapper.find('[data-summary-box]').exists()).toBe(false)
+
+    useFeedStore().selectedItem = makeItem({ id: 2, title: 'Another item' })
+    await wrapper.vm.$nextTick()
+    await summarize()
+
+    expect(wrapper.find('[data-summary-box]').exists()).toBe(true)
+  })
+})
+
+describe('ItemContent extraction switches to the extracted body', () => {
+  beforeEach(() => {
+    summarizeMock.mockReset()
+  })
+
+  // "If pressing extract/re-extract, automatically switch to viewing the
+  // extracted content." The switch must happen ON THE CLICK, not after the poll
+  // resolves: the click is the request to read it, and waiting leaves the user
+  // staring at the body they just asked to replace. Re-extract on an item that
+  // already has a body proves it — the extracted text must appear immediately,
+  // while the extraction request is still in flight.
+  it('switches back to the extracted view when Re-extract is pressed', async () => {
+    const wrapper = mountItemContent(makeItem({ extract_status: 'done' }))
+    const api = await import('../services/api')
+    // Never resolves: the poll must not be what causes the switch.
+    ;(api.itemApi.extract as any).mockImplementation(() => new Promise(() => {}))
+
+    await toggleOriginalButton(wrapper).trigger('click')
+    expect(wrapper.text()).toContain('Original body')
+    expect(wrapper.text()).not.toContain('Extracted body')
+
+    const re = wrapper.findAll('button').find(b => b.text().trim() === 'Re-extract')!
+    await re.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('Extracted body')
+    expect(wrapper.text()).not.toContain('Original body')
+    expect(toggleOriginalButton(wrapper).text().trim()).toBe('Show original')
+  })
+
+  it('returns to the original view when the extraction is deleted', async () => {
+    const wrapper = mountItemContent(makeItem())
+    await toggleOriginalButton(wrapper).trigger('click')
+    expect(wrapper.text()).toContain('Original body')
+
+    // Deleting needs a confirm; drive the store the way the button does.
+    const store = useFeedStore()
+    let deleted = false
+    store.deleteExtraction = async () => { deleted = true; store.selectedItem = makeItem({ extract_status: 'cleared' }) }
+    const del = wrapper.findAll('button').find(b => b.text().trim().includes('Delete extracted'))!
+    await del.trigger('click')
+
+    expect(deleted).toBe(true)
+    await wrapper.vm.$nextTick()
+    // With the extraction gone the pane shows the original and offers no toggle.
+    expect(wrapper.find('[data-toggle-original]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Original body')
   })
 })

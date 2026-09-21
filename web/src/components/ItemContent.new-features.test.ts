@@ -265,11 +265,11 @@ describe('ItemContent summarize button', () => {
     expect(paras).not.toContain('Content')
     expect(paras).not.toContain('Comments')
 
-    // The bodies the summary was built from fold away automatically.
-    const collapsedState = (label: string) =>
-      wrapper.findAll('button').find(b => b.text().startsWith(label))?.attributes('aria-expanded')
-    expect(collapsedState('Extracted')).toBe('false')
-    expect(collapsedState('Original')).toBe('false')
+    // The summary is a dismissible box above the body; it no longer folds the
+    // bodies away, because there is now a single body section rather than two
+    // collapsible ones.
+    expect(wrapper.find('[data-summary-box]').exists()).toBe(true)
+    expect(wrapper.find('[data-summary-box] [aria-expanded]').exists()).toBe(false)
   })
 
   it('has no length slider any more', async () => {
@@ -415,9 +415,9 @@ describe('ItemContent summarize button', () => {
     expect(wrapper.text()).not.toContain('LLM Summary')
   })
 
-  // Summarizing folds the bodies it was built from away. That folding is
-  // per-item state: it must not follow the reader to the next item.
-  it('does not carry the summary collapse into the next item', async () => {
+  // The summary box's dismissed state is per-item: closing it on one item must
+  // not open the next item with its summary already hidden.
+  it('does not carry the dismissed summary into the next item', async () => {
     mockSummarize.mockResolvedValue({
       content_summary: 'Summary.',
       comments_summary: 'Comments.',
@@ -430,9 +430,9 @@ describe('ItemContent summarize button', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    // Summarizing folded both bodies on the item it summarized.
-    expect(wrapper.text()).not.toContain('Extracted body')
-    expect(wrapper.text()).not.toContain('Original body')
+    // Dismiss the box on the item it was generated for.
+    await wrapper.find('[data-summary-close]').trigger('click')
+    expect(wrapper.find('[data-summary-box]').exists()).toBe(false)
 
     useFeedStore().selectedItem = makeItem({
       id: 2,
@@ -443,16 +443,12 @@ describe('ItemContent summarize button', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    // The new item's bodies are visible without any manual expanding.
+    // The next item's body is shown, with no stale dismissal to hide it.
     expect(wrapper.text()).toContain('Other extracted body')
-    expect(wrapper.text()).toContain('Other original body')
-    const collapsedState = (label: string) =>
-      wrapper.findAll('button').find(b => b.text().startsWith(label))?.attributes('aria-expanded')
-    expect(collapsedState('Extracted')).toBe('true')
-    expect(collapsedState('Original')).toBe('true')
+    expect(wrapper.text()).not.toContain('Other original body')
   })
 
-  it('collapses summary section on toggle', async () => {
+  it('hides the summary box when its close button is pressed', async () => {
     mockSummarize.mockResolvedValue({
       content_summary: 'The summary text.',
       comments_summary: 'Comment summary.',
@@ -465,18 +461,15 @@ describe('ItemContent summarize button', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    // Verify summary is visible.
     expect(wrapper.text()).toContain('The summary text.')
 
-    // Click the LLM Summary toggle to collapse.
-    const toggle = wrapper.findAll('button').find(b => b.text().includes('LLM Summary'))!
-    expect(toggle.exists()).toBe(true)
-    await toggle.trigger('click')
+    // The box is dismissed with its close button, not a collapsible header.
+    const close = wrapper.find('[data-summary-close]')
+    expect(close.exists()).toBe(true)
+    await close.trigger('click')
     await wrapper.vm.$nextTick()
 
     expect(wrapper.text()).not.toContain('The summary text.')
-    // Header should still be visible.
-    expect(wrapper.text()).toContain('LLM Summary')
   })
 })
 
