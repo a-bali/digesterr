@@ -549,14 +549,16 @@ export const useFeedStore = defineStore('feed', () => {
     savedItems.value = savedItems.value.filter(i => i.id !== item.id)
   }
 
-  // fetchSavedItems loads the Saved view's list. Server-side per-feed query, so
-  // it is kept here rather than in the view that happens to render it.
+  // fetchSavedItems loads the Saved view's list in one server-side query.
+  // Server-side per-feed query, so it is kept here rather than in the view
+  // that happens to render it. Archive feeds are included, so items orphaned
+  // by a feed deletion come back with their provenance.
   async function fetchSavedItems() {
-    const acc: Item[] = []
-    for (const feed of feeds.value) {
-      try { acc.push(...(await feedApi.getItems(feed.id, { status: 'saved' })).items) } catch { /* skip */ }
+    try {
+      savedItems.value = (await feedApi.savedItems()).items as Item[]
+    } catch {
+      // Saved view keeps its previous list on failure; badge count is separate.
     }
-    savedItems.value = acc
   }
 
   return {

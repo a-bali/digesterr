@@ -45,6 +45,10 @@ CREATE TABLE feeds (
     last_error          TEXT    NOT NULL DEFAULT '',
     last_error_at       DATETIME,
     last_error_severity TEXT    NOT NULL DEFAULT '',
+    -- Archive marker: 1 means this row holds orphaned saved items of a deleted
+    -- feed ("Saved — <name>"), not a pollable source. Hidden from every
+    -- user-facing feed listing, never polled (additionally status='paused').
+    is_archive          INTEGER NOT NULL DEFAULT 0,
     created_at          DATETIME NOT NULL DEFAULT (DATETIME('now')),
     updated_at          DATETIME NOT NULL DEFAULT (DATETIME('now')),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

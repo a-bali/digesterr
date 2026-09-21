@@ -68,6 +68,24 @@ SELECT * FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? A
 -- name: DeleteItem :one
 DELETE FROM items WHERE id = ? RETURNING id;
 
+-- name: DeleteUnkeptFeedItems :execrows
+-- Removes a feed's disposable items on feed deletion: everything that is
+-- neither saved nor referenced by a digest result (those are re-homed to the
+-- feed's archive instead). Saved-ness is checked first because a saved item
+-- may also be digest-linked -- either reason keeps it.
+DELETE FROM items
+WHERE feed_id = ?
+  AND is_saved = 0
+  AND NOT EXISTS (SELECT 1 FROM digest_result_items dri WHERE dri.item_id = items.id);
+
+-- name: RehomeFeedItems :execrows
+-- Moves a feed's kept items (saved or digest-linked) to its archive feed on
+-- deletion, preserving the original read state. The (feed_id, hash) unique
+-- index cannot collide: archive feeds start empty and receive rows once.
+UPDATE items SET feed_id = sqlc.arg(new_feed_id), updated_at = DATETIME('now')
+WHERE feed_id = sqlc.arg(old_feed_id)
+  AND (is_saved = 1 OR EXISTS (SELECT 1 FROM digest_result_items dri WHERE dri.item_id = items.id));
+
 -- name: DeleteExpiredItems :execrows
 DELETE FROM items
 WHERE is_saved = 0
@@ -111,6 +129,18 @@ GROUP BY f.id;
 SELECT CAST(COUNT(*) AS INTEGER) AS count FROM items i
 JOIN feeds f ON f.id = i.feed_id
 WHERE f.user_id = ? AND i.is_saved = 1;
+
+-- name: ListSavedItemsByUser :many
+-- The Saved view, assembled server-side in one query instead of N per-feed
+-- calls. Archive feeds (orphaned saved items of deleted feeds) join normally,
+-- so surviving items keep their "Saved -- <name>" provenance.
+SELECT i.id, i.title, i.content, i.comment_url, i.points, i.comments_count,
+       i.published_at, i.status, i.is_saved, i.extract_content, i.extract_status,
+       i.feed_id, f.name AS feed_name, f.type AS feed_type
+FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = ? AND i.is_saved = 1
+ORDER BY i.published_at DESC, i.created_at DESC, i.id DESC;
 
 
 -- name: ListItemsByFeedPaginated :many

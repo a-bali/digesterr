@@ -354,12 +354,17 @@ func (s *Server) handleDeleteFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deleted, err := s.queries.DeleteFeed(r.Context(), store.DeleteFeedParams{
-		ID:     id,
-		UserID: userID,
-	})
-	if err != nil || deleted == 0 {
-		writeError(w, http.StatusNotFound, "feed not found")
+	// Deleting an archive discards it for good: its items are already
+	// orphans of a previous deletion, and the archive exists only to hold
+	// them. Deleting a live feed re-homes its kept items (saved or
+	// digest-linked) to a new archive feed instead, so they survive.
+	if feed.IsArchive != 0 {
+		if err := s.deleteArchiveFeed(r.Context(), feed, userID); err != nil {
+			writeServerError(w, "failed to delete archive", err)
+			return
+		}
+	} else if err := s.deleteFeedWithArchive(r.Context(), feed, userID); err != nil {
+		writeServerError(w, "failed to delete feed", err)
 		return
 	}
 
@@ -372,6 +377,67 @@ func (s *Server) handleDeleteFeed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
+}
+
+// deleteArchiveFeed permanently discards an archive feed and everything in
+// it. Archives hold only orphaned items of previously deleted feeds, so there
+// is nothing to re-home: the user is explicitly throwing the keepsakes away.
+func (s *Server) deleteArchiveFeed(ctx context.Context, feed store.Feed, userID int64) error {
+	deleted, err := s.queries.DeleteFeed(ctx, store.DeleteFeedParams{ID: feed.ID, UserID: userID})
+	if err != nil {
+		return fmt.Errorf("deleting archive feed %d: %w", feed.ID, err)
+	}
+	if deleted == 0 {
+		return fmt.Errorf("archive feed %d not found", feed.ID)
+	}
+	return nil
+}
+
+// deleteFeedWithArchive deletes a live feed while preserving its kept items
+// (saved or digest-linked) in a new archive feed named "Saved — <name>".
+// Everything runs in one transaction: a partial failure must not leave items
+// re-homed to an archive whose source feed still exists, or vice versa.
+func (s *Server) deleteFeedWithArchive(ctx context.Context, feed store.Feed, userID int64) error {
+	db := s.queries.DB()
+	if db == nil {
+		return fmt.Errorf("feed deletion requires a *sql.DB-backed Queries")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning feed deletion: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.queries.WithTx(tx)
+
+	archive, err := qtx.CreateArchiveFeed(ctx, store.CreateArchiveFeedParams{
+		UserID:   userID,
+		Category: feed.Category,
+		Name:     "Saved -- " + feed.Name,
+	})
+	if err != nil {
+		return fmt.Errorf("creating archive feed: %w", err)
+	}
+	if _, err := qtx.RehomeFeedItems(ctx, store.RehomeFeedItemsParams{
+		NewFeedID: archive.ID,
+		OldFeedID: feed.ID,
+	}); err != nil {
+		return fmt.Errorf("rehoming kept items: %w", err)
+	}
+	if _, err := qtx.DeleteUnkeptFeedItems(ctx, feed.ID); err != nil {
+		return fmt.Errorf("deleting unkept items: %w", err)
+	}
+	deleted, err := qtx.DeleteFeed(ctx, store.DeleteFeedParams{ID: feed.ID, UserID: userID})
+	if err != nil {
+		return fmt.Errorf("deleting feed %d: %w", feed.ID, err)
+	}
+	if deleted == 0 {
+		return fmt.Errorf("feed %d not found", feed.ID)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing feed deletion: %w", err)
+	}
+	slog.Info("feed deleted with archive", "feed_id", feed.ID, "archive_id", archive.ID)
+	return nil
 }
 
 // pruneDigestConfigSources removes the given feed IDs and category from every
@@ -687,6 +753,23 @@ func (s *Server) handleSavedCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"count": count})
+}
+
+// handleListSavedItems returns the user's saved items with feed metadata in
+// one query. Replaces the client's N sequential per-feed requests, and works
+// through archive feeds (orphaned items of deleted feeds keep their
+// "Saved -- <name>" provenance).
+func (s *Server) handleListSavedItems(w http.ResponseWriter, r *http.Request) {
+	userID := authedUserID(r)
+	rows, err := s.queries.ListSavedItemsByUser(r.Context(), userID)
+	if err != nil {
+		writeServerError(w, "failed to list saved items", err)
+		return
+	}
+	if rows == nil {
+		rows = []store.ListSavedItemsByUserRow{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": rows})
 }
 
 func (s *Server) handleMarkFeedRead(w http.ResponseWriter, r *http.Request) {

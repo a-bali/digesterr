@@ -1,4 +1,4 @@
-import type { AllDigestResultsResponse, AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, HealthInfo, Item, LogsResponse, MarkRelativeOptions, MetricsSummary, MultiFeedItemsResponse, User } from '../types/api'
+import type { AllDigestResultsResponse, AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, HealthInfo, Item, LogsResponse, MarkRelativeOptions, MetricsSummary, MultiFeedItemsResponse, SavedItemsResponse, User } from '../types/api'
 
 // The access token lives in memory only — never localStorage. Any XSS that
 // reaches the page (e.g. through feed HTML) could otherwise read it straight
@@ -158,6 +158,9 @@ export const feedApi = {
   // Total saved items across all feeds. NOT an unread count — the sidebar shows
   // it on the Saved row, which is a status view, not an inbox.
   savedCount: () => api<{ count: number }>('/saved-count'),
+  // The Saved view's list in one query. Includes archive feeds, so items
+  // orphaned by a feed deletion keep their provenance.
+  savedItems: () => api<SavedItemsResponse>('/saved'),
   multiItems: (opts: { feed_ids?: number[]; category?: string; status?: string; limit?: number; offset?: number; min_score?: number; sort?: string }) => {
     const params: Record<string, string | number | undefined> = {
       status: opts.status, limit: opts.limit, offset: opts.offset,

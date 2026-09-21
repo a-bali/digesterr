@@ -214,6 +214,25 @@ func (q *Queries) DeleteItem(ctx context.Context, id int64) (int64, error) {
 	return id_2, err
 }
 
+const deleteUnkeptFeedItems = `-- name: DeleteUnkeptFeedItems :execrows
+DELETE FROM items
+WHERE feed_id = ?
+  AND is_saved = 0
+  AND NOT EXISTS (SELECT 1 FROM digest_result_items dri WHERE dri.item_id = items.id)
+`
+
+// Removes a feed's disposable items on feed deletion: everything that is
+// neither saved nor referenced by a digest result (those are re-homed to the
+// feed's archive instead). Saved-ness is checked first because a saved item
+// may also be digest-linked -- either reason keeps it.
+func (q *Queries) DeleteUnkeptFeedItems(ctx context.Context, feedID int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteUnkeptFeedItems, feedID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getItem = `-- name: GetItem :one
 SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items WHERE id = ?
 `
@@ -1492,6 +1511,74 @@ func (q *Queries) ListItemsNeedingReadability(ctx context.Context, feedID int64)
 	return items, nil
 }
 
+const listSavedItemsByUser = `-- name: ListSavedItemsByUser :many
+SELECT i.id, i.title, i.content, i.comment_url, i.points, i.comments_count,
+       i.published_at, i.status, i.is_saved, i.extract_content, i.extract_status,
+       i.feed_id, f.name AS feed_name, f.type AS feed_type
+FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = ? AND i.is_saved = 1
+ORDER BY i.published_at DESC, i.created_at DESC, i.id DESC
+`
+
+type ListSavedItemsByUserRow struct {
+	ID             int64        `json:"id"`
+	Title          string       `json:"title"`
+	Content        string       `json:"content"`
+	CommentUrl     string       `json:"comment_url"`
+	Points         int64        `json:"points"`
+	CommentsCount  int64        `json:"comments_count"`
+	PublishedAt    sql.NullTime `json:"published_at"`
+	Status         string       `json:"status"`
+	IsSaved        int64        `json:"is_saved"`
+	ExtractContent string       `json:"extract_content"`
+	ExtractStatus  string       `json:"extract_status"`
+	FeedID         int64        `json:"feed_id"`
+	FeedName       string       `json:"feed_name"`
+	FeedType       string       `json:"feed_type"`
+}
+
+// The Saved view, assembled server-side in one query instead of N per-feed
+// calls. Archive feeds (orphaned saved items of deleted feeds) join normally,
+// so surviving items keep their "Saved -- <name>" provenance.
+func (q *Queries) ListSavedItemsByUser(ctx context.Context, userID int64) ([]ListSavedItemsByUserRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSavedItemsByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSavedItemsByUserRow{}
+	for rows.Next() {
+		var i ListSavedItemsByUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Content,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.IsSaved,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.FeedID,
+			&i.FeedName,
+			&i.FeedType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnreadItemsForEnrichment = `-- name: ListUnreadItemsForEnrichment :many
 SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY last_enriched_at IS NULL DESC, last_enriched_at ASC, published_at DESC
 `
@@ -2025,6 +2112,28 @@ func (q *Queries) NewestUnreadItemPerFeed(ctx context.Context, userID int64) ([]
 		return nil, err
 	}
 	return items, nil
+}
+
+const rehomeFeedItems = `-- name: RehomeFeedItems :execrows
+UPDATE items SET feed_id = ?1, updated_at = DATETIME('now')
+WHERE feed_id = ?2
+  AND (is_saved = 1 OR EXISTS (SELECT 1 FROM digest_result_items dri WHERE dri.item_id = items.id))
+`
+
+type RehomeFeedItemsParams struct {
+	NewFeedID int64 `json:"new_feed_id"`
+	OldFeedID int64 `json:"old_feed_id"`
+}
+
+// Moves a feed's kept items (saved or digest-linked) to its archive feed on
+// deletion, preserving the original read state. The (feed_id, hash) unique
+// index cannot collide: archive feeds start empty and receive rows once.
+func (q *Queries) RehomeFeedItems(ctx context.Context, arg RehomeFeedItemsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rehomeFeedItems, arg.NewFeedID, arg.OldFeedID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const setItemSaved = `-- name: SetItemSaved :one

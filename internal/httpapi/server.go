@@ -190,6 +190,9 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	// from the unread counts: "saved" is a status, not an unread tally, and the
 	// saved view is assembled client-side across feeds, so it has no length.
 	mux.HandleFunc("GET /api/saved-count", s.requireAuth(s.handleSavedCount))
+	// The Saved view's list, assembled server-side in one query (archive feeds
+	// included) instead of N per-feed requests from the client.
+	mux.HandleFunc("GET /api/saved", s.requireAuth(s.handleListSavedItems))
 
 	mux.HandleFunc("PATCH /api/items/{id}", s.requireAuth(s.handleUpdateItemStatus))
 	mux.HandleFunc("GET /api/items/{id}", s.requireAuth(s.handleGetItem))

@@ -292,6 +292,12 @@ export interface MultiFeedItemsResponse {
   total: number
 }
 
+// The Saved view's list: a saved item with its feed metadata, including
+// archive feeds ("Saved -- <name>") holding orphans of deleted feeds.
+export interface SavedItemsResponse {
+  items: MultiItem[]
+}
+
 // HealthInfo is the readiness payload. It intentionally carries no feature
 // state: it is byte-identical authenticated and anonymous, so a probe response
 // cannot vary with credentials. Email feed availability is per-account and comes

@@ -342,6 +342,12 @@ WHERE hash != ''
 		name:    "create items.feed_hash unique index",
 		stmts:   []string{"CREATE UNIQUE INDEX IF NOT EXISTS idx_items_feed_hash ON items(feed_id, hash) WHERE hash != ''"},
 	},
+	{
+		version: 36,
+		name:    "add feeds.is_archive marker",
+		stmts:   []string{"ALTER TABLE feeds ADD COLUMN is_archive INTEGER NOT NULL DEFAULT 0"},
+		applied: columnPresent("feeds", "is_archive"),
+	},
 }
 
 // allTrue ANDs guard results: the migration is baselined only when every
