@@ -57,6 +57,19 @@ describe('App toaster', () => {
     expect(src).toMatch(/import\s+['"]vue-sonner\/style\.css['"]/)
   })
 
+  // Sonner's default stack is COLLAPSED: it draws only the newest toast at full
+  // height and tucks the rest behind it as slivers, so a burst (refreshing
+  // several feeds, marking read in a few scopes) shows one toast and hides the
+  // others until hover. `expand` is the prop that gives every toast its own
+  // height so they stack and all stay readable.
+  it('expands the toast stack so concurrent toasts are all visible', () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
+    // The prop must be bound to true, not merely mentioned.
+    expect(src).toMatch(/:expand="true"/)
+    // A cap, so a flood cannot cover the whole pane.
+    expect(src).toMatch(/:visible-toasts="\d+"/)
+  })
+
   it('mounts exactly one toaster, as the last element in the app tree', async () => {
     mountApp()
     await nextTick()

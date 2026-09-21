@@ -19,5 +19,18 @@ const themeStore = useThemeStore()
 
 <template>
   <RouterView />
-  <Toaster position="bottom-right" :theme="themeStore.isDark ? 'dark' : 'light'" />
+  <!-- `expand` is what makes a burst of toasts readable. Sonner's default is a
+       collapsed stack: only the newest toast is drawn to full height and the rest
+       sit behind it as slivers, so firing several in a row (refresh several feeds,
+       mark read in a few scopes) hides all but one until you hover. With `expand`
+       every toast keeps its own height and they stack, so all stay visible.
+       `visibleToasts` caps the stack: past that the oldest is dropped, which
+       bounds how much of the pane a flood can cover. -->
+  <Toaster
+    position="bottom-right"
+    :theme="themeStore.isDark ? 'dark' : 'light'"
+    :expand="true"
+    :visible-toasts="5"
+    :gap="8"
+  />
 </template>
