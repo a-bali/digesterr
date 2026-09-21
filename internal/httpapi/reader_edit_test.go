@@ -439,3 +439,91 @@ func TestReaderMarkAllAsReadUnauthorized(t *testing.T) {
 		t.Fatalf("mark-all-as-read without key: expected 401, got %d", w.Code)
 	}
 }
+
+// A bulk sync (many IDs, two tags) applies atomically: items flip, digests
+// flip, and the digest read cascade reaches linked items in the same request.
+func TestReaderEditTagBatchAtomicity(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	// Link a digested item to the new digest result so the cascade has a
+	// target: result read must flip it to read in the same request.
+	digested := createSeedItem(t, queries, seed.feedA.ID, "a-digested", "A digested", "digested", streamTimes.aRead)
+	if _, err := queries.CreateDigestResultItem(t.Context(), store.CreateDigestResultItemParams{
+		ResultID: seed.drNew.ID, ItemID: digested.ID, IsHighlight: 1,
+	}); err != nil {
+		t.Fatalf("link digest item: %v", err)
+	}
+
+	postReaderForm(t, server, "/reader/api/0/edit-tag",
+		editTagForm(readerTagRead, "",
+			itemStreamID(seed.aUnread.ID), itemStreamID(seed.bUnread.ID),
+			digestItemStreamID(seed.drNew.ID)))
+
+	if got := itemStatus(t, queries, seed.aUnread.ID); got != "read" {
+		t.Errorf("item A = %q, want read", got)
+	}
+	if got := itemStatus(t, queries, seed.bUnread.ID); got != "read" {
+		t.Errorf("item B = %q, want read", got)
+	}
+	if got := digestStatus(t, queries, seed.drNew.ID, user.ID); got != "read" {
+		t.Errorf("digest = %q, want read", got)
+	}
+	if got := itemStatus(t, queries, digested.ID); got != "read" {
+		t.Errorf("cascaded item = %q, want read (digest read must flip linked items)", got)
+	}
+}
+
+// Foreign IDs match nothing and do not abort the batch: the request still
+// applies the caller's own IDs and answers 200 OK.
+func TestReaderEditTagBatchSkipsForeignIDs(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+	other := createTestUser(t, queries, "other-batch@example.com", "password123")
+	foreignFeed, err := queries.CreateFeed(t.Context(), store.CreateFeedParams{
+		UserID: other.ID, Type: "rss", Name: "Foreign", Url: "https://f.example.com/x",
+		Config: "{}", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create foreign feed: %v", err)
+	}
+	foreign := createSeedItem(t, queries, foreignFeed.ID, "f-unread", "Foreign", "unread", streamTimes.aUnreadNewest)
+
+	postReaderForm(t, server, "/reader/api/0/edit-tag",
+		editTagForm(readerTagRead, "", itemStreamID(seed.aUnread.ID), itemStreamID(foreign.ID)))
+
+	if got := itemStatus(t, queries, seed.aUnread.ID); got != "read" {
+		t.Errorf("own item = %q, want read", got)
+	}
+	if got := itemStatus(t, queries, foreign.ID); got != "unread" {
+		t.Errorf("foreign item = %q, want still unread", got)
+	}
+}
+
+// The digest-scope mark-all-read flips results and their linked items
+// together: a result must never sit read while its items stay digested.
+func TestReaderMarkAllAsReadDigestCascadesAtomically(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedEditState(t, queries, user.ID)
+
+	digested := createSeedItem(t, queries, seed.feedA.ID, "a-cascade", "Cascade", "digested", streamTimes.aRead)
+	if _, err := queries.CreateDigestResultItem(t.Context(), store.CreateDigestResultItemParams{
+		ResultID: seed.drNew.ID, ItemID: digested.ID,
+	}); err != nil {
+		t.Fatalf("link digest item: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("s", digestStreamID(seed.cfg.ID))
+	postReaderForm(t, server, "/reader/api/0/mark-all-as-read", form)
+
+	if got := digestStatus(t, queries, seed.drNew.ID, user.ID); got != "read" {
+		t.Errorf("digest = %q, want read", got)
+	}
+	if got := itemStatus(t, queries, digested.ID); got != "read" {
+		t.Errorf("cascaded item = %q, want read", got)
+	}
+}

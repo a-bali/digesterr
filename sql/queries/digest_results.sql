@@ -203,3 +203,20 @@ WHERE status = 'digested'
 SELECT id FROM digest_results WHERE created_at < ? ORDER BY id;
 
 -- end of file
+
+-- name: UpdateDigestResultStatusByIDs :execrows
+-- Batch twin of UpdateDigestResultStatus for Reader edit-tag syncs: one
+-- statement for the whole ID set, ownership by user_id in the predicate.
+UPDATE digest_results SET status = sqlc.arg(status), updated_at = DATETIME('now')
+WHERE id IN (SELECT value FROM json_each(sqlc.arg(ids)))
+  AND user_id = sqlc.arg(user_id) AND status != sqlc.arg(status);
+
+-- name: MarkDigestResultItemsReadByResultIDs :execrows
+-- Batch twin of MarkDigestResultItemsRead for the digest cascade: flips
+-- linked items of every listed result in one statement.
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE status = 'digested'
+  AND id IN (
+    SELECT dri.item_id FROM digest_result_items dri
+    WHERE dri.result_id IN (SELECT value FROM json_each(sqlc.arg(ids)))
+  );

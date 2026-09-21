@@ -2190,6 +2190,32 @@ func (q *Queries) SetItemSaved(ctx context.Context, arg SetItemSavedParams) (Ite
 	return i, err
 }
 
+const setItemSavedByIDs = `-- name: SetItemSavedByIDs :execrows
+UPDATE items
+SET is_saved = CAST(?1 AS INTEGER),
+    status = CASE WHEN CAST(?1 AS INTEGER) = 1 AND status = 'unread' THEN 'read' ELSE status END,
+    updated_at = DATETIME('now')
+WHERE items.id IN (SELECT value FROM json_each(?2))
+  AND EXISTS (SELECT 1 FROM feeds f WHERE f.id = items.feed_id AND f.user_id = ?3)
+`
+
+type SetItemSavedByIDsParams struct {
+	Saved  int64       `json:"saved"`
+	Ids    interface{} `json:"ids"`
+	UserID int64       `json:"user_id"`
+}
+
+// Batch twin of SetItemSaved: flips the saved flag for the whole ID set with
+// ownership enforced by join. mark_read carries the same value as saved,
+// mirroring the single-item rule (saving an unread item reads it).
+func (q *Queries) SetItemSavedByIDs(ctx context.Context, arg SetItemSavedByIDsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setItemSavedByIDs, arg.Saved, arg.Ids, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateItemExtraction = `-- name: UpdateItemExtraction :one
 UPDATE items SET extract_content = ?, extract_status = ?, extract_retries = ?, extract_date = DATETIME('now'), updated_at = DATETIME('now') WHERE id = ? RETURNING id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved
 `
@@ -2322,6 +2348,30 @@ func (q *Queries) UpdateItemStatus(ctx context.Context, arg UpdateItemStatusPara
 		&i.IsSaved,
 	)
 	return i, err
+}
+
+const updateItemStatusByIDs = `-- name: UpdateItemStatusByIDs :execrows
+UPDATE items SET status = ?1, updated_at = DATETIME('now')
+WHERE items.id IN (SELECT value FROM json_each(?2))
+  AND EXISTS (SELECT 1 FROM feeds f WHERE f.id = items.feed_id AND f.user_id = ?3)
+`
+
+type UpdateItemStatusByIDsParams struct {
+	Status string      `json:"status"`
+	Ids    interface{} `json:"ids"`
+	UserID int64       `json:"user_id"`
+}
+
+// Batch twin of UpdateItemStatus for Reader edit-tag syncs: one statement for
+// the whole ID set, with ownership enforced by the feed join instead of a
+// per-ID pre-check. Foreign or missing IDs simply match nothing (best-effort,
+// matching the handler's 200-OK contract).
+func (q *Queries) UpdateItemStatusByIDs(ctx context.Context, arg UpdateItemStatusByIDsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateItemStatusByIDs, arg.Status, arg.Ids, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateItemTitle = `-- name: UpdateItemTitle :exec

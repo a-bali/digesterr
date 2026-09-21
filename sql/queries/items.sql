@@ -525,3 +525,23 @@ SELECT title FROM items WHERE feed_id = ? AND hash = ?;
 
 -- name: UpdateItemTitle :exec
 UPDATE items SET title = ?, updated_at = DATETIME('now') WHERE feed_id = ? AND hash = ?;
+
+-- name: UpdateItemStatusByIDs :execrows
+-- Batch twin of UpdateItemStatus for Reader edit-tag syncs: one statement for
+-- the whole ID set, with ownership enforced by the feed join instead of a
+-- per-ID pre-check. Foreign or missing IDs simply match nothing (best-effort,
+-- matching the handler's 200-OK contract).
+UPDATE items SET status = sqlc.arg(status), updated_at = DATETIME('now')
+WHERE items.id IN (SELECT value FROM json_each(sqlc.arg(ids)))
+  AND EXISTS (SELECT 1 FROM feeds f WHERE f.id = items.feed_id AND f.user_id = sqlc.arg(user_id));
+
+-- name: SetItemSavedByIDs :execrows
+-- Batch twin of SetItemSaved: flips the saved flag for the whole ID set with
+-- ownership enforced by join. mark_read carries the same value as saved,
+-- mirroring the single-item rule (saving an unread item reads it).
+UPDATE items
+SET is_saved = CAST(sqlc.arg(saved) AS INTEGER),
+    status = CASE WHEN CAST(sqlc.arg(saved) AS INTEGER) = 1 AND status = 'unread' THEN 'read' ELSE status END,
+    updated_at = DATETIME('now')
+WHERE items.id IN (SELECT value FROM json_each(sqlc.arg(ids)))
+  AND EXISTS (SELECT 1 FROM feeds f WHERE f.id = items.feed_id AND f.user_id = sqlc.arg(user_id));

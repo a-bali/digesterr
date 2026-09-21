@@ -964,6 +964,25 @@ func (q *Queries) MarkDigestResultItemsRead(ctx context.Context, resultID int64)
 	return err
 }
 
+const markDigestResultItemsReadByResultIDs = `-- name: MarkDigestResultItemsReadByResultIDs :execrows
+UPDATE items SET status = 'read', updated_at = DATETIME('now')
+WHERE status = 'digested'
+  AND id IN (
+    SELECT dri.item_id FROM digest_result_items dri
+    WHERE dri.result_id IN (SELECT value FROM json_each(?1))
+  )
+`
+
+// Batch twin of MarkDigestResultItemsRead for the digest cascade: flips
+// linked items of every listed result in one statement.
+func (q *Queries) MarkDigestResultItemsReadByResultIDs(ctx context.Context, ids interface{}) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markDigestResultItemsReadByResultIDs, ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateDigestResultStatus = `-- name: UpdateDigestResultStatus :one
 UPDATE digest_results
 SET status = ?, updated_at = DATETIME('now')
@@ -991,4 +1010,28 @@ func (q *Queries) UpdateDigestResultStatus(ctx context.Context, arg UpdateDigest
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const updateDigestResultStatusByIDs = `-- name: UpdateDigestResultStatusByIDs :execrows
+
+UPDATE digest_results SET status = ?1, updated_at = DATETIME('now')
+WHERE id IN (SELECT value FROM json_each(?2))
+  AND user_id = ?3 AND status != ?1
+`
+
+type UpdateDigestResultStatusByIDsParams struct {
+	Status string      `json:"status"`
+	Ids    interface{} `json:"ids"`
+	UserID int64       `json:"user_id"`
+}
+
+// end of file
+// Batch twin of UpdateDigestResultStatus for Reader edit-tag syncs: one
+// statement for the whole ID set, ownership by user_id in the predicate.
+func (q *Queries) UpdateDigestResultStatusByIDs(ctx context.Context, arg UpdateDigestResultStatusByIDsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateDigestResultStatusByIDs, arg.Status, arg.Ids, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

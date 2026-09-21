@@ -2,6 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,41 +39,26 @@ func resolveEditTarget(id string) (readerEditKind, int64) {
 	return kind, n
 }
 
-// setItemStatus updates an item's status after verifying the item belongs to
-// the user. Unknown or foreign items are silently skipped.
-func (s *Server) setItemStatus(ctx context.Context, id, userID int64, status string) {
-	if _, err := s.queries.GetItemWithFeedOwner(ctx, store.GetItemWithFeedOwnerParams{ID: id, UserID: userID}); err != nil {
-		return
-	}
-	_, _ = s.queries.UpdateItemStatus(ctx, store.UpdateItemStatusParams{ID: id, Status: status})
+// editTagBatch accumulates one edit-tag request's ID sets by transition, so
+// the whole request applies in a handful of batch statements instead of
+// 2-3 round trips per ID.
+type editTagBatch struct {
+	itemRead   []int64
+	itemUnread []int64
+	itemSave   []int64
+	itemUnsave []int64
+	digestRead []int64
+	digestNew  []int64
 }
 
-// setItemSaved flips an item's saved flag after verifying the item belongs to
-// the user. Unknown or foreign items are silently skipped. Read state is left
-// to SetItemSaved's own rule (saving an unread item reads it); the point of the
-// flag is that the two are independent, so this never writes `status` directly.
-func (s *Server) setItemSaved(ctx context.Context, id, userID, saved int64) {
-	if _, err := s.queries.GetItemWithFeedOwner(ctx, store.GetItemWithFeedOwnerParams{ID: id, UserID: userID}); err != nil {
-		return
-	}
-	_, _ = s.queries.SetItemSaved(ctx, store.SetItemSavedParams{ID: id, Saved: saved, MarkRead: saved})
+func (b *editTagBatch) empty() bool {
+	return len(b.itemRead) == 0 && len(b.itemUnread) == 0 &&
+		len(b.itemSave) == 0 && len(b.itemUnsave) == 0 &&
+		len(b.digestRead) == 0 && len(b.digestNew) == 0
 }
 
-// setDigestStatus updates a digest result's status after verifying it belongs
-// to the user. Unknown or foreign results are silently skipped.
-func (s *Server) setDigestStatus(ctx context.Context, id, userID int64, status string) {
-	if _, err := s.queries.GetDigestResult(ctx, store.GetDigestResultParams{ID: id, UserID: userID}); err != nil {
-		return
-	}
-	_, _ = s.queries.UpdateDigestResultStatus(ctx, store.UpdateDigestResultStatusParams{ID: id, UserID: userID, Status: status})
-	if status == "read" {
-		// Spec: result read -> linked items digested -> read.
-		_ = s.queries.MarkDigestResultItemsRead(ctx, id)
-	}
-}
-
-// applyEditTag applies a single add/remove tag transition to an item or digest
-// result. The status mapping is:
+// addEditTag accumulates a single add/remove tag transition for an item or
+// digest result. The status mapping is:
 //
 //	                    | add              | remove
 //	read (item)         | read             | unread
@@ -83,33 +71,113 @@ func (s *Server) setDigestStatus(ctx context.Context, id, userID int64, status s
 // read tag from a starred item leaves it starred. Before is_saved existed,
 // starred WAS the status, so a client that starred an item and then marked it
 // unread silently unstarred it.
-func (s *Server) applyEditTag(ctx context.Context, userID int64, kind readerEditKind, id int64, add bool, tag string) {
+func (b *editTagBatch) addEditTag(kind readerEditKind, id int64, add bool, tag string) {
 	switch tag {
 	case readerTagRead:
 		switch kind {
 		case readerEditItem:
 			if add {
-				s.setItemStatus(ctx, id, userID, "read")
+				b.itemRead = append(b.itemRead, id)
 			} else {
-				s.setItemStatus(ctx, id, userID, "unread")
+				b.itemUnread = append(b.itemUnread, id)
 			}
 		case readerEditDigest:
 			if add {
-				s.setDigestStatus(ctx, id, userID, "read")
+				b.digestRead = append(b.digestRead, id)
 			} else {
-				s.setDigestStatus(ctx, id, userID, "new")
+				b.digestNew = append(b.digestNew, id)
 			}
 		}
 	case readerTagStarred:
 		if kind == readerEditItem {
-			saved := int64(0)
 			if add {
-				saved = 1
+				b.itemSave = append(b.itemSave, id)
+			} else {
+				b.itemUnsave = append(b.itemUnsave, id)
 			}
-			s.setItemSaved(ctx, id, userID, saved)
 		}
 		// Digest results have no starred state: no-op.
 	}
+}
+
+// idsJSON renders an ID set as a JSON array for the json_each batch queries.
+func idsJSON(ids []int64) string {
+	raw, _ := json.Marshal(ids)
+	return string(raw)
+}
+
+// applyEditTagBatch applies an accumulated batch in one transaction: item
+// status flips, saved-flag flips, digest status flips, then the digest read
+// cascade (result read -> linked items digested -> read). Ownership is
+// enforced inside each statement, so unknown or foreign IDs match nothing and
+// the request stays best-effort with its 200-OK contract. A failure rolls
+// everything back instead of leaving a digest read while its items stay
+// digested.
+func (s *Server) applyEditTagBatch(ctx context.Context, userID int64, b *editTagBatch) error {
+	db := s.queries.DB()
+	if db == nil {
+		return fmt.Errorf("edit-tag requires a *sql.DB-backed Queries")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning edit-tag batch: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.queries.WithTx(tx)
+
+	apply := func(ids []int64, op string, fn func(context.Context, *store.Queries, string) error) error {
+		if len(ids) == 0 {
+			return nil
+		}
+		if err := fn(ctx, qtx, idsJSON(ids)); err != nil {
+			return fmt.Errorf("edit-tag %s: %w", op, err)
+		}
+		return nil
+	}
+	if err := apply(b.itemRead, "item-read", func(ctx context.Context, q *store.Queries, ids string) error {
+		_, err := q.UpdateItemStatusByIDs(ctx, store.UpdateItemStatusByIDsParams{Status: "read", Ids: ids, UserID: userID})
+		return err
+	}); err != nil {
+		return err
+	}
+	if err := apply(b.itemUnread, "item-unread", func(ctx context.Context, q *store.Queries, ids string) error {
+		_, err := q.UpdateItemStatusByIDs(ctx, store.UpdateItemStatusByIDsParams{Status: "unread", Ids: ids, UserID: userID})
+		return err
+	}); err != nil {
+		return err
+	}
+	if err := apply(b.itemSave, "item-save", func(ctx context.Context, q *store.Queries, ids string) error {
+		_, err := q.SetItemSavedByIDs(ctx, store.SetItemSavedByIDsParams{Saved: 1, Ids: ids, UserID: userID})
+		return err
+	}); err != nil {
+		return err
+	}
+	if err := apply(b.itemUnsave, "item-unsave", func(ctx context.Context, q *store.Queries, ids string) error {
+		_, err := q.SetItemSavedByIDs(ctx, store.SetItemSavedByIDsParams{Saved: 0, Ids: ids, UserID: userID})
+		return err
+	}); err != nil {
+		return err
+	}
+	if err := apply(b.digestRead, "digest-read", func(ctx context.Context, q *store.Queries, ids string) error {
+		if _, err := q.UpdateDigestResultStatusByIDs(ctx, store.UpdateDigestResultStatusByIDsParams{Status: "read", Ids: ids, UserID: userID}); err != nil {
+			return err
+		}
+		// Spec: result read -> linked items digested -> read, same tx.
+		_, err := q.MarkDigestResultItemsReadByResultIDs(ctx, ids)
+		return err
+	}); err != nil {
+		return err
+	}
+	if err := apply(b.digestNew, "digest-new", func(ctx context.Context, q *store.Queries, ids string) error {
+		_, err := q.UpdateDigestResultStatusByIDs(ctx, store.UpdateDigestResultStatusByIDsParams{Status: "new", Ids: ids, UserID: userID})
+		return err
+	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing edit-tag batch: %w", err)
+	}
+	return nil
 }
 
 // handleReaderEditTag implements POST /reader/api/0/edit-tag. The body is
@@ -131,13 +199,14 @@ func (s *Server) handleReaderEditTag(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ids := r.Form["i"]
 
+	var batch editTagBatch
 	for _, tag := range r.Form["a"] {
 		for _, idStr := range ids {
 			kind, id := resolveEditTarget(idStr)
 			if kind == readerEditSkip {
 				continue
 			}
-			s.applyEditTag(ctx, userID, kind, id, true, tag)
+			batch.addEditTag(kind, id, true, tag)
 		}
 	}
 	for _, tag := range r.Form["r"] {
@@ -146,7 +215,14 @@ func (s *Server) handleReaderEditTag(w http.ResponseWriter, r *http.Request) {
 			if kind == readerEditSkip {
 				continue
 			}
-			s.applyEditTag(ctx, userID, kind, id, false, tag)
+			batch.addEditTag(kind, id, false, tag)
+		}
+	}
+	if !batch.empty() {
+		// Best-effort stays: a DB failure is logged but the handler still
+		// answers 200 OK for client compatibility.
+		if err := s.applyEditTagBatch(ctx, userID, &batch); err != nil {
+			slog.Warn("reader edit-tag batch failed", "user_id", userID, "error", err)
 		}
 	}
 
@@ -194,37 +270,68 @@ func (s *Server) handleReaderMarkAllAsRead(w http.ResponseWriter, r *http.Reques
 			writeText(w, http.StatusOK, "OK")
 			return
 		}
-		if _, err := s.queries.GetDigestConfig(ctx, store.GetDigestConfigParams{ID: id, UserID: userID}); err != nil {
-			writeText(w, http.StatusOK, "OK")
-			return
-		}
-		if err := s.queries.MarkDigestConfigRead(ctx, store.MarkDigestConfigReadParams{ConfigID: id, UserID: userID}); err != nil {
+		if err := s.markDigestScopeRead(ctx, userID, &id); err != nil {
 			writeServerError(w, "failed to mark digest read", err)
-			return
-		}
-		if _, err := s.queries.MarkDigestConfigResultItemsRead(ctx, store.MarkDigestConfigResultItemsReadParams{UserID: userID, Column2: nil}); err != nil {
-			writeServerError(w, "failed to update digest items", err)
 			return
 		}
 
 	default:
 		// reading-list, all, empty/missing s, or any unrecognized stream
 		// (e.g. a label): mark everything read.
-		if err := s.queries.MarkAllUserItemsRead(ctx, userID); err != nil {
-			writeServerError(w, "failed to mark all items read", err)
-			return
-		}
-		if err := s.queries.MarkAllUserDigestResultsRead(ctx, userID); err != nil {
+		if err := s.markDigestScopeRead(ctx, userID, nil); err != nil {
 			writeServerError(w, "failed to mark all digest results read", err)
 			return
 		}
-		if _, err := s.queries.MarkDigestConfigResultItemsRead(ctx, store.MarkDigestConfigResultItemsReadParams{UserID: userID, Column2: nil}); err != nil {
-			writeServerError(w, "failed to update digest items", err)
+		if err := s.queries.MarkAllUserItemsRead(ctx, userID); err != nil {
+			writeServerError(w, "failed to mark all items read", err)
 			return
 		}
 	}
 
 	writeText(w, http.StatusOK, "OK")
+}
+
+// markDigestScopeRead marks a digest config's results (or every result when
+// configID is nil) read together with their linked items' digested->read
+// cascade, in one transaction. A partial chain (results read, items still
+// digested) is the failure the old three-statement sequence could leave.
+func (s *Server) markDigestScopeRead(ctx context.Context, userID int64, configID *int64) error {
+	if configID != nil {
+		if _, err := s.queries.GetDigestConfig(ctx, store.GetDigestConfigParams{ID: *configID, UserID: userID}); err != nil {
+			return nil // missing scope: best-effort OK, same as before
+		}
+	}
+	db := s.queries.DB()
+	if db == nil {
+		return fmt.Errorf("mark-digest-read requires a *sql.DB-backed Queries")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning mark-digest-read: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.queries.WithTx(tx)
+
+	if configID != nil {
+		if err := qtx.MarkDigestConfigRead(ctx, store.MarkDigestConfigReadParams{ConfigID: *configID, UserID: userID}); err != nil {
+			return fmt.Errorf("marking digest config read: %w", err)
+		}
+	} else {
+		if err := qtx.MarkAllUserDigestResultsRead(ctx, userID); err != nil {
+			return fmt.Errorf("marking all digest results read: %w", err)
+		}
+	}
+	params := store.MarkDigestConfigResultItemsReadParams{UserID: userID, Column2: nil}
+	if configID != nil {
+		params.Column2 = *configID
+	}
+	if _, err := qtx.MarkDigestConfigResultItemsRead(ctx, params); err != nil {
+		return fmt.Errorf("flipping digest items: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing mark-digest-read: %w", err)
+	}
+	return nil
 }
 
 // handleReaderNoOp answers 200 "OK" for Google Reader management endpoints
