@@ -87,6 +87,8 @@ type Feed struct {
 	LastErrorAt       sql.NullTime `json:"last_error_at"`
 	LastErrorSeverity string       `json:"last_error_severity"`
 	IsArchive         int64        `json:"is_archive"`
+	FailCount         int64        `json:"fail_count"`
+	NextPollAt        sql.NullTime `json:"next_poll_at"`
 	CreatedAt         time.Time    `json:"created_at"`
 	UpdatedAt         time.Time    `json:"updated_at"`
 }

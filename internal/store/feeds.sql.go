@@ -12,7 +12,7 @@ import (
 const createArchiveFeed = `-- name: CreateArchiveFeed :one
 INSERT INTO feeds (user_id, category, type, name, url, config, min_score, status, extract_content, readability, is_archive)
 VALUES (?, ?, 'rss', ?, '', '{}', 0, 'paused', 0, 0, 1)
-RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, created_at, updated_at
+RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, fail_count, next_poll_at, created_at, updated_at
 `
 
 type CreateArchiveFeedParams struct {
@@ -45,6 +45,8 @@ func (q *Queries) CreateArchiveFeed(ctx context.Context, arg CreateArchiveFeedPa
 		&i.LastErrorAt,
 		&i.LastErrorSeverity,
 		&i.IsArchive,
+		&i.FailCount,
+		&i.NextPollAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -54,7 +56,7 @@ func (q *Queries) CreateArchiveFeed(ctx context.Context, arg CreateArchiveFeedPa
 const createFeed = `-- name: CreateFeed :one
 INSERT INTO feeds (user_id, category, type, name, url, config, min_score, status, extract_content, readability)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, created_at, updated_at
+RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, fail_count, next_poll_at, created_at, updated_at
 `
 
 type CreateFeedParams struct {
@@ -101,6 +103,8 @@ func (q *Queries) CreateFeed(ctx context.Context, arg CreateFeedParams) (Feed, e
 		&i.LastErrorAt,
 		&i.LastErrorSeverity,
 		&i.IsArchive,
+		&i.FailCount,
+		&i.NextPollAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -124,7 +128,7 @@ func (q *Queries) DeleteFeed(ctx context.Context, arg DeleteFeedParams) (int64, 
 }
 
 const getFeed = `-- name: GetFeed :one
-SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, created_at, updated_at FROM feeds WHERE id = ? AND user_id = ?
+SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, fail_count, next_poll_at, created_at, updated_at FROM feeds WHERE id = ? AND user_id = ?
 `
 
 type GetFeedParams struct {
@@ -152,6 +156,8 @@ func (q *Queries) GetFeed(ctx context.Context, arg GetFeedParams) (Feed, error) 
 		&i.LastErrorAt,
 		&i.LastErrorSeverity,
 		&i.IsArchive,
+		&i.FailCount,
+		&i.NextPollAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -159,7 +165,7 @@ func (q *Queries) GetFeed(ctx context.Context, arg GetFeedParams) (Feed, error) 
 }
 
 const getFeedByID = `-- name: GetFeedByID :one
-SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, created_at, updated_at FROM feeds WHERE id = ?
+SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, fail_count, next_poll_at, created_at, updated_at FROM feeds WHERE id = ?
 `
 
 func (q *Queries) GetFeedByID(ctx context.Context, id int64) (Feed, error) {
@@ -182,6 +188,8 @@ func (q *Queries) GetFeedByID(ctx context.Context, id int64) (Feed, error) {
 		&i.LastErrorAt,
 		&i.LastErrorSeverity,
 		&i.IsArchive,
+		&i.FailCount,
+		&i.NextPollAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -189,12 +197,9 @@ func (q *Queries) GetFeedByID(ctx context.Context, id int64) (Feed, error) {
 }
 
 const listActiveFeeds = `-- name: ListActiveFeeds :many
-SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, created_at, updated_at FROM feeds WHERE status IN ('active', 'error') AND is_archive = 0 ORDER BY id
+SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, fail_count, next_poll_at, created_at, updated_at FROM feeds WHERE status IN ('active', 'error') AND is_archive = 0 ORDER BY id
 `
 
-// Archive feeds (is_archive=1) are paused and never polled, but exclude them
-// explicitly rather than relying on their status: the invariant must hold even
-// if an archive row's status is ever touched by another code path.
 func (q *Queries) ListActiveFeeds(ctx context.Context) ([]Feed, error) {
 	rows, err := q.db.QueryContext(ctx, listActiveFeeds)
 	if err != nil {
@@ -221,6 +226,8 @@ func (q *Queries) ListActiveFeeds(ctx context.Context) ([]Feed, error) {
 			&i.LastErrorAt,
 			&i.LastErrorSeverity,
 			&i.IsArchive,
+			&i.FailCount,
+			&i.NextPollAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -238,7 +245,7 @@ func (q *Queries) ListActiveFeeds(ctx context.Context) ([]Feed, error) {
 }
 
 const listAllFeeds = `-- name: ListAllFeeds :many
-SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, created_at, updated_at FROM feeds ORDER BY id
+SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, fail_count, next_poll_at, created_at, updated_at FROM feeds ORDER BY id
 `
 
 func (q *Queries) ListAllFeeds(ctx context.Context) ([]Feed, error) {
@@ -267,6 +274,8 @@ func (q *Queries) ListAllFeeds(ctx context.Context) ([]Feed, error) {
 			&i.LastErrorAt,
 			&i.LastErrorSeverity,
 			&i.IsArchive,
+			&i.FailCount,
+			&i.NextPollAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -310,8 +319,63 @@ func (q *Queries) ListCategories(ctx context.Context, userID int64) ([]string, e
 	return items, nil
 }
 
+const listDueFeeds = `-- name: ListDueFeeds :many
+SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, fail_count, next_poll_at, created_at, updated_at FROM feeds
+WHERE status IN ('active', 'error') AND is_archive = 0
+  AND (next_poll_at IS NULL OR next_poll_at <= DATETIME('now'))
+ORDER BY id
+`
+
+// Poll-due subset of ListActiveFeeds: a feed whose last fetch failed backs off
+// (next_poll_at in the future) instead of retrying every cycle. Archive feeds
+// are excluded explicitly rather than by status, so the invariant holds even
+// if an archive row's status is ever touched by another code path.
+func (q *Queries) ListDueFeeds(ctx context.Context) ([]Feed, error) {
+	rows, err := q.db.QueryContext(ctx, listDueFeeds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Feed{}
+	for rows.Next() {
+		var i Feed
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Category,
+			&i.Type,
+			&i.Name,
+			&i.Url,
+			&i.Config,
+			&i.MinScore,
+			&i.LastFetchedAt,
+			&i.Status,
+			&i.ExtractContent,
+			&i.Readability,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.LastErrorSeverity,
+			&i.IsArchive,
+			&i.FailCount,
+			&i.NextPollAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFeeds = `-- name: ListFeeds :many
-SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, created_at, updated_at FROM feeds WHERE user_id = ? AND is_archive = 0 ORDER BY name
+SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, fail_count, next_poll_at, created_at, updated_at FROM feeds WHERE user_id = ? AND is_archive = 0 ORDER BY name
 `
 
 // Archive feeds (is_archive=1, holding orphaned saved items of deleted feeds)
@@ -342,6 +406,8 @@ func (q *Queries) ListFeeds(ctx context.Context, userID int64) ([]Feed, error) {
 			&i.LastErrorAt,
 			&i.LastErrorSeverity,
 			&i.IsArchive,
+			&i.FailCount,
+			&i.NextPollAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -359,7 +425,7 @@ func (q *Queries) ListFeeds(ctx context.Context, userID int64) ([]Feed, error) {
 }
 
 const listFeedsByCategory = `-- name: ListFeedsByCategory :many
-SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, created_at, updated_at FROM feeds WHERE category = ? AND user_id = ? AND is_archive = 0 ORDER BY name
+SELECT id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, fail_count, next_poll_at, created_at, updated_at FROM feeds WHERE category = ? AND user_id = ? AND is_archive = 0 ORDER BY name
 `
 
 type ListFeedsByCategoryParams struct {
@@ -393,6 +459,8 @@ func (q *Queries) ListFeedsByCategory(ctx context.Context, arg ListFeedsByCatego
 			&i.LastErrorAt,
 			&i.LastErrorSeverity,
 			&i.IsArchive,
+			&i.FailCount,
+			&i.NextPollAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -409,11 +477,39 @@ func (q *Queries) ListFeedsByCategory(ctx context.Context, arg ListFeedsByCatego
 	return items, nil
 }
 
+const recordFeedFailure = `-- name: RecordFeedFailure :exec
+UPDATE feeds
+SET fail_count = fail_count + 1,
+    next_poll_at = DATETIME('now', '+' || CAST(MIN(5 * (1 << MIN(fail_count, 5)), 120) AS TEXT) || ' minutes'),
+    updated_at = DATETIME('now')
+WHERE id = ?
+`
+
+// Exponential backoff on consecutive failures: 5m, 10m, 20m, ... capped at
+// 2h. fail_count drives the delay; last_error bookkeeping is untouched (the
+// caller records it via UpdateFeedError as before).
+func (q *Queries) RecordFeedFailure(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, recordFeedFailure, id)
+	return err
+}
+
+const recordFeedSuccess = `-- name: RecordFeedSuccess :exec
+UPDATE feeds
+SET fail_count = 0, next_poll_at = NULL, last_fetched_at = DATETIME('now'), updated_at = DATETIME('now')
+WHERE id = ?
+`
+
+// A successful poll clears the backoff: the next cycle polls on schedule.
+func (q *Queries) RecordFeedSuccess(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, recordFeedSuccess, id)
+	return err
+}
+
 const updateFeed = `-- name: UpdateFeed :one
 UPDATE feeds
 SET name = ?, url = ?, config = ?, category = ?, status = ?, extract_content = ?, min_score = ?, readability = ?, updated_at = DATETIME('now')
 WHERE id = ? AND user_id = ?
-RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, created_at, updated_at
+RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, fail_count, next_poll_at, created_at, updated_at
 `
 
 type UpdateFeedParams struct {
@@ -462,6 +558,8 @@ func (q *Queries) UpdateFeed(ctx context.Context, arg UpdateFeedParams) (Feed, e
 		&i.LastErrorAt,
 		&i.LastErrorSeverity,
 		&i.IsArchive,
+		&i.FailCount,
+		&i.NextPollAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -472,7 +570,7 @@ const updateFeedFetchTime = `-- name: UpdateFeedFetchTime :one
 UPDATE feeds
 SET last_fetched_at = DATETIME('now'), updated_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, created_at, updated_at
+RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, fail_count, next_poll_at, created_at, updated_at
 `
 
 func (q *Queries) UpdateFeedFetchTime(ctx context.Context, id int64) (Feed, error) {
@@ -495,6 +593,8 @@ func (q *Queries) UpdateFeedFetchTime(ctx context.Context, id int64) (Feed, erro
 		&i.LastErrorAt,
 		&i.LastErrorSeverity,
 		&i.IsArchive,
+		&i.FailCount,
+		&i.NextPollAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -505,7 +605,7 @@ const updateFeedStatus = `-- name: UpdateFeedStatus :one
 UPDATE feeds
 SET status = ?, updated_at = DATETIME('now')
 WHERE id = ?
-RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, created_at, updated_at
+RETURNING id, user_id, category, type, name, url, config, min_score, last_fetched_at, status, extract_content, readability, last_error, last_error_at, last_error_severity, is_archive, fail_count, next_poll_at, created_at, updated_at
 `
 
 type UpdateFeedStatusParams struct {
@@ -533,6 +633,8 @@ func (q *Queries) UpdateFeedStatus(ctx context.Context, arg UpdateFeedStatusPara
 		&i.LastErrorAt,
 		&i.LastErrorSeverity,
 		&i.IsArchive,
+		&i.FailCount,
+		&i.NextPollAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

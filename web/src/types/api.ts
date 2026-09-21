@@ -27,6 +27,10 @@ export interface Feed {
   last_error: string
   last_error_at: string | null
   last_error_severity: string
+  /** Consecutive fetch failures; drives the retry backoff (next_poll_at). */
+  fail_count: number
+  /** Earliest time the feed may be polled again; null means due now. */
+  next_poll_at: string | null
   created_at: string
   updated_at: string
 }

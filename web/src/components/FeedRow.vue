@@ -64,6 +64,7 @@ const noUnread = computed(() => feedStore.unreadCounts[props.feed.id] === 0)
         </template>
         <p>{{ feed.last_error }}</p>
         <p v-if="feed.last_error_at">at {{ absoluteTime(feed.last_error_at) }}</p>
+        <p v-if="feed.next_poll_at">Next retry: {{ absoluteTime(feed.next_poll_at) }}</p>
       </Tooltip>
       <span v-if="(feedStore.unreadCounts[feed.id] ?? 0) > 0" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-1.5">{{ feedStore.unreadCounts[feed.id] }}</span>
     </div>

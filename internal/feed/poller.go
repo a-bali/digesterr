@@ -52,6 +52,15 @@ type Poller struct {
 	// rotations and account churn cannot grow the map without bound.
 	emailSyncsMu sync.Mutex
 	emailSyncs   map[string]*emailSyncEntry
+	// pollConcurrency bounds how many feeds are fetched at once. Writes still
+	// serialize on the single SQLite connection; concurrency is for the
+	// network fetch/enrich/extract phases, so one slow feed no longer stalls
+	// every feed behind it.
+	pollConcurrency int
+	// pollTimeout bounds a single feed's whole poll (fetch + enrich + extract).
+	// A feed that overruns is cancelled and recorded as a failure, so it backs
+	// off instead of holding a worker forever.
+	pollTimeout time.Duration
 }
 
 // emailSyncEntry is one memoized AgentMail sync stage plus its last-use time,
@@ -99,8 +108,10 @@ func NewPoller(queries *store.Queries) *Poller {
 	redditEnricher := NewRedditEnricher(queries)
 	noop := &NoopEnricher{}
 	return &Poller{
-		queries:    queries,
-		emailSyncs: map[string]*emailSyncEntry{},
+		queries:         queries,
+		emailSyncs:      map[string]*emailSyncEntry{},
+		pollConcurrency: 4,
+		pollTimeout:     5 * time.Minute,
 		fetchers: map[string]Fetcher{
 			"rss":      rssFetcher,
 			"atom":     rssFetcher,
@@ -605,12 +616,30 @@ func (p *Poller) expireOldData(ctx context.Context) {
 	}
 }
 
+// SetPollConcurrency bounds how many feeds are fetched at once. Values <= 0
+// fall back to 1 (serial, the historical behavior).
+func (p *Poller) SetPollConcurrency(n int) {
+	if n <= 0 {
+		n = 1
+	}
+	p.pollConcurrency = n
+}
+
+// SetPollTimeout bounds one feed's whole poll (fetch + enrich + extract).
+// Values <= 0 fall back to 5 minutes.
+func (p *Poller) SetPollTimeout(d time.Duration) {
+	if d <= 0 {
+		d = 5 * time.Minute
+	}
+	p.pollTimeout = d
+}
+
 func (p *Poller) PollAll(ctx context.Context) {
 	p.expireOldData(ctx)
 
-	feeds, err := p.queries.ListActiveFeeds(ctx)
+	feeds, err := p.queries.ListDueFeeds(ctx)
 	if err != nil {
-		slog.Error("failed to list active feeds", "error", err)
+		slog.Error("failed to list due feeds", "error", err)
 		return
 	}
 
@@ -631,6 +660,12 @@ func (p *Poller) PollAll(ctx context.Context) {
 	// reported as that feed's own traffic.
 	p.drainEmailInboxes(ctx)
 
+	// Fetch feeds concurrently, bounded by pollConcurrency: one slow feed no
+	// longer stalls every feed behind it. Database writes still serialize on
+	// the single SQLite connection, so concurrency here buys network overlap
+	// (the dominant cost) without write contention.
+	sem := make(chan struct{}, p.pollConcurrency)
+	var wg sync.WaitGroup
 	for _, feed := range feeds {
 		var fetcher Fetcher
 		ok := true
@@ -656,8 +691,24 @@ func (p *Poller) PollAll(ctx context.Context) {
 			continue
 		}
 
-		p.pollFeed(ctx, feed, fetcher)
+		// Acquire before spawning so the number of live poll goroutines is
+		// bounded; a cancelled ctx (shutdown) stops waiting for a slot.
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			wg.Wait()
+			return
+		}
+		wg.Add(1)
+		go func(feed store.Feed, fetcher Fetcher) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			feedCtx, cancel := context.WithTimeout(ctx, p.pollTimeout)
+			defer cancel()
+			p.pollFeed(feedCtx, feed, fetcher)
+		}(feed, fetcher)
 	}
+	wg.Wait()
 
 	slog.Info("polled feeds", "count", len(feeds), "duration", time.Since(start))
 }
@@ -757,6 +808,11 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	}
 	if err != nil {
 		logger.Warn("failed to fetch feed", "error", err)
+		// Back off the feed so a persistently broken source is retried with
+		// growing gaps instead of every cycle.
+		if e := p.queries.RecordFeedFailure(ctx, feed.ID); e != nil {
+			logger.Debug("failed to record feed backoff", "error", e)
+		}
 		// feeds.last_error is rendered in the sidebar tooltip: keep the full
 		// error in the log, but store a bounded copy like digest configs do.
 		msg := err.Error()
@@ -897,8 +953,9 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 		}
 	}
 
-	if _, err := p.queries.UpdateFeedFetchTime(ctx, feed.ID); err != nil {
-		logger.Error("failed to update feed fetch time", "error", err)
+	// Success clears the backoff window (and stamps last_fetched_at).
+	if err := p.queries.RecordFeedSuccess(ctx, feed.ID); err != nil {
+		logger.Error("failed to record feed success", "error", err)
 	}
 
 	if feed.Status == "error" {

@@ -127,6 +127,8 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	// Poller expiry path).
 	s.poller.SetExpiry(cfg.Feed.ExpireItems.Duration(), cfg.Feed.ExpireDigests.Duration())
 	s.poller.SetEnrichmentWindow(cfg.Feed.EnrichmentWindow.Duration())
+	s.poller.SetPollConcurrency(cfg.Feed.PollConcurrency)
+	s.poller.SetPollTimeout(cfg.Feed.PollTimeout.Duration())
 	s.poller.SetRecordFunc(func(rec feed.Record) {
 		s.metrics.Record(metrics.Record{
 			Timestamp:  rec.Timestamp,

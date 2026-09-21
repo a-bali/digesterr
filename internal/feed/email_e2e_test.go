@@ -44,6 +44,10 @@ func openSchemaDB(t *testing.T) *sql.DB {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	// A bare :memory: DSN gives every pool connection its own private database,
+	// so concurrent poll workers would each see an empty schema. Pin the pool
+	// to one connection (production uses a file, where this is a non-issue).
+	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(schema.DDL); err != nil {
 		t.Fatalf("apply schema: %v", err)
 	}

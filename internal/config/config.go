@@ -175,6 +175,12 @@ type FeedConfig struct {
 	// ExtractConcurrency bounds concurrent on-demand content extractions
 	// (the per-item Extract button). Zero means 4 (default).
 	ExtractConcurrency int `yaml:"extract_concurrency"`
+	// PollConcurrency bounds how many feeds are fetched at once in a poll
+	// cycle. Zero means 4 (default).
+	PollConcurrency int `yaml:"poll_concurrency"`
+	// PollTimeout bounds one feed's whole poll (fetch + enrich + extract).
+	// Zero means 5 minutes (default).
+	PollTimeout Duration `yaml:"poll_timeout"`
 }
 
 // DigestConfig holds digest scheduling settings.
@@ -240,6 +246,8 @@ func Default() Config {
 			HNEnrichCount:       0,
 			LobstersEnrichCount: 0,
 			ExtractConcurrency:  4,
+			PollConcurrency:     4,
+			PollTimeout:         Duration(5 * time.Minute),
 		},
 		Reddit:  RedditConfig{},
 		Twitter: TwitterConfig{},
@@ -380,6 +388,8 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 	setInt(&cfg.Feed.HNEnrichCount, "FEED_HN_ENRICH_COUNT", "")
 	setInt(&cfg.Feed.LobstersEnrichCount, "FEED_LOBSTERS_ENRICH_COUNT", "")
 	setInt(&cfg.Feed.ExtractConcurrency, "FEED_EXTRACT_CONCURRENCY", "")
+	setInt(&cfg.Feed.PollConcurrency, "FEED_POLL_CONCURRENCY", "")
+	setDuration(&cfg.Feed.PollTimeout, "FEED_POLL_TIMEOUT")
 
 	setString(&cfg.Reddit.ClientID, "REDDIT_CLIENT_ID", "")
 	setString(&cfg.Reddit.ClientSecret, "REDDIT_CLIENT_SECRET", "")

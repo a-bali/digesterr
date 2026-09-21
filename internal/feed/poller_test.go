@@ -358,3 +358,94 @@ func TestExpireOldData(t *testing.T) {
 		t.Errorf("disabled expiry deleted items=%d digests=%d, want 0/0", itemsDeleted, digestsDeleted)
 	}
 }
+
+// A feed whose fetch keeps failing backs off: after a failure it is absent
+// from ListDueFeeds until next_poll_at passes, and a success clears the
+// backoff window entirely.
+func TestPollBackoffSkipsFailingFeed(t *testing.T) {
+	db, err := testutil.OpenTestDB()
+	if err != nil {
+		t.Fatalf("open test db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	queries := store.New(db)
+
+	user, err := queries.CreateUser(t.Context(), store.CreateUserParams{
+		Email: "backoff@example.com", PasswordHash: "hash", ApiKey: "backoff-key",
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	feedObj, err := queries.CreateFeed(t.Context(), store.CreateFeedParams{
+		UserID: user.ID, Type: "rss", Name: "Flaky", Url: "https://example.com/flaky.xml",
+		Config: "{}", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create feed: %v", err)
+	}
+
+	due, err := queries.ListDueFeeds(t.Context())
+	if err != nil {
+		t.Fatalf("list due: %v", err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("due feeds = %d, want 1 before any failure", len(due))
+	}
+
+	if err := queries.RecordFeedFailure(t.Context(), feedObj.ID); err != nil {
+		t.Fatalf("record failure: %v", err)
+	}
+	feedBacked, err := queries.GetFeed(t.Context(), store.GetFeedParams{ID: feedObj.ID, UserID: user.ID})
+	if err != nil {
+		t.Fatalf("reload feed: %v", err)
+	}
+	if feedBacked.FailCount != 1 {
+		t.Errorf("fail_count = %d, want 1", feedBacked.FailCount)
+	}
+	if !feedBacked.NextPollAt.Valid {
+		t.Fatal("next_poll_at not set after failure")
+	}
+
+	due, err = queries.ListDueFeeds(t.Context())
+	if err != nil {
+		t.Fatalf("list due: %v", err)
+	}
+	if len(due) != 0 {
+		t.Errorf("due feeds = %d after failure, want 0 (backing off)", len(due))
+	}
+
+	// Exponential growth: a second consecutive failure pushes the window out
+	// further than the first.
+	first := feedBacked.NextPollAt.Time
+	if err := queries.RecordFeedFailure(t.Context(), feedObj.ID); err != nil {
+		t.Fatalf("record second failure: %v", err)
+	}
+	feedBacked, err = queries.GetFeed(t.Context(), store.GetFeedParams{ID: feedObj.ID, UserID: user.ID})
+	if err != nil {
+		t.Fatalf("reload feed: %v", err)
+	}
+	if feedBacked.FailCount != 2 {
+		t.Errorf("fail_count = %d, want 2", feedBacked.FailCount)
+	}
+	if !feedBacked.NextPollAt.Time.After(first) {
+		t.Errorf("second backoff %v not after first %v", feedBacked.NextPollAt.Time, first)
+	}
+
+	if err := queries.RecordFeedSuccess(t.Context(), feedObj.ID); err != nil {
+		t.Fatalf("record success: %v", err)
+	}
+	feedBacked, err = queries.GetFeed(t.Context(), store.GetFeedParams{ID: feedObj.ID, UserID: user.ID})
+	if err != nil {
+		t.Fatalf("reload feed: %v", err)
+	}
+	if feedBacked.FailCount != 0 || feedBacked.NextPollAt.Valid {
+		t.Errorf("backoff not cleared: fail_count=%d next_poll_at=%v", feedBacked.FailCount, feedBacked.NextPollAt)
+	}
+	due, err = queries.ListDueFeeds(t.Context())
+	if err != nil {
+		t.Fatalf("list due: %v", err)
+	}
+	if len(due) != 1 {
+		t.Errorf("due feeds = %d after success, want 1", len(due))
+	}
+}

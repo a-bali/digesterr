@@ -416,7 +416,20 @@ WHERE id NOT IN (SELECT MIN(id) FROM digest_result_items GROUP BY result_id, ite
 		version: 40,
 		name:    "unique digest_result_items index",
 		stmts:   []string{"CREATE UNIQUE INDEX IF NOT EXISTS idx_digest_result_items_unique ON digest_result_items(result_id, item_id)"},
-		applied: tableAbsent("digest_result_items"),
+	},
+	{
+		version: 41,
+		name:    "poll backoff columns on feeds",
+		stmts: []string{
+			"ALTER TABLE feeds ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0",
+			"ALTER TABLE feeds ADD COLUMN next_poll_at DATETIME",
+		},
+		applied: func(db *sql.DB) (bool, error) {
+			return allTrue(db,
+				columnPresent("feeds", "fail_count"),
+				columnPresent("feeds", "next_poll_at"),
+			)
+		},
 	},
 }
 
