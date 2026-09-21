@@ -490,18 +490,43 @@ func (p *Poller) SetLobstersEnrichCount(n int) {
 
 // ExpireOldData deletes items and digest results older than the configured
 // retention windows. Saved items and items still referenced by digest
-// results are never deleted. Returns the number of rows deleted. Expiry is
-// skipped for a window of zero.
+// results are never deleted. Items linked to expiring digest results flip
+// from digested back to read first (same transaction), so expiry never
+// strands items in an invisible state. Returns the number of rows deleted.
+// Expiry is skipped for a window of zero.
 func (p *Poller) ExpireOldData(ctx context.Context) (itemsDeleted, digestsDeleted int64, err error) {
+	db := p.queries.DB()
+	if db == nil {
+		return 0, 0, fmt.Errorf("expiry requires a *sql.DB-backed Queries")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("beginning expiry: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := p.queries.WithTx(tx)
+
 	if p.expireItems > 0 {
-		n, err := p.queries.DeleteExpiredItems(ctx, time.Now().Add(-p.expireItems))
+		n, err := qtx.DeleteExpiredItems(ctx, time.Now().Add(-p.expireItems))
 		if err != nil {
 			return itemsDeleted, digestsDeleted, fmt.Errorf("deleting expired items: %w", err)
 		}
 		itemsDeleted = n
 	}
 	if p.expireDigests > 0 {
-		n, err := p.queries.DeleteExpiredDigestResults(ctx, time.Now().Add(-p.expireDigests))
+		cutoff := time.Now().Add(-p.expireDigests)
+		// Flip each expiring result's linked items back to read before the
+		// results (and their join rows) are deleted.
+		ids, err := qtx.ListExpiredDigestResultIDs(ctx, cutoff)
+		if err != nil {
+			return itemsDeleted, digestsDeleted, fmt.Errorf("listing expired digest results: %w", err)
+		}
+		for _, id := range ids {
+			if err := qtx.MarkDigestResultItemsRead(ctx, id); err != nil {
+				return itemsDeleted, digestsDeleted, fmt.Errorf("flipping items of expired digest %d to read: %w", id, err)
+			}
+		}
+		n, err := qtx.DeleteExpiredDigestResults(ctx, cutoff)
 		if err != nil {
 			return itemsDeleted, digestsDeleted, fmt.Errorf("deleting expired digest results: %w", err)
 		}
@@ -510,10 +535,13 @@ func (p *Poller) ExpireOldData(ctx context.Context) (itemsDeleted, digestsDelete
 	// Expired refresh tokens are dead weight (rotation creates a new row per
 	// refresh); sweep them on the same cadence. A fixed 30-day cutoff matches
 	// the refresh token lifetime with margin.
-	if n, err := p.queries.DeleteExpiredRefreshTokens(ctx, time.Now()); err != nil {
+	if n, err := qtx.DeleteExpiredRefreshTokens(ctx, time.Now()); err != nil {
 		slog.Warn("failed to delete expired refresh tokens", "error", err)
 	} else if n > 0 {
 		slog.Debug("deleted expired refresh tokens", "count", n)
+	}
+	if err := tx.Commit(); err != nil {
+		return itemsDeleted, digestsDeleted, fmt.Errorf("committing expiry: %w", err)
 	}
 	return itemsDeleted, digestsDeleted, nil
 }

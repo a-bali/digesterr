@@ -239,8 +239,12 @@ func TestExpireOldData(t *testing.T) {
 	setOld(old.ID)
 	oldSaved := mkItem("old-saved", "saved") // old but saved, kept
 	setOld(oldSaved.ID)
-	linked := mkItem("old-linked", "digested") // old but in a digest, kept
+	linked := mkItem("old-linked", "digested") // old but in a fresh digest, kept
 	setOld(linked.ID)
+	// Old digested item linked to an EXPIRING result: the result is deleted
+	// but the item must flip back to read, not vanish or stay digested.
+	expiring := mkItem("old-expiring", "digested")
+	setOld(expiring.ID)
 
 	dcfg, err := queries.CreateDigestConfig(t.Context(), store.CreateDigestConfigParams{
 		UserID:   user.ID,
@@ -283,6 +287,13 @@ func TestExpireOldData(t *testing.T) {
 	if _, err := db.Exec("UPDATE digest_results SET created_at = ? WHERE id = ?", oldTS, oldResult.ID); err != nil {
 		t.Fatalf("age digest result: %v", err)
 	}
+	if _, err := queries.CreateDigestResultItem(t.Context(), store.CreateDigestResultItemParams{
+		ResultID:    oldResult.ID,
+		ItemID:      expiring.ID,
+		IsHighlight: 0,
+	}); err != nil {
+		t.Fatalf("link item to expiring digest: %v", err)
+	}
 
 	poller := NewPoller(queries)
 	poller.SetExpiry(24*time.Hour, 24*time.Hour)
@@ -306,11 +317,21 @@ func TestExpireOldData(t *testing.T) {
 	for _, it := range remaining {
 		got[it.Title] = true
 	}
-	if !got["fresh-unread"] || !got["old-saved"] || !got["old-linked"] {
-		t.Errorf("expected fresh-unread, old-saved, old-linked to remain, got %v", got)
+	if !got["fresh-unread"] || !got["old-saved"] || !got["old-linked"] || !got["old-expiring"] {
+		t.Errorf("expected fresh-unread, old-saved, old-linked, old-expiring to remain, got %v", got)
 	}
 	if got["old-read"] {
 		t.Error("old-read item survived expiry")
+	}
+
+	// The item linked to the expiring result must flip to read, not stay
+	// digested (which would hide it from every view forever).
+	expiringItem, err := queries.GetItem(t.Context(), expiring.ID)
+	if err != nil {
+		t.Fatalf("get expiring item: %v", err)
+	}
+	if expiringItem.Status != "read" {
+		t.Errorf("expiring item status = %q, want read", expiringItem.Status)
 	}
 
 	// The fresh digest result keeps its item link.

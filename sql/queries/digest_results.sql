@@ -195,3 +195,11 @@ WHERE status = 'digested'
       AND dr.status = 'read'
       AND (?2 IS NULL OR dr.config_id = ?2)
   );
+
+-- name: ListExpiredDigestResultIDs :many
+-- IDs of digest results older than the cutoff. Expiry flips each result's
+-- linked items back to read (MarkDigestResultItemsRead) before deleting the
+-- result, so expiry never strands items in 'digested'.
+SELECT id FROM digest_results WHERE created_at < ? ORDER BY id;
+
+-- end of file

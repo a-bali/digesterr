@@ -648,6 +648,36 @@ func (q *Queries) ListDigestResultsByUserStatusPaginated(ctx context.Context, ar
 	return items, nil
 }
 
+const listExpiredDigestResultIDs = `-- name: ListExpiredDigestResultIDs :many
+SELECT id FROM digest_results WHERE created_at < ? ORDER BY id
+`
+
+// IDs of digest results older than the cutoff. Expiry flips each result's
+// linked items back to read (MarkDigestResultItemsRead) before deleting the
+// result, so expiry never strands items in 'digested'.
+func (q *Queries) ListExpiredDigestResultIDs(ctx context.Context, createdAt time.Time) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listExpiredDigestResultIDs, createdAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnreadDigestItems = `-- name: ListUnreadDigestItems :many
 SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date, i.is_saved FROM items i
 JOIN feeds f ON f.id = i.feed_id
