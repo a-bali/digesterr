@@ -65,6 +65,52 @@
 }
 
 * { border-color: hsl(var(--border)); }
+
+/* Toasts are transient surfaces the app raises, so they carry the active accent
+   instead of neutral chrome. The accent is only MIXED into the app's card colour
+   (12% for the fill, 30% for the border) so every text colour sonner ships keeps
+   the contrast it was designed for — a solid accent fill would need its own
+   foreground colour for each accent and each theme. color-mix is used because the
+   theme store writes --accent as a raw "H S% L%" triplet at runtime, so
+   hsl(var(--accent)) follows whatever accent is active, including one just picked
+   in the theme menu.
+
+   The attribute list is deliberate: it must outrank vue-sonner's own
+   [data-sonner-toaster][data-sonner-theme='light'|'dark'] variable blocks (0,2,0).
+   Matching that specificity would leave the winner to stylesheet order, which
+   differs between the dev server and the bundled build. */
+[data-sonner-toaster][data-sonner-theme][data-rich-colors] {
+  --normal-bg: hsl(var(--card));
+  --normal-border: hsl(var(--border));
+  --success-bg: var(--normal-bg);
+  --success-border: var(--normal-border);
+  --info-bg: var(--normal-bg);
+  --info-border: var(--normal-border);
+  --warning-bg: var(--normal-bg);
+  --warning-border: var(--normal-border);
+  --error-bg: var(--normal-bg);
+  --error-border: var(--normal-border);
+}
+
+/* Gated explicitly rather than left to the transpiler's generated fallback: when
+   the bundler picks the first colour out of color-mix for browsers without
+   support, the accent lands at FULL strength and the toast's text colours — which
+   sonner tuned for a near-white or near-black card — stop being readable. Those
+   browsers keep the neutral card set above instead. */
+@supports (color: color-mix(in lab, red, red)) {
+  [data-sonner-toaster][data-sonner-theme][data-rich-colors] {
+    --normal-bg: color-mix(in srgb, hsl(var(--accent)) 12%, hsl(var(--card)));
+    --normal-border: color-mix(in srgb, hsl(var(--accent)) 30%, hsl(var(--border)));
+  }
+}
+
+/* Sonner hardcodes #3f3f3f for the description, which is unreadable on a tinted
+   dark toast. Inherit the toast's own text colour and step it back for hierarchy. */
+[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-description] {
+  color: inherit;
+  opacity: 0.85;
+}
+
 html, body {
   height: 100%;
   margin: 0;

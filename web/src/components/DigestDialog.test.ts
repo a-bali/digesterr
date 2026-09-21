@@ -173,3 +173,81 @@ describe('DigestDialog min score', () => {
     expect(minScoreInput().disabled).toBe(false)
   })
 })
+
+describe('DigestDialog delete confirmation', () => {
+  const existingConfig = {
+    id: 9,
+    user_id: 1,
+    name: 'Daily',
+    schedule: '0 8 * * *',
+    config: JSON.stringify({ feeds: [{ id: 2, highlights: 5, comments: 10 }] }),
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    vi.clearAllMocks()
+  })
+
+  // Deleting a digest config discards its generated results, so the button must
+  // not be a one-click delete.
+  it('does not delete on the first click — it confirms first', async () => {
+    const wrapper = mountDialog({ config: existingConfig })
+    await flushPromises()
+
+    findButton('Delete').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    expect(wrapper.emitted('delete')).toBeUndefined()
+    expect(document.body.textContent).toContain('Delete digest config?')
+  })
+
+  it('emits delete only after the confirmation is accepted', async () => {
+    const wrapper = mountDialog({ config: existingConfig })
+    await flushPromises()
+
+    findButton('Delete').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    const confirm = document.body.querySelector('[data-delete-digest-confirm]') as HTMLElement
+    expect(confirm).not.toBeNull()
+    confirm.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    expect(wrapper.emitted('delete')?.[0]).toEqual([9])
+  })
+
+  it('cancelling marks nothing deleted', async () => {
+    const wrapper = mountDialog({ config: existingConfig })
+    await flushPromises()
+
+    findButton('Delete').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    findButton('Cancel').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    expect(wrapper.emitted('delete')).toBeUndefined()
+    expect(document.body.textContent).not.toContain('Delete digest config?')
+  })
+
+  // The confirm action must stay reachable: a disabled button would make the
+  // gate a dead end (the same trap as a control disabled until its own change).
+  it('exposes an enabled delete action in the confirmation', async () => {
+    mountDialog({ config: existingConfig })
+    await flushPromises()
+
+    findButton('Delete').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    const confirm = document.body.querySelector('[data-delete-digest-confirm]') as HTMLButtonElement
+    expect(confirm.disabled).toBe(false)
+  })
+
+  it('offers no delete action when creating a new config', async () => {
+    mountDialog()
+    await flushPromises()
+
+    expect(document.body.querySelector('[data-delete-digest]')).toBeNull()
+  })
+})

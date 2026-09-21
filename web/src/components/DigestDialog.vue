@@ -33,6 +33,9 @@ const categoryItems = computed(() => {
 })
 
 const sourceMode = ref<'categories' | 'feeds'>('categories')
+// Deleting a digest config discards its generated results — confirm first
+// (same pattern as delete-feed in FeedDialog).
+const confirmDelete = ref(false)
 const form = reactive({
   name: '',
   schedule: '0 8 * * *',
@@ -59,6 +62,8 @@ const hasScoreCapableSource = computed(() => {
 watch(
   () => props.config,
   (cfg) => {
+    // A stale confirmation must not survive a config swap (e.g. Add after Edit).
+    confirmDelete.value = false
     if (cfg) {
       let ids: TagValue[] = []
       let highlights = 5, comments = 10, maxItems = 100, minScore = 0, prompt = DEFAULT_PROMPT
@@ -174,8 +179,20 @@ function submit() {
       </div>
       <div class="flex gap-2">
         <Button type="submit">{{ config ? 'Save' : 'Create' }}</Button>
-        <Button v-if="config" variant="outline" class="text-destructive" @click="emit('delete', config.id)">Delete</Button>
+        <Button v-if="config" variant="outline" class="text-destructive" data-delete-digest @click="confirmDelete = true">Delete</Button>
       </div>
     </form>
+    <Dialog
+      v-if="confirmDelete"
+      :open="true"
+      title="Delete digest config?"
+      :description="`Delete digest config “${config?.name}”? Its generated results will be removed. This cannot be undone.`"
+      @update:open="v => { if (!v) confirmDelete = false }"
+    >
+      <div class="flex justify-end gap-2">
+        <Button variant="outline" @click="confirmDelete = false">Cancel</Button>
+        <Button variant="outline" class="text-destructive" data-delete-digest-confirm @click="emit('delete', config!.id)">Delete</Button>
+      </div>
+    </Dialog>
   </Dialog>
 </template>
