@@ -166,6 +166,20 @@ CREATE TABLE email_messages (
     UNIQUE (inbox_id, message_id)
 );
 
+-- email_message_recipients normalizes a staged message's recipient list so
+-- routing a feed's plus-address is an indexed equality join instead of a
+-- leading-wildcard LIKE over the to_addrs JSON array (which cannot use an
+-- index and scanned the whole inbox on every feed poll). Cascades from
+-- email_messages so deleting a message drops its recipient rows.
+CREATE TABLE email_message_recipients (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    inbox_id   TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    address    TEXT NOT NULL,
+    UNIQUE (inbox_id, message_id, address),
+    FOREIGN KEY (inbox_id, message_id) REFERENCES email_messages(inbox_id, message_id) ON DELETE CASCADE
+);
+
 -- email_sync_state tracks the per-inbox poll watermark. One row per inbox.
 -- last_synced_at is TEXT for the same reason as email_messages.received_at:
 -- it is compared against, and set from, the API's RFC3339 timestamps.
@@ -208,3 +222,4 @@ CREATE UNIQUE INDEX idx_users_email_inbox ON users(email_inbox) WHERE email_inbo
 CREATE UNIQUE INDEX idx_feeds_email_url ON feeds(url) WHERE type = 'email';
 
 CREATE INDEX idx_email_messages_inbox_received ON email_messages(inbox_id, received_at);
+CREATE INDEX idx_email_recipients_inbox_address ON email_message_recipients(inbox_id, address);

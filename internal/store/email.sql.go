@@ -10,6 +10,24 @@ import (
 	"database/sql"
 )
 
+const addEmailMessageRecipient = `-- name: AddEmailMessageRecipient :exec
+INSERT OR IGNORE INTO email_message_recipients (inbox_id, message_id, address)
+VALUES (?, ?, ?)
+`
+
+type AddEmailMessageRecipientParams struct {
+	InboxID   string `json:"inbox_id"`
+	MessageID string `json:"message_id"`
+	Address   string `json:"address"`
+}
+
+// Records one recipient of a staged message. INSERT OR IGNORE so re-staging
+// (idempotent ingest) never duplicates rows.
+func (q *Queries) AddEmailMessageRecipient(ctx context.Context, arg AddEmailMessageRecipientParams) error {
+	_, err := q.db.ExecContext(ctx, addEmailMessageRecipient, arg.InboxID, arg.MessageID, arg.Address)
+	return err
+}
+
 const createEmailMessageIfNotExists = `-- name: CreateEmailMessageIfNotExists :one
 INSERT OR IGNORE INTO email_messages (
     inbox_id, message_id, thread_id, from_addr, to_addrs,
@@ -205,6 +223,69 @@ type ListEmailMessagesByRecipientParams struct {
 // surface a new newsletter. The caller reverses this for chronological order.
 func (q *Queries) ListEmailMessagesByRecipient(ctx context.Context, arg ListEmailMessagesByRecipientParams) ([]EmailMessage, error) {
 	rows, err := q.db.QueryContext(ctx, listEmailMessagesByRecipient,
+		arg.InboxID,
+		arg.Address,
+		arg.Since,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EmailMessage{}
+	for rows.Next() {
+		var i EmailMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.InboxID,
+			&i.MessageID,
+			&i.ThreadID,
+			&i.FromAddr,
+			&i.ToAddrs,
+			&i.Subject,
+			&i.Text,
+			&i.Html,
+			&i.RawHeaders,
+			&i.ReceivedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEmailMessagesByRecipientExact = `-- name: ListEmailMessagesByRecipientExact :many
+SELECT m.id, m.inbox_id, m.message_id, m.thread_id, m.from_addr, m.to_addrs, m.subject, m.text, m.html, m.raw_headers, m.received_at, m.created_at
+FROM email_messages m
+JOIN email_message_recipients r
+  ON r.inbox_id = m.inbox_id AND r.message_id = m.message_id
+WHERE m.inbox_id = ?1
+  AND r.address = ?2
+  AND (m.received_at IS NULL OR m.received_at > CAST(?3 AS TEXT))
+ORDER BY m.received_at DESC, m.id DESC
+LIMIT ?4
+`
+
+type ListEmailMessagesByRecipientExactParams struct {
+	InboxID string `json:"inbox_id"`
+	Address string `json:"address"`
+	Since   string `json:"since"`
+	Lim     int64  `json:"lim"`
+}
+
+// Indexed twin of ListEmailMessagesByRecipient: exact equality over the
+// normalized recipient table instead of a leading-wildcard LIKE on the JSON
+// array. Same contract (inbox + address + since window, newest first).
+func (q *Queries) ListEmailMessagesByRecipientExact(ctx context.Context, arg ListEmailMessagesByRecipientExactParams) ([]EmailMessage, error) {
+	rows, err := q.db.QueryContext(ctx, listEmailMessagesByRecipientExact,
 		arg.InboxID,
 		arg.Address,
 		arg.Since,

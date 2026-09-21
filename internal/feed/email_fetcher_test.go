@@ -3,6 +3,7 @@ package feed
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -92,6 +93,15 @@ CREATE TABLE email_sync_state (
     last_error_at TEXT,
     updated_at DATETIME NOT NULL DEFAULT (DATETIME('now'))
 );
+CREATE TABLE email_message_recipients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    inbox_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    address TEXT NOT NULL,
+    UNIQUE (inbox_id, message_id, address),
+    FOREIGN KEY (inbox_id, message_id) REFERENCES email_messages(inbox_id, message_id) ON DELETE CASCADE
+);
+CREATE INDEX idx_email_recipients_inbox_address ON email_message_recipients(inbox_id, address);
 `
 
 func emailSyncTestDB(t *testing.T) (*store.Queries, *sql.DB) {
@@ -275,15 +285,73 @@ func TestEmailSyncSanitizesOnIngest(t *testing.T) {
 }
 
 // A text-only newsletter must still produce a readable item.
+// stageWithRecipients stages a message plus its normalized recipient rows,
+// mirroring what the sync stage writes on ingest (the Fetch path reads the
+// recipient rows, never the to_addrs JSON directly).
+func stageWithRecipients(t *testing.T, q *store.Queries, inbox, msgID, receivedAt string, addrs []string, subject string) {
+	t.Helper()
+	toJSON, err := json.Marshal(addrs)
+	if err != nil {
+		t.Fatalf("marshal addrs: %v", err)
+	}
+	if _, err := q.CreateEmailMessageIfNotExists(context.Background(), store.CreateEmailMessageIfNotExistsParams{
+		InboxID: inbox, MessageID: msgID, ToAddrs: string(toJSON),
+		Subject: subject, Text: subject, Html: "<p>x</p>",
+		ReceivedAt: nsString(receivedAt),
+	}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	for _, addr := range addrs {
+		if err := q.AddEmailMessageRecipient(context.Background(), store.AddEmailMessageRecipientParams{
+			InboxID: inbox, MessageID: msgID, Address: addr,
+		}); err != nil {
+			t.Fatalf("stage recipient: %v", err)
+		}
+	}
+}
+
+func TestEmailRecipientRoutingMatchesLegacyLikeQuery(t *testing.T) {
+	// Parity: the indexed exact-match query must return exactly what the old
+	// leading-wildcard LIKE query returned for the same rows.
+	q, _ := emailSyncTestDB(t)
+	ctx := context.Background()
+	stageWithRecipients(t, q, "name@agentmail.to", "<a@x>", "2026-09-15T10:00:00Z", []string{"name+sport@agentmail.to", "name+other@agentmail.to"}, "both")
+	stageWithRecipients(t, q, "name@agentmail.to", "<b@x>", "2026-09-15T10:00:00Z", []string{"name+sport@agentmail.to"}, "sport")
+	stageWithRecipients(t, q, "name@agentmail.to", "<c@x>", "2026-09-15T10:00:00Z", []string{"name+other@agentmail.to"}, "other")
+	stageWithRecipients(t, q, "other@agentmail.to", "<d@x>", "2026-09-15T10:00:00Z", []string{"name+sport@agentmail.to"}, "wrong-inbox")
+
+	legacy, err := q.ListEmailMessagesByRecipient(ctx, store.ListEmailMessagesByRecipientParams{
+		InboxID: "name@agentmail.to", Address: "name+sport@agentmail.to", Since: "", Lim: 200,
+	})
+	if err != nil {
+		t.Fatalf("legacy list: %v", err)
+	}
+	exact, err := q.ListEmailMessagesByRecipientExact(ctx, store.ListEmailMessagesByRecipientExactParams{
+		InboxID: "name@agentmail.to", Address: "name+sport@agentmail.to", Since: "", Lim: 200,
+	})
+	if err != nil {
+		t.Fatalf("exact list: %v", err)
+	}
+	if len(legacy) != len(exact) {
+		t.Fatalf("row count differs: legacy=%d exact=%d", len(legacy), len(exact))
+	}
+	for i := range legacy {
+		if legacy[i].MessageID != exact[i].MessageID {
+			t.Fatalf("row %d differs: legacy=%s exact=%s", i, legacy[i].MessageID, exact[i].MessageID)
+		}
+	}
+}
+
 func TestEmailFetcherTextOnlyMessage(t *testing.T) {
 	q, _ := emailSyncTestDB(t)
 	const addr = "name+sport@agentmail.to"
-	_, err := q.CreateEmailMessageIfNotExists(context.Background(), store.CreateEmailMessageIfNotExistsParams{
-		InboxID: "name@agentmail.to", MessageID: "<text@x>", ToAddrs: `["` + addr + `"]`,
-		Subject: "text only", Text: "line one\nline two", ReceivedAt: nsString("2026-09-15T10:00:00Z"),
-	})
-	if err != nil {
-		t.Fatalf("stage: %v", err)
+	stageWithRecipients(t, q, "name@agentmail.to", "<text@x>", "2026-09-15T10:00:00Z", []string{addr}, "text only")
+	// The helper stages a placeholder body; replace it with the text-only body
+	// this test asserts on.
+	if err := q.UpdateEmailMessageBody(context.Background(), store.UpdateEmailMessageBodyParams{
+		InboxID: "name@agentmail.to", MessageID: "<text@x>", Text: "line one\nline two", Html: "",
+	}); err != nil {
+		t.Fatalf("body: %v", err)
 	}
 
 	items, err := NewEmailFetcher(q, "name@agentmail.to").Fetch(context.Background(), addr)
@@ -312,13 +380,7 @@ func TestEmailFetcherOrdersChronologically(t *testing.T) {
 	const addr = "name+sport@agentmail.to"
 	ctx := context.Background()
 	for i, ts := range []string{"2026-09-15T12:00:00Z", "2026-09-15T10:00:00Z", "2026-09-15T11:00:00Z"} {
-		if _, err := q.CreateEmailMessageIfNotExists(ctx, store.CreateEmailMessageIfNotExistsParams{
-			InboxID: "name@agentmail.to", MessageID: fmt.Sprintf("<m%d@x>", i),
-			ToAddrs: `["` + addr + `"]`, Subject: fmt.Sprintf("s%d", i),
-			Html: "<p>x</p>", ReceivedAt: nsString(ts),
-		}); err != nil {
-			t.Fatalf("stage %d: %v", i, err)
-		}
+		stageWithRecipients(t, q, "name@agentmail.to", fmt.Sprintf("<m%d@x>", i), ts, []string{addr}, fmt.Sprintf("s%d", i))
 	}
 
 	items, err := NewEmailFetcher(q, "name@agentmail.to").Fetch(ctx, addr)

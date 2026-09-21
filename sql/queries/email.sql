@@ -81,3 +81,23 @@ DELETE FROM email_sync_state WHERE inbox_id = ?;
 -- holding RFC3339, so the cutoff is passed in the same format (see the
 -- timestamp note on ListEmailMessagesByRecipient).
 DELETE FROM email_messages WHERE received_at IS NOT NULL AND received_at < ?;
+
+-- name: AddEmailMessageRecipient :exec
+-- Records one recipient of a staged message. INSERT OR IGNORE so re-staging
+-- (idempotent ingest) never duplicates rows.
+INSERT OR IGNORE INTO email_message_recipients (inbox_id, message_id, address)
+VALUES (?, ?, ?);
+
+-- name: ListEmailMessagesByRecipientExact :many
+-- Indexed twin of ListEmailMessagesByRecipient: exact equality over the
+-- normalized recipient table instead of a leading-wildcard LIKE on the JSON
+-- array. Same contract (inbox + address + since window, newest first).
+SELECT m.*
+FROM email_messages m
+JOIN email_message_recipients r
+  ON r.inbox_id = m.inbox_id AND r.message_id = m.message_id
+WHERE m.inbox_id = sqlc.arg(inbox_id)
+  AND r.address = sqlc.arg(address)
+  AND (m.received_at IS NULL OR m.received_at > CAST(sqlc.arg(since) AS TEXT))
+ORDER BY m.received_at DESC, m.id DESC
+LIMIT sqlc.arg(lim);

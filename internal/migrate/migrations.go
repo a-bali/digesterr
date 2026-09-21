@@ -348,6 +348,30 @@ WHERE hash != ''
 		stmts:   []string{"ALTER TABLE feeds ADD COLUMN is_archive INTEGER NOT NULL DEFAULT 0"},
 		applied: columnPresent("feeds", "is_archive"),
 	},
+	{
+		version: 37,
+		name:    "normalize email message recipients",
+		stmts: []string{
+			`CREATE TABLE IF NOT EXISTS email_message_recipients (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    inbox_id   TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    address    TEXT NOT NULL,
+    UNIQUE (inbox_id, message_id, address),
+    FOREIGN KEY (inbox_id, message_id) REFERENCES email_messages(inbox_id, message_id) ON DELETE CASCADE
+)`,
+			`CREATE INDEX IF NOT EXISTS idx_email_recipients_inbox_address ON email_message_recipients(inbox_id, address)`,
+			// Backfill from the JSON array already stored in to_addrs. Only
+			// valid JSON arrays are read (json_valid), so a malformed legacy
+			// value cannot abort startup.
+			`INSERT OR IGNORE INTO email_message_recipients (inbox_id, message_id, address)
+SELECT m.inbox_id, m.message_id, je.value
+FROM email_messages m, json_each(m.to_addrs) je
+WHERE json_valid(m.to_addrs) AND je.value != ''`,
+		},
+		// Baseline when the table already exists (fresh schema, or a prior run).
+		applied: tablePresent("email_message_recipients"),
+	},
 }
 
 // allTrue ANDs guard results: the migration is baselined only when every

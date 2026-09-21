@@ -172,6 +172,21 @@ func (s *EmailSync) Run(ctx context.Context) error {
 			slog.Warn("failed to stage email message", "inbox", inbox, "message_id", ref.MessageID, "error", err)
 			continue
 		}
+		// Normalize recipients for the indexed routing query. INSERT OR IGNORE
+		// so re-staging never duplicates; the LIKE-era to_addrs column stays
+		// as the raw record until the old query is retired.
+		for _, addr := range ref.To {
+			if addr == "" {
+				continue
+			}
+			if err := s.queries.AddEmailMessageRecipient(ctx, store.AddEmailMessageRecipientParams{
+				InboxID:   inbox,
+				MessageID: ref.MessageID,
+				Address:   addr,
+			}); err != nil {
+				slog.Warn("failed to stage email recipient", "inbox", inbox, "message_id", ref.MessageID, "error", err)
+			}
+		}
 
 		// Bodies come from a single GetMessage. The list endpoint omits them and
 		// batch-get silently drops them, so this is the only route.
@@ -278,8 +293,8 @@ func nsString(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: s != ""}
 }
 
-// encodeAddrs renders the recipient list as a JSON array, the form the
-// ListEmailMessagesByRecipient substring match expects.
+// encodeAddrs renders the recipient list as a JSON array, kept as the raw
+// stored record (recipient rows carry the indexed routing copy).
 func encodeAddrs(addrs []string) string {
 	b, err := json.Marshal(addrs)
 	if err != nil {
@@ -316,8 +331,8 @@ func NewEmailFetcher(queries *store.Queries, inboxID string) *EmailFetcher {
 	return &EmailFetcher{queries: queries, inboxID: inboxID}
 }
 
-// emailFetchLimit caps how many messages one feed reads per poll.
-const emailFetchLimit = 200
+	// emailFetchLimit caps how many messages one feed reads per poll.
+const emailFetchLimit int64 = 200
 
 // Fetch returns the items for feedURL (an email feed's full plus-address).
 //
@@ -331,7 +346,7 @@ func (f *EmailFetcher) Fetch(ctx context.Context, feedURL string) ([]Item, error
 	if f.queries == nil || feedURL == "" {
 		return nil, nil
 	}
-	rows, err := f.queries.ListEmailMessagesByRecipient(ctx, store.ListEmailMessagesByRecipientParams{
+	rows, err := f.queries.ListEmailMessagesByRecipientExact(ctx, store.ListEmailMessagesByRecipientExactParams{
 		InboxID: f.inboxID,
 		Address: feedURL,
 		Since:   "",

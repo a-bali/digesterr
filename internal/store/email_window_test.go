@@ -44,6 +44,15 @@ CREATE TABLE email_sync_state (
     last_error_at  TEXT,
     updated_at     DATETIME NOT NULL DEFAULT (DATETIME('now'))
 );
+CREATE TABLE email_message_recipients (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    inbox_id   TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    address    TEXT NOT NULL,
+    UNIQUE (inbox_id, message_id, address),
+    FOREIGN KEY (inbox_id, message_id) REFERENCES email_messages(inbox_id, message_id) ON DELETE CASCADE
+);
+CREATE INDEX idx_email_recipients_inbox_address ON email_message_recipients(inbox_id, address);
 `
 
 func emailTestDB(t *testing.T) *Queries {

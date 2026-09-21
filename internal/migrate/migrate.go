@@ -246,3 +246,14 @@ func noRows(query string, args ...any) func(*sql.DB) (bool, error) {
 func tableAbsent(table string) func(*sql.DB) (bool, error) {
 	return noRows("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", table)
 }
+
+// tablePresent returns an applied-guard that reports true when the named
+// table exists. The mirror of tableAbsent: for migrations whose statements
+// are IF NOT EXISTS / INSERT OR IGNORE idempotent, presence means a prior
+// (or schema-file) run already did the work.
+func tablePresent(table string) func(*sql.DB) (bool, error) {
+	return func(db *sql.DB) (bool, error) {
+		absent, err := tableAbsent(table)(db)
+		return !absent, err
+	}
+}
