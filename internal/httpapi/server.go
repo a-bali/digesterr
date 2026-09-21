@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -322,15 +324,53 @@ func (s *Server) WaitBackground(ctx context.Context) {
 // 1 MiB leaves generous headroom while stopping a memory-exhaustion upload.
 const maxRequestBody = 1 << 20
 
+// requestIDKey carries the request ID in the request context.
+type requestIDKeyT struct{}
+
+var requestIDKey = requestIDKeyT{}
+
+// requestIDOf returns the client's X-Request-ID (truncated to 64 chars) or a
+// fresh random ID. crypto/rand failure falls back to a timestamp: the ID is
+// correlation metadata, not a credential, so availability beats entropy here.
+func requestIDOf(r *http.Request) string {
+	if v := strings.TrimSpace(r.Header.Get("X-Request-ID")); v != "" {
+		if len(v) > 64 {
+			v = v[:64]
+		}
+		return v
+	}
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "req-" + time.Now().UTC().Format("20060102150405.000000000")
+	}
+	return "req-" + hex.EncodeToString(b[:])
+}
+
+// RequestIDFromContext returns the request ID stamped by ServeHTTP, or "".
+func RequestIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(requestIDKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	// Cap request bodies before any handler reads them. The Reader API shares
 	// this path (its form posts are tiny), and static files bypass it entirely.
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
-	rec := &responseRecorder{ResponseWriter: w}
+	// Request ID: echoed back on the response and attached to every request
+	// log line, so an operator can join the access record to the handler
+	// error that followed it. A client-supplied ID is honored (truncated) so
+	// retries stay correlatable across the wire.
+	rid := requestIDOf(r)
+	w.Header().Set("X-Request-ID", rid)
+	r = r.WithContext(context.WithValue(r.Context(), requestIDKey, rid))
+	logger := slog.With("request_id", rid)
+	rec := &responseRecorder{ResponseWriter: w, rid: rid}
 	defer func() {
 		if err := recover(); err != nil {
-			slog.Error("panic recovered", "error", err)
+			logger.Error("panic recovered", "error", err)
 			rec.WriteHeader(http.StatusInternalServerError)
 			writeJSON(rec, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		}
@@ -340,9 +380,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	dur := time.Since(start)
 	// All HTTP traffic is debug-level; failed actions that would otherwise
 	// be info are promoted to warn (see acceptance criteria).
-	slog.Debug("request", "method", r.Method, "host", r.Host, "path", r.URL.Path, "status", status, "duration", dur)
+	logger.Debug("request", "method", r.Method, "host", r.Host, "path", r.URL.Path, "status", status, "duration", dur)
 	if status >= 500 && status < 600 {
-		slog.Warn("request failed with server error", "method", r.Method, "host", r.Host, "path", r.URL.Path, "status", status, "duration", dur)
+		logger.Warn("request failed with server error", "method", r.Method, "host", r.Host, "path", r.URL.Path, "status", status, "duration", dur)
 	}
 }
 
@@ -351,7 +391,13 @@ type responseRecorder struct {
 	status       int
 	wroteHeader  bool
 	bytesWritten int64
+	rid          string
 }
+
+// RequestID exposes the request ID to helpers that only receive the writer,
+// so a 500's server-side log line carries the correlation ID without every
+// call site threading the request through.
+func (rr *responseRecorder) RequestID() string { return rr.rid }
 
 func (rr *responseRecorder) WriteHeader(code int) {
 	if !rr.wroteHeader {

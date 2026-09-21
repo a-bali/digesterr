@@ -20,7 +20,11 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 func writeServerError(w http.ResponseWriter, msg string, err error) {
-	slog.Error("server error", "error", err, "message", msg)
+	args := []any{"error", err, "message", msg}
+	if rr, ok := w.(*responseRecorder); ok && rr.RequestID() != "" {
+		args = append(args, "request_id", rr.RequestID())
+	}
+	slog.Error("server error", args...)
 	writeError(w, http.StatusInternalServerError, msg)
 }
 
