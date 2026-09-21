@@ -101,6 +101,14 @@ feed:
   # Zero = 4 (default).                              [FEED_EXTRACT_CONCURRENCY]
   # extract_concurrency: 4
 
+  # Max feeds fetched at once per poll cycle. Zero = 4 (default).
+  #                                         [FEED_POLL_CONCURRENCY]
+  # poll_concurrency: 4
+
+  # Timeout for one feed's whole poll (fetch + enrich + extract).
+  # Zero = 5m (default).                                [FEED_POLL_TIMEOUT]
+  # poll_timeout: 5m
+
 digest:
   # IANA timezone used to evaluate digest cron schedules (e.g. Europe/Paris).
   # Empty means the server's local timezone.            [DIGEST_SCHEDULER_TIMEZONE]

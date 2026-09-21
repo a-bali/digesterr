@@ -28,7 +28,7 @@ func clearEnv(t *testing.T) {
 		"LOGGING_BUFFER_SIZE", "LOG_BUFFER_SIZE",
 		"LLM_ENDPOINT", "LLM_API_KEY", "LLM_MODEL", "LLM_TIMEOUT",
 		"FEED_SYNC_INTERVAL", "FEED_EXPIRE_ITEMS", "FEED_EXPIRE_DIGESTS",
-		"FEED_EXTRACT_CONCURRENCY",
+		"FEED_EXTRACT_CONCURRENCY", "FEED_POLL_CONCURRENCY", "FEED_POLL_TIMEOUT",
 		"REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET",
 	} {
 		t.Setenv(k, "")
@@ -79,6 +79,12 @@ func TestDefaults(t *testing.T) {
 	}
 	if cfg.Feed.ExpireDigests.Duration() != 365*24*time.Hour {
 		t.Errorf("feed.expire_digests = %v, want 8760h", cfg.Feed.ExpireDigests.Duration())
+	}
+	if cfg.Feed.PollConcurrency != 4 {
+		t.Errorf("feed.poll_concurrency = %d, want 4", cfg.Feed.PollConcurrency)
+	}
+	if cfg.Feed.PollTimeout.Duration() != 5*time.Minute {
+		t.Errorf("feed.poll_timeout = %v, want 5m", cfg.Feed.PollTimeout.Duration())
 	}
 	if cfg.Reddit.ClientID != "" || cfg.Reddit.ClientSecret != "" {
 		t.Errorf("reddit credentials = %q/%q, want empty", cfg.Reddit.ClientID, cfg.Reddit.ClientSecret)
@@ -247,6 +253,8 @@ func TestCanonicalEnvNames(t *testing.T) {
 	t.Setenv("FEED_EXPIRE_ITEMS", "2y")
 	t.Setenv("FEED_EXPIRE_DIGESTS", "1d")
 	t.Setenv("FEED_EXTRACT_CONCURRENCY", "6")
+	t.Setenv("FEED_POLL_CONCURRENCY", "7")
+	t.Setenv("FEED_POLL_TIMEOUT", "90s")
 	t.Setenv("REDDIT_CLIENT_ID", "canonical-rid")
 	t.Setenv("REDDIT_CLIENT_SECRET", "canonical-rsecret")
 
@@ -274,6 +282,12 @@ func TestCanonicalEnvNames(t *testing.T) {
 	}
 	if cfg.Feed.ExtractConcurrency != 6 {
 		t.Errorf("feed.extract_concurrency = %d, want env 6", cfg.Feed.ExtractConcurrency)
+	}
+	if cfg.Feed.PollConcurrency != 7 {
+		t.Errorf("feed.poll_concurrency = %d, want env 7", cfg.Feed.PollConcurrency)
+	}
+	if cfg.Feed.PollTimeout.Duration() != 90*time.Second {
+		t.Errorf("feed.poll_timeout = %v, want env 90s", cfg.Feed.PollTimeout.Duration())
 	}
 	if cfg.Feed.ExpireItems.Duration() != 2*365*24*time.Hour {
 		t.Errorf("feed.expire_items = %v, want 2y", cfg.Feed.ExpireItems.Duration())
