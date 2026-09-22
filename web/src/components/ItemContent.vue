@@ -6,7 +6,7 @@ import { toastSuccess, toastError } from '../lib/toast'
 import Separator from './ui/Separator.vue'
 import DropdownMenu from './ui/DropdownMenu.vue'
 import Skeleton from './ui/Skeleton.vue'
-import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown, Sparkles, Trash2, X, ArrowDownToLine } from 'lucide-vue-next'
+import { BookOpen, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, ChevronDown, Sparkles, X, ArrowDownToLine, Circle, CircleDot } from 'lucide-vue-next'
 import { absoluteTime, relativeTimeAgo } from '../lib/format'
 import { decodeHTMLEntities } from '../lib/utils'
 import { setItemCommentsScroller, clearItemCommentsScroller } from '../lib/itemComments'
@@ -23,22 +23,7 @@ const actionBtn =
   'transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none ' +
   'focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50'
 
-// An action button that is lit while its state holds — read/unread and
-// digested/undigested are TOGGLES, so the control reports the item's state at a
-// glance instead of only naming the action that a click would perform. The accent
-// fill carries "unread"/"undigested" (the states worth surfacing); the muted fill
-// is the resting, nothing-to-do state.
-const toggleBtnOn =
-  'inline-flex size-7 shrink-0 items-center justify-center rounded-md ' +
-  'bg-accent text-accent-foreground transition-colors hover:bg-accent/90 ' +
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
-const toggleBtnOff = actionBtn
-
-function toggleBtnClass(on: boolean) {
-  return on ? toggleBtnOn : toggleBtnOff
-}
-
-defineProps<{
+const props = defineProps<{
   unsaveItem: (item: any) => Promise<void>
 }>()
 
@@ -161,24 +146,18 @@ function onViewKeydown(e: KeyboardEvent) {
 // delete — the same condition under which the action button reads "Re-extract".
 // (`hasExtraction` above is that condition; it is also what the view toggle uses.)
 
-// Read state for the read toggle. `digested` counts as read: the Reader API maps
-// item `digested` → read, and only digesting treats it as a distinct state for
-// filtering. Testing `status === 'read'` alone therefore reported a digested item
-// as unread, showing "Mark Read" on an item that was already read.
-const isRead = computed(() =>
-  feedStore.selectedItem?.status === 'read' || feedStore.selectedItem?.status === 'digested',
-)
+// Read/digest state is read straight from `status` by the status control. Kept
+// note: `digested` is a DISTINCT state here, not a flavour of read — the Reader API
+// maps item `digested` → read for clients, but the pane shows it as its own mark
+// ('◐'), and "Undigested" is the transition back to unread.
 
 // Icon-button state for the header actions. Each pair of values drives
 // `aria-pressed` + the tooltip, so the button reports the item's current state
 // rather than only naming the action.
-const isDigested = computed(() => feedStore.selectedItem?.status === 'digested')
 const isSaved = computed(() => feedStore.selectedItem?.is_saved === 1)
 // "Delete extracted" is offered exactly when an extracted body exists — the same
 // condition under which the extract button reads "Re-extract".
 const canDeleteExtraction = computed(() => extractionSupported.value && hasExtraction.value)
-const readTitle = computed(() => (isRead.value ? 'Mark unread' : 'Mark read'))
-const digestedTitle = computed(() => (isDigested.value ? 'Mark undigested' : 'Mark digested'))
 const saveTitle = computed(() => (isSaved.value ? 'Unsave' : 'Save'))
 const extractTitle = computed(() => (hasExtraction.value ? 'Re-extract' : 'Extract'))
 
@@ -192,25 +171,14 @@ const extractDateTitle = computed(() => {
   return `Extracted ${absoluteTime(item.extract_date)}`
 })
 
-function toggleRead() {
-  if (feedStore.selectedItem) {
-    feedStore.updateItemStatus(feedStore.selectedItem, isRead.value ? 'unread' : 'read')
-  }
-}
-
-function toggleDigested() {
-  if (feedStore.selectedItem) {
-    feedStore.updateItemStatus(feedStore.selectedItem, isDigested.value ? 'unread' : 'digested')
-  }
-}
-
 function toggleSave() {
   const item = feedStore.selectedItem
   if (!item) return
   // Saving and unsaving are separate calls (unsaveItem is injected), and unsave
   // needs the post-save state, so branch on the current state rather than
-  // flipping a flag.
-  if (isSaved.value) unsaveItem(item)
+  // flipping a flag. `props.unsaveItem` — the bare name only resolves inside the
+  // template, which is why calling it from script threw "unsaveItem is not defined".
+  if (isSaved.value) props.unsaveItem(item)
   else feedStore.updateItemStatus(item, undefined, true)
 }
 
@@ -240,7 +208,90 @@ setItemCommentsScroller(scrollToComments)
 // a header control now (top right) rather than a chevron beside the title.
 const canScrollToComments = computed(() => topComments.value.length > 0 || commentsLoading.value)
 
-// --- LLM Summary ---
+// --- Status control (icon before the title + dropdown) ---
+// Small inline glyphs so the menu and the status icon share ONE definition. The
+// mid pane draws digested as '◐'; the delete-extraction icon is the extraction
+// (download-into-tray) glyph with a slash, matching "delete" on the original.
+const DigestedMark = { template: '<span class="inline-flex items-center justify-center leading-none">◐</span>' }
+const DigestedOff = { template: '<span class="inline-flex items-center justify-center leading-none line-through opacity-70">◐</span>' }
+const ExtractionOff = {
+  template:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M12 3v9"/><path d="M8.5 8.5 12 12l3.5-3.5"/>' +
+    '<path d="M4 17h16"/><path d="M4 20h16"/>' +
+    '<path d="M3 3l18 18"/></svg>',
+  props: ['class'],
+}
+
+// --- Status control (icon before the title + dropdown) ---
+// The icon reuses the mid pane's read-state conventions so the same glyph means
+// the same thing in both places: CircleDot (accent) = unread, '◐' = digested,
+// Circle (muted) = read. Saved is an orthogonal flag, drawn as a Check.
+const statusIcon = computed(() => {
+  const s = feedStore.selectedItem?.status
+  if (s === 'unread') return 'unread'
+  if (s === 'digested') return 'digested'
+  return 'read'
+})
+
+// Only transitions that change something are offered — the menu never lists the
+// state the item is already in, so every entry is an action you can take:
+//   read     -> Unread | Digested
+//   unread   -> Read   | Digested
+//   digested -> Read   | Unread (this is "undigest": digested is stored, and
+//               clearing it means returning the item to unread)
+const statusItems = computed(() => {
+  const s = feedStore.selectedItem?.status ?? 'unread'
+  const clear: { label: string; icon: unknown; onClick: () => void }[] =
+    s === 'digested'
+      ? [{ label: 'Undigested', icon: DigestedOff, onClick: () => setStatus('unread') }]
+      : [
+          { label: 'Digested', icon: DigestedMark, onClick: () => setStatus('digested') },
+        ]
+  if (s === 'read') return [{ label: 'Unread', icon: CircleDot, onClick: () => setStatus('unread') }, ...clear]
+  if (s === 'digested') return [{ label: 'Read', icon: Circle, onClick: () => setStatus('read') }, ...clear]
+  return [{ label: 'Read', icon: Circle, onClick: () => setStatus('read') }, ...clear]
+})
+
+// 'undigested' is not a stored status — the store's digested state IS 'digested',
+// so clearing it means returning the item to unread.
+function setStatus(next: 'read' | 'unread' | 'digested') {
+  const item = feedStore.selectedItem
+  if (item) feedStore.updateItemStatus(item, next)
+}
+
+// --- Extraction control (dropdown attached to the Original/Extracted toggle) ---
+// Re-extract and Delete both act on the extracted body, so they hang off the
+// toggle that selects it rather than occupying their own header buttons.
+const extractionItems = computed(() => [
+  { label: extractTitle.value, icon: Download, disabled: extracting.value, onClick: () => { void doExtract() } },
+  {
+    label: 'Delete extracted',
+    icon: ExtractionOff,
+    disabled: extracting.value || !canDeleteExtraction.value,
+    onClick: () => { void doDeleteExtraction() },
+  },
+])
+
+// --- Summary control ---
+// The label names the CURRENT choice; the presets are what you can switch to, and
+// every pick re-runs the summary (including re-picking the current length, which is
+// how you ask for another one).
+const currentSummaryLabel = computed(() => {
+  const key = summaryLength.value
+  return key.charAt(0).toUpperCase() + key.slice(1)
+})
+
+const summaryMenuItems = computed(() =>
+  (Object.keys(SUMMARY_LENGTHS) as SummaryLength[]).map(key => ({
+    label: key.charAt(0).toUpperCase() + key.slice(1),
+    detail: SUMMARY_LENGTHS[key].detail,
+    checked: summaryLength.value === key,
+    onClick: () => selectSummaryLength(key),
+  })),
+)
+
 const summaryLoading = ref(false)
 const summaryData = ref<ItemSummaryResponse | null>(null)
 // The summary is a dismissible box above the body, not a collapsible section:
@@ -262,14 +313,6 @@ const SUMMARY_LENGTHS: Record<SummaryLength, { min: number; max: number; detail:
 }
 const summaryLength = ref<SummaryLength>('medium')
 
-const summaryLengthItems = computed(() =>
-  (Object.keys(SUMMARY_LENGTHS) as SummaryLength[]).map(key => ({
-    label: key.charAt(0).toUpperCase() + key.slice(1),
-    detail: SUMMARY_LENGTHS[key].detail,
-    checked: summaryLength.value === key,
-    onClick: () => selectSummaryLength(key),
-  })),
-)
 
 // The menu IS the summarize control (one control, not a button plus a chevron),
 // so picking a length runs the summary — including re-picking the current length,
@@ -641,26 +684,48 @@ onUnmounted(() => {
       <!-- Sticky: the actions and the content toggle stay reachable while
            reading a long article, which is the whole reason this header is
            compact enough to be worth pinning. -->
-      <div class="sticky top-0 z-10 -mx-3 mb-3 border-b border-border bg-background px-3 pt-1 pb-2.5
-                  relative sm:-mx-6 sm:px-6">
-        <!-- Title and metadata take the full remaining width; the controls sit in a
-             column at the right when the pane is wide enough to give them one, and
-             collapse to a left-aligned stack when it is not. Which happens is decided
-             by the PANE width (`@container` on the wrapper), not the viewport — in a
-             split layout the pane can be phone-narrow on a 2000px screen. -->
+      <!-- One content section. NOT sticky: the header scrolls away with the
+           article, so nothing floats over the text while reading.
+           Title and metadata take the full width; the controls sit in a column at
+           the right when the pane is wide enough, and stack left-aligned when it is
+           not. The PANE width decides (@container), not the viewport — in a split
+           layout the pane can be phone-narrow on a 2000px screen. -->
+      <div class="-mx-3 mb-3 border-b border-border px-3 pt-1 pb-2.5 relative sm:-mx-6 sm:px-6">
         <div class="flex flex-col gap-y-1.5 @[560px]:flex-row @[560px]:items-start @[560px]:gap-x-4">
           <div class="min-w-0 flex-1 @max-[560px]:pr-8">
-            <!-- Title only. The scroll-to-comments control is not pinned here: it
-                 stays top-right in both layouts (see the control column). -->
-            <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank"
-              class="block mb-1 text-[15px] font-semibold leading-snug hover:text-accent transition-colors">
-              {{ decodeHTMLEntities(feedStore.selectedItem.title) }}
-            </a>
-            <h1 v-else class="mb-1 text-[15px] font-semibold leading-snug">{{ decodeHTMLEntities(feedStore.selectedItem.title) }}</h1>
+            <!-- Status icon + title. The icon leads the title because it describes
+                 the ITEM, and it opens the dropdown that sets the state. -->
+            <div class="flex items-start gap-1.5 mb-1">
+              <DropdownMenu :items="statusItems" data-status-menu>
+                <template #trigger>
+                  <button type="button" :class="actionBtn" class="mt-0.5"
+                    :title="`Status: ${statusIcon}`" :aria-label="`Status: ${statusIcon}`"
+                    aria-haspopup="menu" data-action-status>
+                    <CircleDot v-if="statusIcon === 'unread'" class="size-4 text-accent" />
+                    <span v-else-if="statusIcon === 'digested'" class="text-sm leading-none text-muted-foreground/60">◐</span>
+                    <Circle v-else class="size-4 text-muted-foreground/40" />
+                  </button>
+                </template>
+              </DropdownMenu>
+              <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank"
+                class="block min-w-0 text-[15px] font-semibold leading-snug hover:text-accent transition-colors">
+                {{ decodeHTMLEntities(feedStore.selectedItem.title) }}
+              </a>
+              <h1 v-else class="min-w-0 text-[15px] font-semibold leading-snug">{{ decodeHTMLEntities(feedStore.selectedItem.title) }}</h1>
+              <!-- Save sits directly after the status control, as a checkbox-free
+                   toggle: the bookmarks are distinct glyphs, so the filled one reads
+                   as "saved" without relying on colour alone. -->
+              <button type="button" :class="actionBtn" class="mt-0.5"
+                :title="saveTitle" :aria-label="saveTitle" :aria-pressed="isSaved"
+                data-action-save @click="toggleSave">
+                <BookmarkCheck v-if="isSaved" class="size-4 text-accent" />
+                <Bookmark v-else class="size-4" />
+              </button>
+            </div>
             <!-- Metadata: points and comments lead and are bold because they are the
                  signals this header exists to surface; author, feed and age follow as
-                 context. The extraction date is NOT here — it is a hover on the view
-                 toggle, since it only matters while the extracted body is shown. -->
+                 context. The extraction date is a hover on the view toggle, since it
+                 only matters while the extracted body is shown. -->
             <div v-if="hasItemMeta" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
               <span v-if="itemMeta.points" class="flex items-center gap-1 font-semibold text-foreground" title="Points">
                 ▴ {{ itemMeta.points }}
@@ -693,90 +758,78 @@ onUnmounted(() => {
               <span v-if="itemMeta.time" :title="absoluteTime(feedStore.selectedItem.published_at)">{{ itemMeta.time }}</span>
             </div>
           </div>
-          <!-- Control column. Order is fixed: comments (always top-right), then the
-               content view toggle, then the item actions. Icon-only, so six controls
-               fit without competing with the title for width; each keeps a
-               title/aria-label so nothing is discoverable by shape alone. -->
+          <!-- Control column. Summary and comments first (left-most of the right
+               block, so they sit beside the title), then the view toggle with its
+               extraction menu. `self-end` keeps the comments button at the header's
+               top right in both layouts. -->
           <div class="flex flex-col gap-y-1 items-start @[560px]:shrink-0 @[560px]:items-end">
-            <!-- Kept top-right in BOTH layouts. Absolutely positioned while the
-                 layout is stacked, so it sits at the HEADER's top-right rather than
-                 below the title/metadata; in the row layout it returns to the flow
-                 as the first item of the right-hand column. -->
-            <button v-if="canScrollToComments" type="button" :class="actionBtn"
-              class="absolute right-3 top-1 @[560px]:static @[560px]:self-end"
-              title="Scroll to comments (c)" aria-label="Scroll to comments"
-              data-action-comments @click="scrollToComments">
-              <ArrowDownToLine class="size-4" />
-            </button>
-            <!-- Content view toggle (Original/Extracted). Its tooltip carries the
-                 extraction date while the extracted body is the one on screen — the
-                 only time that age matters, so it costs no permanent header space. -->
-            <div
-              v-if="canToggleOriginal"
-              class="inline-flex rounded-md border border-border bg-muted/40 p-0.5"
-              role="radiogroup"
-              aria-label="Content view"
-              data-view-toggle
-              :title="extractDateTitle"
-              @keydown="onViewKeydown"
-            >
-              <button
-                v-for="opt in viewOptions"
-                :key="opt.value"
-                type="button"
-                role="radio"
-                :aria-checked="contentView === opt.value"
-                :tabindex="contentView === opt.value ? 0 : -1"
-                :data-view-option="opt.value"
-                :class="[
-                  'rounded px-2.5 py-0.5 text-xs font-medium transition-colors',
-                  contentView === opt.value
-                    ? 'bg-accent text-accent-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground',
-                ]"
-                @click="selectView(opt.value)"
-              >
-                {{ opt.label }}
+            <div class="flex items-center gap-0.5">
+              <!-- Summary: a button that runs at the current length, plus a small
+                   opener for the presets. The button carries the current choice so
+                   it is visible without opening the menu. -->
+              <button type="button" :class="actionBtn" :disabled="summaryLoading"
+                :title="summaryLoading ? 'Summarizing…' : `Summarize (${currentSummaryLabel})`"
+                :aria-label="summaryLoading ? 'Summarizing' : `Summarize (${currentSummaryLabel})`"
+                data-action-summarize @click="doSummarize">
+                <RefreshCw v-if="summaryLoading" class="size-4 animate-spin" />
+                <Sparkles v-else class="size-4" />
               </button>
-            </div>
-            <!-- The item's own actions. Read/unread and digested/undigested are
-                 TOGGLES that light up in the unread/undigested state, so the header
-                 answers "have I read this" without a click. -->
-            <div class="flex flex-wrap items-center gap-0.5">
-              <button type="button" :class="toggleBtnClass(!isRead)" :title="readTitle" :aria-label="readTitle" :aria-pressed="!isRead"
-                data-action-read @click="toggleRead">
-                <Check class="size-4" />
-              </button>
-              <button type="button" :class="toggleBtnClass(!isDigested)" :title="digestedTitle" :aria-label="digestedTitle" :aria-pressed="!isDigested"
-                data-action-digest @click="toggleDigested">
-                <Files class="size-4" />
-              </button>
-              <button type="button" :class="toggleBtnClass(isSaved)" :title="saveTitle" :aria-label="saveTitle" :aria-pressed="isSaved"
-                data-action-save @click="toggleSave">
-                <BookmarkCheck v-if="isSaved" class="size-4" />
-                <Bookmark v-else class="size-4" />
-              </button>
-              <button v-if="extractionSupported" type="button" :class="actionBtn" :disabled="extracting"
-                :title="extracting ? 'Extracting…' : extractTitle" :aria-label="extracting ? 'Extracting' : extractTitle"
-                data-action-extract @click="doExtract">
-                <RefreshCw v-if="extracting" class="size-4 animate-spin" />
-                <Download v-else class="size-4" />
-              </button>
-              <button v-if="canDeleteExtraction" type="button" :class="actionBtn" :disabled="extracting"
-                title="Delete the extracted content and show the original one" aria-label="Delete extracted"
-                data-action-delete-extracted @click="doDeleteExtraction">
-                <Trash2 class="size-4" />
-              </button>
-              <!-- Summarize is ONE control: the button runs the summary, and its
-                   menu both picks the length and is the only place the current
-                   length is visible. -->
-              <DropdownMenu :items="summaryLengthItems" data-summary-length-menu>
+              <DropdownMenu :items="summaryMenuItems" data-summary-length-menu>
                 <template #trigger>
                   <button type="button" :class="actionBtn" :disabled="summaryLoading"
-                    :title="summaryLoading ? 'Summarizing…' : 'Summarize'" :aria-label="summaryLoading ? 'Summarizing' : 'Summarize'"
-                    data-action-summarize>
-                    <RefreshCw v-if="summaryLoading" class="size-4 animate-spin" />
-                    <Sparkles v-else class="size-4" />
+                    title="Summary length" aria-label="Summary length" aria-haspopup="menu"
+                    data-summary-length-opener>
+                    <ChevronDown class="size-3" />
+                  </button>
+                </template>
+              </DropdownMenu>
+              <button v-if="canScrollToComments" type="button" :class="actionBtn"
+                class="self-end" title="Scroll to comments (c)" aria-label="Scroll to comments"
+                data-action-comments @click="scrollToComments">
+                <ArrowDownToLine class="size-4" />
+              </button>
+            </div>
+            <!-- Content view toggle with its extraction menu attached: the opener is
+                 visually part of the toggle, because Re-extract and Delete act on the
+                 extracted body the toggle selects. The opener additionally requires
+                 extractionSupported — a twitter/reddit-hosted item can have an
+                 extracted body yet offer no extraction actions, and without this the
+                 menu would offer "Re-extract" for a feed that cannot extract. -->
+            <div v-if="canToggleOriginal" class="inline-flex items-stretch rounded-md border border-border bg-muted/40 p-0.5"
+              :title="extractDateTitle">
+              <div
+                class="inline-flex"
+                role="radiogroup"
+                aria-label="Content view"
+                data-view-toggle
+                @keydown="onViewKeydown"
+              >
+                <button
+                  v-for="opt in viewOptions"
+                  :key="opt.value"
+                  type="button"
+                  role="radio"
+                  :aria-checked="contentView === opt.value"
+                  :tabindex="contentView === opt.value ? 0 : -1"
+                  :data-view-option="opt.value"
+                  :class="[
+                    'rounded px-2.5 py-0.5 text-xs font-medium transition-colors',
+                    contentView === opt.value
+                      ? 'bg-accent text-accent-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground',
+                  ]"
+                  @click="selectView(opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+              <DropdownMenu v-if="extractionSupported" :items="extractionItems" data-extraction-menu>
+                <template #trigger>
+                  <button type="button" :disabled="extracting"
+                    class="ml-0.5 inline-flex items-center rounded px-1 text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                    title="Extraction actions" aria-label="Extraction actions" aria-haspopup="menu"
+                    data-extraction-opener>
+                    <ChevronDown class="size-3" />
                   </button>
                 </template>
               </DropdownMenu>

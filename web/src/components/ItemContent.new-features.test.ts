@@ -35,18 +35,17 @@ function summaryLengthItems(): HTMLElement[] {
   return Array.from(document.body.querySelectorAll('[role="menuitem"]')) as HTMLElement[]
 }
 
-// The summarize button IS the menu trigger now (no separate chevron), so opening
-// the length menu means pressing it.
+// Summary is a button plus a small opener: the button runs at the CURRENT length,
+// the opener picks a different preset. So opening the length menu presses the opener.
 async function openSummaryLengthMenu(wrapper: ReturnType<typeof mount>) {
-  const trigger = wrapper.find('[data-action-summarize]')
+  const trigger = wrapper.find('[data-summary-length-opener]')
   expect(trigger.exists()).toBe(true)
   await trigger.trigger('click')
   await flushPromises()
 }
 
-// Summarize is ONE control: the trigger opens the length menu, and picking a
-// length runs the summary. So "summarize at the default length" = open + pick
-// Medium. Tests below use this instead of clicking a bare button.
+// Picking a preset runs the summary at that length, so "summarize at the default"
+// = open the opener and pick Medium.
 async function summarizeVia(wrapper: ReturnType<typeof mount>, label = 'Medium') {
   await openSummaryLengthMenu(wrapper)
   await clickSummaryLengthItem(label)
@@ -244,9 +243,9 @@ describe('ItemContent summarize button', () => {
     const wrapper = mountItemContent(makeItem())
     const btn = wrapper.find('[data-action-summarize]')
     expect(btn.exists()).toBe(true)
-    // Icon-only: the label lives on the accessible name, since an icon button
-    // with no text still has to be announceable.
-    expect(btn.attributes('aria-label')).toBe('Summarize')
+    // Icon-only: the label lives on the accessible name, and it names the CURRENT
+    // length so the choice is visible without opening the menu.
+    expect(btn.attributes('aria-label')).toBe('Summarize (Medium)')
   })
 
   it('shows summary section after summarizing', async () => {
@@ -284,15 +283,22 @@ describe('ItemContent summarize button', () => {
     expect(wrapper.find('[data-summary-box] [aria-expanded]').exists()).toBe(false)
   })
 
-  it('is a single control: the trigger opens the length menu itself', async () => {
+  it('splits into a run button and a length opener', async () => {
     mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
 
     const wrapper = mountItemContent(makeItem())
     expect(wrapper.find('input[type="range"]').exists()).toBe(false)
-    // No separate chevron beside the button — the button IS the menu trigger.
-    expect(wrapper.find('[aria-label="Summary length"]').exists()).toBe(false)
-    const trigger = wrapper.find('[data-action-summarize]')
-    expect(trigger.attributes('aria-haspopup')).toBeTruthy()
+    // Two controls: the button runs at the current length, the opener picks one.
+    const run = wrapper.find('[data-action-summarize]')
+    const opener = wrapper.find('[data-summary-length-opener]')
+    expect(run.exists()).toBe(true)
+    expect(opener.exists()).toBe(true)
+    expect(run.attributes('aria-label')).toBe('Summarize (Medium)')
+
+    // The RUN button summarizes at the current length without opening a menu.
+    await run.trigger('click')
+    await flushPromises()
+    expect(mockSummarize).toHaveBeenCalledWith(1, { sentence_count: 7, min_sentences: 5, max_sentences: 7, detail: 'balanced' })
   })
 
   it('summarizes at medium length by default', async () => {
@@ -362,7 +368,7 @@ describe('ItemContent summarize button', () => {
     expect(checked).toHaveLength(1)
     expect(checked[0].textContent).toContain('Medium')
     // The trigger itself carries no length label.
-    expect(wrapper.find('[data-action-summarize]').attributes('aria-label')).toBe('Summarize')
+    expect(wrapper.find('[data-action-summarize]').attributes('aria-label')).toBe('Summarize (Medium)')
   })
 
   it('re-summarizes at the chosen length when a preset is picked', async () => {

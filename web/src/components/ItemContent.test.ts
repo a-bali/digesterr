@@ -30,6 +30,16 @@ class ResizeObserverStub {
 }
 vi.stubGlobal('ResizeObserver', ResizeObserverStub)
 
+// Menu items render [icon][label] or [label][detail]. The detail span is the only
+// one carrying text-xs, and the icon is an svg or a bare glyph span — so the label
+// is the last span that is neither.
+function menuItemLabel(el: Element): string {
+  const spans = Array.from(el.querySelectorAll('span'))
+  const label = spans.filter(s => !s.className.includes('text-xs'))
+  const last = label[label.length - 1]
+  return (last?.textContent ?? el.textContent ?? '').trim()
+}
+
 function makeItem(overrides: Partial<Item> = {}): Item {
   return {
     id: 1,
@@ -117,45 +127,89 @@ function checkedView(wrapper: ReturnType<typeof mountItemContent>) {
 // `status === 'read'`, which treated digested as unread: the button read "Mark
 // Read" on an item that was already read, and clicking it wrote 'read' — the same
 // state the app already considered it to be in — so it looked like a dead button.
-describe('ItemContent read toggle', () => {
-  // The header actions are icon-only: state is carried by the accent fill,
-  // aria-pressed and the tooltip, not by a label.
-  //
-  // aria-pressed reports the state the control is DISPLAYING, which for these
-  // toggles is the actionable one: lit means "unread"/"undigested", i.e. there is
-  // something to do. So an UNREAD item is pressed='true', and clicking it turns the
-  // fill off. (This is the inverse of the earlier icon-button version, which
-  // reported isRead — see the toggle-fill test below for the visible half.)
-  function readButton(wrapper: ReturnType<typeof mountItemContent>) {
-    return wrapper.find('[data-action-read]')
+describe('ItemContent status control', () => {
+  // The read/digest control is now an ICON before the title (reusing the mid pane's
+  // conventions: CircleDot = unread, '◐' = digested, Circle = read) whose dropdown
+  // offers only the transitions that change something.
+  function statusButton(wrapper: ReturnType<typeof mountItemContent>) {
+    return wrapper.find('[data-action-status]')
   }
+  // The menu renders in a portal on document.body. Each item is [icon][label], so
+  // read the LABEL span — textContent would include the icon glyph ('◐Digested').
+  function statusItems(): string[] {
+    const menus = document.body.querySelectorAll('[role="menu"]')
+    // Only the last-opened menu: reka keeps a closed menu in the DOM through its
+    // exit transition, so a plain query can match a previous test's menu too.
+    const menu = menus[menus.length - 1]
+    return Array.from(menu?.querySelectorAll('[role="menuitem"]') ?? []).map(
+      i => (menuItemLabel(i)).trim(),
+    )
+  }
+  async function openStatus(wrapper: ReturnType<typeof mountItemContent>) {
+    document.body.querySelectorAll('[role="menu"]').forEach(m => m.setAttribute('data-stale', '1'))
+    await statusButton(wrapper).trigger('click')
+    await flushPromises()
+  }
+  beforeEach(() => { document.body.innerHTML = '' })
 
-  it('lights "Mark read" for an unread item', () => {
+  it('shows the unread convention and offers Read + Digested for an unread item', async () => {
     const wrapper = mountItemContent(makeItem({ status: 'unread' }))
-    expect(readButton(wrapper).attributes('title')).toBe('Mark read')
-    expect(readButton(wrapper).attributes('aria-pressed')).toBe('true')
+    expect(statusButton(wrapper).attributes('title')).toBe('Status: unread')
+    await openStatus(wrapper)
+    expect(statusItems()).toEqual(['Read', 'Digested'])
   })
 
-  it('leaves it unlit for a read item, offering "Mark unread"', () => {
+  it('shows the read convention and offers Unread + Digested for a read item', async () => {
     const wrapper = mountItemContent(makeItem({ status: 'read' }))
-    expect(readButton(wrapper).attributes('title')).toBe('Mark unread')
-    expect(readButton(wrapper).attributes('aria-pressed')).toBe('false')
+    expect(statusButton(wrapper).attributes('title')).toBe('Status: read')
+    await openStatus(wrapper)
+    expect(statusItems()).toEqual(['Unread', 'Digested'])
   })
 
-  it('treats a DIGESTED item as read: unlit, offering "Mark unread"', () => {
+  it('shows the digested convention and offers Read + Undigested for a digested item', async () => {
     const wrapper = mountItemContent(makeItem({ status: 'digested' }))
-    expect(readButton(wrapper).attributes('title')).toBe('Mark unread')
-    expect(readButton(wrapper).attributes('aria-pressed')).toBe('false')
+    expect(statusButton(wrapper).attributes('title')).toBe('Status: digested')
+    await openStatus(wrapper)
+    // "Undigested" is the transition back to unread — digested is a stored state,
+    // so clearing it means returning the item to unread.
+    expect(statusItems()).toEqual(['Read', 'Undigested'])
   })
 
-  it('clicking the toggle on a digested item clears it to unread, not to read', () => {
-    const wrapper = mountItemContent(makeItem({ status: 'digested' }))
+  it('never offers the state the item is already in', async () => {
+    for (const [status, own] of [['unread', 'Unread'], ['read', 'Read'], ['digested', 'Digested']] as const) {
+      const wrapper = mountItemContent(makeItem({ status }))
+      await openStatus(wrapper)
+      expect(statusItems()).not.toContain(own)
+      wrapper.unmount()
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('writes the chosen status through the store', async () => {
+    const wrapper = mountItemContent(makeItem({ status: 'unread' }))
     const store = useFeedStore()
-    // Record what the button writes without a network round trip.
     const writes: Array<string | undefined> = []
     store.updateItemStatus = async (_item: any, status?: string) => { writes.push(status) }
 
-    readButton(wrapper)!.trigger('click')
+    await openStatus(wrapper)
+    const dig = Array.from(document.body.querySelectorAll('[role="menuitem"]'))
+      .find(i => menuItemLabel(i) === 'Digested') as HTMLElement
+    dig.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    expect(writes).toEqual(['digested'])
+  })
+
+  it('clears a digested item to unread via Undigested, not to read', async () => {
+    const wrapper = mountItemContent(makeItem({ status: 'digested' }))
+    const store = useFeedStore()
+    const writes: Array<string | undefined> = []
+    store.updateItemStatus = async (_item: any, status?: string) => { writes.push(status) }
+
+    await openStatus(wrapper)
+    const und = Array.from(document.body.querySelectorAll('[role="menuitem"]'))
+      .find(i => menuItemLabel(i) === 'Undigested') as HTMLElement
+    und.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
     expect(writes).toEqual(['unread'])
   })
 })
@@ -276,7 +330,9 @@ describe('ItemContent single content section', () => {
     // only matters while the extracted body is the one on screen, so it costs no
     // permanent header space. Hence a title attribute, not a visible element.
     const stamp = `Extracted ${absoluteTime('2026-08-13T08:00:00Z')}`
-    const tip = () => viewToggle(wrapper).attributes('title')
+    // The title sits on the toggle's bordered WRAPPER, which also holds the
+    // extraction opener — so both controls share the one hover.
+    const tip = () => viewToggle(wrapper).element.parentElement!.getAttribute('title') ?? undefined
     expect(tip()).toBe(stamp)
 
     await viewOption(wrapper, 'original').trigger('click')
@@ -286,13 +342,13 @@ describe('ItemContent single content section', () => {
     expect(tip()).toBe(stamp)
   })
 
-  it('places the toggle in the header action row', () => {
-    // The toggle moved off its own row into the header's action row, which is
-    // what removes a whole band of chrome. It must precede the action buttons.
-    const actions = viewToggle(wrapper).element.parentElement!
-    expect(actions.contains(wrapper.find('[data-action-read]').element)).toBe(true)
-    const order = [...actions.querySelectorAll('[data-view-toggle], [data-action-read]')]
-    expect(order[0].hasAttribute('data-view-toggle')).toBe(true)
+  it('attaches the extraction menu opener to the view toggle', () => {
+    // Re-extract and Delete act on the extracted body, so they hang off the toggle
+    // that selects it instead of occupying their own header buttons.
+    const wrap = viewToggle(wrapper).element.parentElement!
+    expect(wrap.querySelector('[data-extraction-opener]')).not.toBeNull()
+    // Same bordered container, so the opener reads as part of the toggle.
+    expect(wrap.className).toContain('rounded-md')
   })
 
   it('offers no toggle when the item has no extraction', () => {
@@ -327,9 +383,9 @@ describe('ItemContent single content section', () => {
     await viewOption(wrapper, 'original').trigger('click')
     expect(wrapper.text()).toContain('Original body')
     // Actions stay in the header row, still enabled, in both views.
-    expect(wrapper.find('[data-action-read]').attributes('title')).toBe('Mark read')
-    expect(wrapper.find('[data-action-extract]').attributes('title')).toBe('Re-extract')
-    expect(wrapper.find('[data-action-extract]').attributes('disabled')).toBeUndefined()
+    // The status control and the extraction menu survive the view switch.
+    expect(wrapper.find('[data-action-status]').exists()).toBe(true)
+    expect(wrapper.find('[data-extraction-opener]').attributes('disabled')).toBeUndefined()
   })
 
   // A cleared extraction is not a view: the original is all there is.
@@ -436,14 +492,18 @@ describe('ItemContent LLM summary box', () => {
     wrapper = mountItemContent(makeItem())
   })
 
-  // Summarize is ONE control: pressing it opens the length menu, and picking a
-  // length runs the summary. The menu renders in a portal on document.body, so
+  // Summary is a button plus a small opener: the button runs at the CURRENT length,
+  // the opener picks a preset. The menu renders in a portal on document.body, so
   // read the live DOM rather than the wrapper.
   async function summarize() {
-    await wrapper.find('[data-action-summarize]').trigger('click')
+    await wrapper.find('[data-summary-length-opener]').trigger('click')
     await flushPromises()
-    const item = Array.from(document.body.querySelectorAll('[role="menuitem"]'))
-      .find(el => el.textContent?.includes('Medium')) as HTMLElement | undefined
+    const menus = document.body.querySelectorAll('[role="menu"]')
+    const menu = menus[menus.length - 1]
+    // Each item renders [label][detail], so match the label with startsWith rather
+    // than grabbing span:last-child (which is the detail text).
+    const item = Array.from(menu?.querySelectorAll('[role="menuitem"]') ?? [])
+      .find(el => menuItemLabel(el) === 'Medium') as HTMLElement | undefined
     if (!item) throw new Error('summary length item "Medium" not found')
     item.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
@@ -519,7 +579,11 @@ describe('ItemContent extraction switches to the extracted body', () => {
     expect(wrapper.text()).toContain('Original body')
     expect(wrapper.text()).not.toContain('Extracted body')
 
-    await wrapper.find('[data-action-extract]').trigger('click')
+    await wrapper.find('[data-extraction-opener]').trigger('click')
+    await flushPromises()
+    const re = Array.from(document.body.querySelectorAll('[role="menuitem"]'))
+      .find(i => (i.querySelector('span:not([class*=text-xs])')?.textContent ?? '').trim() === 'Re-extract') as HTMLElement
+    re.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await wrapper.vm.$nextTick()
 
     expect(wrapper.text()).toContain('Extracted body')
@@ -536,7 +600,11 @@ describe('ItemContent extraction switches to the extracted body', () => {
     const store = useFeedStore()
     let deleted = false
     store.deleteExtraction = async () => { deleted = true; store.selectedItem = makeItem({ extract_status: 'cleared' }) }
-    await wrapper.find('[data-action-delete-extracted]').trigger('click')
+    await wrapper.find('[data-extraction-opener]').trigger('click')
+    await flushPromises()
+    const del = Array.from(document.body.querySelectorAll('[role="menuitem"]'))
+      .find(i => (i.querySelector('span:not([class*=text-xs])')?.textContent ?? '').trim() === 'Delete extracted') as HTMLElement
+    del.dispatchEvent(new MouseEvent('click', { bubbles: true }))
 
     expect(deleted).toBe(true)
     await wrapper.vm.$nextTick()
