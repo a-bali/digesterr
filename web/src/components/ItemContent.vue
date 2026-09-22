@@ -49,12 +49,6 @@ const itemMeta = computed(() => {
 // comments, author, feed or date renders no empty row.
 const hasItemMeta = computed(() => Object.values(itemMeta.value).some(Boolean))
 
-// Does the header have anything to put in the control slot (the view toggle, or the
-// Extract button)? The slot shares the metadata row, so that row has to render even
-// when there is no metadata at all.
-const hasHeaderControls = computed(
-  () => canToggleOriginal.value || (extractionSupported.value && !hasExtraction.value),
-)
 
 // Content extraction is not useful for twitter (login wall) or reddit
 // posts whose content is already rendered by the fetcher (self-text,
@@ -758,7 +752,8 @@ onUnmounted(() => {
            not. The PANE width decides (@container), not the viewport — in a split
            layout the pane can be phone-narrow on a 2000px screen. -->
       <div class="-mx-3 mb-3 border-b border-border px-3 pt-0.5 pb-2.5 relative sm:-mx-6 sm:px-6">
-        <div class="flex flex-col gap-y-1.5 @[560px]:flex-row @[560px]:items-start @[560px]:gap-x-4">
+        <div class="flex flex-col gap-y-1">
+          <div class="flex flex-col gap-y-1.5 @[560px]:flex-row @[560px]:items-start @[560px]:gap-x-4">
           <div class="min-w-0 flex-1" data-title-col>
             <!-- Status + title. The status leads the title as a CHARACTER set in the
                  headline's own type, so it shares the title's baseline and reads as an
@@ -801,12 +796,20 @@ onUnmounted(() => {
                 <h1 v-else class="min-w-0 text-[15px] font-semibold leading-snug">{{ decodeHTMLEntities(feedStore.selectedItem.title) }}</h1>
               </div>
             </div>
+          </div>
+          </div>
+          <!-- Row 2: the metadata across the FULL pane width, with the view toggle /
+               Extract dock bottom-aligned at its right end. A separate full-width row
+               is what lets the toggle reach the header's right edge -- inside the title
+               column it stopped 172px short -- while keeping it structurally unable to
+               change the title's width: different flex rows never trade space, so the
+               title cannot re-wrap when the toggle appears or disappears. -->
+          <div class="flex flex-col gap-y-1 @[560px]:flex-row @[560px]:items-end @[560px]:gap-x-3">
             <!-- Metadata: points and comments lead and are bold because they are the
                  signals this header exists to surface; author, feed and age follow as
                  context. The extraction date is a hover on the view toggle, since it
                  only matters while the extracted body is shown. -->
-            <div v-if="hasItemMeta || hasHeaderControls"
-              class="flex flex-wrap items-end gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <div v-if="hasItemMeta" class="flex flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
               <span v-if="itemMeta.points" class="flex items-center gap-1 font-semibold text-foreground" title="Points">
                 ▴ {{ itemMeta.points }}
               </span>
@@ -836,7 +839,11 @@ onUnmounted(() => {
                 <span class="opacity-40">·</span>
               </template>
               <span v-if="itemMeta.time" :title="absoluteTime(feedStore.selectedItem.published_at)">{{ itemMeta.time }}</span>
-            <div class="flex w-[10rem] shrink-0 justify-end" data-control-slot>
+            </div>
+            <!-- The view toggle / Extract dock. A CONSTANT width keeps row 2's widths
+                 steady when it appears or disappears, so nothing shifts. Right-aligned
+                 when the pane is wide; the stacked layout aligns it left. -->
+            <div class="flex w-full shrink-0 justify-start @[560px]:w-[11rem] @[560px]:justify-end" data-control-slot>
                 <button v-if="extractionSupported && !hasExtraction" type="button"
                   class="inline-flex shrink-0 items-center rounded text-[15px] leading-snug text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
                   :disabled="extracting"
@@ -885,12 +892,11 @@ onUnmounted(() => {
                 </DropdownMenu>
               </div>
             </div>
-            </div>
           </div>
-          <!-- Control column. First row: Summarize (runs) + its length opener, then
-               scroll-to-comments as the header's top-right-most element. Second row:
-               the view toggle with its extraction menu. The column is right-aligned
-               when the pane is wide enough and left-aligned when it is not. -->
+          <!-- Control column: Summarize (runs) + its length opener, then
+               scroll-to-comments as the header's top-right-most element. Right-aligned
+               when the pane is wide enough and left-aligned when it is not. The view
+               toggle lives in row 2 with the metadata, not here. -->
           <div class="flex flex-col gap-y-1 @[560px]:shrink-0 @[560px]:items-end">
             <div class="flex items-center gap-0.5">
               <!-- Summary: plain text character that runs at the current length, plus
@@ -926,16 +932,7 @@ onUnmounted(() => {
                 <ChevronsDown class="size-[15px]" />
               </a>
             </div>
-            <!-- Content view toggle with its extraction menu to the RIGHT of the
-                 segmented control, inside the same bordered pill. Re-extract and
-                 Delete act on the extracted body the toggle selects. The opener
-                 additionally requires extractionSupported — a twitter or
-                 reddit-hosted item can have an extracted body yet offer no extraction
-                 actions, and without this the menu would offer "Re-extract" for a
-                 feed that cannot extract. -->
-            <!-- Extract button: shown when extraction is supported but no extraction
-                 exists yet (the toggle requires both bodies). After a delete-extraction,
-                 the toggle vanishes and this is the only way to re-extract. -->
+
           </div>
         </div>
       </div>

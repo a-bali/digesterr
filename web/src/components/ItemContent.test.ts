@@ -184,27 +184,31 @@ describe('ItemContent status control', () => {
     expect(wrapper.find('[data-action-save] svg').classes()).toContain('size-[15px]')
   })
 
-  // The view toggle and the Extract button must not be able to change the TITLE's
-  // width, or the title re-wraps when the toggle appears/disappears (after an
-  // extraction completes or is deleted). jsdom has no layout engine, so this asserts
-  // the invariant that guarantees it: the control slot sits INSIDE the title's own
-  // column (at the end of the metadata row), so the column merely has to accommodate
-  // it -- it can never take width away from the title. In the sibling control COLUMN
-  // it could, which is the bug this pins.
-  it('keeps the view toggle inside the title column so the title cannot re-wrap', () => {
+  // The view toggle / Extract dock must be right-aligned with the header's content
+  // edge and bottom-aligned with the subtitle. It sits in its own full-width row UNDER
+  // the title row: inside the title's column it could not reach the right edge (it
+  // measured 172px short), and in the control column it stole width from the title.
+  // jsdom has no layout, so this pins the structure that guarantees both, including
+  // the constant width that keeps the title from re-wrapping when the dock changes.
+  it('docks the view toggle beside the metadata, in a row of its own', () => {
     const wrapper = mountItemContent(makeItem({ status: 'unread' }))
+    const slot = wrapper.find('[data-control-slot]')
+    expect(slot.exists()).toBe(true)
+    // Constant width, so the dock appearing/disappearing cannot shift the layout.
+    expect(slot.classes()).toContain('w-full')
+    expect(slot.classes().join(' ')).toContain('@[560px]:w-[11rem]')
+    expect(slot.classes()).toContain('justify-start')
+    expect(slot.classes().join(' ')).toContain('@[560px]:justify-end')
+    // The dock and the metadata share one row, which is NOT the title's column.
+    const metaRow = slot.element.parentElement as HTMLElement
+    const meta = metaRow.querySelector('.flex-wrap') as HTMLElement
+    expect(meta).not.toBeNull()
+    expect(meta.parentElement).toBe(metaRow)
+    // The title's column does not contain the dock.
     const titleCol = wrapper.find('[data-title-col]').element
-    const slot = wrapper.find('[data-control-slot]').element
-    const titleEl = wrapper.find('h1, a[href^="http"]').element
-    // The slot and the title are in the SAME column...
-    expect(titleCol.contains(slot)).toBe(true)
-    expect(titleCol.contains(titleEl)).toBe(true)
-    // ...and the control column (Summarize's column) is NOT that column.
-    const summarize = wrapper.find('[data-action-summarize]').element
-    expect(summarize.closest('[data-title-col]')).toBeNull()
-    expect(titleCol.contains(summarize)).toBe(false)
-    // The slot is in the metadata row, so it cannot push the title's own line.
-    expect((slot.parentElement as HTMLElement).className).toContain('flex-wrap')
+    expect(titleCol.contains(slot.element)).toBe(false)
+    // The metadata row is not the title column either.
+    expect(titleCol.contains(metaRow)).toBe(false)
   })
 
   it('shows the unread convention and offers Read + Digested for an unread item', async () => {
