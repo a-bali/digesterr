@@ -693,17 +693,20 @@ onUnmounted(() => {
       <div class="-mx-3 mb-3 border-b border-border px-3 pt-1 pb-2.5 relative sm:-mx-6 sm:px-6">
         <div class="flex flex-col gap-y-1.5 @[560px]:flex-row @[560px]:items-start @[560px]:gap-x-4">
           <div class="min-w-0 flex-1 @max-[560px]:pr-8">
-            <!-- Status icon + title. The icon leads the title because it describes
-                 the ITEM, and it opens the dropdown that sets the state. -->
-            <div class="flex items-start gap-1.5 mb-1">
+            <!-- Status icon + title. The icon leads the title as a CHARACTER rather
+                 than a padded button, so it reads as part of the headline; the tiny
+                 chevron at its bottom-right is the affordance that it opens a menu. -->
+            <div class="flex items-start gap-1 mb-1">
               <DropdownMenu :items="statusItems" data-status-menu>
                 <template #trigger>
-                  <button type="button" :class="actionBtn" class="mt-0.5"
+                  <button type="button"
+                    class="relative -ml-1 mt-[3px] inline-flex shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                     :title="`Status: ${statusIcon}`" :aria-label="`Status: ${statusIcon}`"
                     aria-haspopup="menu" data-action-status>
                     <CircleDot v-if="statusIcon === 'unread'" class="size-4 text-accent" />
                     <span v-else-if="statusIcon === 'digested'" class="text-sm leading-none text-muted-foreground/60">◐</span>
                     <Circle v-else class="size-4 text-muted-foreground/40" />
+                    <ChevronDown class="absolute -bottom-0.5 -right-0.5 size-2.5 text-muted-foreground/70" />
                   </button>
                 </template>
               </DropdownMenu>
@@ -712,9 +715,9 @@ onUnmounted(() => {
                 {{ decodeHTMLEntities(feedStore.selectedItem.title) }}
               </a>
               <h1 v-else class="min-w-0 text-[15px] font-semibold leading-snug">{{ decodeHTMLEntities(feedStore.selectedItem.title) }}</h1>
-              <!-- Save sits directly after the status control, as a checkbox-free
-                   toggle: the bookmarks are distinct glyphs, so the filled one reads
-                   as "saved" without relying on colour alone. -->
+              <!-- Save sits directly after the title, as a checkbox-free toggle: the
+                   bookmarks are distinct glyphs, so the filled one reads as "saved"
+                   without relying on colour alone. -->
               <button type="button" :class="actionBtn" class="mt-0.5"
                 :title="saveTitle" :aria-label="saveTitle" :aria-pressed="isSaved"
                 data-action-save @click="toggleSave">
@@ -764,38 +767,42 @@ onUnmounted(() => {
                top right in both layouts. -->
           <div class="flex flex-col gap-y-1 items-start @[560px]:shrink-0 @[560px]:items-end">
             <div class="flex items-center gap-0.5">
-              <!-- Summary: a button that runs at the current length, plus a small
-                   opener for the presets. The button carries the current choice so
-                   it is visible without opening the menu. -->
-              <button type="button" :class="actionBtn" :disabled="summaryLoading"
-                :title="summaryLoading ? 'Summarizing…' : `Summarize (${currentSummaryLabel})`"
-                :aria-label="summaryLoading ? 'Summarizing' : `Summarize (${currentSummaryLabel})`"
-                data-action-summarize @click="doSummarize">
-                <RefreshCw v-if="summaryLoading" class="size-4 animate-spin" />
-                <Sparkles v-else class="size-4" />
-              </button>
-              <DropdownMenu :items="summaryMenuItems" data-summary-length-menu>
-                <template #trigger>
-                  <button type="button" :class="actionBtn" :disabled="summaryLoading"
-                    title="Summary length" aria-label="Summary length" aria-haspopup="menu"
-                    data-summary-length-opener>
-                    <ChevronDown class="size-3" />
-                  </button>
-                </template>
-              </DropdownMenu>
+              <!-- Summary: ONE button that runs at the current length, with a tiny
+                   chevron tucked into its bottom-right corner for the presets. The
+                   chevron is a separate hit target (it must not also run the summary)
+                   but overlays the button's corner so the pair reads as one control. -->
+              <div class="relative">
+                <button type="button" :class="actionBtn" :disabled="summaryLoading"
+                  :title="summaryLoading ? 'Summarizing…' : `Summarize (${currentSummaryLabel})`"
+                  :aria-label="summaryLoading ? 'Summarizing' : `Summarize (${currentSummaryLabel})`"
+                  data-action-summarize @click="doSummarize">
+                  <RefreshCw v-if="summaryLoading" class="size-4 animate-spin" />
+                  <Sparkles v-else class="size-4" />
+                </button>
+                <DropdownMenu :items="summaryMenuItems" data-summary-length-menu>
+                  <template #trigger>
+                    <button type="button" :disabled="summaryLoading"
+                      class="absolute -bottom-0.5 -right-0.5 inline-flex size-3 items-center justify-center rounded-sm bg-background text-muted-foreground/70 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                      title="Summary length" aria-label="Summary length" aria-haspopup="menu"
+                      data-summary-length-opener>
+                      <ChevronDown class="size-2.5" />
+                    </button>
+                  </template>
+                </DropdownMenu>
+              </div>
               <button v-if="canScrollToComments" type="button" :class="actionBtn"
                 class="self-end" title="Scroll to comments (c)" aria-label="Scroll to comments"
                 data-action-comments @click="scrollToComments">
                 <ArrowDownToLine class="size-4" />
               </button>
             </div>
-            <!-- Content view toggle with its extraction menu attached: the opener is
-                 visually part of the toggle, because Re-extract and Delete act on the
-                 extracted body the toggle selects. The opener additionally requires
-                 extractionSupported — a twitter/reddit-hosted item can have an
-                 extracted body yet offer no extraction actions, and without this the
-                 menu would offer "Re-extract" for a feed that cannot extract. -->
-            <div v-if="canToggleOriginal" class="inline-flex items-stretch rounded-md border border-border bg-muted/40 p-0.5"
+            <!-- Content view toggle with its extraction menu tucked into the corner:
+                 Re-extract and Delete act on the extracted body the toggle selects.
+                 The opener additionally requires extractionSupported — a twitter or
+                 reddit-hosted item can have an extracted body yet offer no extraction
+                 actions, and without this the menu would offer "Re-extract" for a
+                 feed that cannot extract. -->
+            <div v-if="canToggleOriginal" class="relative inline-flex items-stretch rounded-md border border-border bg-muted/40 p-0.5"
               :title="extractDateTitle">
               <div
                 class="inline-flex"
@@ -826,10 +833,10 @@ onUnmounted(() => {
               <DropdownMenu v-if="extractionSupported" :items="extractionItems" data-extraction-menu>
                 <template #trigger>
                   <button type="button" :disabled="extracting"
-                    class="ml-0.5 inline-flex items-center rounded px-1 text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                    class="absolute -bottom-0.5 -right-0.5 inline-flex size-3 items-center justify-center rounded-sm bg-background text-muted-foreground/70 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                     title="Extraction actions" aria-label="Extraction actions" aria-haspopup="menu"
                     data-extraction-opener>
-                    <ChevronDown class="size-3" />
+                    <ChevronDown class="size-2.5" />
                   </button>
                 </template>
               </DropdownMenu>
