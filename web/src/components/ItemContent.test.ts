@@ -12,13 +12,23 @@ vi.mock('../services/api', () => ({
     getComments: vi.fn(async () => ({ comments: [], cached: false })),
   },
 }))
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'
 import ItemContent from './ItemContent.vue'
 import { useFeedStore } from '../stores/feed'
 import { absoluteTime, relativeTimeAgo } from '../lib/format'
 import type { Feed, Item } from '../types/api'
+
+// reka-ui's dropdown content measures itself with ResizeObserver, which jsdom
+// does not provide. The Summarize control IS a dropdown trigger now, so the
+// summary-box tests need this stub.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+vi.stubGlobal('ResizeObserver', ResizeObserverStub)
 
 function makeItem(overrides: Partial<Item> = {}): Item {
   return {
@@ -108,29 +118,34 @@ function checkedView(wrapper: ReturnType<typeof mountItemContent>) {
 // Read" on an item that was already read, and clicking it wrote 'read' — the same
 // state the app already considered it to be in — so it looked like a dead button.
 describe('ItemContent read toggle', () => {
-  // The header actions are icon-only: state is carried by aria-pressed and the
-  // tooltip, not by a label. The read button's tooltip still says "Mark read" /
-  // "Mark unread", so a state regression is still visible.
+  // The header actions are icon-only: state is carried by the accent fill,
+  // aria-pressed and the tooltip, not by a label.
+  //
+  // aria-pressed reports the state the control is DISPLAYING, which for these
+  // toggles is the actionable one: lit means "unread"/"undigested", i.e. there is
+  // something to do. So an UNREAD item is pressed='true', and clicking it turns the
+  // fill off. (This is the inverse of the earlier icon-button version, which
+  // reported isRead — see the toggle-fill test below for the visible half.)
   function readButton(wrapper: ReturnType<typeof mountItemContent>) {
     return wrapper.find('[data-action-read]')
   }
 
-  it('offers "Mark read" for an unread item', () => {
+  it('lights "Mark read" for an unread item', () => {
     const wrapper = mountItemContent(makeItem({ status: 'unread' }))
     expect(readButton(wrapper).attributes('title')).toBe('Mark read')
+    expect(readButton(wrapper).attributes('aria-pressed')).toBe('true')
+  })
+
+  it('leaves it unlit for a read item, offering "Mark unread"', () => {
+    const wrapper = mountItemContent(makeItem({ status: 'read' }))
+    expect(readButton(wrapper).attributes('title')).toBe('Mark unread')
     expect(readButton(wrapper).attributes('aria-pressed')).toBe('false')
   })
 
-  it('offers "Mark unread" for a read item', () => {
-    const wrapper = mountItemContent(makeItem({ status: 'read' }))
-    expect(readButton(wrapper).attributes('title')).toBe('Mark unread')
-    expect(readButton(wrapper).attributes('aria-pressed')).toBe('true')
-  })
-
-  it('offers "Mark unread" for a DIGESTED item, which is a read item', () => {
+  it('treats a DIGESTED item as read: unlit, offering "Mark unread"', () => {
     const wrapper = mountItemContent(makeItem({ status: 'digested' }))
     expect(readButton(wrapper).attributes('title')).toBe('Mark unread')
-    expect(readButton(wrapper).attributes('aria-pressed')).toBe('true')
+    expect(readButton(wrapper).attributes('aria-pressed')).toBe('false')
   })
 
   it('clicking the toggle on a digested item clears it to unread, not to read', () => {
@@ -418,12 +433,17 @@ describe('ItemContent LLM summary box', () => {
     wrapper = mountItemContent(makeItem())
   })
 
+  // Summarize is ONE control: pressing it opens the length menu, and picking a
+  // length runs the summary. The menu renders in a portal on document.body, so
+  // read the live DOM rather than the wrapper.
   async function summarize() {
-    // Icon-only now: selected by its hook, not by label text.
-    const btn = wrapper.find('[data-action-summarize]')
-    await btn.trigger('click')
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
+    await wrapper.find('[data-action-summarize]').trigger('click')
+    await flushPromises()
+    const item = Array.from(document.body.querySelectorAll('[role="menuitem"]'))
+      .find(el => el.textContent?.includes('Medium')) as HTMLElement | undefined
+    if (!item) throw new Error('summary length item "Medium" not found')
+    item.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
   }
 
   it('renders no summary box before one is generated', () => {

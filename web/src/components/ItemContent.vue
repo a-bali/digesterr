@@ -6,7 +6,7 @@ import { toastSuccess, toastError } from '../lib/toast'
 import Separator from './ui/Separator.vue'
 import DropdownMenu from './ui/DropdownMenu.vue'
 import Skeleton from './ui/Skeleton.vue'
-import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown, Sparkles, Trash2, X } from 'lucide-vue-next'
+import { BookOpen, Check, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, Files, ChevronDown, Sparkles, Trash2, X, ArrowDownToLine } from 'lucide-vue-next'
 import { absoluteTime, relativeTimeAgo } from '../lib/format'
 import { decodeHTMLEntities } from '../lib/utils'
 import { setItemCommentsScroller, clearItemCommentsScroller } from '../lib/itemComments'
@@ -22,6 +22,21 @@ const actionBtn =
   'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground ' +
   'transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none ' +
   'focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50'
+
+// An action button that is lit while its state holds — read/unread and
+// digested/undigested are TOGGLES, so the control reports the item's state at a
+// glance instead of only naming the action that a click would perform. The accent
+// fill carries "unread"/"undigested" (the states worth surfacing); the muted fill
+// is the resting, nothing-to-do state.
+const toggleBtnOn =
+  'inline-flex size-7 shrink-0 items-center justify-center rounded-md ' +
+  'bg-accent text-accent-foreground transition-colors hover:bg-accent/90 ' +
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+const toggleBtnOff = actionBtn
+
+function toggleBtnClass(on: boolean) {
+  return on ? toggleBtnOn : toggleBtnOff
+}
 
 defineProps<{
   unsaveItem: (item: any) => Promise<void>
@@ -211,6 +226,10 @@ function scrollToComments() {
 // Hand the scroller to the shared handle the HomeView keyboard shortcut reads.
 setItemCommentsScroller(scrollToComments)
 
+// Scroll-to-comments is offered only when there is something to scroll to. It is
+// a header control now (top right) rather than a chevron beside the title.
+const canScrollToComments = computed(() => topComments.value.length > 0 || commentsLoading.value)
+
 // --- LLM Summary ---
 const summaryLoading = ref(false)
 const summaryData = ref<ItemSummaryResponse | null>(null)
@@ -242,12 +261,13 @@ const summaryLengthItems = computed(() =>
   })),
 )
 
-// Picking a different length re-runs the summary so the choice takes effect
-// immediately; before the first summary it only sets what will be requested.
+// The menu IS the summarize control (one control, not a button plus a chevron),
+// so picking a length runs the summary — including re-picking the current length,
+// which is how you ask for another summary. Returning early on an unchanged pick
+// would make the only control dead exactly when the user wants to re-run.
 function selectSummaryLength(length: SummaryLength) {
-  if (summaryLength.value === length) return
   summaryLength.value = length
-  if (summaryData.value) void doSummarize()
+  void doSummarize()
 }
 
 // Item title for naming it in a toast; undefined when blank so no empty line renders.
@@ -601,8 +621,8 @@ onUnmounted(() => {
       </div>
     </div>
     <div v-else class="@container">
-      <!-- One content section. The header carries everything: title, then a
-           metadata line, then a compact icon row for the actions — five stacked
+      <!-- One content section. The header carries everything: title and metadata
+           on the left, with the controls floated to the top right — five stacked
            bands (title / meta / actions / toggle / date) cost ~206px before the
            first word of content. The pane is a `@container`, not the viewport,
            because its width depends on the split layout: at 50% on a 2000px
@@ -615,23 +635,13 @@ onUnmounted(() => {
                   @max-[520px]:pb-2 sm:-mx-6 sm:px-6">
           <div class="flex items-center gap-3 @max-[520px]:flex-wrap @max-[520px]:gap-y-2">
             <div class="min-w-0 flex-1 @max-[520px]:basis-full">
-              <!-- Title row with scroll-to-comments arrow -->
-              <div class="flex items-start justify-between gap-2 mb-1">
-                <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank"
-                  class="text-[15px] font-semibold leading-snug hover:text-accent transition-colors">
-                  {{ decodeHTMLEntities(feedStore.selectedItem.title) }}
-                </a>
-                <h1 v-else class="text-[15px] font-semibold leading-snug">{{ decodeHTMLEntities(feedStore.selectedItem.title) }}</h1>
-                <button
-                  v-if="topComments.length > 0 || commentsLoading"
-                  type="button"
-                  class="shrink-0 mt-0.5 p-1 rounded text-muted-foreground hover:text-accent hover:bg-muted transition-colors"
-                  title="Scroll to comments (c)"
-                  @click="scrollToComments"
-                >
-                  <ChevronDown class="size-4" />
-                </button>
-              </div>
+              <!-- Title only. The scroll-to-comments control is no longer pinned
+                   here — it lives with the other header controls, top right. -->
+              <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank"
+                class="block mb-1 text-[15px] font-semibold leading-snug hover:text-accent transition-colors">
+                {{ decodeHTMLEntities(feedStore.selectedItem.title) }}
+              </a>
+              <h1 v-else class="mb-1 text-[15px] font-semibold leading-snug">{{ decodeHTMLEntities(feedStore.selectedItem.title) }}</h1>
               <!-- Metadata: points and comments lead and are bold because they are
                    the signals this header exists to surface; author, feed and age
                    follow as context. Left-aligned at every width. -->
@@ -673,14 +683,16 @@ onUnmounted(() => {
                 </template>
               </div>
             </div>
-            <!-- Actions. Icon-only because six labelled buttons do not fit beside
-                 the title; each keeps a title/aria-label so nothing is discoverable
-                 by shape alone. aria-pressed carries the item's current state, so a
-                 saved item's button reports itself as pressed. -->
-            <div class="flex shrink-0 items-center gap-0.5 @max-[520px]:w-full @max-[520px]:justify-start">
-              <!-- Content view toggle: the first control in the row, so mobile's
-                   left-aligned action row starts with it. Exactly one body is on
-                   screen, hence a radiogroup rather than two independent buttons. -->
+            <!-- Actions, floated to the top right of the header. Icon-only
+                 because six controls do not fit beside a title; each keeps a
+                 title/aria-label so nothing is discoverable by shape alone.
+                 Read/unread and digested/undigested are TOGGLES that light up in
+                 the unread/undigested state, so the header answers "have I read
+                 this, have I digested it" without a click. -->
+            <div class="flex shrink-0 items-center gap-0.5 self-start @max-[520px]:w-full @max-[520px]:justify-start">
+              <!-- Content view toggle (Original/Extracted). Kept from the layout
+                   you approved: first in the row, since it selects which body the
+                   text below shows rather than acting on the item. -->
               <div
                 v-if="canToggleOriginal"
                 class="mr-1 inline-flex rounded-md border border-border bg-muted/40 p-0.5"
@@ -708,18 +720,24 @@ onUnmounted(() => {
                   {{ opt.label }}
                 </button>
               </div>
-              <button type="button" :class="actionBtn" :title="readTitle" :aria-label="readTitle" :aria-pressed="isRead"
+              <button type="button" :class="toggleBtnClass(!isRead)" :title="readTitle" :aria-label="readTitle" :aria-pressed="!isRead"
                 data-action-read @click="toggleRead">
                 <Check class="size-4" />
               </button>
-              <button type="button" :class="actionBtn" :title="digestedTitle" :aria-label="digestedTitle" :aria-pressed="isDigested"
+              <button type="button" :class="toggleBtnClass(!isDigested)" :title="digestedTitle" :aria-label="digestedTitle" :aria-pressed="!isDigested"
                 data-action-digest @click="toggleDigested">
                 <Files class="size-4" />
               </button>
-              <button type="button" :class="actionBtn" :title="saveTitle" :aria-label="saveTitle" :aria-pressed="isSaved"
+              <button type="button" :class="toggleBtnClass(isSaved)" :title="saveTitle" :aria-label="saveTitle" :aria-pressed="isSaved"
                 data-action-save @click="toggleSave">
                 <BookmarkCheck v-if="isSaved" class="size-4" />
                 <Bookmark v-else class="size-4" />
+              </button>
+              <!-- Scroll to the comments block, beside the other header controls. -->
+              <button v-if="canScrollToComments" type="button" :class="actionBtn"
+                title="Scroll to comments (c)" aria-label="Scroll to comments" data-action-comments
+                @click="scrollToComments">
+                <ArrowDownToLine class="size-4" />
               </button>
               <button v-if="extractionSupported" type="button" :class="actionBtn" :disabled="extracting"
                 :title="extracting ? 'Extracting…' : extractTitle" :aria-label="extracting ? 'Extracting' : extractTitle"
@@ -732,29 +750,20 @@ onUnmounted(() => {
                 data-action-delete-extracted @click="doDeleteExtraction">
                 <Trash2 class="size-4" />
               </button>
-              <!-- Split button: summarizing runs at the selected length, and the
-                   attached chevron opens the length picker. -->
-              <div class="flex items-center">
-                <button type="button" :disabled="summaryLoading"
-                  :title="summaryLoading ? 'Summarizing…' : 'Summarize'" :aria-label="summaryLoading ? 'Summarizing' : 'Summarize'"
-                  class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-                  data-action-summarize @click="doSummarize">
-                  <RefreshCw v-if="summaryLoading" class="size-4 animate-spin" />
-                  <Sparkles v-else class="size-4" />
-                </button>
-                <DropdownMenu :items="summaryLengthItems" data-summary-length-menu>
-                  <template #trigger>
-                    <button
-                      type="button"
-                      :disabled="summaryLoading"
-                      aria-label="Summary length"
-                      class="inline-flex h-7 items-center rounded-md px-0.5 text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-                    >
-                      <ChevronDown class="size-3" />
-                    </button>
-                  </template>
-                </DropdownMenu>
-              </div>
+              <!-- Summarize is ONE control: the button runs the summary, and its
+                   menu both picks the length and is the only place the current
+                   length is visible. A chevron beside a separate button made the
+                   two read as unrelated controls. -->
+              <DropdownMenu :items="summaryLengthItems" data-summary-length-menu>
+                <template #trigger>
+                  <button type="button" :class="actionBtn" :disabled="summaryLoading"
+                    :title="summaryLoading ? 'Summarizing…' : 'Summarize'" :aria-label="summaryLoading ? 'Summarizing' : 'Summarize'"
+                    data-action-summarize>
+                    <RefreshCw v-if="summaryLoading" class="size-4 animate-spin" />
+                    <Sparkles v-else class="size-4" />
+                  </button>
+                </template>
+              </DropdownMenu>
             </div>
           </div>
       </div>

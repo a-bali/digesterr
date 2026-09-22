@@ -35,10 +35,21 @@ function summaryLengthItems(): HTMLElement[] {
   return Array.from(document.body.querySelectorAll('[role="menuitem"]')) as HTMLElement[]
 }
 
+// The summarize button IS the menu trigger now (no separate chevron), so opening
+// the length menu means pressing it.
 async function openSummaryLengthMenu(wrapper: ReturnType<typeof mount>) {
-  const trigger = wrapper.find('[aria-label="Summary length"]')
+  const trigger = wrapper.find('[data-action-summarize]')
   expect(trigger.exists()).toBe(true)
   await trigger.trigger('click')
+  await flushPromises()
+}
+
+// Summarize is ONE control: the trigger opens the length menu, and picking a
+// length runs the summary. So "summarize at the default length" = open + pick
+// Medium. Tests below use this instead of clicking a bare button.
+async function summarizeVia(wrapper: ReturnType<typeof mount>, label = 'Medium') {
+  await openSummaryLengthMenu(wrapper)
+  await clickSummaryLengthItem(label)
   await flushPromises()
 }
 
@@ -245,8 +256,7 @@ describe('ItemContent summarize button', () => {
     })
 
     const wrapper = mountItemContent(makeItem())
-    const btn = wrapper.find('[data-action-summarize]')
-    await btn.trigger('click')
+    await summarizeVia(wrapper)
 
     // Wait for the async mock to resolve and Vue to re-render.
     await vi.dynamicImportSettled()
@@ -274,26 +284,24 @@ describe('ItemContent summarize button', () => {
     expect(wrapper.find('[data-summary-box] [aria-expanded]').exists()).toBe(false)
   })
 
-  it('has no length slider any more', async () => {
+  it('is a single control: the trigger opens the length menu itself', async () => {
     mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
 
     const wrapper = mountItemContent(makeItem())
-    const btn = wrapper.find('[data-action-summarize]')
-    await btn.trigger('click')
-    await vi.dynamicImportSettled()
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
-
     expect(wrapper.find('input[type="range"]').exists()).toBe(false)
+    // No separate chevron beside the button — the button IS the menu trigger.
+    expect(wrapper.find('[aria-label="Summary length"]').exists()).toBe(false)
+    const trigger = wrapper.find('[data-action-summarize]')
+    expect(trigger.attributes('aria-haspopup')).toBeTruthy()
   })
 
   it('summarizes at medium length by default', async () => {
     mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
 
     const wrapper = mountItemContent(makeItem())
-    const btn = wrapper.find('[data-action-summarize]')
-    await btn.trigger('click')
-    await flushPromises()
+    // Summarize is one control: pressing it opens its menu, and picking a length
+    // runs the summary at that length. So the default flow is press -> Medium.
+    await summarizeVia(wrapper)
 
     expect(mockSummarize).toHaveBeenCalledWith(1, { sentence_count: 7, min_sentences: 5, max_sentences: 7, detail: 'balanced' })
   })
@@ -361,9 +369,7 @@ describe('ItemContent summarize button', () => {
     mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
 
     const wrapper = mountItemContent(makeItem())
-    const btn = wrapper.find('[data-action-summarize]')
-    await btn.trigger('click')
-    await flushPromises()
+    await summarizeVia(wrapper)
     expect(mockSummarize).toHaveBeenCalledTimes(1)
 
     await openSummaryLengthMenu(wrapper)
@@ -373,24 +379,24 @@ describe('ItemContent summarize button', () => {
     expect(mockSummarize).toHaveBeenLastCalledWith(1, { sentence_count: 18, min_sentences: 12, max_sentences: 18, detail: 'detailed' })
   })
 
-  it('remembers the picked length for the next summary without refetching before one exists', async () => {
+  it('re-runs the summary when the current length is picked again', async () => {
     mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
 
     const wrapper = mountItemContent(makeItem())
+    await summarizeVia(wrapper)
+    expect(mockSummarize).toHaveBeenCalledTimes(1)
+
+    // Re-picking the SAME length must re-run: with the menu as the only control,
+    // an early return on an unchanged choice would leave no way to ask again.
+    await openSummaryLengthMenu(wrapper)
+    await clickSummaryLengthItem('Medium')
+    expect(mockSummarize).toHaveBeenCalledTimes(2)
+    expect(mockSummarize).toHaveBeenLastCalledWith(1, { sentence_count: 7, min_sentences: 5, max_sentences: 7, detail: 'balanced' })
+
+    // A different length still routes through the picker and runs at that length.
     await openSummaryLengthMenu(wrapper)
     await clickSummaryLengthItem('Short')
-    // No summary yet, so picking a length must not fire a request.
-    expect(mockSummarize).not.toHaveBeenCalled()
-
-    await openSummaryLengthMenu(wrapper)
-    const checked = summaryLengthItems().filter(i => i.hasAttribute('data-checked'))
-    expect(checked).toHaveLength(1)
-    expect(checked[0].textContent).toContain('Short')
-
-    const btn = wrapper.find('[data-action-summarize]')
-    await btn.trigger('click')
-    await flushPromises()
-    expect(mockSummarize).toHaveBeenCalledWith(1, { sentence_count: 2, min_sentences: 1, max_sentences: 2, detail: 'gist' })
+    expect(mockSummarize).toHaveBeenLastCalledWith(1, { sentence_count: 2, min_sentences: 1, max_sentences: 2, detail: 'gist' })
   })
 
   it('resets summary when item changes', async () => {
@@ -400,8 +406,7 @@ describe('ItemContent summarize button', () => {
     })
 
     const wrapper = mountItemContent(makeItem())
-    const btn = wrapper.find('[data-action-summarize]')
-    await btn.trigger('click')
+    await summarizeVia(wrapper)
     await vi.dynamicImportSettled()
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
@@ -425,8 +430,7 @@ describe('ItemContent summarize button', () => {
     })
 
     const wrapper = mountItemContent(makeItem({ id: 1 }))
-    const btn = wrapper.find('[data-action-summarize]')
-    await btn.trigger('click')
+    await summarizeVia(wrapper)
     await vi.dynamicImportSettled()
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
@@ -456,8 +460,7 @@ describe('ItemContent summarize button', () => {
     })
 
     const wrapper = mountItemContent(makeItem())
-    const btn = wrapper.find('[data-action-summarize]')
-    await btn.trigger('click')
+    await summarizeVia(wrapper)
     await vi.dynamicImportSettled()
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
