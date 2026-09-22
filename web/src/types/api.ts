@@ -56,6 +56,16 @@ export interface Item {
   last_enriched_at?: string | null
   extract_content: string
   extract_status: string
+  /**
+   * Plain text for the list row, flattened server-side from the item's stored
+   * HTML bodies (preferring the extracted text when one exists).
+   *
+   * The row must NOT flatten the bodies itself: a list response carries a
+   * bounded prefix of each body, and a character cap over raw HTML can land
+   * inside a leading run of markup — leaving the row with no excerpt at all
+   * until the full item is fetched by opening it.
+   */
+  excerpt?: string
   extract_retries?: number
   extract_date?: string | null
 }

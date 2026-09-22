@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
+	"digesterr/internal/feed"
 	"digesterr/internal/store"
 )
-
 
 func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
@@ -151,10 +151,18 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 
 	// Fetch limit+1 to detect has_more. Only select columns needed for the
 	// middle pane — excludes hash, url, author, and internal metadata. Bodies
-	// are 500-char previews; the full body comes from GET /api/items/{id}.
+	// are capped at 8192 characters, not 500: the row's excerpt is flattened
+	// from this prefix below, and a cut is a CHARACTER count over RAW HTML, so
+	// a body opening with inline SVG or a long srcset list can spend several KB
+	// of markup before its first word of prose. At 500 chars those rows showed
+	// an empty excerpt. The full body still comes from GET /api/items/{id}.
+	//
+	// The two substr() columns MUST be aliased: this handler maps columns by
+	// NAME, so an unaliased expression is keyed as "substr(i.content, 1, 8192)"
+	// and the row silently loses its body entirely.
 	queryStr := fmt.Sprintf(
-		"SELECT i.id, i.title, substr(i.content, 1, 500), i.comment_url, i.points, i.comments_count, "+
-			"i.published_at, i.status, i.is_saved, substr(i.extract_content, 1, 500), i.extract_status, "+
+		"SELECT i.id, i.title, substr(i.content, 1, 8192) AS content, i.comment_url, i.points, i.comments_count, "+
+			"i.published_at, i.status, i.is_saved, substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status, "+
 			"f.name AS feed_name, f.type AS feed_type FROM items i "+
 			"JOIN feeds f ON f.id = i.feed_id WHERE %s ORDER BY %s LIMIT ? OFFSET ?",
 		whereClause, orderClause,
@@ -206,6 +214,9 @@ func (s *Server) handleListMultiFeedItems(w http.ResponseWriter, r *http.Request
 			FeedName:       colStr(colMap["feed_name"]),
 			FeedType:       colStr(colMap["feed_type"]),
 		}
+		// Same server-side flattening as the single-feed list: the row shows
+		// plain text, and the stored bodies are HTML.
+		item.Excerpt = feed.ExcerptForPreview(item.Content, item.ExtractContent, item.ExtractStatus)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {

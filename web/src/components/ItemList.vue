@@ -381,7 +381,10 @@ async function markBelowRead(item: any) {
           class="text-[10px] text-accent/70 shrink-0 max-w-[7rem] truncate"
         >{{ feedNameFor(item) }}</span>
         <span data-item-title class="font-semibold truncate shrink-0 max-w-[55%]">{{ decodeHTMLEntities(item.title) }}</span>
-        <span data-item-excerpt class="text-xs text-muted-foreground/70 truncate flex-1 min-w-0">{{ stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</span>
+        <!-- The server flattens the bodies into `excerpt`; the client fallback
+             covers a row holding a FULL item (opening one merges the fetched
+             item into the list, and the detail response carries no excerpt). -->
+        <span data-item-excerpt class="text-xs text-muted-foreground/70 truncate flex-1 min-w-0">{{ item.excerpt ?? stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</span>
         <!-- Score, comments and the publish time form one cluster on the right;
              on hover the whole cluster gives way to the two chevrons, so the
              meta does not fight the action for the same pixels. -->
@@ -470,7 +473,7 @@ async function markBelowRead(item: any) {
           </span>
         </span>
       </div>
-      <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0" :class="feedStore.isMultiView ? '' : 'pr-16'">{{ stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</p>
+      <p class="text-xs text-muted-foreground/70 line-clamp-2 mt-0.5 min-w-0" :class="feedStore.isMultiView ? '' : 'pr-16'">{{ item.excerpt ?? stripContent(item.extract_status === 'done' ? item.extract_content : item.content) }}</p>
       <!-- Multi-view bottom: feed name + score/comments on same line -->
       <div v-if="feedStore.isMultiView" class="flex items-center justify-between mt-2">
         <div v-if="feedNameFor(item)" class="flex items-center gap-1 min-w-0">

@@ -134,8 +134,8 @@ WHERE f.user_id = ? AND i.is_saved = 1;
 -- The Saved view, assembled server-side in one query instead of N per-feed
 -- calls. Archive feeds (orphaned saved items of deleted feeds) join normally,
 -- so surviving items keep their "Saved -- <name>" provenance.
-SELECT i.id, i.title, substr(i.content, 1, 500) AS content, i.comment_url, i.points, i.comments_count,
-       i.published_at, i.status, i.is_saved, substr(i.extract_content, 1, 500) AS extract_content, i.extract_status,
+SELECT i.id, i.title, substr(i.content, 1, 8192) AS content, i.comment_url, i.points, i.comments_count,
+       i.published_at, i.status, i.is_saved, substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,
        i.feed_id, f.name AS feed_name, f.type AS feed_type
 FROM items i
 JOIN feeds f ON f.id = i.feed_id
@@ -152,9 +152,16 @@ SELECT * FROM items WHERE feed_id = ? AND status = ? ORDER BY published_at DESC,
 -- name: ListItemsByFeedSortedDateDesc :many
 -- Preview query for the middle pane: excludes hash, url, author, and
 -- internal metadata not needed for list display.
+--
+-- The bodies are capped at 8192 characters, not 500: the row's excerpt is
+-- flattened from this prefix server-side (feed.ExcerptForPreview), and a cut is
+-- a CHARACTER count over RAW HTML, so a body opening with inline SVG or a long
+-- srcset list can spend several KB of markup before its first word of prose.
+-- At 500 chars those rows rendered an EMPTY excerpt that filled in only after
+-- the item was opened. The cap still keeps whole articles out of the response.
 SELECT i.id, i.title, i.status, i.is_saved, i.published_at,
-       substr(i.content, 1, 500) AS content,
-       substr(i.extract_content, 1, 500) AS extract_content, i.extract_status,
+       substr(i.content, 1, 8192) AS content,
+       substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = sqlc.arg(feed_id)
@@ -172,8 +179,8 @@ LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: ListItemsByFeedSortedDateAsc :many
 SELECT i.id, i.title, i.status, i.is_saved, i.published_at,
-       substr(i.content, 1, 500) AS content,
-       substr(i.extract_content, 1, 500) AS extract_content, i.extract_status,
+       substr(i.content, 1, 8192) AS content,
+       substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = sqlc.arg(feed_id)
@@ -191,8 +198,8 @@ LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: ListItemsByFeedSortedScoreDesc :many
 SELECT i.id, i.title, i.status, i.is_saved, i.published_at,
-       substr(i.content, 1, 500) AS content,
-       substr(i.extract_content, 1, 500) AS extract_content, i.extract_status,
+       substr(i.content, 1, 8192) AS content,
+       substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = sqlc.arg(feed_id)
@@ -210,8 +217,8 @@ LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: ListItemsByFeedSortedScoreAsc :many
 SELECT i.id, i.title, i.status, i.is_saved, i.published_at,
-       substr(i.content, 1, 500) AS content,
-       substr(i.extract_content, 1, 500) AS extract_content, i.extract_status,
+       substr(i.content, 1, 8192) AS content,
+       substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = sqlc.arg(feed_id)

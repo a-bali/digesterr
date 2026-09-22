@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strconv"
 
+	"digesterr/internal/feed"
 	"digesterr/internal/store"
 )
-
 
 func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
@@ -112,9 +112,15 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 		Content        string      `json:"content"`
 		ExtractContent string      `json:"extract_content"`
 		ExtractStatus  string      `json:"extract_status"`
-		Points         int64       `json:"points"`
-		CommentsCount  int64       `json:"comments_count"`
-		CommentUrl     string      `json:"comment_url"`
+		// Excerpt is the plain text the list row displays: the stored bodies are
+		// HTML, and flattening them is what keeps markup out of the row. It is
+		// computed here, and NOT from a 500-char cut, because a character cap
+		// over raw HTML can land inside an opening run of markup and leave the
+		// row with nothing to show (see feed.ExcerptForPreview).
+		Excerpt       string `json:"excerpt"`
+		Points        int64  `json:"points"`
+		CommentsCount int64  `json:"comments_count"`
+		CommentUrl    string `json:"comment_url"`
 	}
 	var items []itemPreview
 	var rawItems interface{}
@@ -145,22 +151,22 @@ func (s *Server) handleListFeedItems(w http.ResponseWriter, r *http.Request) {
 	case []store.ListItemsByFeedSortedDateDescRow:
 		items = make([]itemPreview, len(rows))
 		for i, r := range rows {
-			items[i] = itemPreview{r.ID, r.Title, r.Status, r.IsSaved, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
+			items[i] = itemPreview{r.ID, r.Title, r.Status, r.IsSaved, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, feed.ExcerptForPreview(r.Content, r.ExtractContent, r.ExtractStatus), r.Points, r.CommentsCount, r.CommentUrl}
 		}
 	case []store.ListItemsByFeedSortedDateAscRow:
 		items = make([]itemPreview, len(rows))
 		for i, r := range rows {
-			items[i] = itemPreview{r.ID, r.Title, r.Status, r.IsSaved, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
+			items[i] = itemPreview{r.ID, r.Title, r.Status, r.IsSaved, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, feed.ExcerptForPreview(r.Content, r.ExtractContent, r.ExtractStatus), r.Points, r.CommentsCount, r.CommentUrl}
 		}
 	case []store.ListItemsByFeedSortedScoreDescRow:
 		items = make([]itemPreview, len(rows))
 		for i, r := range rows {
-			items[i] = itemPreview{r.ID, r.Title, r.Status, r.IsSaved, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
+			items[i] = itemPreview{r.ID, r.Title, r.Status, r.IsSaved, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, feed.ExcerptForPreview(r.Content, r.ExtractContent, r.ExtractStatus), r.Points, r.CommentsCount, r.CommentUrl}
 		}
 	case []store.ListItemsByFeedSortedScoreAscRow:
 		items = make([]itemPreview, len(rows))
 		for i, r := range rows {
-			items[i] = itemPreview{r.ID, r.Title, r.Status, r.IsSaved, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, r.Points, r.CommentsCount, r.CommentUrl}
+			items[i] = itemPreview{r.ID, r.Title, r.Status, r.IsSaved, r.PublishedAt, r.Content, r.ExtractContent, r.ExtractStatus, feed.ExcerptForPreview(r.Content, r.ExtractContent, r.ExtractStatus), r.Points, r.CommentsCount, r.CommentUrl}
 		}
 	}
 	if err != nil {
@@ -266,10 +272,14 @@ func (s *Server) handleListSavedItems(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, "failed to list saved items", err)
 		return
 	}
-	if rows == nil {
-		rows = []store.ListSavedItemsByUserRow{}
+	items := make([]savedItemRow, len(rows))
+	for i, row := range rows {
+		items[i] = savedItemRow{
+			ListSavedItemsByUserRow: row,
+			Excerpt:                 feed.ExcerptForPreview(row.Content, row.ExtractContent, row.ExtractStatus),
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"items": rows})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }
 
 func (s *Server) handleMarkFeedRead(w http.ResponseWriter, r *http.Request) {
@@ -332,6 +342,17 @@ type multiItemRow struct {
 	IsSaved        int64       `json:"is_saved"`
 	ExtractContent string      `json:"extract_content"`
 	ExtractStatus  string      `json:"extract_status"`
-	FeedName       string      `json:"feed_name"`
-	FeedType       string      `json:"feed_type"`
+	// Excerpt is the plain text the list row displays, flattened server-side
+	// from the two HTML bodies above (see feed.ExcerptForPreview).
+	Excerpt  string `json:"excerpt"`
+	FeedName string `json:"feed_name"`
+	FeedType string `json:"feed_type"`
+}
+
+// savedItemRow is a saved item with feed metadata and its display excerpt. The
+// excerpt is added here rather than in the query because it is flattened from
+// the stored HTML bodies, which the list response already carries.
+type savedItemRow struct {
+	store.ListSavedItemsByUserRow
+	Excerpt string `json:"excerpt"`
 }

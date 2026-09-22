@@ -748,8 +748,8 @@ func (q *Queries) ListItemsByFeedPaginated(ctx context.Context, arg ListItemsByF
 
 const listItemsByFeedSortedDateAsc = `-- name: ListItemsByFeedSortedDateAsc :many
 SELECT i.id, i.title, i.status, i.is_saved, i.published_at,
-       substr(i.content, 1, 500) AS content,
-       substr(i.extract_content, 1, 500) AS extract_content, i.extract_status,
+       substr(i.content, 1, 8192) AS content,
+       substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = ?1
@@ -833,8 +833,8 @@ func (q *Queries) ListItemsByFeedSortedDateAsc(ctx context.Context, arg ListItem
 
 const listItemsByFeedSortedDateDesc = `-- name: ListItemsByFeedSortedDateDesc :many
 SELECT i.id, i.title, i.status, i.is_saved, i.published_at,
-       substr(i.content, 1, 500) AS content,
-       substr(i.extract_content, 1, 500) AS extract_content, i.extract_status,
+       substr(i.content, 1, 8192) AS content,
+       substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = ?1
@@ -920,8 +920,8 @@ func (q *Queries) ListItemsByFeedSortedDateDesc(ctx context.Context, arg ListIte
 
 const listItemsByFeedSortedScoreAsc = `-- name: ListItemsByFeedSortedScoreAsc :many
 SELECT i.id, i.title, i.status, i.is_saved, i.published_at,
-       substr(i.content, 1, 500) AS content,
-       substr(i.extract_content, 1, 500) AS extract_content, i.extract_status,
+       substr(i.content, 1, 8192) AS content,
+       substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = ?1
@@ -1005,8 +1005,8 @@ func (q *Queries) ListItemsByFeedSortedScoreAsc(ctx context.Context, arg ListIte
 
 const listItemsByFeedSortedScoreDesc = `-- name: ListItemsByFeedSortedScoreDesc :many
 SELECT i.id, i.title, i.status, i.is_saved, i.published_at,
-       substr(i.content, 1, 500) AS content,
-       substr(i.extract_content, 1, 500) AS extract_content, i.extract_status,
+       substr(i.content, 1, 8192) AS content,
+       substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,
        i.points, i.comments_count, i.comment_url
 FROM items i
 WHERE feed_id = ?1
@@ -1516,8 +1516,8 @@ func (q *Queries) ListItemsNeedingReadability(ctx context.Context, feedID int64)
 }
 
 const listSavedItemsByUser = `-- name: ListSavedItemsByUser :many
-SELECT i.id, i.title, substr(i.content, 1, 500) AS content, i.comment_url, i.points, i.comments_count,
-       i.published_at, i.status, i.is_saved, substr(i.extract_content, 1, 500) AS extract_content, i.extract_status,
+SELECT i.id, i.title, substr(i.content, 1, 8192) AS content, i.comment_url, i.points, i.comments_count,
+       i.published_at, i.status, i.is_saved, substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,
        i.feed_id, f.name AS feed_name, f.type AS feed_type
 FROM items i
 JOIN feeds f ON f.id = i.feed_id
