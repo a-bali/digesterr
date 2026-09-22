@@ -6,7 +6,7 @@ import { toastSuccess, toastError } from '../lib/toast'
 import Separator from './ui/Separator.vue'
 import DropdownMenu from './ui/DropdownMenu.vue'
 import Skeleton from './ui/Skeleton.vue'
-import { BookOpen, Bookmark, BookmarkCheck, MessageSquare, Download, LoaderCircle, RefreshCw, ChevronDown, Sparkles, X, Circle, CircleDot, AlignLeft, AlignJustify, Rows3 } from 'lucide-vue-next'
+import { BookOpen, Bookmark, BookmarkCheck, MessageSquare, Download, LoaderCircle, RefreshCw, ChevronDown, ChevronsDown, Sparkles, X, Circle, CircleDot, AlignLeft, AlignJustify, Rows3 } from 'lucide-vue-next'
 import { absoluteTime, relativeTimeAgo } from '../lib/format'
 import { decodeHTMLEntities } from '../lib/utils'
 import { setItemCommentsScroller, clearItemCommentsScroller } from '../lib/itemComments'
@@ -270,6 +270,28 @@ const ExtractionOff = (props: { class?: string }) =>
       h('line', { x1: 12, x2: 12, y1: 15, y2: 3 }),
       h('line', { x1: 2, y1: 2, x2: 22, y2: 22 }),
     ],
+  )
+
+// The dropdown openers use a NARROW chevron at the text's own height rather than a
+// square icon: it is an affordance, not content, so it should read as a slim mark
+// beside its icon without adding width or height to the control. Drawn in a viewBox
+// whose aspect (~2:5) matches the rendered box, so uniform scaling keeps the stroke
+// even — a square icon squeezed into a narrow box distorts its stroke instead.
+const NarrowChevron = (props: { class?: string }) =>
+  h(
+    'svg',
+    {
+      xmlns: 'http://www.w3.org/2000/svg',
+      viewBox: '0 0 10 24',
+      fill: 'none',
+      stroke: 'currentColor',
+      'stroke-width': 2,
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+      'aria-hidden': 'true',
+      class: props.class,
+    },
+    [h('path', { d: 'M2.5 9 L5 14 L7.5 9' })],
   )
 
 const statusItems = computed(() => {
@@ -730,7 +752,7 @@ onUnmounted(() => {
            layout the pane can be phone-narrow on a 2000px screen. -->
       <div class="-mx-3 mb-3 border-b border-border px-3 py-1.5 relative sm:-mx-6 sm:px-6">
         <div class="flex flex-col gap-y-1.5 @[560px]:flex-row @[560px]:items-start @[560px]:gap-x-4">
-          <div class="min-w-0 flex-1 @max-[560px]:pr-8">
+          <div class="min-w-0 flex-1">
             <!-- Status + title. The status leads the title as a CHARACTER set in the
                  headline's own type, so it shares the title's baseline and reads as an
                  initial rather than a control sitting beside the text. The chevron on
@@ -739,38 +761,38 @@ onUnmounted(() => {
                  title as the first two characters of the headline — both plain text
                  glyphs at the headline's own size, not padded buttons. The chevron on
                  the status glyph is the affordance that it opens a menu. -->
-            <div class="flex items-start gap-0 mb-0">
-              <DropdownMenu :items="statusItems" data-status-menu>
-                <template #trigger>
-                  <button type="button"
-                    class="inline-flex shrink-0 items-center gap-px rounded text-[15px] font-semibold leading-snug text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    :title="`Status: ${statusIcon}`" :aria-label="`Status: ${statusIcon}`"
-                    aria-haspopup="menu" data-action-status>
-                    <span data-status-glyph :class="statusGlyphClass">{{ statusGlyph }}</span>
-                    <ChevronDown class="size-2.5 shrink-0 opacity-60" />
-                  </button>
-                </template>
-              </DropdownMenu>
-              <button type="button"
-                class="inline-flex shrink-0 items-center rounded text-[15px] leading-snug text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                :title="saveTitle" :aria-label="saveTitle" :aria-pressed="isSaved"
-                data-action-save @click="toggleSave">
-                <BookmarkCheck v-if="isSaved" class="text-[15px] text-accent" />
-                <Bookmark v-else class="text-[15px]" />
-              </button>
-              <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank"
-                class="block min-w-0 text-[15px] font-semibold leading-snug hover:text-accent transition-colors">
-                {{ decodeHTMLEntities(feedStore.selectedItem.title) }}
-              </a>
-              <h1 v-else class="min-w-0 text-[15px] font-semibold leading-snug">{{ decodeHTMLEntities(feedStore.selectedItem.title) }}</h1>
-              <!-- Skip-to-comments: a plain text link, not a button. It sits at the
-                   top-right of the title row on wide panes, or wraps to its own line
-                   on narrow panes. -->
-              <a v-if="canScrollToComments" href="#comments" @click.prevent="scrollToComments"
-                class="shrink-0 self-start ml-auto pl-3 text-xs text-muted-foreground/60 hover:text-foreground transition-colors @[560px]:text-xs"
-                title="Scroll to comments (c)" data-action-comments>
-                ↓ comments
-              </a>
+            <!-- Status and save form a narrow LEFT RAIL beside the title, so they
+                 read as a margin mark on the article rather than competing with the
+                 headline for its first characters. The rail holds them in a column
+                 at the title's own text height. -->
+            <div class="flex items-start gap-1.5 min-w-0">
+              <div class="flex flex-col items-center gap-px shrink-0" data-status-rail>
+                <DropdownMenu :items="statusItems" data-status-menu>
+                  <template #trigger>
+                    <button type="button"
+                      class="inline-flex items-center rounded text-[15px] leading-snug text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      :title="`Status: ${statusIcon}`" :aria-label="`Status: ${statusIcon}`"
+                      aria-haspopup="menu" data-action-status>
+                      <span data-status-glyph :class="statusGlyphClass">{{ statusGlyph }}</span>
+                      <NarrowChevron class="h-[13px] w-[5px] -ml-px opacity-50" />
+                    </button>
+                  </template>
+                </DropdownMenu>
+                <button type="button"
+                  class="inline-flex items-center rounded text-[15px] leading-snug text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  :title="saveTitle" :aria-label="saveTitle" :aria-pressed="isSaved"
+                  data-action-save @click="toggleSave">
+                  <BookmarkCheck v-if="isSaved" class="size-[15px] text-accent" />
+                  <Bookmark v-else class="size-[15px]" />
+                </button>
+              </div>
+              <div class="min-w-0 flex-1">
+                <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank"
+                  class="block min-w-0 text-[15px] font-semibold leading-snug hover:text-accent transition-colors">
+                  {{ decodeHTMLEntities(feedStore.selectedItem.title) }}
+                </a>
+                <h1 v-else class="min-w-0 text-[15px] font-semibold leading-snug">{{ decodeHTMLEntities(feedStore.selectedItem.title) }}</h1>
+              </div>
             </div>
             <!-- Metadata: points and comments lead and are bold because they are the
                  signals this header exists to surface; author, feed and age follow as
@@ -823,7 +845,7 @@ onUnmounted(() => {
                 :title="summaryLoading ? 'Summarizing…' : `Summarize (${currentSummaryLabel})`"
                 :aria-label="summaryLoading ? 'Summarizing' : `Summarize (${currentSummaryLabel})`"
                 data-action-summarize @click="doSummarize">
-                <RefreshCw v-if="summaryLoading" class="text-[15px] animate-spin" />
+                <RefreshCw v-if="summaryLoading" class="size-[15px] animate-spin" />
                 <span v-else>✦</span>
               </button>
               <DropdownMenu :items="summaryMenuItems" data-summary-length-menu>
@@ -833,10 +855,19 @@ onUnmounted(() => {
                     :disabled="summaryLoading"
                     title="Summary length" aria-label="Summary length" aria-haspopup="menu"
                     data-summary-length-opener>
-                    <ChevronDown class="size-2.5 opacity-60" />
+                    <NarrowChevron class="h-[15px] w-[6px] opacity-60" />
                   </button>
                 </template>
               </DropdownMenu>
+              <!-- Skip-to-comments: the header's TOP-RIGHT-most element, in the same
+                   row as Summarize. Icon-only: the double chevron pointing down at the
+                   comment count says where it goes, and a word here would compete with
+                   the metadata for width. -->
+              <a v-if="canScrollToComments" href="#comments" @click.prevent="scrollToComments"
+                class="shrink-0 rounded text-muted-foreground/60 hover:text-foreground transition-colors"
+                title="Scroll to comments (c)" aria-label="Scroll to comments" data-action-comments>
+                <ChevronsDown class="size-[15px]" />
+              </a>
             </div>
             <!-- Content view toggle with its extraction menu to the RIGHT of the
                  segmented control, inside the same bordered pill. Re-extract and
@@ -849,13 +880,12 @@ onUnmounted(() => {
                  exists yet (the toggle requires both bodies). After a delete-extraction,
                  the toggle vanishes and this is the only way to re-extract. -->
             <button v-if="extractionSupported && !hasExtraction" type="button"
-              class="inline-flex shrink-0 items-center gap-1 rounded text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+              class="inline-flex shrink-0 items-center rounded text-[15px] leading-snug text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
               :disabled="extracting"
               :title="extractTitle" :aria-label="extractTitle"
               data-action-extract @click="doExtract">
-              <Download v-if="!extracting" class="size-3.5" />
-              <LoaderCircle v-else class="size-3.5 animate-spin" />
-              {{ extractTitle }}
+              <Download v-if="!extracting" class="size-[15px]" />
+              <LoaderCircle v-else class="size-[15px] animate-spin" />
             </button>
             <div v-if="canToggleOriginal" class="inline-flex items-stretch rounded-md border border-border bg-muted/40 p-0.5"
               :title="extractDateTitle">
@@ -891,7 +921,7 @@ onUnmounted(() => {
                     class="inline-flex w-3.5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
                     title="Extraction actions" aria-label="Extraction actions" aria-haspopup="menu"
                     data-extraction-opener>
-                    <ChevronDown class="size-3" />
+                    <NarrowChevron class="h-[15px] w-[6px] opacity-60" />
                   </button>
                 </template>
               </DropdownMenu>
