@@ -137,13 +137,13 @@ describe('ItemContent scroll-to-comments', () => {
     ]
     await wrapper.vm.$nextTick()
 
-    const scrollBtn = wrapper.find('button[title="Scroll to comments (c)"]')
+    const scrollBtn = wrapper.find('a[title="Scroll to comments (c)"]')
     expect(scrollBtn.exists()).toBe(true)
   })
 
   it('hides the scroll-to-comments arrow when no comments', () => {
     const wrapper = mountItemContent(makeItem({ comment_url: '', comments_count: 0 }))
-    const scrollBtn = wrapper.find('button[title="Scroll to comments (c)"]')
+    const scrollBtn = wrapper.find('a[title="Scroll to comments (c)"]')
     expect(scrollBtn.exists()).toBe(false)
   })
 

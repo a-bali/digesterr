@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onUnmounted, nextTick, h } from 'vue'
 import { useFeedStore } from '../stores/feed'
 import { itemApi } from '../services/api'
 import { toastSuccess, toastError } from '../lib/toast'
 import Separator from './ui/Separator.vue'
 import DropdownMenu from './ui/DropdownMenu.vue'
 import Skeleton from './ui/Skeleton.vue'
-import { BookOpen, Bookmark, BookmarkCheck, MessageSquare, Download, RefreshCw, ChevronDown, Sparkles, X, ArrowDownToLine, Circle, CircleDot } from 'lucide-vue-next'
+import { BookOpen, Bookmark, BookmarkCheck, MessageSquare, Download, LoaderCircle, RefreshCw, ChevronDown, Sparkles, X, Circle, CircleDot, AlignLeft, AlignJustify, Rows3 } from 'lucide-vue-next'
 import { absoluteTime, relativeTimeAgo } from '../lib/format'
 import { decodeHTMLEntities } from '../lib/utils'
 import { setItemCommentsScroller, clearItemCommentsScroller } from '../lib/itemComments'
@@ -18,10 +18,6 @@ const proseClass = 'prose prose-sm dark:prose-invert max-w-none [&_a]:text-accen
 // Icon-only action buttons in the header. The actions are a compact icon row
 // because six labelled buttons do not fit beside the title; each keeps its label
 // as title/aria-label so nothing is discoverable only by shape.
-const actionBtn =
-  'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground ' +
-  'transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none ' +
-  'focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50'
 
 const props = defineProps<{
   unsaveItem: (item: any) => Promise<void>
@@ -212,17 +208,7 @@ const canScrollToComments = computed(() => topComments.value.length > 0 || comme
 // Small inline glyphs so the menu and the status icon share ONE definition. The
 // mid pane draws digested as '◐'; the delete-extraction icon is the extraction
 // (download-into-tray) glyph with a slash, matching "delete" on the original.
-const DigestedMark = { template: '<span class="inline-flex items-center justify-center leading-none">◐</span>' }
-const DigestedOff = { template: '<span class="inline-flex items-center justify-center leading-none line-through opacity-70">◐</span>' }
-const ExtractionOff = {
-  template:
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-    'stroke-linecap="round" stroke-linejoin="round">' +
-    '<path d="M12 3v9"/><path d="M8.5 8.5 12 12l3.5-3.5"/>' +
-    '<path d="M4 17h16"/><path d="M4 20h16"/>' +
-    '<path d="M3 3l18 18"/></svg>',
-  props: ['class'],
-}
+
 
 // --- Status control (icon before the title + dropdown) ---
 // The icon reuses the mid pane's read-state conventions so the same glyph means
@@ -260,13 +246,39 @@ const statusGlyphClass = computed(() => {
 //   unread   -> Read   | Digested
 //   digested -> Read   | Unread (this is "undigest": digested is stored, and
 //               clearing it means returning the item to unread)
+// "Delete extracted" needs the EXTRACTION icon struck through, so it reads as "remove
+// what Extract produced". A functional component with h() so the incoming `class`
+// (size-4) is applied to the <svg> itself — a plain object component that declares
+// `props: ['class']` swallows it, which is why the earlier custom icon showed up
+// unstyled. Paths mirror lucide's `download`, plus a diagonal strike.
+const ExtractionOff = (props: { class?: string }) =>
+  h(
+    'svg',
+    {
+      xmlns: 'http://www.w3.org/2000/svg',
+      viewBox: '0 0 24 24',
+      fill: 'none',
+      stroke: 'currentColor',
+      'stroke-width': 2,
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+      class: props.class,
+    },
+    [
+      h('path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }),
+      h('polyline', { points: '7 10 12 15 17 10' }),
+      h('line', { x1: 12, x2: 12, y1: 15, y2: 3 }),
+      h('line', { x1: 2, y1: 2, x2: 22, y2: 22 }),
+    ],
+  )
+
 const statusItems = computed(() => {
   const s = feedStore.selectedItem?.status ?? 'unread'
   const clear: { label: string; icon: unknown; onClick: () => void }[] =
     s === 'digested'
-      ? [{ label: 'Undigested', icon: DigestedOff, onClick: () => setStatus('unread') }]
+      ? [{ label: 'Undigested', icon: Circle, onClick: () => setStatus('unread') }]
       : [
-          { label: 'Digested', icon: DigestedMark, onClick: () => setStatus('digested') },
+          { label: 'Digested', icon: CircleDot, onClick: () => setStatus('digested') },
         ]
   if (s === 'read') return [{ label: 'Unread', icon: CircleDot, onClick: () => setStatus('unread') }, ...clear]
   if (s === 'digested') return [{ label: 'Read', icon: Circle, onClick: () => setStatus('read') }, ...clear]
@@ -302,9 +314,16 @@ const currentSummaryLabel = computed(() => {
   return key.charAt(0).toUpperCase() + key.slice(1)
 })
 
+// Each preset carries an icon too: every menu in this header is icon + text.
+const SUMMARY_ICONS: Record<SummaryLength, unknown> = {
+  short: AlignLeft,
+  medium: Rows3,
+  long: AlignJustify,
+}
 const summaryMenuItems = computed(() =>
   (Object.keys(SUMMARY_LENGTHS) as SummaryLength[]).map(key => ({
     label: key.charAt(0).toUpperCase() + key.slice(1),
+    icon: SUMMARY_ICONS[key],
     detail: SUMMARY_LENGTHS[key].detail,
     checked: summaryLength.value === key,
     onClick: () => selectSummaryLength(key),
@@ -709,14 +728,18 @@ onUnmounted(() => {
            the right when the pane is wide enough, and stack left-aligned when it is
            not. The PANE width decides (@container), not the viewport — in a split
            layout the pane can be phone-narrow on a 2000px screen. -->
-      <div class="-mx-3 mb-3 border-b border-border px-3 pt-1 pb-2.5 relative sm:-mx-6 sm:px-6">
+      <div class="-mx-3 mb-3 border-b border-border px-3 py-1.5 relative sm:-mx-6 sm:px-6">
         <div class="flex flex-col gap-y-1.5 @[560px]:flex-row @[560px]:items-start @[560px]:gap-x-4">
           <div class="min-w-0 flex-1 @max-[560px]:pr-8">
             <!-- Status + title. The status leads the title as a CHARACTER set in the
                  headline's own type, so it shares the title's baseline and reads as an
                  initial rather than a control sitting beside the text. The chevron on
                  its right is the affordance that it opens a menu. -->
-            <div class="flex items-start gap-1 mb-1">
+            <!-- Status + save + title. Status and save sit immediately in front of the
+                 title as the first two characters of the headline — both plain text
+                 glyphs at the headline's own size, not padded buttons. The chevron on
+                 the status glyph is the affordance that it opens a menu. -->
+            <div class="flex items-start gap-0 mb-0">
               <DropdownMenu :items="statusItems" data-status-menu>
                 <template #trigger>
                   <button type="button"
@@ -728,20 +751,26 @@ onUnmounted(() => {
                   </button>
                 </template>
               </DropdownMenu>
+              <button type="button"
+                class="inline-flex shrink-0 items-center rounded text-[15px] leading-snug text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                :title="saveTitle" :aria-label="saveTitle" :aria-pressed="isSaved"
+                data-action-save @click="toggleSave">
+                <BookmarkCheck v-if="isSaved" class="text-[15px] text-accent" />
+                <Bookmark v-else class="text-[15px]" />
+              </button>
               <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank"
                 class="block min-w-0 text-[15px] font-semibold leading-snug hover:text-accent transition-colors">
                 {{ decodeHTMLEntities(feedStore.selectedItem.title) }}
               </a>
               <h1 v-else class="min-w-0 text-[15px] font-semibold leading-snug">{{ decodeHTMLEntities(feedStore.selectedItem.title) }}</h1>
-              <!-- Save sits directly after the title, as a checkbox-free toggle: the
-                   bookmarks are distinct glyphs, so the filled one reads as "saved"
-                   without relying on colour alone. -->
-              <button type="button" :class="actionBtn" class="mt-0.5"
-                :title="saveTitle" :aria-label="saveTitle" :aria-pressed="isSaved"
-                data-action-save @click="toggleSave">
-                <BookmarkCheck v-if="isSaved" class="size-4 text-accent" />
-                <Bookmark v-else class="size-4" />
-              </button>
+              <!-- Skip-to-comments: a plain text link, not a button. It sits at the
+                   top-right of the title row on wide panes, or wraps to its own line
+                   on narrow panes. -->
+              <a v-if="canScrollToComments" href="#comments" @click.prevent="scrollToComments"
+                class="shrink-0 self-start ml-auto pl-3 text-xs text-muted-foreground/60 hover:text-foreground transition-colors @[560px]:text-xs"
+                title="Scroll to comments (c)" data-action-comments>
+                ↓ comments
+              </a>
             </div>
             <!-- Metadata: points and comments lead and are bold because they are the
                  signals this header exists to surface; author, feed and age follow as
@@ -785,36 +814,29 @@ onUnmounted(() => {
                top right in both layouts. -->
           <div class="flex flex-col gap-y-1 items-start @[560px]:shrink-0 @[560px]:items-end">
             <div class="flex items-center gap-0.5">
-              <!-- Summary: ONE control that runs at the current length, with its
-                   preset chevron to the RIGHT of the sparkle. The chevron is a
-                   separate hit target (it must not also run the summary) but sits
-                   inside the same bordered pill, so the pair reads as one control. -->
-              <div class="inline-flex items-stretch rounded-md border border-border bg-muted/40 p-0.5">
-                <button type="button"
-                  class="inline-flex size-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-                  :disabled="summaryLoading"
-                  :title="summaryLoading ? 'Summarizing…' : `Summarize (${currentSummaryLabel})`"
-                  :aria-label="summaryLoading ? 'Summarizing' : `Summarize (${currentSummaryLabel})`"
-                  data-action-summarize @click="doSummarize">
-                  <RefreshCw v-if="summaryLoading" class="size-4 animate-spin" />
-                  <Sparkles v-else class="size-4" />
-                </button>
-                <DropdownMenu :items="summaryMenuItems" data-summary-length-menu>
-                  <template #trigger>
-                    <button type="button" :disabled="summaryLoading"
-                      class="inline-flex w-3.5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-                      title="Summary length" aria-label="Summary length" aria-haspopup="menu"
-                      data-summary-length-opener>
-                      <ChevronDown class="size-3" />
-                    </button>
-                  </template>
-                </DropdownMenu>
-              </div>
-              <button v-if="canScrollToComments" type="button" :class="actionBtn"
-                class="self-end" title="Scroll to comments (c)" aria-label="Scroll to comments"
-                data-action-comments @click="scrollToComments">
-                <ArrowDownToLine class="size-4" />
+              <!-- Summary: plain text character that runs at the current length, plus
+                   a chevron that opens the presets — same character style as status
+                   and save (no border, no background). -->
+              <button type="button"
+                class="inline-flex shrink-0 items-center gap-px rounded text-[15px] font-semibold leading-snug text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                :disabled="summaryLoading"
+                :title="summaryLoading ? 'Summarizing…' : `Summarize (${currentSummaryLabel})`"
+                :aria-label="summaryLoading ? 'Summarizing' : `Summarize (${currentSummaryLabel})`"
+                data-action-summarize @click="doSummarize">
+                <RefreshCw v-if="summaryLoading" class="text-[15px] animate-spin" />
+                <span v-else>✦</span>
               </button>
+              <DropdownMenu :items="summaryMenuItems" data-summary-length-menu>
+                <template #trigger>
+                  <button type="button"
+                    class="inline-flex shrink-0 items-center gap-px rounded text-[15px] font-semibold leading-snug text-muted-foreground/60 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                    :disabled="summaryLoading"
+                    title="Summary length" aria-label="Summary length" aria-haspopup="menu"
+                    data-summary-length-opener>
+                    <ChevronDown class="size-2.5 opacity-60" />
+                  </button>
+                </template>
+              </DropdownMenu>
             </div>
             <!-- Content view toggle with its extraction menu to the RIGHT of the
                  segmented control, inside the same bordered pill. Re-extract and
@@ -823,6 +845,18 @@ onUnmounted(() => {
                  reddit-hosted item can have an extracted body yet offer no extraction
                  actions, and without this the menu would offer "Re-extract" for a
                  feed that cannot extract. -->
+            <!-- Extract button: shown when extraction is supported but no extraction
+                 exists yet (the toggle requires both bodies). After a delete-extraction,
+                 the toggle vanishes and this is the only way to re-extract. -->
+            <button v-if="extractionSupported && !hasExtraction" type="button"
+              class="inline-flex shrink-0 items-center gap-1 rounded text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+              :disabled="extracting"
+              :title="extractTitle" :aria-label="extractTitle"
+              data-action-extract @click="doExtract">
+              <Download v-if="!extracting" class="size-3.5" />
+              <LoaderCircle v-else class="size-3.5 animate-spin" />
+              {{ extractTitle }}
+            </button>
             <div v-if="canToggleOriginal" class="inline-flex items-stretch rounded-md border border-border bg-muted/40 p-0.5"
               :title="extractDateTitle">
               <div
