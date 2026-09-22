@@ -786,7 +786,7 @@ onUnmounted(() => {
                   <Bookmark v-else class="size-[15px]" />
                 </button>
               </div>
-              <div class="min-w-0 flex-1">
+              <div class="min-w-0 flex-1 @max-[560px]:pr-7">
                 <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank"
                   class="block min-w-0 text-[15px] font-semibold leading-snug hover:text-accent transition-colors">
                   {{ decodeHTMLEntities(feedStore.selectedItem.title) }}
@@ -830,11 +830,11 @@ onUnmounted(() => {
               <span v-if="itemMeta.time" :title="absoluteTime(feedStore.selectedItem.published_at)">{{ itemMeta.time }}</span>
             </div>
           </div>
-          <!-- Control column. Summary and comments first (left-most of the right
-               block, so they sit beside the title), then the view toggle with its
-               extraction menu. `self-end` keeps the comments button at the header's
-               top right in both layouts. -->
-          <div class="flex flex-col gap-y-1 items-start @[560px]:shrink-0 @[560px]:items-end">
+          <!-- Control column. First row: Summarize (runs) + its length opener, then
+               scroll-to-comments as the header's top-right-most element. Second row:
+               the view toggle with its extraction menu. The column is right-aligned
+               when the pane is wide enough and left-aligned when it is not. -->
+          <div class="flex flex-col gap-y-1 self-stretch @[560px]:shrink-0 @[560px]:items-end">
             <div class="flex items-center gap-0.5">
               <!-- Summary: plain text character that runs at the current length, plus
                    a chevron that opens the presets — same character style as status
@@ -864,7 +864,7 @@ onUnmounted(() => {
                    comment count says where it goes, and a word here would compete with
                    the metadata for width. -->
               <a v-if="canScrollToComments" href="#comments" @click.prevent="scrollToComments"
-                class="shrink-0 rounded text-muted-foreground/60 hover:text-foreground transition-colors"
+                class="absolute right-3 top-1.5 shrink-0 rounded text-muted-foreground/60 hover:text-foreground transition-colors @[560px]:static @[560px]:right-auto @[560px]:top-auto"
                 title="Scroll to comments (c)" aria-label="Scroll to comments" data-action-comments>
                 <ChevronsDown class="size-[15px]" />
               </a>
