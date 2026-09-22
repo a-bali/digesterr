@@ -49,6 +49,13 @@ const itemMeta = computed(() => {
 // comments, author, feed or date renders no empty row.
 const hasItemMeta = computed(() => Object.values(itemMeta.value).some(Boolean))
 
+// Does the header have anything to put in the control slot (the view toggle, or the
+// Extract button)? The slot shares the metadata row, so that row has to render even
+// when there is no metadata at all.
+const hasHeaderControls = computed(
+  () => canToggleOriginal.value || (extractionSupported.value && !hasExtraction.value),
+)
+
 // Content extraction is not useful for twitter (login wall) or reddit
 // posts whose content is already rendered by the fetcher (self-text,
 // reddit-hosted images). Reddit posts linking to external articles
@@ -235,9 +242,9 @@ const statusGlyph = computed(() => {
 // `leading-snug` matches the title's line-height so the two share a text baseline —
 // with `leading-none` the glyph's smaller line box lifts it above the headline.
 const statusGlyphClass = computed(() => {
-  if (statusIcon.value === 'unread') return 'text-accent text-[15px] leading-snug'
-  if (statusIcon.value === 'digested') return 'text-muted-foreground/60 text-[15px] leading-snug'
-  return 'text-muted-foreground/40 text-[15px] leading-snug'
+  if (statusIcon.value === 'unread') return 'text-accent text-[15px] leading-none'
+  if (statusIcon.value === 'digested') return 'text-muted-foreground/60 text-[15px] leading-none'
+  return 'text-muted-foreground/40 text-[15px] leading-none'
 })
 
 // Only transitions that change something are offered — the menu never lists the
@@ -720,7 +727,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div ref="scroller" class="h-full overflow-y-auto overflow-x-hidden min-w-0 px-3 py-3 sm:p-6" data-item-content @scroll.passive="onScroll">
+  <div ref="scroller" class="h-full overflow-y-auto overflow-x-hidden min-w-0 px-3 py-1.5 sm:px-6 sm:py-2.5" data-item-content @scroll.passive="onScroll">
     <div v-if="!feedStore.selectedItem" class="flex h-full items-center justify-center text-muted-foreground">
       <BookOpen class="size-8 mr-2" /> <span>Select an item</span>
     </div>
@@ -750,9 +757,9 @@ onUnmounted(() => {
            the right when the pane is wide enough, and stack left-aligned when it is
            not. The PANE width decides (@container), not the viewport — in a split
            layout the pane can be phone-narrow on a 2000px screen. -->
-      <div class="-mx-3 mb-3 border-b border-border px-3 py-1.5 relative sm:-mx-6 sm:px-6">
+      <div class="-mx-3 mb-3 border-b border-border px-3 pt-0.5 pb-2.5 relative sm:-mx-6 sm:px-6">
         <div class="flex flex-col gap-y-1.5 @[560px]:flex-row @[560px]:items-start @[560px]:gap-x-4">
-          <div class="min-w-0 flex-1">
+          <div class="min-w-0 flex-1" data-title-col>
             <!-- Status + title. The status leads the title as a CHARACTER set in the
                  headline's own type, so it shares the title's baseline and reads as an
                  initial rather than a control sitting beside the text. The chevron on
@@ -763,18 +770,18 @@ onUnmounted(() => {
                  the status glyph is the affordance that it opens a menu. -->
             <!-- Status and save form a narrow LEFT RAIL beside the title, so they
                  read as a margin mark on the article rather than competing with the
-                 headline for its first characters. The rail holds them in a column
-                 at the title's own text height. -->
+                 headline for its first characters. Both are 15x15 boxes at the
+                 title's text size, so they read as an equal pair. The status mark
+                 carries no dropdown indicator: the mark IS the affordance. -->
             <div class="flex items-start gap-1.5 min-w-0">
               <div class="flex flex-col items-center gap-px shrink-0" data-status-rail>
                 <DropdownMenu :items="statusItems" data-status-menu>
                   <template #trigger>
                     <button type="button"
-                      class="inline-flex items-center rounded text-[15px] leading-snug text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      class="inline-flex size-[15px] items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       :title="`Status: ${statusIcon}`" :aria-label="`Status: ${statusIcon}`"
                       aria-haspopup="menu" data-action-status>
                       <span data-status-glyph :class="statusGlyphClass">{{ statusGlyph }}</span>
-                      <NarrowChevron class="h-[13px] w-[5px] -ml-px opacity-50" />
                     </button>
                   </template>
                 </DropdownMenu>
@@ -798,7 +805,8 @@ onUnmounted(() => {
                  signals this header exists to surface; author, feed and age follow as
                  context. The extraction date is a hover on the view toggle, since it
                  only matters while the extracted body is shown. -->
-            <div v-if="hasItemMeta" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <div v-if="hasItemMeta || hasHeaderControls"
+              class="flex flex-wrap items-end gap-x-2 gap-y-1 text-xs text-muted-foreground">
               <span v-if="itemMeta.points" class="flex items-center gap-1 font-semibold text-foreground" title="Points">
                 ▴ {{ itemMeta.points }}
               </span>
@@ -828,13 +836,62 @@ onUnmounted(() => {
                 <span class="opacity-40">·</span>
               </template>
               <span v-if="itemMeta.time" :title="absoluteTime(feedStore.selectedItem.published_at)">{{ itemMeta.time }}</span>
+            <div class="flex w-[10rem] shrink-0 justify-end" data-control-slot>
+                <button v-if="extractionSupported && !hasExtraction" type="button"
+                  class="inline-flex shrink-0 items-center rounded text-[15px] leading-snug text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                  :disabled="extracting"
+                  :title="extractTitle" :aria-label="extractTitle"
+                  data-action-extract @click="doExtract">
+                  <Download v-if="!extracting" class="size-[15px]" />
+                  <LoaderCircle v-else class="size-[15px] animate-spin" />
+                </button>
+                <div v-if="canToggleOriginal" class="inline-flex items-stretch rounded-md border border-border bg-muted/40 p-0.5"
+                  :title="extractDateTitle">
+                <div
+                  class="inline-flex"
+                  role="radiogroup"
+                  aria-label="Content view"
+                  data-view-toggle
+                  @keydown="onViewKeydown"
+                >
+                  <button
+                    v-for="opt in viewOptions"
+                    :key="opt.value"
+                    type="button"
+                    role="radio"
+                    :aria-checked="contentView === opt.value"
+                    :tabindex="contentView === opt.value ? 0 : -1"
+                    :data-view-option="opt.value"
+                    :class="[
+                      'rounded px-2.5 py-0.5 text-xs font-medium transition-colors',
+                      contentView === opt.value
+                        ? 'bg-accent text-accent-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    ]"
+                    @click="selectView(opt.value)"
+                  >
+                    {{ opt.label }}
+                  </button>
+                </div>
+                <DropdownMenu v-if="extractionSupported" :items="extractionItems" data-extraction-menu>
+                  <template #trigger>
+                    <button type="button" :disabled="extracting"
+                      class="inline-flex w-3.5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                      title="Extraction actions" aria-label="Extraction actions" aria-haspopup="menu"
+                      data-extraction-opener>
+                      <NarrowChevron class="h-[15px] w-[6px] opacity-60" />
+                    </button>
+                  </template>
+                </DropdownMenu>
+              </div>
+            </div>
             </div>
           </div>
           <!-- Control column. First row: Summarize (runs) + its length opener, then
                scroll-to-comments as the header's top-right-most element. Second row:
                the view toggle with its extraction menu. The column is right-aligned
                when the pane is wide enough and left-aligned when it is not. -->
-          <div class="flex flex-col gap-y-1 self-stretch @[560px]:shrink-0 @[560px]:items-end">
+          <div class="flex flex-col gap-y-1 @[560px]:shrink-0 @[560px]:items-end">
             <div class="flex items-center gap-0.5">
               <!-- Summary: plain text character that runs at the current length, plus
                    a chevron that opens the presets — same character style as status
@@ -879,53 +936,6 @@ onUnmounted(() => {
             <!-- Extract button: shown when extraction is supported but no extraction
                  exists yet (the toggle requires both bodies). After a delete-extraction,
                  the toggle vanishes and this is the only way to re-extract. -->
-            <button v-if="extractionSupported && !hasExtraction" type="button"
-              class="inline-flex shrink-0 items-center rounded text-[15px] leading-snug text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-              :disabled="extracting"
-              :title="extractTitle" :aria-label="extractTitle"
-              data-action-extract @click="doExtract">
-              <Download v-if="!extracting" class="size-[15px]" />
-              <LoaderCircle v-else class="size-[15px] animate-spin" />
-            </button>
-            <div v-if="canToggleOriginal" class="inline-flex items-stretch rounded-md border border-border bg-muted/40 p-0.5"
-              :title="extractDateTitle">
-              <div
-                class="inline-flex"
-                role="radiogroup"
-                aria-label="Content view"
-                data-view-toggle
-                @keydown="onViewKeydown"
-              >
-                <button
-                  v-for="opt in viewOptions"
-                  :key="opt.value"
-                  type="button"
-                  role="radio"
-                  :aria-checked="contentView === opt.value"
-                  :tabindex="contentView === opt.value ? 0 : -1"
-                  :data-view-option="opt.value"
-                  :class="[
-                    'rounded px-2.5 py-0.5 text-xs font-medium transition-colors',
-                    contentView === opt.value
-                      ? 'bg-accent text-accent-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground',
-                  ]"
-                  @click="selectView(opt.value)"
-                >
-                  {{ opt.label }}
-                </button>
-              </div>
-              <DropdownMenu v-if="extractionSupported" :items="extractionItems" data-extraction-menu>
-                <template #trigger>
-                  <button type="button" :disabled="extracting"
-                    class="inline-flex w-3.5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-                    title="Extraction actions" aria-label="Extraction actions" aria-haspopup="menu"
-                    data-extraction-opener>
-                    <NarrowChevron class="h-[15px] w-[6px] opacity-60" />
-                  </button>
-                </template>
-              </DropdownMenu>
-            </div>
           </div>
         </div>
       </div>

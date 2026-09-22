@@ -165,26 +165,46 @@ describe('ItemContent status control', () => {
       const glyph = wrapper.find('[data-status-glyph]')
       expect(glyph.exists()).toBe(true)
       expect(glyph.text()).toBe(char)
-      // Nothing between the glyph and the title but the control's own chevron.
-      expect(wrapper.find('[data-action-status] svg').exists()).toBe(true)
     }
   })
 
-  // The chevron must sit AFTER the glyph, in normal flow — not absolutely positioned
-  // over it. `absolute` would mean overlap, which is what was rejected.
-  it('puts the status chevron after the glyph in flow, not overlapping it', () => {
+  // No dropdown indicator on the status mark: it was removed by request, and a glyph
+  // plus a chevron in a 15px box would not fit the save button's box anyway.
+  it('carries no dropdown indicator', () => {
     const wrapper = mountItemContent(makeItem({ status: 'unread' }))
-    const btn = statusButton(wrapper)
-    const glyph = btn.find('[data-status-glyph]')
-    const chevron = btn.find('svg')
-    expect(glyph.exists()).toBe(true)
-    expect(chevron.exists()).toBe(true)
-    // Order in the DOM puts the chevron after the glyph.
-    const kids = Array.from(btn.element.children)
-    expect(kids.indexOf(chevron.element)).toBeGreaterThan(kids.indexOf(glyph.element))
-    // No absolute positioning on either part of the control.
-    expect(chevron.classes()).not.toContain('absolute')
-    expect(glyph.classes()).not.toContain('absolute')
+    expect(statusButton(wrapper).find('svg').exists()).toBe(false)
+  })
+
+  // Status and save sit as an equal pair in the left rail, so they must be the same
+  // size. The status button IS a 15px box; the save button wraps a 15px icon.
+  it('is the same size as the save button', () => {
+    const wrapper = mountItemContent(makeItem({ status: 'unread' }))
+    expect(statusButton(wrapper).classes()).toContain('size-[15px]')
+    expect(wrapper.find('[data-status-glyph]').classes()).toContain('leading-none')
+    expect(wrapper.find('[data-action-save] svg').classes()).toContain('size-[15px]')
+  })
+
+  // The view toggle and the Extract button must not be able to change the TITLE's
+  // width, or the title re-wraps when the toggle appears/disappears (after an
+  // extraction completes or is deleted). jsdom has no layout engine, so this asserts
+  // the invariant that guarantees it: the control slot sits INSIDE the title's own
+  // column (at the end of the metadata row), so the column merely has to accommodate
+  // it -- it can never take width away from the title. In the sibling control COLUMN
+  // it could, which is the bug this pins.
+  it('keeps the view toggle inside the title column so the title cannot re-wrap', () => {
+    const wrapper = mountItemContent(makeItem({ status: 'unread' }))
+    const titleCol = wrapper.find('[data-title-col]').element
+    const slot = wrapper.find('[data-control-slot]').element
+    const titleEl = wrapper.find('h1, a[href^="http"]').element
+    // The slot and the title are in the SAME column...
+    expect(titleCol.contains(slot)).toBe(true)
+    expect(titleCol.contains(titleEl)).toBe(true)
+    // ...and the control column (Summarize's column) is NOT that column.
+    const summarize = wrapper.find('[data-action-summarize]').element
+    expect(summarize.closest('[data-title-col]')).toBeNull()
+    expect(titleCol.contains(summarize)).toBe(false)
+    // The slot is in the metadata row, so it cannot push the title's own line.
+    expect((slot.parentElement as HTMLElement).className).toContain('flex-wrap')
   })
 
   it('shows the unread convention and offers Read + Digested for an unread item', async () => {
@@ -458,8 +478,10 @@ describe('ItemContent single content section', () => {
     expect(root.classes()).toContain('overflow-x-hidden')
     expect(root.classes()).toContain('min-w-0')
     expect(root.classes()).toContain('px-3')
-    expect(root.classes()).toContain('py-3')
-    expect(root.classes()).toContain('sm:p-6')
+    // A deliberately SMALL top padding: the gap above the header is part of what the
+    // header costs, so it is kept tight (see the header's own pt-0.5).
+    expect(root.classes()).toContain('py-1.5')
+    expect(root.classes()).toContain('sm:py-2.5')
   })
 
   it('resets vertical scroll when a different item is opened', async () => {
