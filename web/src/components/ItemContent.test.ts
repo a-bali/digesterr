@@ -271,16 +271,19 @@ describe('ItemContent single content section', () => {
 
   // "if showing extracted view, show extraction date in small muted font below
   // toggle" — the date belongs to the extracted body, so it shows only there.
-  it('shows the extraction date beneath the toggle only in the extracted view', async () => {
-    const date = () => wrapper.find('[data-extract-date]')
-    expect(date().exists()).toBe(true)
-    expect(date().text()).toBe(`Extracted ${absoluteTime('2026-08-13T08:00:00Z')}`)
+  it('carries the extraction date on the toggle tooltip, only in the extracted view', async () => {
+    // The date is a HOVER on the view toggle rather than a line in the header: it
+    // only matters while the extracted body is the one on screen, so it costs no
+    // permanent header space. Hence a title attribute, not a visible element.
+    const stamp = `Extracted ${absoluteTime('2026-08-13T08:00:00Z')}`
+    const tip = () => viewToggle(wrapper).attributes('title')
+    expect(tip()).toBe(stamp)
 
     await viewOption(wrapper, 'original').trigger('click')
-    expect(date().exists()).toBe(false)
+    expect(tip()).toBeUndefined()
 
     await viewOption(wrapper, 'extracted').trigger('click')
-    expect(date().exists()).toBe(true)
+    expect(tip()).toBe(stamp)
   })
 
   it('places the toggle in the header action row', () => {

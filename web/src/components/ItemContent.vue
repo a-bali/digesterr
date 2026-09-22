@@ -182,6 +182,16 @@ const digestedTitle = computed(() => (isDigested.value ? 'Mark undigested' : 'Ma
 const saveTitle = computed(() => (isSaved.value ? 'Unsave' : 'Save'))
 const extractTitle = computed(() => (hasExtraction.value ? 'Re-extract' : 'Extract'))
 
+// The extraction date lives on the view toggle's tooltip rather than in the
+// metadata line: it only matters while the extracted body is the one on screen, so
+// it costs no permanent header space. Empty in the original view (and when there is
+// no extraction), which leaves the radiogroup with no title attribute to show.
+const extractDateTitle = computed(() => {
+  const item = feedStore.selectedItem
+  if (contentView.value !== 'extracted' || !item?.extract_date) return undefined
+  return `Extracted ${absoluteTime(item.extract_date)}`
+})
+
 function toggleRead() {
   if (feedStore.selectedItem) {
     feedStore.updateItemStatus(feedStore.selectedItem, isRead.value ? 'unread' : 'read')
@@ -632,94 +642,107 @@ onUnmounted(() => {
            reading a long article, which is the whole reason this header is
            compact enough to be worth pinning. -->
       <div class="sticky top-0 z-10 -mx-3 mb-3 border-b border-border bg-background px-3 pt-1 pb-2.5
-                  @max-[520px]:pb-2 sm:-mx-6 sm:px-6">
-          <div class="flex items-center gap-3 @max-[520px]:flex-wrap @max-[520px]:gap-y-2">
-            <div class="min-w-0 flex-1 @max-[520px]:basis-full">
-              <!-- Title only. The scroll-to-comments control is no longer pinned
-                   here — it lives with the other header controls, top right. -->
-              <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank"
-                class="block mb-1 text-[15px] font-semibold leading-snug hover:text-accent transition-colors">
-                {{ decodeHTMLEntities(feedStore.selectedItem.title) }}
+                  relative sm:-mx-6 sm:px-6">
+        <!-- Title and metadata take the full remaining width; the controls sit in a
+             column at the right when the pane is wide enough to give them one, and
+             collapse to a left-aligned stack when it is not. Which happens is decided
+             by the PANE width (`@container` on the wrapper), not the viewport — in a
+             split layout the pane can be phone-narrow on a 2000px screen. -->
+        <div class="flex flex-col gap-y-1.5 @[560px]:flex-row @[560px]:items-start @[560px]:gap-x-4">
+          <div class="min-w-0 flex-1 @max-[560px]:pr-8">
+            <!-- Title only. The scroll-to-comments control is not pinned here: it
+                 stays top-right in both layouts (see the control column). -->
+            <a v-if="feedStore.selectedItem.url" :href="feedStore.selectedItem.url" target="_blank"
+              class="block mb-1 text-[15px] font-semibold leading-snug hover:text-accent transition-colors">
+              {{ decodeHTMLEntities(feedStore.selectedItem.title) }}
+            </a>
+            <h1 v-else class="mb-1 text-[15px] font-semibold leading-snug">{{ decodeHTMLEntities(feedStore.selectedItem.title) }}</h1>
+            <!-- Metadata: points and comments lead and are bold because they are the
+                 signals this header exists to surface; author, feed and age follow as
+                 context. The extraction date is NOT here — it is a hover on the view
+                 toggle, since it only matters while the extracted body is shown. -->
+            <div v-if="hasItemMeta" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+              <span v-if="itemMeta.points" class="flex items-center gap-1 font-semibold text-foreground" title="Points">
+                ▴ {{ itemMeta.points }}
+              </span>
+              <template v-if="itemMeta.points && (itemMeta.comments || itemMeta.author || itemMeta.feed || itemMeta.time)">
+                <span class="opacity-40">·</span>
+              </template>
+              <a v-if="itemMeta.comments && feedStore.selectedItem.comment_url"
+                :href="feedStore.selectedItem.comment_url" target="_blank"
+                class="flex items-center gap-1 font-semibold text-foreground hover:text-accent transition-colors" title="Comments">
+                <MessageSquare class="size-3" /> {{ itemMeta.comments }}
               </a>
-              <h1 v-else class="mb-1 text-[15px] font-semibold leading-snug">{{ decodeHTMLEntities(feedStore.selectedItem.title) }}</h1>
-              <!-- Metadata: points and comments lead and are bold because they are
-                   the signals this header exists to surface; author, feed and age
-                   follow as context. Left-aligned at every width. -->
-              <div v-if="hasItemMeta" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                <span v-if="itemMeta.points" class="flex items-center gap-1 font-semibold text-foreground" title="Points">
-                  ▴ {{ itemMeta.points }}
-                </span>
-                <template v-if="itemMeta.points && (itemMeta.comments || itemMeta.author || itemMeta.feed || itemMeta.time)">
-                  <span class="opacity-40">·</span>
-                </template>
-                <a v-if="itemMeta.comments && feedStore.selectedItem.comment_url"
-                  :href="feedStore.selectedItem.comment_url" target="_blank"
-                  class="flex items-center gap-1 font-semibold text-foreground hover:text-accent transition-colors" title="Comments">
-                  <MessageSquare class="size-3" /> {{ itemMeta.comments }}
-                </a>
-                <span v-else-if="itemMeta.comments" class="flex items-center gap-1 font-semibold text-foreground" title="Comments">
-                  <MessageSquare class="size-3" /> {{ itemMeta.comments }}
-                </span>
-                <template v-if="itemMeta.comments && (itemMeta.author || itemMeta.feed || itemMeta.time)">
-                  <span class="opacity-40">·</span>
-                </template>
-                <span v-if="itemMeta.author">{{ itemMeta.author }}</span>
-                <template v-if="itemMeta.author && (itemMeta.feed || itemMeta.time)">
-                  <span class="opacity-40">·</span>
-                </template>
-                <RouterLink v-if="itemMeta.feed" :to="`/feeds/${selectedFeed!.id}`"
-                  class="text-accent hover:underline" title="Open feed">
-                  {{ itemMeta.feed }}
-                </RouterLink>
-                <template v-if="itemMeta.feed && itemMeta.time">
-                  <span class="opacity-40">·</span>
-                </template>
-                <span v-if="itemMeta.time" :title="absoluteTime(feedStore.selectedItem.published_at)">{{ itemMeta.time }}</span>
-                <!-- Extraction freshness, only while the extracted body is the one
-                     on screen: that is when its age matters. -->
-                <template v-if="contentView === 'extracted' && feedStore.selectedItem.extract_date">
-                  <span class="opacity-40">·</span>
-                  <span data-extract-date>Extracted {{ absoluteTime(feedStore.selectedItem.extract_date) }}</span>
-                </template>
-              </div>
+              <span v-else-if="itemMeta.comments" class="flex items-center gap-1 font-semibold text-foreground" title="Comments">
+                <MessageSquare class="size-3" /> {{ itemMeta.comments }}
+              </span>
+              <template v-if="itemMeta.comments && (itemMeta.author || itemMeta.feed || itemMeta.time)">
+                <span class="opacity-40">·</span>
+              </template>
+              <span v-if="itemMeta.author">{{ itemMeta.author }}</span>
+              <template v-if="itemMeta.author && (itemMeta.feed || itemMeta.time)">
+                <span class="opacity-40">·</span>
+              </template>
+              <RouterLink v-if="itemMeta.feed" :to="`/feeds/${selectedFeed!.id}`"
+                class="text-accent hover:underline" title="Open feed">
+                {{ itemMeta.feed }}
+              </RouterLink>
+              <template v-if="itemMeta.feed && itemMeta.time">
+                <span class="opacity-40">·</span>
+              </template>
+              <span v-if="itemMeta.time" :title="absoluteTime(feedStore.selectedItem.published_at)">{{ itemMeta.time }}</span>
             </div>
-            <!-- Actions, floated to the top right of the header. Icon-only
-                 because six controls do not fit beside a title; each keeps a
-                 title/aria-label so nothing is discoverable by shape alone.
-                 Read/unread and digested/undigested are TOGGLES that light up in
-                 the unread/undigested state, so the header answers "have I read
-                 this, have I digested it" without a click. -->
-            <div class="flex shrink-0 items-center gap-0.5 self-start @max-[520px]:w-full @max-[520px]:justify-start">
-              <!-- Content view toggle (Original/Extracted). Kept from the layout
-                   you approved: first in the row, since it selects which body the
-                   text below shows rather than acting on the item. -->
-              <div
-                v-if="canToggleOriginal"
-                class="mr-1 inline-flex rounded-md border border-border bg-muted/40 p-0.5"
-                role="radiogroup"
-                aria-label="Content view"
-                data-view-toggle
-                @keydown="onViewKeydown"
+          </div>
+          <!-- Control column. Order is fixed: comments (always top-right), then the
+               content view toggle, then the item actions. Icon-only, so six controls
+               fit without competing with the title for width; each keeps a
+               title/aria-label so nothing is discoverable by shape alone. -->
+          <div class="flex flex-col gap-y-1 items-start @[560px]:shrink-0 @[560px]:items-end">
+            <!-- Kept top-right in BOTH layouts. Absolutely positioned while the
+                 layout is stacked, so it sits at the HEADER's top-right rather than
+                 below the title/metadata; in the row layout it returns to the flow
+                 as the first item of the right-hand column. -->
+            <button v-if="canScrollToComments" type="button" :class="actionBtn"
+              class="absolute right-3 top-1 @[560px]:static @[560px]:self-end"
+              title="Scroll to comments (c)" aria-label="Scroll to comments"
+              data-action-comments @click="scrollToComments">
+              <ArrowDownToLine class="size-4" />
+            </button>
+            <!-- Content view toggle (Original/Extracted). Its tooltip carries the
+                 extraction date while the extracted body is the one on screen — the
+                 only time that age matters, so it costs no permanent header space. -->
+            <div
+              v-if="canToggleOriginal"
+              class="inline-flex rounded-md border border-border bg-muted/40 p-0.5"
+              role="radiogroup"
+              aria-label="Content view"
+              data-view-toggle
+              :title="extractDateTitle"
+              @keydown="onViewKeydown"
+            >
+              <button
+                v-for="opt in viewOptions"
+                :key="opt.value"
+                type="button"
+                role="radio"
+                :aria-checked="contentView === opt.value"
+                :tabindex="contentView === opt.value ? 0 : -1"
+                :data-view-option="opt.value"
+                :class="[
+                  'rounded px-2.5 py-0.5 text-xs font-medium transition-colors',
+                  contentView === opt.value
+                    ? 'bg-accent text-accent-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground',
+                ]"
+                @click="selectView(opt.value)"
               >
-                <button
-                  v-for="opt in viewOptions"
-                  :key="opt.value"
-                  type="button"
-                  role="radio"
-                  :aria-checked="contentView === opt.value"
-                  :tabindex="contentView === opt.value ? 0 : -1"
-                  :data-view-option="opt.value"
-                  :class="[
-                    'rounded px-2.5 py-0.5 text-xs font-medium transition-colors',
-                    contentView === opt.value
-                      ? 'bg-accent text-accent-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground',
-                  ]"
-                  @click="selectView(opt.value)"
-                >
-                  {{ opt.label }}
-                </button>
-              </div>
+                {{ opt.label }}
+              </button>
+            </div>
+            <!-- The item's own actions. Read/unread and digested/undigested are
+                 TOGGLES that light up in the unread/undigested state, so the header
+                 answers "have I read this" without a click. -->
+            <div class="flex flex-wrap items-center gap-0.5">
               <button type="button" :class="toggleBtnClass(!isRead)" :title="readTitle" :aria-label="readTitle" :aria-pressed="!isRead"
                 data-action-read @click="toggleRead">
                 <Check class="size-4" />
@@ -732,12 +755,6 @@ onUnmounted(() => {
                 data-action-save @click="toggleSave">
                 <BookmarkCheck v-if="isSaved" class="size-4" />
                 <Bookmark v-else class="size-4" />
-              </button>
-              <!-- Scroll to the comments block, beside the other header controls. -->
-              <button v-if="canScrollToComments" type="button" :class="actionBtn"
-                title="Scroll to comments (c)" aria-label="Scroll to comments" data-action-comments
-                @click="scrollToComments">
-                <ArrowDownToLine class="size-4" />
               </button>
               <button v-if="extractionSupported" type="button" :class="actionBtn" :disabled="extracting"
                 :title="extracting ? 'Extracting…' : extractTitle" :aria-label="extracting ? 'Extracting' : extractTitle"
@@ -752,8 +769,7 @@ onUnmounted(() => {
               </button>
               <!-- Summarize is ONE control: the button runs the summary, and its
                    menu both picks the length and is the only place the current
-                   length is visible. A chevron beside a separate button made the
-                   two read as unrelated controls. -->
+                   length is visible. -->
               <DropdownMenu :items="summaryLengthItems" data-summary-length-menu>
                 <template #trigger>
                   <button type="button" :class="actionBtn" :disabled="summaryLoading"
@@ -766,6 +782,7 @@ onUnmounted(() => {
               </DropdownMenu>
             </div>
           </div>
+        </div>
       </div>
 
       <!-- LLM Summary: a tinted box above the body, dismissible with the close
