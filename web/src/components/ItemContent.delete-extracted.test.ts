@@ -92,10 +92,14 @@ function mountItemContent(item: Item | null, feeds: Feed[] = [makeFeed()]) {
   })
 }
 
-// The delete control is found by its own text, so a label change cannot make
-// this suite silently pass by matching the wrong button.
+// The header actions are icon-only, so each carries a stable data-action hook
+// plus an aria-label. Selecting by hook (not by text) keeps this suite honest:
+// an icon button has no text, and matching on icon shape would be untestable.
 function deleteExtractedButton(wrapper: ReturnType<typeof mountItemContent>) {
-  return wrapper.findAll('button').find(b => b.text().trim() === 'Delete extracted')
+  return wrapper.find('[data-action-delete-extracted]')
+}
+function extractButton(wrapper: ReturnType<typeof mountItemContent>) {
+  return wrapper.find('[data-action-extract]')
 }
 
 beforeEach(() => {
@@ -112,33 +116,33 @@ describe('Delete extracted', () => {
     // test, so assert it can actually be pressed.
     expect(button!.attributes('disabled')).toBeUndefined()
     // It sits directly after the Re-extract button the request calls out.
-    const labels = wrapper.findAll('button').map(b => b.text().trim())
-    expect(labels.indexOf('Delete extracted')).toBe(labels.indexOf('Re-extract') + 1)
+    const hooks = wrapper.findAll('button[data-action-extract], button[data-action-delete-extracted]')
+      .map(b => b.attributes('data-action-extract') !== undefined ? 'extract' : 'delete')
+    expect(hooks).toEqual(['extract', 'delete'])
   })
 
   it('hides the control when there is no extracted body to delete', () => {
     const plain = mountItemContent(makeItem({ extract_status: '', extract_content: '' }))
-    expect(deleteExtractedButton(plain)).toBeUndefined()
+    expect(deleteExtractedButton(plain).exists()).toBe(false)
     // "Extract", not "Re-extract": nothing has been extracted for this item.
-    expect(plain.text()).toContain('Extract')
-    expect(plain.text()).not.toContain('Re-extract')
+    expect(extractButton(plain).attributes('aria-label')).toBe('Extract')
   })
 
   it('hides the control after the user already deleted the extraction', () => {
     const cleared = mountItemContent(makeItem({ extract_status: 'cleared', extract_content: '' }))
-    expect(deleteExtractedButton(cleared)).toBeUndefined()
+    expect(deleteExtractedButton(cleared).exists()).toBe(false)
   })
 
   it('deletes the extraction through the store when clicked', async () => {
     const wrapper = mountItemContent(makeItem())
-    await deleteExtractedButton(wrapper)!.trigger('click')
+    await deleteExtractedButton(wrapper).trigger('click')
     expect(mockDeleteExtraction).toHaveBeenCalledTimes(1)
     expect(mockDeleteExtraction.mock.calls[0][0].id).toBe(1)
   })
 
   it('does not offer the control for feed types where extraction is unsupported', () => {
     const twitter = mountItemContent(makeItem(), [makeFeed({ type: 'twitter' })])
-    expect(deleteExtractedButton(twitter)).toBeUndefined()
+    expect(deleteExtractedButton(twitter).exists()).toBe(false)
   })
 
   it('renders the original content plainly once the extraction is cleared', () => {
@@ -148,9 +152,7 @@ describe('Delete extracted', () => {
     // contains the word "Original".
     const wrapper = mountItemContent(makeItem({ extract_status: 'cleared', extract_content: '' }))
     expect(wrapper.text()).toContain('Original body')
-    const headers = wrapper.findAll('button').map(b => b.text().trim())
-    expect(headers.some(h => h.startsWith('Extracted'))).toBe(false)
-    expect(headers.some(h => h.startsWith('Original'))).toBe(false)
+    expect(wrapper.find('[data-view-toggle]').exists()).toBe(false)
   })
 
   it('falls back to the original body after the store clears the item', async () => {
@@ -158,13 +160,13 @@ describe('Delete extracted', () => {
     // the store replaces the item with the server's cleared copy.
     const wrapper = mountItemContent(makeItem())
     expect(wrapper.text()).toContain('Extracted body')
-    expect(wrapper.html()).toContain('Extracted')
+    expect(wrapper.find('[data-view-toggle]').exists()).toBe(true)
 
     useFeedStore().selectedItem = makeItem({ extract_status: 'cleared', extract_content: '', extract_date: null })
     await flushPromises()
 
     expect(wrapper.text()).toContain('Original body')
     expect(wrapper.text()).not.toContain('Extracted body')
-    expect(deleteExtractedButton(wrapper)).toBeUndefined()
+    expect(deleteExtractedButton(wrapper).exists()).toBe(false)
   })
 })

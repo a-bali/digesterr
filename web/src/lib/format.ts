@@ -35,6 +35,16 @@ export function relativeTime(val: any): string {
   return `${Math.floor(m / 12)}y`
 }
 
+// Same buckets as relativeTime, phrased as a past interval ("2h ago"). The item
+// header reads as a sentence, where a bare "2h" next to an author name does not.
+// The sub-minute bucket reads "just now" rather than "now ago". Left separate
+// from relativeTime so the denser list rows keep their short form.
+export function relativeTimeAgo(val: any): string {
+  const rel = relativeTime(val)
+  if (!rel) return ''
+  return rel === 'now' ? 'just now' : `${rel} ago`
+}
+
 export function absoluteTime(val: any): string {
   const d = parseDate(val)
   if (!d) return ''

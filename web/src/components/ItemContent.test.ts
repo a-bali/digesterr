@@ -17,7 +17,7 @@ import { createRouter, createMemoryHistory } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'
 import ItemContent from './ItemContent.vue'
 import { useFeedStore } from '../stores/feed'
-import { absoluteTime } from '../lib/format'
+import { absoluteTime, relativeTimeAgo } from '../lib/format'
 import type { Feed, Item } from '../types/api'
 
 function makeItem(overrides: Partial<Item> = {}): Item {
@@ -108,23 +108,29 @@ function checkedView(wrapper: ReturnType<typeof mountItemContent>) {
 // Read" on an item that was already read, and clicking it wrote 'read' — the same
 // state the app already considered it to be in — so it looked like a dead button.
 describe('ItemContent read toggle', () => {
+  // The header actions are icon-only: state is carried by aria-pressed and the
+  // tooltip, not by a label. The read button's tooltip still says "Mark read" /
+  // "Mark unread", so a state regression is still visible.
   function readButton(wrapper: ReturnType<typeof mountItemContent>) {
-    return wrapper.findAll('button').find(b => /^Mark (Read|Unread)$/.test(b.text().trim()))
+    return wrapper.find('[data-action-read]')
   }
 
-  it('offers "Mark Read" for an unread item', () => {
+  it('offers "Mark read" for an unread item', () => {
     const wrapper = mountItemContent(makeItem({ status: 'unread' }))
-    expect(readButton(wrapper)!.text().trim()).toBe('Mark Read')
+    expect(readButton(wrapper).attributes('title')).toBe('Mark read')
+    expect(readButton(wrapper).attributes('aria-pressed')).toBe('false')
   })
 
-  it('offers "Mark Unread" for a read item', () => {
+  it('offers "Mark unread" for a read item', () => {
     const wrapper = mountItemContent(makeItem({ status: 'read' }))
-    expect(readButton(wrapper)!.text().trim()).toBe('Mark Unread')
+    expect(readButton(wrapper).attributes('title')).toBe('Mark unread')
+    expect(readButton(wrapper).attributes('aria-pressed')).toBe('true')
   })
 
-  it('offers "Mark Unread" for a DIGESTED item, which is a read item', () => {
+  it('offers "Mark unread" for a DIGESTED item, which is a read item', () => {
     const wrapper = mountItemContent(makeItem({ status: 'digested' }))
-    expect(readButton(wrapper)!.text().trim()).toBe('Mark Unread')
+    expect(readButton(wrapper).attributes('title')).toBe('Mark unread')
+    expect(readButton(wrapper).attributes('aria-pressed')).toBe('true')
   })
 
   it('clicking the toggle on a digested item clears it to unread, not to read', () => {
@@ -254,9 +260,6 @@ describe('ItemContent single content section', () => {
     const date = () => wrapper.find('[data-extract-date]')
     expect(date().exists()).toBe(true)
     expect(date().text()).toBe(`Extracted ${absoluteTime('2026-08-13T08:00:00Z')}`)
-    // Small and muted.
-    expect(date().classes()).toContain('text-xs')
-    expect(date().classes()).toContain('text-muted-foreground/70')
 
     await viewOption(wrapper, 'original').trigger('click')
     expect(date().exists()).toBe(false)
@@ -265,13 +268,13 @@ describe('ItemContent single content section', () => {
     expect(date().exists()).toBe(true)
   })
 
-  it('aligns the toggle to the right edge', () => {
-    // The container right-aligns its children (toggle, then the date below it).
-    const container = viewToggle(wrapper).element.parentElement!
-    expect(container.className).toContain('items-end')
-    // The toggle follows the date in the DOM, i.e. the date sits BELOW it.
-    expect(container.querySelector('[data-extract-date]')).not.toBeNull()
-    expect(container.lastElementChild?.hasAttribute('data-extract-date')).toBe(true)
+  it('places the toggle in the header action row', () => {
+    // The toggle moved off its own row into the header's action row, which is
+    // what removes a whole band of chrome. It must precede the action buttons.
+    const actions = viewToggle(wrapper).element.parentElement!
+    expect(actions.contains(wrapper.find('[data-action-read]').element)).toBe(true)
+    const order = [...actions.querySelectorAll('[data-view-toggle], [data-action-read]')]
+    expect(order[0].hasAttribute('data-view-toggle')).toBe(true)
   })
 
   it('offers no toggle when the item has no extraction', () => {
@@ -305,8 +308,10 @@ describe('ItemContent single content section', () => {
   it('keeps existing actions visible and functional while switched', async () => {
     await viewOption(wrapper, 'original').trigger('click')
     expect(wrapper.text()).toContain('Original body')
-    expect(wrapper.text()).toContain('Mark Read')
-    expect(wrapper.text()).toContain('Re-extract')
+    // Actions stay in the header row, still enabled, in both views.
+    expect(wrapper.find('[data-action-read]').attributes('title')).toBe('Mark read')
+    expect(wrapper.find('[data-action-extract]').attributes('title')).toBe('Re-extract')
+    expect(wrapper.find('[data-action-extract]').attributes('disabled')).toBeUndefined()
   })
 
   // A cleared extraction is not a view: the original is all there is.
@@ -384,10 +389,12 @@ describe('ItemContent feed link', () => {
     expect(link.exists()).toBe(true)
     expect(link.attributes('href')).toBe('/feeds/7')
     expect(link.text()).toBe('HN')
-    // Feed link sits next to the unchanged timestamp in the metadata row.
-    const time = wrapper.find('span.text-xs')
-    expect(time.text()).toBe(absoluteTime(makeItem().published_at))
-    expect(wrapper.text()).toContain('HN')
+    // Feed link sits in the metadata row alongside the relative time, which is
+    // now phrased as an interval ("1mo ago") rather than a full timestamp.
+    expect(wrapper.text()).toContain(relativeTimeAgo(makeItem().published_at))
+    // The absolute timestamp is still available on hover.
+    const time = wrapper.findAll('span').find(sp => sp.attributes('title') === absoluteTime(makeItem().published_at))
+    expect(time, 'the relative time keeps an absolute title').toBeTruthy()
   })
 
   it('renders no feed link when the item feed is unknown', () => {
@@ -396,10 +403,9 @@ describe('ItemContent feed link', () => {
     expect(wrapper.text()).not.toContain('Example Feed')
   })
 
-  it('keeps the timestamp format unchanged when a feed link is present', () => {
+  it('keeps the relative timestamp format when a feed link is present', () => {
     const wrapper = mountItemContent(makeItem(), [makeFeed()])
-    const time = wrapper.find('span.text-xs')
-    expect(time.text()).toBe(absoluteTime(makeItem().published_at))
+    expect(wrapper.text()).toContain(relativeTimeAgo(makeItem().published_at))
   })
 })
 
@@ -413,7 +419,8 @@ describe('ItemContent LLM summary box', () => {
   })
 
   async function summarize() {
-    const btn = wrapper.findAll('button').find(b => b.text().trim() === 'Summarize')!
+    // Icon-only now: selected by its hook, not by label text.
+    const btn = wrapper.find('[data-action-summarize]')
     await btn.trigger('click')
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
@@ -436,9 +443,10 @@ describe('ItemContent LLM summary box', () => {
     const close = box.find('[data-summary-close]')
     expect(close.exists()).toBe(true)
     expect(close.attributes('aria-label')).toBe('Hide summary')
-    // The box sits above the content body.
+    // The box sits above the content body. (The view toggle now lives up in the
+    // header, so it is no longer the anchor for "above the body" — the prose is.)
     const html = wrapper.html()
-    expect(html.indexOf('data-summary-box')).toBeLessThan(html.indexOf('data-view-toggle'))
+    expect(html.indexOf('data-summary-box')).toBeLessThan(html.indexOf('class="prose'))
   })
 
   it('hides the box when the close button is pressed', async () => {
@@ -488,8 +496,7 @@ describe('ItemContent extraction switches to the extracted body', () => {
     expect(wrapper.text()).toContain('Original body')
     expect(wrapper.text()).not.toContain('Extracted body')
 
-    const re = wrapper.findAll('button').find(b => b.text().trim() === 'Re-extract')!
-    await re.trigger('click')
+    await wrapper.find('[data-action-extract]').trigger('click')
     await wrapper.vm.$nextTick()
 
     expect(wrapper.text()).toContain('Extracted body')
@@ -506,8 +513,7 @@ describe('ItemContent extraction switches to the extracted body', () => {
     const store = useFeedStore()
     let deleted = false
     store.deleteExtraction = async () => { deleted = true; store.selectedItem = makeItem({ extract_status: 'cleared' }) }
-    const del = wrapper.findAll('button').find(b => b.text().trim().includes('Delete extracted'))!
-    await del.trigger('click')
+    await wrapper.find('[data-action-delete-extracted]').trigger('click')
 
     expect(deleted).toBe(true)
     await wrapper.vm.$nextTick()

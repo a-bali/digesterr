@@ -231,9 +231,11 @@ describe('ItemContent summarize button', () => {
 
   it('renders a Summarize button', () => {
     const wrapper = mountItemContent(makeItem())
-    const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))
-    expect(btn).toBeDefined()
-    expect(btn!.text()).toContain('Summarize')
+    const btn = wrapper.find('[data-action-summarize]')
+    expect(btn.exists()).toBe(true)
+    // Icon-only: the label lives on the accessible name, since an icon button
+    // with no text still has to be announceable.
+    expect(btn.attributes('aria-label')).toBe('Summarize')
   })
 
   it('shows summary section after summarizing', async () => {
@@ -243,7 +245,7 @@ describe('ItemContent summarize button', () => {
     })
 
     const wrapper = mountItemContent(makeItem())
-    const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))!
+    const btn = wrapper.find('[data-action-summarize]')
     await btn.trigger('click')
 
     // Wait for the async mock to resolve and Vue to re-render.
@@ -276,7 +278,7 @@ describe('ItemContent summarize button', () => {
     mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
 
     const wrapper = mountItemContent(makeItem())
-    const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))!
+    const btn = wrapper.find('[data-action-summarize]')
     await btn.trigger('click')
     await vi.dynamicImportSettled()
     await wrapper.vm.$nextTick()
@@ -289,7 +291,7 @@ describe('ItemContent summarize button', () => {
     mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
 
     const wrapper = mountItemContent(makeItem())
-    const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))!
+    const btn = wrapper.find('[data-action-summarize]')
     await btn.trigger('click')
     await flushPromises()
 
@@ -327,8 +329,7 @@ describe('ItemContent summarize button', () => {
       await openSummaryLengthMenu(wrapper)
       clickSummaryLengthItem(label)
       await flushPromises()
-      const btn = wrapper.findAll('button').find(b => (b.text() || '') === 'Summarize')
-      await btn!.trigger('click')
+      await wrapper.find('[data-action-summarize]').trigger('click')
       await flushPromises()
       const calls = mockSummarize.mock.calls
       const opts = (calls[calls.length - 1]?.[1] ?? {}) as Record<string, unknown>
@@ -353,14 +354,14 @@ describe('ItemContent summarize button', () => {
     expect(checked).toHaveLength(1)
     expect(checked[0].textContent).toContain('Medium')
     // The trigger itself carries no length label.
-    expect(wrapper.findAll('button').find(b => b.text().includes('Summarize'))!.text()).toBe('Summarize')
+    expect(wrapper.find('[data-action-summarize]').attributes('aria-label')).toBe('Summarize')
   })
 
   it('re-summarizes at the chosen length when a preset is picked', async () => {
     mockSummarize.mockResolvedValue({ content_summary: 'Summary.', comments_summary: 'Comments.' })
 
     const wrapper = mountItemContent(makeItem())
-    const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))!
+    const btn = wrapper.find('[data-action-summarize]')
     await btn.trigger('click')
     await flushPromises()
     expect(mockSummarize).toHaveBeenCalledTimes(1)
@@ -386,7 +387,7 @@ describe('ItemContent summarize button', () => {
     expect(checked).toHaveLength(1)
     expect(checked[0].textContent).toContain('Short')
 
-    const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))!
+    const btn = wrapper.find('[data-action-summarize]')
     await btn.trigger('click')
     await flushPromises()
     expect(mockSummarize).toHaveBeenCalledWith(1, { sentence_count: 2, min_sentences: 1, max_sentences: 2, detail: 'gist' })
@@ -399,7 +400,7 @@ describe('ItemContent summarize button', () => {
     })
 
     const wrapper = mountItemContent(makeItem())
-    const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))!
+    const btn = wrapper.find('[data-action-summarize]')
     await btn.trigger('click')
     await vi.dynamicImportSettled()
     await wrapper.vm.$nextTick()
@@ -424,7 +425,7 @@ describe('ItemContent summarize button', () => {
     })
 
     const wrapper = mountItemContent(makeItem({ id: 1 }))
-    const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))!
+    const btn = wrapper.find('[data-action-summarize]')
     await btn.trigger('click')
     await vi.dynamicImportSettled()
     await wrapper.vm.$nextTick()
@@ -455,7 +456,7 @@ describe('ItemContent summarize button', () => {
     })
 
     const wrapper = mountItemContent(makeItem())
-    const btn = wrapper.findAll('button').find(b => b.text().includes('Summarize'))!
+    const btn = wrapper.find('[data-action-summarize]')
     await btn.trigger('click')
     await vi.dynamicImportSettled()
     await wrapper.vm.$nextTick()
