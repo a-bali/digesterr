@@ -235,6 +235,25 @@ const statusIcon = computed(() => {
   return 'read'
 })
 
+// Rendered as a TEXT CHARACTER, not an icon: a text glyph inherits the headline's
+// font metrics and so shares its baseline, which is what makes it read as an initial
+// in front of the title. An SVG icon would sit on its own box instead.
+const statusGlyph = computed(() => {
+  if (statusIcon.value === 'unread') return '◉'
+  if (statusIcon.value === 'digested') return '◐'
+  return '◯'
+})
+
+// Same glyphs and colours as the mid pane's list rows, so a mark means the same
+// thing in both places: accent dot = unread, half-filled = digested, hollow = read.
+// `leading-snug` matches the title's line-height so the two share a text baseline —
+// with `leading-none` the glyph's smaller line box lifts it above the headline.
+const statusGlyphClass = computed(() => {
+  if (statusIcon.value === 'unread') return 'text-accent text-[15px] leading-snug'
+  if (statusIcon.value === 'digested') return 'text-muted-foreground/60 text-[15px] leading-snug'
+  return 'text-muted-foreground/40 text-[15px] leading-snug'
+})
+
 // Only transitions that change something are offered — the menu never lists the
 // state the item is already in, so every entry is an action you can take:
 //   read     -> Unread | Digested
@@ -693,20 +712,19 @@ onUnmounted(() => {
       <div class="-mx-3 mb-3 border-b border-border px-3 pt-1 pb-2.5 relative sm:-mx-6 sm:px-6">
         <div class="flex flex-col gap-y-1.5 @[560px]:flex-row @[560px]:items-start @[560px]:gap-x-4">
           <div class="min-w-0 flex-1 @max-[560px]:pr-8">
-            <!-- Status icon + title. The icon leads the title as a CHARACTER rather
-                 than a padded button, so it reads as part of the headline; the tiny
-                 chevron at its bottom-right is the affordance that it opens a menu. -->
+            <!-- Status + title. The status leads the title as a CHARACTER set in the
+                 headline's own type, so it shares the title's baseline and reads as an
+                 initial rather than a control sitting beside the text. The chevron on
+                 its right is the affordance that it opens a menu. -->
             <div class="flex items-start gap-1 mb-1">
               <DropdownMenu :items="statusItems" data-status-menu>
                 <template #trigger>
                   <button type="button"
-                    class="relative -ml-1 mt-[3px] inline-flex shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    class="inline-flex shrink-0 items-center gap-px rounded text-[15px] font-semibold leading-snug text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     :title="`Status: ${statusIcon}`" :aria-label="`Status: ${statusIcon}`"
                     aria-haspopup="menu" data-action-status>
-                    <CircleDot v-if="statusIcon === 'unread'" class="size-4 text-accent" />
-                    <span v-else-if="statusIcon === 'digested'" class="text-sm leading-none text-muted-foreground/60">◐</span>
-                    <Circle v-else class="size-4 text-muted-foreground/40" />
-                    <ChevronDown class="absolute -bottom-0.5 -right-0.5 size-2.5 text-muted-foreground/70" />
+                    <span data-status-glyph :class="statusGlyphClass">{{ statusGlyph }}</span>
+                    <ChevronDown class="size-2.5 shrink-0 opacity-60" />
                   </button>
                 </template>
               </DropdownMenu>
@@ -767,12 +785,14 @@ onUnmounted(() => {
                top right in both layouts. -->
           <div class="flex flex-col gap-y-1 items-start @[560px]:shrink-0 @[560px]:items-end">
             <div class="flex items-center gap-0.5">
-              <!-- Summary: ONE button that runs at the current length, with a tiny
-                   chevron tucked into its bottom-right corner for the presets. The
-                   chevron is a separate hit target (it must not also run the summary)
-                   but overlays the button's corner so the pair reads as one control. -->
-              <div class="relative">
-                <button type="button" :class="actionBtn" :disabled="summaryLoading"
+              <!-- Summary: ONE control that runs at the current length, with its
+                   preset chevron to the RIGHT of the sparkle. The chevron is a
+                   separate hit target (it must not also run the summary) but sits
+                   inside the same bordered pill, so the pair reads as one control. -->
+              <div class="inline-flex items-stretch rounded-md border border-border bg-muted/40 p-0.5">
+                <button type="button"
+                  class="inline-flex size-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                  :disabled="summaryLoading"
                   :title="summaryLoading ? 'Summarizing…' : `Summarize (${currentSummaryLabel})`"
                   :aria-label="summaryLoading ? 'Summarizing' : `Summarize (${currentSummaryLabel})`"
                   data-action-summarize @click="doSummarize">
@@ -782,10 +802,10 @@ onUnmounted(() => {
                 <DropdownMenu :items="summaryMenuItems" data-summary-length-menu>
                   <template #trigger>
                     <button type="button" :disabled="summaryLoading"
-                      class="absolute -bottom-0.5 -right-0.5 inline-flex size-3 items-center justify-center rounded-sm bg-background text-muted-foreground/70 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                      class="inline-flex w-3.5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
                       title="Summary length" aria-label="Summary length" aria-haspopup="menu"
                       data-summary-length-opener>
-                      <ChevronDown class="size-2.5" />
+                      <ChevronDown class="size-3" />
                     </button>
                   </template>
                 </DropdownMenu>
@@ -796,13 +816,14 @@ onUnmounted(() => {
                 <ArrowDownToLine class="size-4" />
               </button>
             </div>
-            <!-- Content view toggle with its extraction menu tucked into the corner:
-                 Re-extract and Delete act on the extracted body the toggle selects.
-                 The opener additionally requires extractionSupported — a twitter or
+            <!-- Content view toggle with its extraction menu to the RIGHT of the
+                 segmented control, inside the same bordered pill. Re-extract and
+                 Delete act on the extracted body the toggle selects. The opener
+                 additionally requires extractionSupported — a twitter or
                  reddit-hosted item can have an extracted body yet offer no extraction
                  actions, and without this the menu would offer "Re-extract" for a
                  feed that cannot extract. -->
-            <div v-if="canToggleOriginal" class="relative inline-flex items-stretch rounded-md border border-border bg-muted/40 p-0.5"
+            <div v-if="canToggleOriginal" class="inline-flex items-stretch rounded-md border border-border bg-muted/40 p-0.5"
               :title="extractDateTitle">
               <div
                 class="inline-flex"
@@ -833,10 +854,10 @@ onUnmounted(() => {
               <DropdownMenu v-if="extractionSupported" :items="extractionItems" data-extraction-menu>
                 <template #trigger>
                   <button type="button" :disabled="extracting"
-                    class="absolute -bottom-0.5 -right-0.5 inline-flex size-3 items-center justify-center rounded-sm bg-background text-muted-foreground/70 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                    class="inline-flex w-3.5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
                     title="Extraction actions" aria-label="Extraction actions" aria-haspopup="menu"
                     data-extraction-opener>
-                    <ChevronDown class="size-2.5" />
+                    <ChevronDown class="size-3" />
                   </button>
                 </template>
               </DropdownMenu>

@@ -152,6 +152,41 @@ describe('ItemContent status control', () => {
   }
   beforeEach(() => { document.body.innerHTML = '' })
 
+  // The status mark is a CHARACTER, not an icon in a padded button: it renders as a
+  // text glyph in the headline's own size/line-height, so it shares the title's
+  // baseline and reads as an initial. An SVG icon gets its own line box and sits
+  // like a control beside the text — regressed twice, so it is pinned here.
+  // Layout (baseline sharing, chevron geometry) is measured live in the browser;
+  // jsdom has no layout engine, so this asserts the markup contract instead.
+  it('renders the status as a text glyph, not an icon button', () => {
+    const glyphs = { unread: '◉', digested: '◐', read: '◯' }
+    for (const [status, char] of Object.entries(glyphs)) {
+      const wrapper = mountItemContent(makeItem({ status }))
+      const glyph = wrapper.find('[data-status-glyph]')
+      expect(glyph.exists()).toBe(true)
+      expect(glyph.text()).toBe(char)
+      // Nothing between the glyph and the title but the control's own chevron.
+      expect(wrapper.find('[data-action-status] svg').exists()).toBe(true)
+    }
+  })
+
+  // The chevron must sit AFTER the glyph, in normal flow — not absolutely positioned
+  // over it. `absolute` would mean overlap, which is what was rejected.
+  it('puts the status chevron after the glyph in flow, not overlapping it', () => {
+    const wrapper = mountItemContent(makeItem({ status: 'unread' }))
+    const btn = statusButton(wrapper)
+    const glyph = btn.find('[data-status-glyph]')
+    const chevron = btn.find('svg')
+    expect(glyph.exists()).toBe(true)
+    expect(chevron.exists()).toBe(true)
+    // Order in the DOM puts the chevron after the glyph.
+    const kids = Array.from(btn.element.children)
+    expect(kids.indexOf(chevron.element)).toBeGreaterThan(kids.indexOf(glyph.element))
+    // No absolute positioning on either part of the control.
+    expect(chevron.classes()).not.toContain('absolute')
+    expect(glyph.classes()).not.toContain('absolute')
+  })
+
   it('shows the unread convention and offers Read + Digested for an unread item', async () => {
     const wrapper = mountItemContent(makeItem({ status: 'unread' }))
     expect(statusButton(wrapper).attributes('title')).toBe('Status: unread')
