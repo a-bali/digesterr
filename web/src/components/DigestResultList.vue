@@ -7,7 +7,7 @@ import { Circle, CircleDot, LoaderCircle, CheckCircle2, ChevronsUp, ChevronsDown
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
 import { absoluteTime, relativeTime } from '../lib/format'
 import type { DigestResult, DigestResultWithConfigName } from '../types/api'
-import { scopeActionLabel, scopeEmptyLabel, markRelativeLabel, markRelativeShortLabel } from '../lib/markAllRead'
+import { scopeActionLabel, scopeEmptyLabel, markRelativeLabel } from '../lib/markAllRead'
 
 const props = defineProps<{
   showingAll?: boolean

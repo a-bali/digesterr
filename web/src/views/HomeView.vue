@@ -27,10 +27,10 @@ import { useLayoutStore } from '../stores/layout'
 import { itemApi } from '../services/api'
 import { toastSuccess } from '../lib/toast'
 import {
-  type MarkAllScope, scopeLabel, scopeActionLabel, scopeEmptyLabel, scopeCount,
-  MARK_SUCCESS_TITLE, MARK_FAILURE_TITLE, MARK_EMPTY_TITLE, MARK_DIALOG_TITLE,
+  type MarkAllScope, scopeLabel, scopeCount,
+  MARK_EMPTY_TITLE, MARK_DIALOG_TITLE,
 } from '../lib/markAllRead'
-import type { Item, DigestConfig } from '../types/api'
+import type { Item } from '../types/api'
 import { useBreakpoints } from '../composables/useMediaQuery'
 import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts'
 import { useSwipeGesture } from '../composables/useSwipeGesture'
@@ -402,7 +402,6 @@ function onHelpClick() {
 }
 
 // Keyboard Shift+A routes through the same confirmation as the sidebar action.
-const sidebarRef = useTemplateRef<InstanceType<typeof FeedSidebar>>('sidebar')
 // The sidebar declares the scope it wants marked; the dialog and the action both
 // live here, so a sidebar control cannot mark a scope read without the same
 // confirmation the key and the mid-pane button use.
@@ -481,11 +480,6 @@ function digestUnreadInScope(configId?: number): number | null {
     if (typeof n === 'number') { total += n; known = true }
   }
   return known ? total : null
-}
-
-function plural(n: number | null, one: string): string {
-  const count = n ?? 0
-  return `${count} ${one}${count === 1 ? '' : 's'}`
 }
 
 // Single funnel for every mark-all-read request. Decides the scope from the view
