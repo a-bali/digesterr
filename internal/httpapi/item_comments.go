@@ -169,7 +169,12 @@ func (s *Server) fetchTopComments(r *http.Request, item store.Item, limit int, b
 		return nil, false
 	}
 
-	comments, err := cf.FetchComments(ctx, item, limit)
+	// Comment fetching goes through the same transport as polling, and this
+	// handler runs concurrently with the poller: attribute from this request's own
+	// traffic rather than from the shared counters, which another feed's requests
+	// can be sitting in.
+	scope := metrics.NewScope()
+	comments, err := cf.FetchComments(metrics.WithScope(ctx, scope), item, limit)
 	// Record comment fetch metrics with the correct target URL.
 	if s.metrics != nil {
 		statusCode := metrics.StatusFor(err)
@@ -177,13 +182,7 @@ func (s *Server) fetchTopComments(r *http.Request, item store.Item, limit int, b
 		if err != nil {
 			errStr = err.Error()
 		}
-		// Comment fetching goes through the same shared transport as polling,
-		// so take both counters to keep bytes and requests attributed together.
-		var respBytes int64
-		var reqs int
-		if s.poller != nil {
-			respBytes, reqs = s.poller.ConsumeCounters()
-		}
+		respBytes, reqs := scope.Totals()
 		s.metrics.Record(metrics.Record{
 			Timestamp:  time.Now(),
 			URL:        cf.CommentTargetURL(),

@@ -131,9 +131,10 @@ func (c *AgentMailClient) Host() string {
 	return u.Host
 }
 
-// consumeCounters reads and resets the shared metrics transport counters. The
-// sync uses this so its traffic is reported as its own instead of being left
-// for the next feed's ConsumeCounters to claim.
+// consumeCounters reads and resets the shared metrics transport counters. Used
+// only to drain the aggregate after a pass; per-pass numbers come from the
+// operation's Scope, since concurrent feeds share this transport and a global
+// counter cannot be attributed to one of them.
 func (c *AgentMailClient) consumeCounters() (int64, int) {
 	if t, ok := c.client.Transport.(*metrics.Transport); ok {
 		b, r := t.Consume()

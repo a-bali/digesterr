@@ -1,8 +1,11 @@
 package metrics
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -91,6 +94,108 @@ func TestSummaryReportsHTTPRequests(t *testing.T) {
 	}
 	if fetchReqs != 1 || enrichReqs != 44 {
 		t.Errorf("group HTTPRequests — fetch=%d enrichment=%d, want 1 and 44", fetchReqs, enrichReqs)
+	}
+}
+
+// TestScopeAttributesConcurrentOperations is the regression test for
+// cross-feed misattribution: feeds poll concurrently now, so reading one shared
+// counter after each fetch let a worker claim another feed's requests and bytes.
+//
+// Each operation must get EXACTLY its own traffic, whichever order they finish
+// in. The shared counter can never do this — the totals below are read from the
+// per-operation scopes, and the assertion is on the difference, not the order.
+func TestScopeAttributesConcurrentOperations(t *testing.T) {
+	// Two endpoints with distinguishable payload sizes, so a mix-up is visible in
+	// the byte totals and not just the counts.
+	small := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("s"))
+	}))
+	t.Cleanup(small.Close)
+	large := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("L", 500)))
+	}))
+	t.Cleanup(large.Close)
+
+	tr := NewTransport(nil)
+	client := &http.Client{Transport: tr}
+
+	// Two operations running at the same time, as two feeds do.
+	smallScope, largeScope := NewScope(), NewScope()
+	var wg sync.WaitGroup
+	for _, op := range []struct {
+		scope *Scope
+		url   string
+		calls int
+	}{
+		{smallScope, small.URL, 3},
+		{largeScope, large.URL, 5},
+	} {
+		wg.Add(1)
+		go func(scope *Scope, url string, calls int) {
+			defer wg.Done()
+			ctx := WithScope(context.Background(), scope)
+			for i := 0; i < calls; i++ {
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+				if err != nil {
+					t.Errorf("build request: %v", err)
+					return
+				}
+				resp, err := client.Do(req)
+				if err != nil {
+					t.Errorf("request: %v", err)
+					return
+				}
+				resp.Body.Close()
+			}
+		}(op.scope, op.url, op.calls)
+	}
+	wg.Wait()
+
+	if b, r := smallScope.Totals(); r != 3 || b != 3 {
+		t.Errorf("small op = (%d bytes, %d requests), want (3, 3)", b, r)
+	}
+	if b, r := largeScope.Totals(); r != 5 || b != 500*5 {
+		t.Errorf("large op = (%d bytes, %d requests), want (%d, 5)", b, r, 500*5)
+	}
+
+	// The process-wide counters still see the aggregate, so traffic on a path
+	// that carries no scope is not lost from the summary.
+	if _, r := tr.Consume(); r != 8 {
+		t.Errorf("aggregate requests = %d, want 8", r)
+	}
+}
+
+// TestScopeTotalsAreNotConsumed: a scope belongs to one operation and is read
+// once at the end. Unlike Consume, reading it must not zero it, or a second read
+// (e.g. a deferred metrics record) would report zero traffic.
+func TestScopeTotalsAreNotConsumed(t *testing.T) {
+	s := NewScope()
+	s.AddRequest()
+	s.AddBytes(10)
+
+	if b, r := s.Totals(); b != 10 || r != 1 {
+		t.Fatalf("first Totals() = (%d, %d), want (10, 1)", b, r)
+	}
+	if b, r := s.Totals(); b != 10 || r != 1 {
+		t.Errorf("second Totals() = (%d, %d), want (10, 1) — reading must not reset", b, r)
+	}
+}
+
+// TestScopeNilSafety: a nil scope is what a caller gets when an operation has no
+// scope, so every method must tolerate it rather than panic in production.
+func TestScopeNilSafety(t *testing.T) {
+	var s *Scope
+	s.AddRequest()
+	s.AddBytes(5)
+	if b, r := s.Totals(); b != 0 || r != 0 {
+		t.Errorf("nil scope Totals() = (%d, %d), want (0, 0)", b, r)
+	}
+	// A context with no scope yields nil, and requests through it must not panic.
+	if got := ScopeFrom(context.Background()); got != nil {
+		t.Errorf("ScopeFrom(background) = %v, want nil", got)
+	}
+	if got := WithScope(context.Background(), nil); got == nil {
+		t.Error("WithScope(ctx, nil) must return the original context, not nil")
 	}
 }
 

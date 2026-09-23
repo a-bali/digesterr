@@ -66,35 +66,43 @@ func (s *EmailSync) setTransport(t http.RoundTripper) {
 	}
 }
 
-// consume reads and resets the shared transport counters, so a sync pass can
-// report its own traffic and leave nothing behind for the next feed to claim.
-func (s *EmailSync) consume() (int64, int) {
+// drainSharedCounters reads and discards the shared transport counters, so a
+// sync pass does not leave its traffic sitting in the aggregate. Per-pass
+// attribution comes from the scope in RunEmailSync; this exists only to keep the
+// shared totals from double-counting once they are no longer how a pass is
+// measured.
+func (s *EmailSync) drainSharedCounters() {
 	if !s.Configured() {
-		return 0, 0
+		return
 	}
-	return s.client.consumeCounters()
+	s.client.consumeCounters()
 }
 
 // RunEmailSync performs one sync pass and emits its metrics record, so the
 // mailbox sync is visible in GET /api/metrics as `email_sync` instead of being
 // silently attributed to whichever feed happened to be polled next.
 //
-// Run itself must NOT record: PollAll calls Run and then polls the first feed,
-// whose pollFeed reads the shared transport counters immediately. Anything the
-// sync leaves behind is claimed by that feed (measured: a ~30 KB RSS fetch
-// reported bytes=1252698 while both email feeds showed 0). Metrics transport
-// fixtures therefore call Run directly; only the real entry points use this.
+// Run itself must NOT record: only the real entry points use this. Metrics
+// transport fixtures call Run directly, and a bare Run would leave this pass's
+// traffic in the shared counters for a later consumer to claim (measured once:
+// a ~30 KB RSS fetch reported bytes=1252698 while both email feeds showed 0).
 func (s *EmailSync) RunEmailSync(ctx context.Context, record func(Record)) {
 	if s == nil || !s.Configured() {
 		return
 	}
 	inbox := s.client.InboxID()
 	start := time.Now()
-	err := s.Run(ctx)
-	// Consume AFTER the pass: consuming first would read the pre-sync counters
-	// (usually zero) and leave this pass's traffic in the transport for the next
-	// feed to claim — the exact bug this function exists to prevent.
-	bytes, reqs := s.consume()
+	// Attribute from the REQUESTS this pass makes, not from the shared counter.
+	// The counters are still drained below so the aggregate they feed is not left
+	// holding this pass's traffic — but the per-pass numbers come from the scope,
+	// which no concurrent feed can contaminate.
+	scope := metrics.NewScope()
+	err := s.Run(metrics.WithScope(ctx, scope))
+	bytes, reqs := scope.Totals()
+	// Drain the shared counters AFTER the pass: draining first would read the
+	// pre-sync counters (usually zero) and leave this pass's traffic in the
+	// transport for the next consumer to claim.
+	s.drainSharedCounters()
 	if record == nil {
 		return
 	}

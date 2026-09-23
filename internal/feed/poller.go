@@ -375,8 +375,12 @@ func hostFromURL(raw string) string {
 
 // ConsumeCounters reads and resets the shared transport counters, returning
 // response bytes and the number of outbound HTTP requests they came from.
-// Exported for use by the digest generator after enrichment/comment-fetch
-// operations.
+//
+// Per-operation callers should NOT use this: feeds poll concurrently and the
+// digest runs alongside them, so these counters can hold another operation's
+// traffic. Carry a metrics.Scope on the request context instead (metrics.WithScope)
+// and read its Totals. Retained because the process-wide aggregate is still
+// reported, and it is the only place traffic from unscoped paths is visible.
 func (p *Poller) ConsumeCounters() (respBytes int64, requests int) {
 	if t, ok := p.sharedTransport.(*metrics.Transport); ok {
 		b, r := t.Consume()
@@ -654,10 +658,9 @@ func (p *Poller) PollAll(ctx context.Context) {
 	// Twitter 429s. A sync failure is recorded on the inbox and does not stop the
 	// other feeds from polling.
 	//
-	// RunEmailSync (not Run) so the sync's HTTP traffic is consumed and recorded
-	// as `email_sync` here: the first pollFeed below reads the shared transport
-	// counters immediately after its Fetch, so whatever the sync leaves behind is
-	// reported as that feed's own traffic.
+	// RunEmailSync (not Run) so the sync's HTTP traffic is recorded as
+	// `email_sync` instead of being left in the shared transport counters for a
+	// feed poll to claim.
 	p.drainEmailInboxes(ctx)
 
 	// Fetch feeds concurrently, bounded by pollConcurrency: one slow feed no
@@ -779,9 +782,13 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	logger := slog.With("feed_id", feed.ID, "feed_name", feed.Name, "feed_url", feed.Url)
 	logger.Debug("polling feed")
 
-	items, err := fetcher.Fetch(ctx, feed.Url)
+	// Attribute this feed's traffic from the REQUESTS it makes, not from the
+	// shared counter: feeds poll concurrently now, so a shared counter would let
+	// one feed claim another's requests and bytes.
+	scope := metrics.NewScope()
+	items, err := fetcher.Fetch(metrics.WithScope(ctx, scope), feed.Url)
 	fetchDur := time.Since(start)
-	fetchBytes, fetchReqs := p.ConsumeCounters()
+	fetchBytes, fetchReqs := scope.Totals()
 	// Derive host from feed URL.
 	fetchHost := hostFromURL(feed.Url)
 	if p.recordFn != nil {
@@ -1072,30 +1079,35 @@ func (p *Poller) enrichForPoll(ctx context.Context, feed store.Feed, candidates 
 		origContent[si.Hash] = si.Content
 	}
 	enrichStart := time.Now()
+	// ONE scope spans the bulk pass and the per-item fallback: the fallback issues
+	// real requests too, so reading the totals before it would drop them (and,
+	// with feeds polling concurrently, leave them to be claimed by another feed).
+	enrichScope := metrics.NewScope()
+	enrichCtx := metrics.WithScope(ctx, enrichScope)
+	var enrichErr error
 	if b, ok := enricher.(BulkEnricher); ok {
-		bulkErr := b.BulkEnrich(ctx, allPtrs)
-		enrichBytes, enrichReqs := p.ConsumeCounters()
-		enrichHost := hostFromURL(feed.Url)
-		p.recordEnrich(enrichStart, feed, enrichHost, enrichBytes, enrichReqs, bulkErr)
-		if bulkErr != nil {
-			logger.Warn("bulk enrich failed", "error", bulkErr)
+		enrichErr = b.BulkEnrich(enrichCtx, allPtrs)
+		if enrichErr != nil {
+			logger.Warn("bulk enrich failed", "error", enrichErr)
 		}
 		// Per-item fallback for unscored items.
 		for _, si := range allPtrs {
 			if si.Points > 0 {
 				continue
 			}
-			if err := enricher.Enrich(ctx, si); err != nil {
+			if err := enricher.Enrich(enrichCtx, si); err != nil {
 				logger.Debug("enrich fallback failed", "hash", si.Hash, "error", err)
 			}
 		}
 	} else {
 		for _, si := range allPtrs {
-			if err := enricher.Enrich(ctx, si); err != nil {
+			if err := enricher.Enrich(enrichCtx, si); err != nil {
 				logger.Debug("enrich failed", "hash", si.Hash, "error", err)
 			}
 		}
 	}
+	enrichBytes, enrichReqs := enrichScope.Totals()
+	p.recordEnrich(enrichStart, feed, hostFromURL(feed.Url), enrichBytes, enrichReqs, enrichErr)
 
 	// Track which candidates the enricher modified.
 	enrichedHashes := make(map[string]bool, len(candidates))
@@ -1340,8 +1352,9 @@ func (p *Poller) extractSingleItem(ctx context.Context, client *http.Client, ite
 		return
 	}
 
-	content, err := ExtractContent(ctx, item.Url, client, logger)
-	extractBytes, extractReqs := p.ConsumeCounters()
+	extractScope := metrics.NewScope()
+	content, err := ExtractContent(metrics.WithScope(ctx, extractScope), item.Url, client, logger)
+	extractBytes, extractReqs := extractScope.Totals()
 	// Record extraction metrics.
 	if p.recordFn != nil {
 		errStr := ""
@@ -1482,8 +1495,9 @@ func (p *Poller) enrichTwitterItems(ctx context.Context, feed store.Feed, tf *Tw
 		ptrs[i] = &items[i]
 	}
 	enrichStart := time.Now()
-	twErr := tf.EnrichFeed(ctx, feed.Url, ptrs)
-	twBytes, twReqs := p.ConsumeCounters()
+	twScope := metrics.NewScope()
+	twErr := tf.EnrichFeed(metrics.WithScope(ctx, twScope), feed.Url, ptrs)
+	twBytes, twReqs := twScope.Totals()
 	twHost := hostFromURL(feed.Url)
 	p.recordEnrich(enrichStart, feed, twHost, twBytes, twReqs, twErr)
 	if twErr != nil {
