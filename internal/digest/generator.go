@@ -444,15 +444,19 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 			continue
 		}
 		enrichStart := time.Now()
+		// Attribute from this pass's own requests. The digest runs alongside the
+		// poller on the same transport, so the shared counters would mix the two.
+		enrichScope := metrics.NewScope()
+		enrichCtx := metrics.WithScope(ctx, enrichScope)
 		var enrichErr error
 		if b, ok := enricher.(feed.BulkEnricher); ok {
-			enrichErr = b.BulkEnrich(ctx, feedItems)
+			enrichErr = b.BulkEnrich(enrichCtx, feedItems)
 			if enrichErr != nil {
 				genLogger.Debug("bulk enrich failed for digest", "type", feedType, "error", enrichErr)
 			}
 		} else {
 			for _, item := range feedItems {
-				if err := enricher.Enrich(ctx, item); err != nil {
+				if err := enricher.Enrich(enrichCtx, item); err != nil {
 					genLogger.Debug("enrich failed for digest item", "item_id", item.ID, "error", err)
 					if enrichErr == nil {
 						enrichErr = err
@@ -460,14 +464,10 @@ func (g *Generator) enrichAndExtractItems(ctx context.Context, items []digestIte
 				}
 			}
 		}
+		enrichBytes, enrichReqs := enrichScope.Totals()
 
 		// Record enrichment metrics.
 		if g.recordFn != nil && len(feedItems) > 0 {
-			var enrichBytes int64
-			var enrichReqs int
-			if g.extractor != nil {
-				enrichBytes, enrichReqs = g.extractor.ConsumeCounters()
-			}
 			feedObj, ferr := g.queries.GetFeedByID(ctx, feedItems[0].FeedID)
 			var feedName string
 			var feedID int64
@@ -659,12 +659,9 @@ func (g *Generator) fetchCommentsForHighlights(ctx context.Context, highlights [
 			continue
 		}
 		fetchStart := time.Now()
-		comments, err := cf.FetchComments(ctx, item.Item, item.Comments)
-		var fetchBytes int64
-		var fetchReqs int
-		if g.extractor != nil {
-			fetchBytes, fetchReqs = g.extractor.ConsumeCounters()
-		}
+		fetchScope := metrics.NewScope()
+		comments, err := cf.FetchComments(metrics.WithScope(ctx, fetchScope), item.Item, item.Comments)
+		fetchBytes, fetchReqs := fetchScope.Totals()
 		// Record comment-fetch metrics.
 		if g.recordFn != nil {
 			errStr := ""

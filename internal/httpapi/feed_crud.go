@@ -320,10 +320,13 @@ func (s *Server) handleUpdateFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If the feed left its category (moved or cleared), digest configs
-	// selecting that category should no longer include it.
+	// If the feed left its category (moved or cleared), digest configs selecting
+	// that category should stop counting this feed against it. The category
+	// selection itself is dropped only when this was its LAST feed — it names the
+	// category, so it stays valid while other feeds remain in it.
 	if existing.Category != "" && category != existing.Category {
-		if removed, err := s.pruneDigestConfigSources(r.Context(), userID, nil, existing.Category); err != nil {
+		if removed, err := s.pruneDigestConfigSources(r.Context(), userID, nil, existing.Category,
+			s.feedsLeftInCategory(r.Context(), userID, existing.Category)); err != nil {
 			slog.Warn("failed to prune digest config sources after category change",
 				"feed_id", id, "category", existing.Category, "error", err)
 		} else if removed > 0 {

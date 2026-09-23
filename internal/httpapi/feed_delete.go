@@ -2,15 +2,14 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 
+	"digesterr/internal/digest"
 	"digesterr/internal/store"
 )
-
 
 func (s *Server) handleDeleteFeed(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
@@ -42,7 +41,10 @@ func (s *Server) handleDeleteFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if removed, err := s.pruneDigestConfigSources(r.Context(), userID, []int64{feed.ID}, feed.Category); err != nil {
+	// Count the category's remaining feeds AFTER the delete: the category is
+	// pruned only when this reaches zero, so a feed leaving a shared category
+	// does not drop the selection for the feeds still in it.
+	if removed, err := s.pruneDigestConfigSources(r.Context(), userID, []int64{feed.ID}, feed.Category, s.feedsLeftInCategory(r.Context(), userID, feed.Category)); err != nil {
 		slog.Warn("failed to prune digest config sources after feed deletion",
 			"feed_id", id, "category", feed.Category, "error", err)
 	} else if removed > 0 {
@@ -51,6 +53,28 @@ func (s *Server) handleDeleteFeed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
+}
+
+// feedsLeftInCategory reports how many non-archive feeds the user still has in
+// the named category. A prune only removes a category selection when this is
+// zero: the selection names the CATEGORY, so it stays meaningful while any feed
+// remains in it. An empty name is not a category at all (it is "uncategorised"),
+// so it always reports zero.
+func (s *Server) feedsLeftInCategory(ctx context.Context, userID int64, category string) int {
+	if category == "" {
+		return 0
+	}
+	feeds, err := s.queries.ListFeedsByCategory(ctx, store.ListFeedsByCategoryParams{
+		Category: category,
+		UserID:   userID,
+	})
+	if err != nil {
+		// A failed lookup must not prune: treating "unknown" as "empty" would
+		// drop a live category selection on a transient DB error.
+		slog.Warn("failed to count feeds left in category", "category", category, "error", err)
+		return 1
+	}
+	return len(feeds)
 }
 
 // deleteArchiveFeed permanently discards an archive feed and everything in
@@ -114,68 +138,42 @@ func (s *Server) deleteFeedWithArchive(ctx context.Context, feed store.Feed, use
 	return nil
 }
 
-// pruneDigestConfigSources removes the given feed IDs and category from every
-// digest config of the user that references them. A config left with no
-// sources at all gets both lists cleared (it stays but generates nothing
-// until reconfigured). Returns the number of configs updated.
-func (s *Server) pruneDigestConfigSources(ctx context.Context, userID int64, feedIDs []int64, category string) (int, error) {
+// pruneDigestConfigSources removes the given feed IDs and, when it no longer
+// holds any feeds, the given category from every digest config of the user that
+// references them. Returns the number of configs updated.
+//
+// The category is pruned ONLY when it is empty (see digest.PruneSources). It is
+// a live reference to a name, so a feed leaving it does not invalidate the
+// selection while other feeds remain — pruning on every departure silently
+// dropped a source the user never touched. Pass the category's remaining feed
+// count as categoryFeedsLeft.
+//
+// A config left with no sources at all is deliberately left ALONE: the generator
+// reads "no sources" as "all feeds", so clearing the last source would widen the
+// digest to the whole account.
+func (s *Server) pruneDigestConfigSources(ctx context.Context, userID int64, feedIDs []int64, category string, categoryFeedsLeft int) (int, error) {
 	configs, err := s.queries.ListDigestConfigs(ctx, userID)
 	if err != nil {
 		return 0, fmt.Errorf("listing digest configs: %w", err)
 	}
-	idSet := make(map[int64]bool, len(feedIDs))
-	for _, fid := range feedIDs {
-		idSet[fid] = true
-	}
 	updated := 0
 	for _, cfg := range configs {
-		var parsed struct {
-			Feeds []struct {
-				ID         int `json:"id"`
-				Highlights int `json:"highlights"`
-				Comments   int `json:"comments"`
-			} `json:"feeds"`
-			Categories []struct {
-				Name       string `json:"name"`
-				Highlights int    `json:"highlights"`
-				Comments   int    `json:"comments"`
-			} `json:"categories"`
-		}
-		if err := json.Unmarshal([]byte(cfg.Config), &parsed); err != nil {
-			continue // unparseable config — leave untouched
-		}
-		feedsChanged, catsChanged := false, false
-		feeds := parsed.Feeds[:0]
-		for _, f := range parsed.Feeds {
-			if idSet[int64(f.ID)] {
-				feedsChanged = true
-				continue
-			}
-			feeds = append(feeds, f)
-		}
-		categories := parsed.Categories[:0]
-		for _, c := range parsed.Categories {
-			if category != "" && c.Name == category {
-				catsChanged = true
-				continue
-			}
-			categories = append(categories, c)
-		}
-		if !feedsChanged && !catsChanged {
+		rewritten, changed, err := digest.PruneSources(cfg.Config, feedIDs, category, categoryFeedsLeft == 0)
+		if err != nil {
+			// Unparseable config — leave it untouched rather than risk destroying it.
+			slog.Warn("skipping digest config with unparseable config JSON",
+				"config_id", cfg.ID, "error", err)
 			continue
 		}
-		parsed.Feeds = feeds
-		parsed.Categories = categories
-		blob, err := json.Marshal(parsed)
-		if err != nil {
-			return updated, fmt.Errorf("marshaling config %d: %w", cfg.ID, err)
+		if !changed {
+			continue
 		}
 		if _, err := s.queries.UpdateDigestConfig(ctx, store.UpdateDigestConfigParams{
 			ID:       cfg.ID,
 			UserID:   userID,
 			Name:     cfg.Name,
 			Schedule: cfg.Schedule,
-			Config:   string(blob),
+			Config:   rewritten,
 		}); err != nil {
 			return updated, fmt.Errorf("updating config %d: %w", cfg.ID, err)
 		}

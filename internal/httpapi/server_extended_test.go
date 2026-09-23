@@ -300,7 +300,7 @@ func TestDeleteFeedPrunesDigestConfigs(t *testing.T) {
 		Url: "https://example.com/b", Config: "{}", Status: "active",
 	})
 
-	// Config 1 references the doomed feed by ID; config 2 selects its
+	// Config 1 references the doomed feed by ID; config 2 selects its (only-feed)
 	// category; config 3 references neither and must stay untouched.
 	mk := func(name string, config string) store.DigestConfig {
 		w := makeRequest(server, http.MethodPost, "/api/digest-configs", map[string]interface{}{
@@ -313,7 +313,8 @@ func TestDeleteFeedPrunesDigestConfigs(t *testing.T) {
 		json.NewDecoder(w.Body).Decode(&dc)
 		return dc
 	}
-	cfgFeeds := mk("by-feed", `{"feeds":[{"id":`+itoa(feedA.ID)+`,"highlights":3,"comments":5}]}`)
+	cfgFeeds := mk("by-feed", `{"feeds":[{"id":`+itoa(feedA.ID)+`,"highlights":3,"comments":5}],`+
+		`"max_items":42,"min_score":25,"prompt":"keep me"}`)
 	cfgCats := mk("by-category", `{"categories":[{"name":"GoneCat","highlights":1,"comments":2}]}`)
 	mk("untouched", `{"feeds":[{"id":`+itoa(feedB.ID)+`,"highlights":1,"comments":1}]}`)
 
@@ -322,7 +323,7 @@ func TestDeleteFeedPrunesDigestConfigs(t *testing.T) {
 		t.Fatalf("delete failed: %d: %s", w.Code, w.Body.String())
 	}
 
-	check := func(dc store.DigestConfig, wantFeeds, wantCats string) {
+	check := func(dc store.DigestConfig, wantFeeds, wantCats string) map[string]any {
 		t.Helper()
 		var cfg map[string]any
 		row, err := queries.GetDigestConfig(t.Context(), store.GetDigestConfigParams{ID: dc.ID, UserID: user.ID})
@@ -336,9 +337,28 @@ func TestDeleteFeedPrunesDigestConfigs(t *testing.T) {
 			t.Errorf("config %s: feeds=%s (want %s), categories=%s (want %s)",
 				dc.Name, fj, wantFeeds, cj, wantCats)
 		}
+		return cfg
 	}
-	check(cfgFeeds, "[]", "null")
-	check(cfgCats, "null", "[]")
+
+	// Config 1 selected ONLY the deleted feed. Pruning it would leave the config
+	// with no sources at all, which the generator reads as "every feed the user
+	// owns" — so the prune is REFUSED and the stale reference is left in place.
+	cfg := check(cfgFeeds, `[{"comments":5,"highlights":3,"id":`+itoa(feedA.ID)+`}]`, "null")
+	// ...and refusing must not have cost the other settings. This is the
+	// settings-erasure regression: the old implementation round-tripped the config
+	// through a feeds+categories-only struct and dropped all of these.
+	for key, want := range map[string]float64{"max_items": 42, "min_score": 25} {
+		if got, ok := cfg[key].(float64); !ok || got != want {
+			t.Errorf("config by-feed lost %s: got %v, want %v", key, cfg[key], want)
+		}
+	}
+	if got, _ := cfg["prompt"].(string); got != "keep me" {
+		t.Errorf("config by-feed lost its prompt: got %q", got)
+	}
+
+	// Config 2 selected GoneCat, whose only feed was just deleted: the same
+	// refusal applies, for the same reason.
+	check(cfgCats, "null", `[{"comments":2,"highlights":1,"name":"GoneCat"}]`)
 
 	// The untouched config keeps its single feed reference.
 	var sawUntouched bool
@@ -350,6 +370,91 @@ func TestDeleteFeedPrunesDigestConfigs(t *testing.T) {
 	}
 	if !sawUntouched {
 		t.Error("untouched config missing or modified")
+	}
+}
+
+// TestRecategorizeKeepsCategoryWithRemainingFeeds is the regression test for the
+// reported bug: one feed leaving a category must NOT drop a digest config's
+// selection of that category while other feeds remain in it.
+//
+// Dropping the selection was doubly wrong — it silently stopped tracking feeds
+// the user never touched, and when the category was the config's only source the
+// resulting empty config was interpreted as "all feeds", widening a scheduled
+// digest to the whole account.
+func TestRecategorizeKeepsCategoryWithRemainingFeeds(t *testing.T) {
+	server, queries := setupTestServer(t)
+	user := createTestUser(t, queries, "recat@example.com", "password123")
+	token := getTestToken(t, server.auth, &user)
+
+	// Two feeds SHARE a category; a third is unrelated.
+	mover, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
+		UserID: user.ID, Category: "Shared", Type: "hn", Name: "Mover",
+		Url: "https://example.com/m", Config: "{}", Status: "active",
+	})
+	stayer, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
+		UserID: user.ID, Category: "Shared", Type: "rss", Name: "Stayer",
+		Url: "https://example.com/s", Config: "{}", Status: "active",
+	})
+
+	// The config selects the category AND an unrelated feed. The second source is
+	// what makes this test discriminating: with the category as the only source, a
+	// wrongly-pruned category would empty the config and the broadening refusal
+	// would mask the mistake. With a feed alongside it, an over-eager prune of the
+	// category is visible as the config silently narrowing to that one feed.
+	other, _ := queries.CreateFeed(t.Context(), store.CreateFeedParams{
+		UserID: user.ID, Category: "", Type: "rss", Name: "Other",
+		Url: "https://example.com/o", Config: "{}", Status: "active",
+	})
+	cfgJSON := `{"categories":[{"name":"Shared","highlights":2,"comments":3}],` +
+		`"feeds":[{"id":` + itoa(other.ID) + `,"highlights":9,"comments":9}],` +
+		`"max_items":30,"min_score":15,"prompt":"keep"}`
+	w := makeRequest(server, http.MethodPost, "/api/digest-configs", map[string]interface{}{
+		"name": "shared-cat", "schedule": "0 8 * * *", "config": cfgJSON,
+	}, token)
+	if w.Code != http.StatusOK && w.Code != http.StatusCreated {
+		t.Fatalf("create config: %d: %s", w.Code, w.Body.String())
+	}
+	var dc store.DigestConfig
+	json.NewDecoder(w.Body).Decode(&dc)
+
+	// Move ONE of them out of the category.
+	w = makeRequest(server, http.MethodPatch, "/api/feeds/"+itoa(mover.ID), map[string]interface{}{
+		"name": "Mover", "url": "https://example.com/m", "category": "Elsewhere",
+	}, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("recategorize failed: %d: %s", w.Code, w.Body.String())
+	}
+
+	row, err := queries.GetDigestConfig(t.Context(), store.GetDigestConfigParams{ID: dc.ID, UserID: user.ID})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(row.Config), &cfg); err != nil {
+		t.Fatalf("parse config %q: %v", row.Config, err)
+	}
+	// The category selection SURVIVES: `stayer` is still in it.
+	cats, _ := json.Marshal(cfg["categories"])
+	if got := string(cats); !strings.Contains(got, `"Shared"`) {
+		t.Errorf("category selection was dropped while a feed remained in it: categories=%s", got)
+	}
+	// And the settings survived too.
+	if got, _ := cfg["max_items"].(float64); got != 30 {
+		t.Errorf("max_items lost: %v", cfg["max_items"])
+	}
+	if got, _ := cfg["min_score"].(float64); got != 15 {
+		t.Errorf("min_score lost: %v", cfg["min_score"])
+	}
+	if got, _ := cfg["prompt"].(string); got != "keep" {
+		t.Errorf("prompt lost: %q", got)
+	}
+	// Sanity: the other feed really is still in the category, so the survival
+	// above is about the shared-category rule and not a no-op patch.
+	left, _ := queries.ListFeedsByCategory(t.Context(), store.ListFeedsByCategoryParams{
+		Category: "Shared", UserID: user.ID,
+	})
+	if len(left) != 1 || left[0].ID != stayer.ID {
+		t.Fatalf("expected only the staying feed left in Shared, got %+v", left)
 	}
 }
 
