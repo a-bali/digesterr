@@ -15,6 +15,12 @@ import { cn } from '../../lib/utils'
 type MenuItem = {
   label: string
   icon?: Component
+  // A TEXT GLYPH in the icon slot, for menus that mirror a text mark elsewhere in
+  // the app (the item header's status mark is `◉ ◐ ◯ ★`). Preferred over `icon`
+  // for those: a Lucide icon renders at its own size/weight and reads as a
+  // different family than the mark it is meant to echo, while a glyph inherits
+  // the same font metrics and so matches it exactly.
+  glyph?: string
   disabled?: boolean
   separator?: boolean
   onClick?: () => void
@@ -63,6 +69,10 @@ function onItemClick(item: MenuItem) {
               <Check v-if="item.checked" class="size-4" />
             </span>
             <component :is="item.icon" v-if="item.icon" class="size-4 shrink-0" />
+            <!-- Same 16px slot as an icon, so a glyph and an icon in the same menu
+                 keep the labels aligned. `text-[15px] leading-none` matches the
+                 header status mark's glyph size exactly. -->
+            <span v-else-if="item.glyph" class="flex size-4 shrink-0 items-center justify-center text-[15px] leading-none">{{ item.glyph }}</span>
             <span>{{ item.label }}</span>
             <span v-if="item.detail" class="ml-auto pl-3 text-xs text-muted-foreground">{{ item.detail }}</span>
           </DropdownMenuItem>

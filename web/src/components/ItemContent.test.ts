@@ -156,7 +156,9 @@ describe('ItemContent status control', () => {
   // text glyph in the headline's own size/line-height, so it shares the title's
   // baseline and reads as an initial. An SVG icon gets its own line box and sits
   // like a control beside the text — regressed twice, so it is pinned here.
-  // Layout (baseline sharing, chevron geometry) is measured live in the browser;
+  // SAVED shows as ★ (accent, also a text char) IN PLACE of the read-state glyph —
+  // the four display states are mutually exclusive: the glyph shows exactly one.
+  // Layout (baseline sharing, box geometry) is measured live in the browser;
   // jsdom has no layout engine, so this asserts the markup contract instead.
   it('renders the status as a text glyph, not an icon button', () => {
     const glyphs = { unread: '◉', digested: '◐', read: '◯' }
@@ -168,6 +170,54 @@ describe('ItemContent status control', () => {
     }
   })
 
+  // Saved WINS the glyph: the four display states are exclusive, so a saved
+  // item shows ★ regardless of its read state — the read state stays reachable
+  // through the menu (by what's absent) and in the label. Also a text char,
+  // accent-coloured, in the same box as the read-state glyphs.
+  it('shows ★ in accent for a saved item, in place of the read-state glyph', async () => {
+    for (const status of ['unread', 'read', 'digested'] as const) {
+      const wrapper = mountItemContent(makeItem({ status, is_saved: 1 }))
+      const glyph = wrapper.find('[data-status-glyph]')
+      expect(glyph.text()).toBe('★')
+      expect(glyph.classes().join(' ')).toContain('text-accent')
+      expect(glyph.find('svg').exists()).toBe(false)
+      // The label carries the hidden read state so nothing is lost.
+      expect(statusButton(wrapper).attributes('title')).toBe(`State: saved (${status})`)
+      wrapper.unmount()
+      document.body.innerHTML = ''
+    }
+  })
+
+  // The ONE menu: Save/Unsave first, then the read-state transitions (never
+  // the current one). This replaces the separate save button — a plain click
+  // opens this menu; save is its first entry.
+  it('leads the menu with Save, then the transitions', async () => {
+    const wrapper = mountItemContent(makeItem({ status: 'unread' }))
+    await openStatus(wrapper)
+    expect(statusItems()).toEqual(['Save', 'Read', 'Digested'])
+  })
+
+  it('leads the menu with Unsave for a saved item', async () => {
+    const wrapper = mountItemContent(makeItem({ status: 'read', is_saved: 1 }))
+    await openStatus(wrapper)
+    expect(statusItems()).toEqual(['Unsave', 'Unread', 'Digested'])
+  })
+
+  it('writes the saved flag when Save is chosen', async () => {
+    const wrapper = mountItemContent(makeItem({ status: 'unread' }))
+    const store = useFeedStore()
+    const writes: unknown[][] = []
+    store.updateItemStatus = async (_item: any, status?: string, saved?: boolean) => {
+      writes.push([status, saved])
+    }
+    await openStatus(wrapper)
+    const save = Array.from(document.body.querySelectorAll('[role="menuitem"]'))
+      .find(i => menuItemLabel(i) === 'Save') as HTMLElement
+    save.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    expect(writes).toEqual([[undefined, true]])
+  })
+
   // No dropdown indicator on the status mark: it was removed by request, and a glyph
   // plus a chevron in a 15px box would not fit the save button's box anyway.
   it('carries no dropdown indicator', () => {
@@ -175,30 +225,53 @@ describe('ItemContent status control', () => {
     expect(statusButton(wrapper).find('svg').exists()).toBe(false)
   })
 
-  // Status and save sit as an equal pair in the left rail, so they must be the same
-  // size. The status button IS a 15px box; the save button wraps a 15px icon.
-  it('is the same size as the save button', () => {
+  // The state button is INLINE — the title's first character, not a rail column
+  // beside it. Being an inline character in the headline's own line box, it shares
+  // the title's baseline by construction, so there is no rail to size and no
+  // centring trick to keep in sync. jsdom has no layout, so the structural
+  // contract is: the button and the title share ONE inline parent, and no
+  // `data-status-rail` column exists any more.
+  it('renders the state button inline, as the title\u2019s first character', () => {
     const wrapper = mountItemContent(makeItem({ status: 'unread' }))
-    expect(statusButton(wrapper).classes()).toContain('size-[15px]')
-    expect(wrapper.find('[data-status-glyph]').classes()).toContain('leading-none')
-    expect(wrapper.find('[data-action-save] svg').classes()).toContain('size-[15px]')
+    // The old left-rail column is gone.
+    expect(wrapper.find('[data-status-rail]').exists()).toBe(false)
+    const btn = statusButton(wrapper)
+    expect(btn.exists()).toBe(true)
+    // The button is a SIBLING of the title text, inside the same inline box.
+    const titleText = wrapper.find('[data-title-text]').element
+    const title = titleText.querySelector('a, h1') as HTMLElement
+    expect(title).not.toBeNull()
+    expect(btn.element.parentElement).toBe(title.parentElement)
+    expect(titleText.contains(btn.element)).toBe(true)
+    // Exactly one state button in the whole header, and it is not a flex column.
+    expect(wrapper.findAll('[data-action-status]')).toHaveLength(1)
+    expect(btn.classes()).not.toContain('flex-col')
+    expect(wrapper.find('[data-status-glyph]').exists()).toBe(true)
   })
 
-  // The view toggle / Extract dock must be right-aligned with the header's content
-  // edge and bottom-aligned with the subtitle. It sits in its own full-width row UNDER
-  // the title row: inside the title's column it could not reach the right edge (it
-  // measured 172px short), and in the control column it stole width from the title.
-  // jsdom has no layout, so this pins the structure that guarantees both, including
-  // the constant width that keeps the title from re-wrapping when the dock changes.
-  it('docks the view toggle beside the metadata, in a row of its own', () => {
+  // The body-controls dock holds the view toggle / Extract button AND the
+  // Summarize control, in ONE flex row: summarize to the LEFT of the toggle, and
+  // the row never wraps, so they stay on the same line however narrow the pane
+  // gets. It shares row 2 with the metadata, which is NOT the title's column.
+  // jsdom has no layout, so the contract pinned here is DOM order + row membership.
+  it('docks the view toggle beside the metadata, with summarize to its left', () => {
     const wrapper = mountItemContent(makeItem({ status: 'unread' }))
     const slot = wrapper.find('[data-control-slot]')
     expect(slot.exists()).toBe(true)
-    // Constant width, so the dock appearing/disappearing cannot shift the layout.
-    expect(slot.classes()).toContain('w-full')
-    expect(slot.classes().join(' ')).toContain('@[560px]:w-[11rem]')
+    // Wide: right-aligned; narrow: left-aligned. Either way it is a nowrap flex
+    // row of its own children, so the two controls cannot be split onto two lines.
+    expect(slot.classes()).toContain('items-center')
+    expect(slot.classes()).toContain('shrink-0')
     expect(slot.classes()).toContain('justify-start')
     expect(slot.classes().join(' ')).toContain('@[560px]:justify-end')
+    // Summarize and the toggle are SIBLINGS inside the dock...
+    const summarize = wrapper.find('[data-action-summarize]').element
+    const toggle = wrapper.find('[data-view-toggle]').element
+    expect(summarize.parentElement).not.toBe(toggle.parentElement) // toggle has its own pill wrapper
+    expect(slot.element.contains(summarize)).toBe(true)
+    expect(slot.element.contains(toggle)).toBe(true)
+    // ...and summarize comes FIRST, so it renders to the toggle's LEFT.
+    expect(summarize.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     // The dock and the metadata share one row, which is NOT the title's column.
     const metaRow = slot.element.parentElement as HTMLElement
     const meta = metaRow.querySelector('.flex-wrap') as HTMLElement
@@ -211,27 +284,81 @@ describe('ItemContent status control', () => {
     expect(titleCol.contains(metaRow)).toBe(false)
   })
 
+  // Summarize moved OUT of row 1: only scroll-to-comments remains there. This is
+  // what "keep summarize on the toggle's line" requires — while it rode row 1, the
+  // narrow layout stacked it above the toggle. Comments keeps the top-right corner.
+  it('leaves scroll-to-comments on the title row and summarize off it', () => {
+    const wrapper = mountItemContent(makeItem({ status: 'unread' }))
+    const summarize = wrapper.find('[data-action-summarize]').element
+    const titleCol = wrapper.find('[data-title-col]').element
+    const slot = wrapper.find('[data-control-slot]').element
+    // Summarize no longer shares row 1 with the title.
+    expect(titleCol.parentElement?.contains(summarize)).toBe(false)
+    // It is in the dock instead (i.e. on the toggle's row).
+    expect(slot.contains(summarize)).toBe(true)
+    // Comments is still a row-1 control, so it can keep the top-right corner.
+    const comments = wrapper.find('[data-action-comments]')
+    if (comments.exists()) {
+      expect(titleCol.parentElement?.contains(comments.element)).toBe(true)
+    }
+  })
+
+  // Inline placement means the title no longer needs `self-center` to line up
+  // with a taller rail: glyph and headline share one line box, so their baselines
+  // match automatically. Pin the absence, so the old centring workaround cannot
+  // creep back in with a rail that no longer exists.
+  it('needs no centring workaround on the title box', () => {
+    const wrapper = mountItemContent(makeItem({ status: 'unread' }))
+    const titleBox = wrapper.find('[data-title-text]').element
+    expect(titleBox).toBeTruthy()
+    expect(titleBox.className).not.toContain('self-center')
+  })
+
+  // The menu entries must ECHO the header mark, not show a different icon family.
+  // The header renders its state as a text character (◉ ◐ ◯ ★); the menu used to
+  // render Lucide SVGs at 16px beside those labels, which read as a different
+  // family than the mark they were meant to repeat. Every entry now carries the
+  // same glyph as a text character in the icon slot.
+  it('uses the header\u2019s glyph vocabulary in the status menu, not icons', async () => {
+    const wrapper = mountItemContent(makeItem({ status: 'unread' }))
+    await openStatus(wrapper)
+    const menus = document.body.querySelectorAll('[role="menu"]')
+    const menu = menus[menus.length - 1]
+    const items = Array.from(menu.querySelectorAll('[role="menuitem"]')) as HTMLElement[]
+    expect(items.length).toBeGreaterThan(0)
+    for (const item of items) {
+      // No SVG in the icon slot — the mark is a character.
+      expect(item.querySelector('svg')).toBeNull()
+      // And the character is one of the four the header uses.
+      const text = (item.textContent ?? '').trim()
+      expect(/[★◉◐◯]/.test(text)).toBe(true)
+    }
+    // Save carries ★, matching the saved mark the header shows.
+    const save = items.find(i => (i.textContent ?? '').includes('Save'))!
+    expect(save.textContent).toContain('★')
+  })
+
   it('shows the unread convention and offers Read + Digested for an unread item', async () => {
     const wrapper = mountItemContent(makeItem({ status: 'unread' }))
-    expect(statusButton(wrapper).attributes('title')).toBe('Status: unread')
+    expect(statusButton(wrapper).attributes('title')).toBe('State: unread')
     await openStatus(wrapper)
-    expect(statusItems()).toEqual(['Read', 'Digested'])
+    expect(statusItems()).toEqual(['Save', 'Read', 'Digested'])
   })
 
   it('shows the read convention and offers Unread + Digested for a read item', async () => {
     const wrapper = mountItemContent(makeItem({ status: 'read' }))
-    expect(statusButton(wrapper).attributes('title')).toBe('Status: read')
+    expect(statusButton(wrapper).attributes('title')).toBe('State: read')
     await openStatus(wrapper)
-    expect(statusItems()).toEqual(['Unread', 'Digested'])
+    expect(statusItems()).toEqual(['Save', 'Unread', 'Digested'])
   })
 
   it('shows the digested convention and offers Read + Undigested for a digested item', async () => {
     const wrapper = mountItemContent(makeItem({ status: 'digested' }))
-    expect(statusButton(wrapper).attributes('title')).toBe('Status: digested')
+    expect(statusButton(wrapper).attributes('title')).toBe('State: digested')
     await openStatus(wrapper)
     // "Undigested" is the transition back to unread — digested is a stored state,
     // so clearing it means returning the item to unread.
-    expect(statusItems()).toEqual(['Read', 'Undigested'])
+    expect(statusItems()).toEqual(['Save', 'Read', 'Undigested'])
   })
 
   it('never offers the state the item is already in', async () => {

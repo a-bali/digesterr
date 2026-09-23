@@ -4,7 +4,7 @@ import { useFeedStore, type FeedSort, type FeedStatusFilter } from '../stores/fe
 import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
 import Tooltip from './ui/Tooltip.vue'
-import { Circle, CircleDot, Check, ArrowUp, MessageSquare, LoaderCircle, CheckCircle2, ChevronsUp, ChevronsDown } from 'lucide-vue-next'
+import { Circle, CircleDot, ArrowUp, MessageSquare, LoaderCircle, CheckCircle2, ChevronsUp, ChevronsDown } from 'lucide-vue-next'
 import { stripContent, decodeHTMLEntities } from '../lib/utils'
 import { feedIcon } from '../lib/format'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
@@ -361,12 +361,20 @@ async function markBelowRead(item: any) {
            The title and excerpt are SIBLINGS so the excerpt can only ever sit
            beside the title, never under it. -->
       <div v-if="compact" class="flex items-center gap-1.5 h-full min-w-0 px-2 text-sm">
-        <!-- Read state only: saved is an orthogonal flag, rendered by the
-             <Check> span below, so it must not claim a slot in this chain. -->
-        <CircleDot v-if="item.status === 'unread'" class="size-3 shrink-0 text-accent" />
-        <span v-else-if="item.status === 'digested'" class="size-3 shrink-0 inline-flex items-center justify-center text-[10px] leading-none text-muted-foreground/60" title="digested">◐</span>
-        <Circle v-else class="size-3 shrink-0 text-muted-foreground/40" />
-        <span v-if="item.is_saved === 1" class="text-accent shrink-0" title="saved"><Check class="size-3" /></span>
+        <!-- ONE merged state mark: saved wins it (★, accent — the same mark the
+             header rail shows), else the read-state mark. The saved FLAG stays
+             orthogonal in the data; only the display collapses, so a saved row
+             shows exactly one mark before its title. -->
+        <span
+          class="shrink-0 inline-flex items-center justify-center size-3"
+          :class="item.is_saved === 1 ? 'text-accent' : ''"
+          :title="item.is_saved === 1 ? 'saved' : undefined"
+        >
+          <span v-if="item.is_saved === 1" class="text-[10px] leading-none">★</span>
+          <CircleDot v-else-if="item.status === 'unread'" class="size-3 text-accent" />
+          <span v-else-if="item.status === 'digested'" class="text-[10px] leading-none text-muted-foreground/60" title="digested">◐</span>
+          <Circle v-else class="size-3 text-muted-foreground/40" />
+        </span>
         <img
           v-if="feedStore.isMultiView && feedTypeIcon(item.feed_type)"
           :src="feedTypeIcon(item.feed_type)"
@@ -436,10 +444,18 @@ async function markBelowRead(item: any) {
       </div>
       <template v-else>
       <div class="flex items-start gap-1 min-w-0">
-        <CircleDot v-if="item.status === 'unread'" class="size-3 shrink-0 mt-0.5 text-accent" />
-        <span v-else-if="item.status === 'digested'" class="size-3 shrink-0 mt-0.5 inline-flex items-center justify-center text-[10px] leading-none text-muted-foreground/60" title="digested">◐</span>
-        <Circle v-else class="size-3 shrink-0 mt-0.5 text-muted-foreground/40" />
-        <span v-if="item.is_saved === 1" class="text-accent shrink-0 mt-0.5" title="saved"><Check class="size-3" /></span>
+        <!-- Same ONE merged state mark as the compact row (and the header rail):
+             saved wins the mark, else the read state. -->
+        <span
+          class="shrink-0 mt-0.5 inline-flex items-center justify-center size-3"
+          :class="item.is_saved === 1 ? 'text-accent' : ''"
+          :title="item.is_saved === 1 ? 'saved' : undefined"
+        >
+          <span v-if="item.is_saved === 1" class="text-[10px] leading-none">★</span>
+          <CircleDot v-else-if="item.status === 'unread'" class="size-3 text-accent" />
+          <span v-else-if="item.status === 'digested'" class="text-[10px] leading-none text-muted-foreground/60" title="digested">◐</span>
+          <Circle v-else class="size-3 text-muted-foreground/40" />
+        </span>
         <p class="text-sm font-semibold truncate flex-1 min-w-0">{{ decodeHTMLEntities(item.title) }}</p>
         <!-- Top right corner: the publish time gives way to the mark-read
              chevrons on hover. Every row gets them, whatever its status, so

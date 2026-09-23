@@ -889,3 +889,57 @@ describe('middle pane header counts', () => {
     expect(bar.querySelector('[aria-label="Sort items"]')).not.toBeNull()
   })
 })
+
+// Status and saved collapsed into ONE leading mark per row, mirroring the
+// header rail: saved wins it (★, accent, text char — the same mark the header
+// shows), else the read-state glyph. The DATA stays orthogonal (is_saved flag
+// + status); only the display collapses. A saved row must therefore show
+// exactly ONE element before its title — the old markup stacked the status
+// mark AND a separate ✓ Check span there (two elements), so this fails hard
+// against it. jsdom does no layout, so the contract is element count + shape.
+describe('ItemList merged status+saved mark', () => {
+  // Everything in the row's first line that precedes the title = the mark chain.
+  function leadingMarks(row: Element): Element[] {
+    const title = row.querySelector('[data-item-title]') ?? row.querySelector('p')
+    const siblings = Array.from(title!.parentElement!.children)
+    return siblings.slice(0, siblings.indexOf(title!))
+  }
+
+  for (const compact of [true, false]) {
+    it(`renders exactly one mark — ★ for a saved row (compact=${compact})`, () => {
+      const { wrapper } = mountList({
+        items: [makeItem({ id: 1, title: 'Saved thing', status: 'unread', is_saved: 1 })],
+        compact,
+      })
+      const marks = leadingMarks(resultRows(wrapper)[0].element)
+      expect(marks).toHaveLength(1)
+      const star = marks[0] as HTMLElement
+      expect(star.getAttribute('title')).toBe('saved')
+      expect(star.textContent?.trim()).toBe('★')
+      // A text char, not an icon — same rule the header glyph learned twice.
+      expect(star.querySelector('svg')).toBeNull()
+      expect(star.className).toContain('text-accent')
+      // And no second mark anywhere in the row.
+      expect(wrapper.element.querySelectorAll('[title="saved"]')).toHaveLength(1)
+      expect(wrapper.element.querySelector('svg.lucide-check')).toBeNull()
+    })
+
+    it(`keeps the read-state mark alone for an unsaved row (compact=${compact})`, () => {
+      const { wrapper } = mountList({
+        items: [
+          makeItem({ id: 1, title: 'Unread', status: 'unread', is_saved: 0 }),
+          makeItem({ id: 2, title: 'Read', status: 'read', is_saved: 0 }),
+        ],
+        compact,
+      })
+      const rows = resultRows(wrapper)
+      expect(leadingMarks(rows[0].element)).toHaveLength(1)
+      expect(rows[0].element.querySelector('[title="saved"]')).toBeNull()
+      // Unread keeps its CircleDot; read keeps its Circle — the unsaved chain
+      // is untouched by the merge.
+      expect(rows[0].element.querySelector('svg.lucide-circle-dot')).not.toBeNull()
+      expect(rows[1].element.querySelector('svg.lucide-circle')).not.toBeNull()
+      expect(rows[1].element.querySelector('[title="saved"]')).toBeNull()
+    })
+  }
+})
