@@ -532,6 +532,14 @@ var itemsColumns = []string{
 
 // itemsIndexDDL recreates every index the items table carries, so a rebuild does
 // not silently drop query performance.
+//
+// The hash index MUST keep its partial predicate (hash != the empty string).
+// schema.sql and the migration that first created it (v35) are both partial, and
+// the predicate is load-bearing: the hash column is NOT NULL with an empty-string
+// default, so every pre-hash-dedup item carries the same empty value and a FULL
+// unique index on (feed_id, hash) rejects the second one. Two such rows in one
+// feed make the CREATE fail and abort migration 42 — and with it startup — on
+// exactly the legacy databases the rebuild exists to fix.
 var itemsIndexDDL = []string{
 	`CREATE INDEX IF NOT EXISTS idx_items_created_at ON items(created_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_items_feed_status_published ON items(feed_id, status, published_at)`,
@@ -539,7 +547,7 @@ var itemsIndexDDL = []string{
 	`CREATE INDEX IF NOT EXISTS idx_items_feed_status_enriched ON items(feed_id, status, last_enriched_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_items_saved_created ON items(is_saved, created_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_items_feed_extract ON items(feed_id, extract_status, extract_retries)`,
-	`CREATE UNIQUE INDEX IF NOT EXISTS idx_items_feed_hash ON items(feed_id, hash)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_items_feed_hash ON items(feed_id, hash) WHERE hash != ''`,
 }
 
 // makeItemsTableDDL returns the CREATE TABLE statement for the items table under

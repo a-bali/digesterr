@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -427,6 +428,107 @@ func TestItemsPointsNotNullNormalisesLegacyNulls(t *testing.T) {
 	// would re-run on every startup.
 	if ok, err := columnNotNull("items", "status")(db); err != nil || !ok {
 		t.Errorf("columnNotNull on an existing NOT NULL column = %v, %v; want true", ok, err)
+	}
+}
+
+// TestMigration42ToleratesDuplicateEmptyHashes is the regression test for the
+// rebuild's index recreation.
+//
+// The hash column is NOT NULL with an empty-string default, so every item
+// predating the hash backfill carries the same empty value. Rebuilding the table
+// recreates idx_items_feed_hash — and if that index is created WITHOUT the
+// partial predicate (hash != the empty string) that schema.sql and migration 35
+// both use, the second empty-hash row in one feed makes CREATE UNIQUE INDEX
+// fail. That aborts migration 42, and because migrations run at startup, the
+// server never comes up on exactly the
+// legacy databases the rebuild exists to fix.
+//
+// Two empty-hash rows in one feed is the minimum reproduction: one row would not
+// collide, and rows in different feeds only collide on a full index if their
+// feed_id matches.
+func TestMigration42ToleratesDuplicateEmptyHashes(t *testing.T) {
+	db := openTestDB(t)
+	if err := Run(db); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if _, err := db.Exec(`INSERT INTO users (email, password_hash) VALUES ('eh@example.com', 'h')`); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO feeds (user_id, type, name, url) VALUES (1, 'rss', 'F', 'https://example.com/eh')`); err != nil {
+		t.Fatalf("seed feed: %v", err)
+	}
+	// Legacy shape: nullable points/comments_count (so the rebuild has real work
+	// to do) plus the pre-backfill empty hashes.
+	if _, err := db.Exec(`DROP TABLE items`); err != nil {
+		t.Fatalf("drop items: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    feed_id INTEGER NOT NULL,
+    hash TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL,
+    url TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '',
+    author TEXT NOT NULL DEFAULT '',
+    comment_url TEXT NOT NULL DEFAULT '',
+    points INTEGER,
+    comments_count INTEGER,
+    published_at DATETIME,
+    status TEXT NOT NULL DEFAULT 'unread',
+    fetched_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    created_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    updated_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    last_enriched_at DATETIME,
+    extract_content TEXT NOT NULL DEFAULT '',
+    extract_status TEXT NOT NULL DEFAULT '',
+    extract_retries INTEGER NOT NULL DEFAULT 0,
+    extract_date DATETIME,
+    is_saved INTEGER NOT NULL DEFAULT 0
+)`); err != nil {
+		t.Fatalf("recreate legacy items: %v", err)
+	}
+	// TWO rows in the SAME feed, both with hash = '' — the collision case.
+	for _, title := range []string{"dup-a", "dup-b"} {
+		if _, err := db.Exec(
+			`INSERT INTO items (feed_id, hash, title, points, comments_count) VALUES (1, '', ?, 1, 1)`,
+			title,
+		); err != nil {
+			t.Fatalf("seed empty-hash item %s: %v", title, err)
+		}
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = 42`); err != nil {
+		t.Fatalf("clear v42: %v", err)
+	}
+
+	if err := Run(db); err != nil {
+		t.Fatalf("Run with duplicate empty hashes must succeed, got: %v", err)
+	}
+
+	// Both rows survive the rebuild...
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM items`).Scan(&n); err != nil {
+		t.Fatalf("count items: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected both empty-hash rows preserved, got %d", n)
+	}
+	// ...and the index exists AND is still partial, so it keeps allowing them.
+	var ddl string
+	if err := db.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_items_feed_hash'`,
+	).Scan(&ddl); err != nil {
+		t.Fatalf("read index DDL: %v", err)
+	}
+	if !strings.Contains(ddl, "hash != ''") {
+		t.Errorf("idx_items_feed_hash lost its partial predicate: %s", ddl)
+	}
+	// A NON-empty duplicate must still be rejected — the index is not simply gone.
+	if _, err := db.Exec(`INSERT INTO items (feed_id, hash, title) VALUES (1, 'same', 'x')`); err != nil {
+		t.Fatalf("seed non-empty hash: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO items (feed_id, hash, title) VALUES (1, 'same', 'y')`); err == nil {
+		t.Error("duplicate non-empty hash was accepted; the unique index is not enforcing")
 	}
 }
 
