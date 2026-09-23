@@ -214,9 +214,18 @@ WHERE id IN (SELECT value FROM json_each(sqlc.arg(ids)))
 -- name: MarkDigestResultItemsReadByResultIDs :execrows
 -- Batch twin of MarkDigestResultItemsRead for the digest cascade: flips
 -- linked items of every listed result in one statement.
+--
+-- Ownership is enforced HERE, not only on the caller's result update: this
+-- statement takes the submitted result ids straight from the request, so without
+-- the predicate an attacker could pass another account's result id and flip that
+-- account's items from digested to read. Mirrors MarkDigestConfigResultItemsRead,
+-- which scopes by dr.user_id. The join also means an id the caller does not own
+-- simply matches nothing, so the cascade stays a no-op for foreign ids.
 UPDATE items SET status = 'read', updated_at = DATETIME('now')
 WHERE status = 'digested'
   AND id IN (
     SELECT dri.item_id FROM digest_result_items dri
-    WHERE dri.result_id IN (SELECT value FROM json_each(sqlc.arg(ids)))
+    JOIN digest_results dr ON dr.id = dri.result_id
+    WHERE dr.user_id = sqlc.arg(user_id)
+      AND dri.result_id IN (SELECT value FROM json_each(sqlc.arg(ids)))
   );

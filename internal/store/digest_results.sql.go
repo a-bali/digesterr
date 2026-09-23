@@ -969,14 +969,28 @@ UPDATE items SET status = 'read', updated_at = DATETIME('now')
 WHERE status = 'digested'
   AND id IN (
     SELECT dri.item_id FROM digest_result_items dri
-    WHERE dri.result_id IN (SELECT value FROM json_each(?1))
+    JOIN digest_results dr ON dr.id = dri.result_id
+    WHERE dr.user_id = ?1
+      AND dri.result_id IN (SELECT value FROM json_each(?2))
   )
 `
 
+type MarkDigestResultItemsReadByResultIDsParams struct {
+	UserID int64       `json:"user_id"`
+	Ids    interface{} `json:"ids"`
+}
+
 // Batch twin of MarkDigestResultItemsRead for the digest cascade: flips
 // linked items of every listed result in one statement.
-func (q *Queries) MarkDigestResultItemsReadByResultIDs(ctx context.Context, ids interface{}) (int64, error) {
-	result, err := q.db.ExecContext(ctx, markDigestResultItemsReadByResultIDs, ids)
+//
+// Ownership is enforced HERE, not only on the caller's result update: this
+// statement takes the submitted result ids straight from the request, so without
+// the predicate an attacker could pass another account's result id and flip that
+// account's items from digested to read. Mirrors MarkDigestConfigResultItemsRead,
+// which scopes by dr.user_id. The join also means an id the caller does not own
+// simply matches nothing, so the cascade stays a no-op for foreign ids.
+func (q *Queries) MarkDigestResultItemsReadByResultIDs(ctx context.Context, arg MarkDigestResultItemsReadByResultIDsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markDigestResultItemsReadByResultIDs, arg.UserID, arg.Ids)
 	if err != nil {
 		return 0, err
 	}

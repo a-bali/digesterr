@@ -162,8 +162,14 @@ func (s *Server) applyEditTagBatch(ctx context.Context, userID int64, b *editTag
 		if _, err := q.UpdateDigestResultStatusByIDs(ctx, store.UpdateDigestResultStatusByIDsParams{Status: "read", Ids: ids, UserID: userID}); err != nil {
 			return err
 		}
-		// Spec: result read -> linked items digested -> read, same tx.
-		_, err := q.MarkDigestResultItemsReadByResultIDs(ctx, ids)
+		// Spec: result read -> linked items digested -> read, same tx. userID is
+		// passed because the cascade must enforce ownership itself: it receives the
+		// submitted result ids directly, so it cannot rely on the result update
+		// above having matched a row.
+		_, err := q.MarkDigestResultItemsReadByResultIDs(ctx, store.MarkDigestResultItemsReadByResultIDsParams{
+			UserID: userID,
+			Ids:    ids,
+		})
 		return err
 	}); err != nil {
 		return err
