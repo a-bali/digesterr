@@ -160,7 +160,8 @@ export const feedApi = {
   savedCount: () => api<{ count: number }>('/saved-count'),
   // The Saved view's list in one query. Includes archive feeds, so items
   // orphaned by a feed deletion keep their provenance.
-  savedItems: () => api<SavedItemsResponse>('/saved'),
+  savedItems: (opts: { status?: string; limit?: number; offset?: number } = {}) =>
+    api<SavedItemsResponse>(`/saved${qs(opts)}`),
   multiItems: (opts: { feed_ids?: number[]; category?: string; status?: string; limit?: number; offset?: number; min_score?: number; sort?: string }) => {
     const params: Record<string, string | number | undefined> = {
       status: opts.status, limit: opts.limit, offset: opts.offset,

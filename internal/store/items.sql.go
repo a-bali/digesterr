@@ -77,6 +77,27 @@ func (q *Queries) CountItemsByFeed(ctx context.Context, arg CountItemsByFeedPara
 	return count, err
 }
 
+const countSavedItemsByUser = `-- name: CountSavedItemsByUser :one
+SELECT CAST(COUNT(*) AS INTEGER) AS count FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = ?1 AND i.is_saved = 1
+  AND (i.status = ?2 OR ?2 = '')
+`
+
+type CountSavedItemsByUserParams struct {
+	UserID int64  `json:"user_id"`
+	Status string `json:"status"`
+}
+
+// Filter-aware total for the paginated Saved view, matching ListSavedItemsByUser
+// exactly so the header's loaded/total pair describes one set.
+func (q *Queries) CountSavedItemsByUser(ctx context.Context, arg CountSavedItemsByUserParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countSavedItemsByUser, arg.UserID, arg.Status)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countStarredItems = `-- name: CountStarredItems :one
 SELECT CAST(COUNT(*) AS INTEGER) AS count FROM items i
 JOIN feeds f ON f.id = i.feed_id
@@ -1528,9 +1549,18 @@ SELECT i.id, i.title, substr(i.content, 1, 8192) AS content, i.comment_url, i.po
        i.feed_id, f.name AS feed_name, f.type AS feed_type
 FROM items i
 JOIN feeds f ON f.id = i.feed_id
-WHERE f.user_id = ? AND i.is_saved = 1
+WHERE f.user_id = ?1 AND i.is_saved = 1
+  AND (i.status = ?2 OR ?2 = '')
 ORDER BY i.published_at DESC, i.created_at DESC, i.id DESC
+LIMIT ?4 OFFSET ?3
 `
+
+type ListSavedItemsByUserParams struct {
+	UserID int64  `json:"user_id"`
+	Status string `json:"status"`
+	Off    int64  `json:"off"`
+	Lim    int64  `json:"lim"`
+}
 
 type ListSavedItemsByUserRow struct {
 	ID             int64        `json:"id"`
@@ -1552,8 +1582,23 @@ type ListSavedItemsByUserRow struct {
 // The Saved view, assembled server-side in one query instead of N per-feed
 // calls. Archive feeds (orphaned saved items of deleted feeds) join normally,
 // so surviving items keep their "Saved -- <name>" provenance.
-func (q *Queries) ListSavedItemsByUser(ctx context.Context, userID int64) ([]ListSavedItemsByUserRow, error) {
-	rows, err := q.db.QueryContext(ctx, listSavedItemsByUser, userID)
+//
+// @status filters by read state (” = every saved item). It is applied here
+// rather than in the client because the list is paginated: filtering the loaded
+// page would silently narrow to whichever rows happen to be in memory.
+//
+// LIMIT -1 means "no limit" in SQLite, so an unpaginated call (lim = -1) returns
+// the whole list and callers that pass no limit keep working. Paging is offset
+// based and the ORDER BY ends in i.id DESC for that reason: (published_at,
+// created_at) is not unique, so a page boundary inside a tie would otherwise
+// duplicate or skip rows between requests.
+func (q *Queries) ListSavedItemsByUser(ctx context.Context, arg ListSavedItemsByUserParams) ([]ListSavedItemsByUserRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSavedItemsByUser,
+		arg.UserID,
+		arg.Status,
+		arg.Off,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}

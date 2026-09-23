@@ -79,6 +79,13 @@ export const useFeedStore = defineStore('feed', () => {
   // the content pane while the ROW kept its old status icon until a reload
   // ("mark unread is not showing as unread until I reload the view").
   const savedItems = ref<Item[]>([])
+  // The Saved VIEW's total for the current status filter. Distinct from
+  // savedCount, which is the sidebar badge's unfiltered tally: sharing one ref
+  // would make filtering the view silently rewrite the badge.
+  const savedTotal = ref(0)
+  // Whether the Saved view is the active list. It decides which page loader
+  // fetchMoreItems drives and whether changeFilter refetches.
+  const showingSaved = ref(false)
 
   const activeFeed = computed(() => feeds.value.find(f => f.id === activeFeedId.value) || null)
 
@@ -391,6 +398,10 @@ export const useFeedStore = defineStore('feed', () => {
   }
 
   async function fetchMoreItems() {
+    if (showingSaved.value) {
+      await fetchMoreSavedItems()
+      return
+    }
     if (isMultiView.value) {
       if (!hasMore.value || loadingMore.value || loading.value) return
       await loadMultiPage(false)
@@ -435,6 +446,9 @@ export const useFeedStore = defineStore('feed', () => {
     if (isMultiView.value || activeFeedId.value) {
       fetchFirstPage()
     }
+    // The Saved view's filter is applied server-side, so changing it has to
+    // refetch rather than re-filter the loaded rows.
+    if (showingSaved.value) fetchSavedItems()
   }
 
   function changeSort(s: FeedSort) {
@@ -651,23 +665,64 @@ export const useFeedStore = defineStore('feed', () => {
     if (ok) savedItems.value = savedItems.value.filter(i => i.id !== item.id)
   }
 
-  // fetchSavedItems loads the Saved view's list in one server-side query.
-  // Server-side per-feed query, so it is kept here rather than in the view
-  // that happens to render it. Archive feeds are included, so items orphaned
-  // by a feed deletion come back with their provenance.
+  // fetchSavedItems loads the Saved view's FIRST page. The list is paginated
+  // like every other list view: a long-running install accumulates saved items
+  // without bound and each row carries a body excerpt, so loading the whole set
+  // in one request degrades with age.
   async function fetchSavedItems() {
+    await loadSavedPage(true)
+  }
+
+  // loadSavedPage loads one page of the Saved view, replacing or appending.
+  // Mirrors loadMultiPage: same PAGE_SIZE, same request-id guard, same
+  // hasMore/total bookkeeping. The status filter is sent to the SERVER rather
+  // than applied to the loaded rows, because a client-side filter would only
+  // ever see the pages fetched so far.
+  async function loadSavedPage(replace: boolean) {
+    const rid = ++fetchReq
+    if (replace) {
+      loading.value = true
+      hasMore.value = false
+    } else {
+      loadingMore.value = true
+    }
     try {
-      savedItems.value = (await feedApi.savedItems()).items as Item[]
-    } catch {
+      const resp = await feedApi.savedItems({
+        status: filter.value === 'all' || filter.value === 'saved' ? undefined : filter.value,
+        limit: PAGE_SIZE,
+        offset: replace ? 0 : savedItems.value.length,
+      })
+      if (rid !== fetchReq) return
+      if (replace) {
+        savedItems.value = resp.items as Item[]
+      } else {
+        savedItems.value.push(...(resp.items as Item[]))
+      }
+      hasMore.value = resp.has_more
+      savedTotal.value = resp.total
+    } catch (e) {
       // Saved view keeps its previous list on failure; badge count is separate.
+      if (replace) toastError(e, 'Failed to load saved items')
+    } finally {
+      if (rid === fetchReq) {
+        loading.value = false
+        loadingMore.value = false
+      }
     }
   }
 
+  // fetchMoreSavedItems appends the next page. Called by the same
+  // infinite-scroll handler the feed and multi-feed lists use.
+  async function fetchMoreSavedItems() {
+    if (!hasMore.value || loadingMore.value || loading.value) return
+    await loadSavedPage(false)
+  }
+
   return {
-    feeds, activeFeedId, activeCategory, activeSection, items, multiItems, selectedItem, savedItems, savedCount, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
+    feeds, activeFeedId, activeCategory, activeSection, items, multiItems, selectedItem, savedItems, savedCount, savedTotal, showingSaved, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
     activeFeed, isMultiView, supportsScore, unreadCounts, backgroundRefreshing,
     fetchFeeds, setActiveFeed, setActiveCategory, setActiveSection, clearActiveView, fetchFirstPage, refreshItems, fetchMoreItems,
-    selectItem, updateItemStatus, unsaveItem, deleteExtraction, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, fetchSavedItems, fetchSavedCount, markFeedRead, markAllRead, markReadAbove, markReadBelow,
+    selectItem, updateItemStatus, unsaveItem, deleteExtraction, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, fetchSavedItems, fetchMoreSavedItems, fetchSavedCount, markFeedRead, markAllRead, markReadAbove, markReadBelow,
     emailInbox, ensureEmailConfig, refreshEmailConfig,
   }
 })

@@ -134,13 +134,33 @@ WHERE f.user_id = ? AND i.is_saved = 1;
 -- The Saved view, assembled server-side in one query instead of N per-feed
 -- calls. Archive feeds (orphaned saved items of deleted feeds) join normally,
 -- so surviving items keep their "Saved -- <name>" provenance.
+--
+-- @status filters by read state ('' = every saved item). It is applied here
+-- rather than in the client because the list is paginated: filtering the loaded
+-- page would silently narrow to whichever rows happen to be in memory.
+--
+-- LIMIT -1 means "no limit" in SQLite, so an unpaginated call (lim = -1) returns
+-- the whole list and callers that pass no limit keep working. Paging is offset
+-- based and the ORDER BY ends in i.id DESC for that reason: (published_at,
+-- created_at) is not unique, so a page boundary inside a tie would otherwise
+-- duplicate or skip rows between requests.
 SELECT i.id, i.title, substr(i.content, 1, 8192) AS content, i.comment_url, i.points, i.comments_count,
        i.published_at, i.status, i.is_saved, substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,
        i.feed_id, f.name AS feed_name, f.type AS feed_type
 FROM items i
 JOIN feeds f ON f.id = i.feed_id
-WHERE f.user_id = ? AND i.is_saved = 1
-ORDER BY i.published_at DESC, i.created_at DESC, i.id DESC;
+WHERE f.user_id = @user_id AND i.is_saved = 1
+  AND (i.status = @status OR @status = '')
+ORDER BY i.published_at DESC, i.created_at DESC, i.id DESC
+LIMIT @lim OFFSET @off;
+
+-- name: CountSavedItemsByUser :one
+-- Filter-aware total for the paginated Saved view, matching ListSavedItemsByUser
+-- exactly so the header's loaded/total pair describes one set.
+SELECT CAST(COUNT(*) AS INTEGER) AS count FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = @user_id AND i.is_saved = 1
+  AND (i.status = @status OR @status = '');
 
 
 -- name: ListItemsByFeedPaginated :many

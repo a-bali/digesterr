@@ -112,12 +112,14 @@ const scoreSupported = computed(() => !props.showingSaved && feedStore.supportsS
 // result set, so subtracting it keeps loaded <= total. The saved view is exempt:
 // it has no pagination and no server total, so loaded == total there.
 const loadedCount = computed(() => {
-  if (props.showingSaved) return displayItems.value.length
+  if (props.showingSaved) return Math.min(displayItems.value.length, feedStore.savedTotal)
   const loaded = feedStore.isMultiView ? feedStore.multiItems.length : feedStore.items.length
   const stale = feedStore.items.some(i => i.id === feedStore.selectedItem?.id) ? 1 : 0
   return Math.min(loaded - stale, feedStore.totalItems)
 })
-const totalCount = computed(() => (props.showingSaved ? displayItems.value.length : feedStore.totalItems))
+// The Saved view now has a real server total (filter-aware), so the header's
+// loaded/total pair describes the filtered set instead of the loaded page.
+const totalCount = computed(() => (props.showingSaved ? feedStore.savedTotal : feedStore.totalItems))
 
 // Whether a mark-all-read is offered here at all. The button stays RENDERED
 // whenever the list has items but is disabled once nothing is unread, so it never
@@ -142,14 +144,11 @@ function onMinScore(v: number | null) { feedStore.changeMinScore(v) }
 const displayItems = computed(() => {
   if (feedStore.isMultiView) return feedStore.multiItems as any[]
   if (!props.showingSaved) return feedStore.items
-  const filtered = feedStore.filter === 'all'
-    ? props.savedItems
-    // Every row here IS saved (the list is built from the saved query), so the
-    // only meaningful filter is the READ state. The old `status === 'saved'`
-    // test can never be true now that saved is a flag, which is what left this
-    // view's own "Saved" filter matching nothing.
-    : props.savedItems.filter(i => i.status === feedStore.filter)
-  return sortSavedItems(filtered, feedStore.sort)
+  // No status filtering here: the Saved view is paginated, so the server applies
+  // the read-state filter (see handleListSavedItems) and returns only matching
+  // rows. Filtering the loaded page would narrow to whatever happens to be in
+  // memory and report a total that ignores the filter.
+  return sortSavedItems(props.savedItems, feedStore.sort)
 })
 
 // Simple type-based favicon URL for items that carry feed_type.
@@ -289,7 +288,7 @@ async function markBelowRead(item: any) {
       <span class="sr-only">Loading items</span>
     </div>
     <div v-else-if="!feedStore.activeFeedId && !feedStore.isMultiView && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
-    <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">No saved items</div>
+    <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">{{ feedStore.filter === 'all' || feedStore.filter === 'saved' ? 'No saved items' : 'No saved items match this filter' }}</div>
     <template v-else>
       <!-- Refresh in flight with rows present: dim instead of replacing, so
            the list and scroll position stay visible during the reload.
@@ -539,7 +538,7 @@ async function markBelowRead(item: any) {
       </div>
       </div>
     </component>
-    <div v-if="!props.showingSaved && feedStore.loadingMore" class="p-3">
+    <div v-if="feedStore.loadingMore" class="p-3">
       <Skeleton class="h-12" />
     </div>
     </template>

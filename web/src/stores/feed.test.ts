@@ -10,6 +10,7 @@ vi.mock('../services/api', () => ({
     delete: vi.fn(),
     getItems: vi.fn(),
     multiItems: vi.fn(),
+    savedItems: vi.fn(),
     fetch: vi.fn(),
   },
   itemApi: {
@@ -22,6 +23,73 @@ vi.mock('../services/api', () => ({
 
 beforeEach(() => {
   setActivePinia(createPinia())
+})
+
+// The Saved view paginates like every other list: a page of PAGE_SIZE with
+// has_more, appending on scroll. The status filter goes to the SERVER, because a
+// client-side filter would only ever see the pages fetched so far.
+describe('feed store saved view pagination', () => {
+  it('requests the first page with a limit and stores has_more/total', async () => {
+    const { feedApi } = await import('../services/api')
+    const store = useFeedStore()
+    ;(feedApi.savedItems as any).mockResolvedValue({
+      items: [{ id: 1, title: 'A' }, { id: 2, title: 'B' }],
+      has_more: true,
+      total: 7,
+    })
+
+    await store.fetchSavedItems()
+
+    expect(feedApi.savedItems).toHaveBeenCalledWith({ status: undefined, limit: 50, offset: 0 })
+    expect(store.savedItems).toHaveLength(2)
+    expect(store.hasMore).toBe(true)
+    expect(store.savedTotal).toBe(7)
+  })
+
+  it('appends the next page at the loaded offset', async () => {
+    const { feedApi } = await import('../services/api')
+    const store = useFeedStore()
+    ;(feedApi.savedItems as any).mockResolvedValue({
+      items: [{ id: 1, title: 'A' }, { id: 2, title: 'B' }],
+      has_more: true,
+      total: 4,
+    })
+    await store.fetchSavedItems()
+
+    ;(feedApi.savedItems as any).mockResolvedValue({
+      items: [{ id: 3, title: 'C' }, { id: 4, title: 'D' }],
+      has_more: false,
+      total: 4,
+    })
+    await store.fetchMoreSavedItems()
+
+    expect(feedApi.savedItems).toHaveBeenLastCalledWith({ status: undefined, limit: 50, offset: 2 })
+    expect(store.savedItems.map(i => i.id)).toEqual([1, 2, 3, 4])
+    expect(store.hasMore).toBe(false)
+  })
+
+  it('sends the read-state filter to the server', async () => {
+    const { feedApi } = await import('../services/api')
+    const store = useFeedStore()
+    ;(feedApi.savedItems as any).mockResolvedValue({ items: [], has_more: false, total: 0 })
+
+    store.filter = 'unread'
+    await store.fetchSavedItems()
+
+    expect(feedApi.savedItems).toHaveBeenCalledWith({ status: 'unread', limit: 50, offset: 0 })
+  })
+
+  it('does not page when there is nothing more to load', async () => {
+    const { feedApi } = await import('../services/api')
+    const store = useFeedStore()
+    ;(feedApi.savedItems as any).mockResolvedValue({ items: [{ id: 1 }], has_more: false, total: 1 })
+    await store.fetchSavedItems()
+    ;(feedApi.savedItems as any).mockClear()
+
+    await store.fetchMoreSavedItems()
+
+    expect(feedApi.savedItems).not.toHaveBeenCalled()
+  })
 })
 
 // A select-time fetch must not overwrite a write that happened while it was in

@@ -310,6 +310,8 @@ export interface MultiFeedItemsResponse {
 // archive feeds ("Saved -- <name>") holding orphans of deleted feeds.
 export interface SavedItemsResponse {
   items: MultiItem[]
+  has_more: boolean
+  total: number
 }
 
 // HealthInfo is the readiness payload. It intentionally carries no feature

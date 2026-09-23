@@ -265,9 +265,50 @@ func (s *Server) handleSavedCount(w http.ResponseWriter, r *http.Request) {
 // one query. Replaces the client's N sequential per-feed requests, and works
 // through archive feeds (orphaned items of deleted feeds keep their
 // "Saved -- <name>" provenance).
+//
+// A limit selects the paginated response shape (items + has_more + total), the
+// same contract the feed and multi-feed list endpoints use. Without one the
+// whole list is returned, so existing callers keep working unchanged. Lazy
+// loading matters here because a long-running install accumulates saved items
+// without bound, and every row carries a body excerpt.
+//
+// `status` filters by read state server-side. It has to live here rather than in
+// the client: the list is paginated, so filtering the loaded page would narrow
+// to whichever rows happen to be in memory.
 func (s *Server) handleListSavedItems(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
-	rows, err := s.queries.ListSavedItemsByUser(r.Context(), userID)
+
+	status := r.URL.Query().Get("status")
+
+	paginated := false
+	limit := int64(0)
+	offset := int64(0)
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		paginated = true
+		l, err := strconv.Atoi(limitStr)
+		if err != nil || l <= 0 {
+			l = 50
+		}
+		if l > 100 {
+			l = 100
+		}
+		if o := r.URL.Query().Get("offset"); o != "" {
+			if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+				offset = int64(v)
+			}
+		}
+		// Fetch one extra row to detect whether more items exist.
+		limit = int64(l + 1)
+	} else {
+		limit = -1
+	}
+
+	rows, err := s.queries.ListSavedItemsByUser(r.Context(), store.ListSavedItemsByUserParams{
+		UserID: userID,
+		Status: status,
+		Lim:    limit,
+		Off:    offset,
+	})
 	if err != nil {
 		writeServerError(w, "failed to list saved items", err)
 		return
@@ -278,6 +319,36 @@ func (s *Server) handleListSavedItems(w http.ResponseWriter, r *http.Request) {
 			ListSavedItemsByUserRow: row,
 			Excerpt:                 feed.ExcerptForPreview(row.Content, row.ExtractContent, row.ExtractStatus),
 		}
+	}
+
+	hasMore := false
+	var total int64
+	if paginated {
+		hasMore = len(items) > int(limit-1)
+		if hasMore {
+			items = items[:int(limit-1)]
+		}
+		total, err = s.queries.CountSavedItemsByUser(r.Context(), store.CountSavedItemsByUserParams{
+			UserID: userID,
+			Status: status,
+		})
+		if err != nil {
+			writeServerError(w, "failed to count saved items", err)
+			return
+		}
+	}
+
+	if items == nil {
+		items = []savedItemRow{}
+	}
+
+	if paginated {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"items":    items,
+			"has_more": hasMore,
+			"total":    total,
+		})
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }

@@ -48,10 +48,17 @@ const layoutStore = useLayoutStore()
 
 const { isDesktop, isTablet } = useBreakpoints()
 
-const showingSaved = ref(false)
 // The Saved view's list lives in the store so a status change reaches its rows
 // (see savedItems in stores/feed.ts); this is just a readable alias.
 const savedItems = computed(() => feedStore.savedItems)
+// The Saved view's active state lives in the store too: the store's page loader
+// has to know whether fetchMoreItems should page the saved list or a feed, and
+// changeFilter refetches the saved list only when it is showing. A local ref
+// would leave the store blind to it.
+const showingSaved = computed({
+  get: () => feedStore.showingSaved,
+  set: (v: boolean) => { feedStore.showingSaved = v },
+})
 const sidebarOpen = ref(false)
 
 // Left-edge swipe walks one pane to the left: content -> list, list ->

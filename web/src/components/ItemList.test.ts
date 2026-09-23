@@ -104,6 +104,9 @@ function mountList(opts: { savedItems?: Item[]; items?: Item[]; showingSaved?: b
     makeItem(),
     makeItem({ id: 2, title: 'Item 2', published_at: '2026-08-12T09:30:00Z' }),
   ]
+  // The Saved view's total now comes from the server (filter-aware), so seed it
+  // alongside the rows: the header reports loaded/total for the filtered set.
+  store.savedTotal = (opts.savedItems ?? []).length
   const wrapper = mount(ItemList, {
     props: {
       savedItems: opts.savedItems ?? [],
@@ -305,7 +308,10 @@ describe('ItemList filter/sort controls', () => {
       expect(rows[1].text()).toContain('Older')
     })
 
-    it('filters saved items client-side by status', async () => {
+    it('renders every row the server returned, without re-filtering', async () => {
+      // The Saved view's read-state filter is applied SERVER-side (the list is
+      // paginated, so a client-side filter would only see loaded pages). What the
+      // component must do is render exactly what it was given.
       const saved = [
         makeItem({ id: 1, title: 'Saved one', status: 'saved' }),
         makeItem({ id: 2, title: 'Saved two', status: 'saved' }),
@@ -864,12 +870,19 @@ describe('middle pane header counts', () => {
     expect(headerCount(wrapper)).toBe('1/1')
   })
 
-  it('treats the saved view as fully loaded, since it has no pagination', () => {
+  it('reports the saved view against its server total', async () => {
     const saved = [makeItem({ status: 'saved' }), makeItem({ id: 2, status: 'saved' })]
-    const { wrapper } = mountList({ showingSaved: true, savedItems: saved })
+    const { store, wrapper } = mountList({ showingSaved: true, savedItems: saved })
 
+    // Loaded page vs the server's filter-aware count, like every other list.
     expect(headerCount(wrapper)).toBe('2/2')
     expect(wrapper.find('[data-filter-feed-name]').text()).toBe('Saved')
+
+    // A page of 2 out of 7 saved reads as "2/7", not "2/2": the saved view is
+    // paginated now, so the loaded length is not the total.
+    store.savedTotal = 7
+    await wrapper.vm.$nextTick()
+    expect(headerCount(wrapper)).toBe('2/7')
   })
 
   // Centring on the BAR is a layout guarantee, and jsdom does no layout — what it
