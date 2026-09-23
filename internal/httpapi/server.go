@@ -34,6 +34,9 @@ type Server struct {
 	// build in-app links surfaced to Reader clients (feed home pages, digest
 	// article links). Empty means "derive from the request host".
 	publicBaseURL string
+	// cookieSecure forces the Secure flag on the refresh cookie. Nil follows the
+	// request's TLS state (see refreshCookie).
+	cookieSecure *bool
 	// topComments is the experimental per-item comment fetch limit.
 	// Zero disables on-demand comment fetching.
 	topComments int
@@ -97,6 +100,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 		logs:              logs,
 		metrics:           metrics.New(10000),
 		publicBaseURL:     strings.TrimRight(cfg.Server.PublicBaseURL, "/"),
+		cookieSecure:      cfg.Server.CookieSecure,
 		topComments:       cfg.Feed.TopComments,
 		commentCache:      newCommentCache(cfg.Feed.CommentCacheTTL.Duration()),
 		schedulerTimezone: cfg.Digest.SchedulerTimezone,

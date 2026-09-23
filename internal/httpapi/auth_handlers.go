@@ -37,8 +37,18 @@ func newUserResponse(u store.User) userResponse {
 }
 
 // refreshCookie builds the refresh-token cookie scoped to /api/auth/refresh.
-func refreshCookie(r *http.Request, value string, maxAge int) *http.Cookie {
+//
+// Secure defaults to the request's TLS state, which is correct when the app
+// terminates TLS itself but silently wrong behind a TLS-terminating proxy: the
+// request the app sees is plain HTTP, so the cookie goes out without Secure over
+// an HTTPS-only deployment. server.cookie_secure overrides that. Leaving it
+// unset preserves the old behaviour, so a plain-HTTP install (LAN, no proxy)
+// keeps a working refresh cookie instead of one the browser refuses to store.
+func (s *Server) refreshCookie(r *http.Request, value string, maxAge int) *http.Cookie {
 	secure := r.TLS != nil
+	if s.cookieSecure != nil {
+		secure = *s.cookieSecure
+	}
 	return &http.Cookie{
 		Name:     "refresh_token",
 		Value:    value,
@@ -102,7 +112,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, refreshCookie(r, refreshToken, int(auth.RefreshTokenDuration.Seconds())))
+	http.SetCookie(w, s.refreshCookie(r, refreshToken, int(auth.RefreshTokenDuration.Seconds())))
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"user":         newUserResponse(user),
@@ -143,7 +153,7 @@ func (s *Server) handleSignin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, refreshCookie(r, refreshToken, int(auth.RefreshTokenDuration.Seconds())))
+	http.SetCookie(w, s.refreshCookie(r, refreshToken, int(auth.RefreshTokenDuration.Seconds())))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"user":         newUserResponse(user),
@@ -155,7 +165,7 @@ func (s *Server) handleSignout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie("refresh_token"); err == nil {
 		s.auth.DeleteRefreshToken(r.Context(), cookie.Value)
 	}
-	http.SetCookie(w, refreshCookie(r, "", -1))
+	http.SetCookie(w, s.refreshCookie(r, "", -1))
 	writeJSON(w, http.StatusOK, map[string]string{"message": "signed out"})
 }
 
@@ -208,7 +218,7 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	// every account through /api/logs.
 	slog.Debug("token refreshed", logging.CategoryAttr(logging.CategoryAuth), "user_id", user.ID)
 
-	http.SetCookie(w, refreshCookie(r, newRefresh, int(auth.RefreshTokenDuration.Seconds())))
+	http.SetCookie(w, s.refreshCookie(r, newRefresh, int(auth.RefreshTokenDuration.Seconds())))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"access_token": accessToken,
@@ -262,7 +272,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.auth.DeleteAllUserRefreshTokens(r.Context(), userID)
-	http.SetCookie(w, refreshCookie(r, "", -1))
+	http.SetCookie(w, s.refreshCookie(r, "", -1))
 	writeJSON(w, http.StatusOK, map[string]string{"message": "password changed"})
 }
 

@@ -96,6 +96,13 @@ type ServerConfig struct {
 	Port          int    `yaml:"port"`
 	JWTSecret     string `yaml:"jwt_secret"`
 	PublicBaseURL string `yaml:"public_base_url"`
+	// CookieSecure forces the Secure flag on the refresh cookie. Nil (unset)
+	// means "follow the request", which is the historical behaviour and keeps
+	// plain-HTTP installs working. Set it to true when TLS terminates at a
+	// reverse proxy: r.TLS is nil on the request the app sees, so the cookie
+	// would otherwise be issued without Secure over an HTTPS-only deployment.
+	// A pointer so "unset" is distinguishable from an explicit false.
+	CookieSecure *bool `yaml:"cookie_secure"`
 }
 
 // DBConfig holds database settings.
@@ -335,6 +342,22 @@ func setInt(dst *int, canonical, legacy string) {
 	*dst = n
 }
 
+// setBoolPtr sets a tri-state bool from an environment variable. Unset leaves the
+// pointer nil, which callers treat as "not configured"; an unparseable value is
+// reported and ignored rather than silently flipping the setting.
+func setBoolPtr(dst **bool, canonical string) {
+	v, ok := lookupEnv(canonical)
+	if !ok {
+		return
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		slog.Warn("invalid value for environment variable, keeping configured value", "env", canonical, "value", v, "error", err)
+		return
+	}
+	*dst = &b
+}
+
 func setDuration(dst *Duration, canonical string) {
 	v, ok := lookupEnv(canonical)
 	if !ok {
@@ -356,6 +379,7 @@ func setDuration(dst *Duration, canonical string) {
 func applyEnv(cfg *Config, levelSetByFile bool) {
 	setString(&cfg.Server.JWTSecret, "SERVER_JWT_SECRET", "JWT_SECRET")
 	setString(&cfg.Server.PublicBaseURL, "SERVER_PUBLIC_BASE_URL", "PUBLIC_BASE_URL")
+	setBoolPtr(&cfg.Server.CookieSecure, "SERVER_COOKIE_SECURE")
 	setInt(&cfg.Server.Port, "SERVER_PORT", "PORT")
 
 	setString(&cfg.DB.Path, "DB_PATH", "DATABASE_PATH")

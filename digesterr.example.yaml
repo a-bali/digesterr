@@ -22,6 +22,15 @@ server:
   # clients. Empty means "derive from the request host".
   #                            [SERVER_PUBLIC_BASE_URL, legacy PUBLIC_BASE_URL]
   public_base_url: ""
+  # Force the Secure flag on the refresh cookie. Omit (or leave unset) to
+  # follow the request: Secure is set when the app itself terminates TLS.
+  # Set this to true when TLS terminates at a reverse proxy, because the
+  # request the app sees is plain HTTP and the cookie would otherwise be
+  # issued without Secure. Leave it unset (not false) for a plain-HTTP
+  # install such as a trusted LAN with no proxy, or browsers will refuse to
+  # store the cookie and every reload will require a fresh sign-in.
+  #                                        [SERVER_COOKIE_SECURE]
+  # cookie_secure: true
 
 db:
   # SQLite database file path.    [DB_PATH, legacy DATABASE_PATH]
