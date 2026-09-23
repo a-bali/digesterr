@@ -485,7 +485,11 @@ export const useFeedStore = defineStore('feed', () => {
   // dimming already report the outcome inline. A toast per click would bury the
   // messages that do need attention. Failures still toast, because a click that
   // silently does nothing is the case a user must hear about.
-  async function updateItemStatus(item: Item, status?: string, saved?: boolean) {
+  //
+  // Returns whether the write SUCCEEDED. Callers that also mutate local list state
+  // (unsaveItem) must branch on it: a caller that assumed success on a failure
+  // removed the row anyway, and the row reappeared on the next reload.
+  async function updateItemStatus(item: Item, status?: string, saved?: boolean): Promise<boolean> {
     try {
       const body: { status?: string; saved?: boolean } = {}
       if (status !== undefined) body.status = status
@@ -503,8 +507,10 @@ export const useFeedStore = defineStore('feed', () => {
       if (!wasSaved && nowSaved) savedCount.value++
       else if (wasSaved && !nowSaved) savedCount.value = Math.max(0, savedCount.value - 1)
       fetchUnreadCounts()
+      return true
     } catch (e) {
       toastError(e, 'Failed to update item')
+      return false
     }
   }
 
@@ -636,9 +642,13 @@ export const useFeedStore = defineStore('feed', () => {
   // Like updateItemStatus, no success toast: the row leaves the list, which is
   // its own confirmation. (updateItemStatus's error toast still covers failure,
   // since it is the one that performs the write.)
+  //
+  // The row is removed ONLY when the write succeeded. Removing it unconditionally
+  // hid a failed unsave: the row vanished, then reappeared on the next reload,
+  // which reads as the app losing the change rather than the request failing.
   async function unsaveItem(item: Item) {
-    await updateItemStatus(item, undefined, false)
-    savedItems.value = savedItems.value.filter(i => i.id !== item.id)
+    const ok = await updateItemStatus(item, undefined, false)
+    if (ok) savedItems.value = savedItems.value.filter(i => i.id !== item.id)
   }
 
   // fetchSavedItems loads the Saved view's list in one server-side query.

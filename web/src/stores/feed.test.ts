@@ -174,6 +174,38 @@ describe('feed store', () => {
     expect(store.savedItems).toHaveLength(0)
   })
 
+  // A failed unsave must NOT remove the row. updateItemStatus catches API errors
+  // and (before this) returned normally, so unsaveItem could not tell success from
+  // failure and dropped the row regardless — the row then reappeared on reload,
+  // which reads as the app losing the change rather than the request failing.
+  it('keeps the row when the unsave request fails', async () => {
+    const { itemApi } = await import('../services/api')
+    ;(itemApi.updateStatus as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('network down'))
+
+    const store = useFeedStore()
+    const item = { id: 1, title: 't', status: 'unread', is_saved: 1 } as any
+    store.savedItems = [{ ...item }]
+
+    await store.unsaveItem(store.savedItems[0])
+
+    expect(store.savedItems).toHaveLength(1)
+  })
+
+  // ...and the success path still removes it, so the guard above is not simply
+  // disabling the feature.
+  it('removes the row when the unsave request succeeds', async () => {
+    const { itemApi } = await import('../services/api')
+    ;(itemApi.updateStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, status: 'unread', is_saved: 0 })
+
+    const store = useFeedStore()
+    const item = { id: 1, title: 't', status: 'unread', is_saved: 1 } as any
+    store.savedItems = [{ ...item }]
+
+    await store.unsaveItem(store.savedItems[0])
+
+    expect(store.savedItems).toHaveLength(0)
+  })
+
   it('deleteExtraction clears the extracted body in the list, the multi-view and the selection', async () => {
     const { itemApi } = await import('../services/api')
     ;(itemApi.deleteExtracted as ReturnType<typeof vi.fn>).mockResolvedValue({
