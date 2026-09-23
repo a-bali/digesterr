@@ -22,6 +22,15 @@ const feedStore = useFeedStore()
 // would flash every row on first paint and would render a failed
 // /unread-counts call as "everything is read".
 const noUnread = computed(() => feedStore.unreadCounts[props.feed.id] === 0)
+
+// The row whose feed is currently open is the SURFACE for its actions. On a
+// touch device there is no hover, so every row used to paint its Settings /
+// mark-read / Refresh buttons at all times (`pointer-coarse:opacity-100`) — a
+// column of four controls per feed, which is the clutter this replaces. Now the
+// selected row reveals them and the others stay bare; a pointer device keeps the
+// hover behaviour it always had, and keyboard focus still reveals them, so the
+// buttons never become unreachable for a non-touch user.
+const isSelected = computed(() => feedStore.activeFeedId === props.feed.id)
 </script>
 
 <template>
@@ -70,16 +79,25 @@ const noUnread = computed(() => feedStore.unreadCounts[props.feed.id] === 0)
       <span v-if="(feedStore.unreadCounts[feed.id] ?? 0) > 0" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-1.5">{{ feedStore.unreadCounts[feed.id] }}</span>
     </div>
     <!-- The action buttons sit above the row's click handler and stop
-         propagation, so their clicks never select the feed. -->
-    <button class="shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20" title="Settings" @click.stop="emit('edit', feed)">
-      <Settings class="size-3" />
-    </button>
-    <button class="shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20" :title="scopeActionLabel({ kind: 'feed', id: feed.id, name: feed.name })" @click.stop="emit('markRead', feed.id)">
-      <Check class="size-3" />
-    </button>
-    <button class="shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20" title="Refresh" @click.stop="emit('refresh', feed.id)">
-      <RefreshCw v-if="refreshing" class="size-3 animate-spin" />
-      <RefreshCw v-else class="size-3" />
-    </button>
+         propagation, so their clicks never select the feed. One GROUP owns the
+         reveal: `opacity-0` hides it, `group-hover`/`group-focus-within` reveal it
+         for a pointer, and the selected row pins it open so a touch user (who has
+         no hover) can reach it on the row they are already on. -->
+    <span
+      class="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
+      :class="{ 'opacity-100': isSelected }"
+      data-row-actions
+    >
+      <button class="p-1 rounded hover:bg-accent/20" title="Settings" @click.stop="emit('edit', feed)">
+        <Settings class="size-3" />
+      </button>
+      <button class="p-1 rounded hover:bg-accent/20" :title="scopeActionLabel({ kind: 'feed', id: feed.id, name: feed.name })" @click.stop="emit('markRead', feed.id)">
+        <Check class="size-3" />
+      </button>
+      <button class="p-1 rounded hover:bg-accent/20" title="Refresh" @click.stop="emit('refresh', feed.id)">
+        <RefreshCw v-if="refreshing" class="size-3 animate-spin" />
+        <RefreshCw v-else class="size-3" />
+      </button>
+    </span>
   </div>
 </template>

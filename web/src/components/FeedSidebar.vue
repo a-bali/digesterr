@@ -39,6 +39,23 @@ const route = useRoute()
 const refreshingFeeds = ref(new Set<number>())
 const generatingDigests = ref(new Set<number>())
 
+// One rule for every action group in the sidebar and its rows: the SELECTED
+// scope pins its actions visible, everything else reveals them on hover (pointer)
+// or focus (keyboard) only. Nothing is revealed unconditionally — the old
+// `pointer-coarse:opacity-100` painted four controls on every row on a touch
+// device, which is the clutter being removed. The `+` buttons are exempt on
+// purpose: they are the touch user's only way in, so they are always visible.
+//
+// These are helpers rather than inline object literals so the reveal rule stays
+// identical across the four call sites; a group that keeps one half of the rule
+// and drops the other is the drift this prevents.
+function selectedAwareClass(selected: boolean, group: 'group-hover' | 'group-hover/section' | 'group-hover/cat' = 'group-hover') {
+  return selected ? 'opacity-100' : `opacity-0 ${group}:opacity-100 group-focus-within:opacity-100`
+}
+const sectionActionClass = (selected: boolean) => selectedAwareClass(selected, 'group-hover/section')
+const categoryActionClass = (selected: boolean) => selectedAwareClass(selected, 'group-hover/cat')
+const digestBlockActionClass = (selected: boolean) => selectedAwareClass(selected)
+
 const showAddFeed = ref(false)
 const showEditFeed = ref(false)
 const editingFeed = ref<Feed | null>(null)
@@ -275,7 +292,8 @@ const categoryUnreadCounts = computed(() => {
         >{{ totalDigestUnread }}</span>
       </button>
       <button
-        class="shrink-0 opacity-0 group-hover/section:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default"
+        class="shrink-0 p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default transition-opacity"
+        :class="sectionActionClass(feedStore.activeSection === 'digests')"
         :disabled="totalDigestUnread === 0"
         :title="totalDigestUnread > 0
           ? scopeActionLabel({ kind: 'all-digests' })
@@ -312,7 +330,11 @@ const categoryUnreadCounts = computed(() => {
             class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground ml-1.5"
           >{{ digestStore.unreadCounts[cfg.id] }}</span>
         </div>
-        <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity">
+        <div
+          class="flex items-center gap-0.5 shrink-0 transition-opacity"
+          :class="digestBlockActionClass(digestStore.activeConfigId === cfg.id)"
+          data-digest-actions
+        >
           <button
             class="p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default"
             :disabled="(digestStore.unreadCounts[cfg.id] ?? 0) === 0"
@@ -351,7 +373,8 @@ const categoryUnreadCounts = computed(() => {
         >{{ totalFeedUnread }}</span>
       </button>
       <button
-        class="shrink-0 opacity-0 group-hover/section:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default"
+        class="shrink-0 p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default transition-opacity"
+        :class="sectionActionClass(feedStore.activeSection === 'feeds')"
         :disabled="totalFeedUnread === 0"
         :title="totalFeedUnread > 0
           ? scopeActionLabel({ kind: 'feeds-section' })
@@ -395,7 +418,8 @@ const categoryUnreadCounts = computed(() => {
           >{{ categoryUnreadCounts[catName] }}</span>
         </button>
         <button
-          class="shrink-0 opacity-0 group-hover/cat:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default"
+          class="shrink-0 p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default transition-opacity"
+          :class="categoryActionClass(feedStore.activeCategory === catName)"
           :disabled="(categoryUnreadCounts[catName] ?? 0) === 0"
           :title="(categoryUnreadCounts[catName] ?? 0) > 0
             ? scopeActionLabel({ kind: 'category', name: catName })

@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import FeedSidebar from './FeedSidebar.vue'
+import FeedRow from './FeedRow.vue'
 import type { Feed, DigestConfig } from '../types/api'
 
 vi.mock('../services/api', () => ({
@@ -102,7 +103,7 @@ function dialogText(): string {
   return document.body.querySelector('[role="dialog"]')?.textContent ?? ''
 }
 
-describe('FeedSidebar hover actions', () => {
+describe('FeedSidebar touch action visibility', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
     setActivePinia(createPinia())
@@ -110,33 +111,74 @@ describe('FeedSidebar hover actions', () => {
     vi.mocked(digestApi.listConfigs).mockResolvedValue([])
   })
 
-  it('keeps feed action buttons reachable on touch devices (pointer-coarse) and via keyboard focus', async () => {
+  // On a touch device there is no hover, so `pointer-coarse:opacity-100` used to
+  // paint EVERY row's Settings/mark-read/Refresh buttons permanently — a column of
+  // ~4 controls per feed. The selected row is the SURFACE for those actions now:
+  // the row whose feed is open shows them, all others show none. The `+` buttons
+  // (Add feed / Create digest config) stay unconditionally visible — they are the
+  // touch user's only way in.
+  // The group's own classes ARE the contract: `opacity-100` means the actions
+  // are painted, `opacity-0` (plus the hover/focus variants) means hidden until
+  // pointed at. Exactly one of the two is ever present, so `opacity-100` is an
+  // unambiguous "visible".
+  const actionGroups = (wrapper: Awaited<ReturnType<typeof mountSidebar>>) =>
+    Array.from((wrapper.element as HTMLElement).querySelectorAll('[data-row-actions]'))
+
+  // Two ways this assertion can be blind, both of which shipped once:
+  //   * `className.includes('opacity-100')` also matches the hover/focus VARIANTS
+  //     (`group-hover:opacity-100`), so it can never fail — read the class LIST.
+  //   * checking only the exact `opacity-100` token misses `pointer-coarse:opacity-100`,
+  //     which is the ACTUAL bug: it forces the actions visible on every touch device
+  //     regardless of selection. Both must be absent on an unselected row.
+  const isPainted = (group: Element) =>
+    group.classList.contains('opacity-100') || group.classList.contains('pointer-coarse:opacity-100')
+
+  it('reveals actions only on the selected feed row', async () => {
     const wrapper = await mountSidebar()
     const { useFeedStore } = await import('../stores/feed')
     const feedStore = useFeedStore()
-    feedStore.feeds.push(feed)
+    feedStore.feeds.push(feed, { ...feed, id: 9, name: 'Other Feed' })
     await flushPromises()
 
-    for (const title of ['Settings', 'Mark “Example Feed” as read', 'Refresh']) {
-      const btn = wrapper.find(`button[title="${title}"]`)
-      expect(btn.exists()).toBe(true)
-      expect(btn.classes()).toContain('pointer-coarse:opacity-100')
-      expect(btn.classes()).toContain('group-focus-within:opacity-100')
-    }
-    wrapper.unmount()
+    expect(wrapper.findAllComponents(FeedRow)).toHaveLength(2)
+    const groups = actionGroups(wrapper)
+    expect(groups).toHaveLength(2)
+
+    // Nothing selected → no row paints its actions.
+    expect(isPainted(groups[0])).toBe(false)
+    expect(isPainted(groups[1])).toBe(false)
+
+    // Select the first feed → only that row paints them.
+    feedStore.activeFeedId = 1
+    await flushPromises()
+    expect(isPainted(groups[0])).toBe(true)
+    expect(isPainted(groups[1])).toBe(false)
   })
 
-  it('keeps digest config action buttons reachable on touch devices', async () => {
-    const { digestApi } = await import('../services/api')
-    vi.mocked(digestApi.listConfigs).mockResolvedValue([digestConfig])
+  it('hides every feed row\u2019s actions when no feed is selected', async () => {
     const wrapper = await mountSidebar()
+    const { useFeedStore } = await import('../stores/feed')
+    const feedStore = useFeedStore()
+    feedStore.feeds.push(feed, { ...feed, id: 9, name: 'Other Feed' })
+    feedStore.activeFeedId = null
     await flushPromises()
 
-    const settingsBtn = wrapper.find('button[title="Settings"]')
-    expect(settingsBtn.exists()).toBe(true)
-    const actionsContainer = settingsBtn.element.parentElement
-    expect(actionsContainer?.className).toContain('pointer-coarse:opacity-100')
-    wrapper.unmount()
+    for (const group of actionGroups(wrapper)) {
+      // Hidden means no unconditional reveal on ANY pointer type; hover/focus
+      // still reveal it for the users who have them.
+      expect(isPainted(group)).toBe(false)
+      expect(group.classList.contains('group-hover:opacity-100')).toBe(true)
+    }
+  })
+
+  it('keeps the + buttons always visible', async () => {
+    const wrapper = await mountSidebar()
+    await flushPromises()
+    for (const title of ['Add feed', 'Create digest config']) {
+      const plus = wrapper.find(`button[title="${title}"]`)
+      expect(plus.exists()).toBe(true)
+      expect(plus.classes()).not.toContain('opacity-0')
+    }
   })
 })
 
@@ -471,7 +513,9 @@ describe('FeedSidebar unread pill and error-icon placement', () => {
 
     const root = wrapper.element as HTMLElement
     const settings = root.querySelector('button[title="Settings"]') as HTMLElement
-    const row = settings.parentElement as HTMLElement
+    // Actions live in their own group wrapper now, so the ROW is the group's
+    // parent — climbing one level from the button would land on the group.
+    const row = settings.closest('[data-row-actions]')!.parentElement as HTMLElement
     const name = spanWithText(row, 'Example Feed')
     const pill = Array.from(row.querySelectorAll('span')).find(s => s.textContent?.trim() === '7') as HTMLElement
     expect(pill).toBeDefined()

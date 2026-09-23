@@ -151,7 +151,11 @@ describe('FeedRow unread-aware dimming', () => {
     expect(row.classes()).not.toContain('opacity-60')
     const refreshBtn = wrapper.find('button[title="Refresh"]')
     expect(refreshBtn.classes()).not.toContain('opacity-60')
-    expect(refreshBtn.classes()).toContain('group-hover:opacity-100')
+    // The reveal moved onto the action GROUP (one rule for all three buttons);
+    // the buttons themselves are now plain, so assert it there.
+    const group = wrapper.find('[data-row-actions]')
+    expect(group.classes()).not.toContain('opacity-60')
+    expect(group.classes()).toContain('group-hover:opacity-100')
     wrapper.unmount()
   })
 })
