@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -9,6 +11,59 @@ import (
 
 	"digesterr/internal/store"
 )
+
+// inDigestTx runs fn in a transaction against the digest tables. Every digest
+// read cascade belongs in one: the cascade flips linked items from digested to
+// read, so running it as a separate statement after the result update leaves the
+// two halves inconsistent whenever the cascade fails — results read, items still
+// digested, and (before this) an error nobody looked at. Errors are returned,
+// never discarded, so the handler can fail the request and the rollback undoes
+// the result update with it.
+func (s *Server) inDigestTx(ctx context.Context, what string, fn func(context.Context, *store.Queries) error) error {
+	db := s.queries.DB()
+	if db == nil {
+		return fmt.Errorf("%s requires a *sql.DB-backed Queries", what)
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning %s: %w", what, err)
+	}
+	defer tx.Rollback()
+	if err := fn(ctx, s.queries.WithTx(tx)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing %s: %w", what, err)
+	}
+	return nil
+}
+
+// markDigestResultsRead flips digest results read and cascades their linked
+// items, in one transaction. configID nil means every result the user owns.
+func (s *Server) markDigestResultsRead(ctx context.Context, userID int64, configID *int64) error {
+	return s.inDigestTx(ctx, "mark-digest-read", func(ctx context.Context, q *store.Queries) error {
+		if configID != nil {
+			if err := q.MarkDigestConfigRead(ctx, store.MarkDigestConfigReadParams{
+				ConfigID: *configID,
+				UserID:   userID,
+			}); err != nil {
+				return fmt.Errorf("marking digest config read: %w", err)
+			}
+		} else {
+			if err := q.MarkAllUserDigestResultsRead(ctx, userID); err != nil {
+				return fmt.Errorf("marking all digest results read: %w", err)
+			}
+		}
+		params := store.MarkDigestConfigResultItemsReadParams{UserID: userID}
+		if configID != nil {
+			params.Column2 = *configID
+		}
+		if _, err := q.MarkDigestConfigResultItemsRead(ctx, params); err != nil {
+			return fmt.Errorf("flipping digest items: %w", err)
+		}
+		return nil
+	})
+}
 
 func (s *Server) handleMarkDigestResultsRead(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
@@ -18,30 +73,9 @@ func (s *Server) handleMarkDigestResultsRead(w http.ResponseWriter, r *http.Requ
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
-	ctx := r.Context()
-	if body.ConfigID != nil {
-		if err := s.queries.MarkDigestConfigRead(ctx, store.MarkDigestConfigReadParams{
-			ConfigID: *body.ConfigID,
-			UserID:   userID,
-		}); err != nil {
-			writeServerError(w, "failed to mark digest results read", err)
-			return
-		}
-		// Cascade: flip digested items for this config's results.
-		_, _ = s.queries.MarkDigestConfigResultItemsRead(ctx, store.MarkDigestConfigResultItemsReadParams{
-			UserID: userID,
-			Column2: body.ConfigID,
-		})
-	} else {
-		if err := s.queries.MarkAllUserDigestResultsRead(ctx, userID); err != nil {
-			writeServerError(w, "failed to mark all digest results read", err)
-			return
-		}
-		// Cascade: flip all digested items.
-		_, _ = s.queries.MarkDigestConfigResultItemsRead(ctx, store.MarkDigestConfigResultItemsReadParams{
-			UserID: userID,
-			Column2: nil,
-		})
+	if err := s.markDigestResultsRead(r.Context(), userID, body.ConfigID); err != nil {
+		writeServerError(w, "failed to mark digest results read", err)
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "digest results marked read"})
 }
@@ -77,49 +111,58 @@ func (s *Server) handleMarkDigestRelative(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if body.ConfigID != nil {
-		if direction == "above" {
-			err = s.queries.MarkDigestConfigReadAbove(r.Context(), store.MarkDigestConfigReadAboveParams{
-				ConfigID:   *body.ConfigID,
-				UserID:     userID,
-				BoundaryID: resultID,
-			})
+	// Results and their cascade commit together: a failed cascade must not
+	// leave results read with their items still digested.
+	err = s.inDigestTx(r.Context(), "mark-digest-read-relative", func(ctx context.Context, q *store.Queries) error {
+		if body.ConfigID != nil {
+			if direction == "above" {
+				if err := q.MarkDigestConfigReadAbove(ctx, store.MarkDigestConfigReadAboveParams{
+					ConfigID:   *body.ConfigID,
+					UserID:     userID,
+					BoundaryID: resultID,
+				}); err != nil {
+					return fmt.Errorf("marking digest config read above: %w", err)
+				}
+			} else {
+				if err := q.MarkDigestConfigReadBelow(ctx, store.MarkDigestConfigReadBelowParams{
+					ConfigID:   *body.ConfigID,
+					UserID:     userID,
+					BoundaryID: resultID,
+				}); err != nil {
+					return fmt.Errorf("marking digest config read below: %w", err)
+				}
+			}
 		} else {
-			err = s.queries.MarkDigestConfigReadBelow(r.Context(), store.MarkDigestConfigReadBelowParams{
-				ConfigID:   *body.ConfigID,
-				UserID:     userID,
-				BoundaryID: resultID,
-			})
+			if direction == "above" {
+				if err := q.MarkAllDigestReadAbove(ctx, store.MarkAllDigestReadAboveParams{
+					UserID:     userID,
+					BoundaryID: resultID,
+				}); err != nil {
+					return fmt.Errorf("marking digest read above: %w", err)
+				}
+			} else {
+				if err := q.MarkAllDigestReadBelow(ctx, store.MarkAllDigestReadBelowParams{
+					UserID:     userID,
+					BoundaryID: resultID,
+				}); err != nil {
+					return fmt.Errorf("marking digest read below: %w", err)
+				}
+			}
 		}
-	} else {
-		if direction == "above" {
-			err = s.queries.MarkAllDigestReadAbove(r.Context(), store.MarkAllDigestReadAboveParams{
-				UserID:     userID,
-				BoundaryID: resultID,
-			})
-		} else {
-			err = s.queries.MarkAllDigestReadBelow(r.Context(), store.MarkAllDigestReadBelowParams{
-				UserID:     userID,
-				BoundaryID: resultID,
-			})
+
+		// Cascade: flip digested items for the newly read results.
+		params := store.MarkDigestConfigResultItemsReadParams{UserID: userID}
+		if body.ConfigID != nil {
+			params.Column2 = *body.ConfigID
 		}
-	}
+		if _, err := q.MarkDigestConfigResultItemsRead(ctx, params); err != nil {
+			return fmt.Errorf("flipping digest items: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		writeServerError(w, "failed to mark digest results read", err)
 		return
-	}
-
-	// Cascade: flip digested items for the newly read results.
-	if body.ConfigID != nil {
-		_, _ = s.queries.MarkDigestConfigResultItemsRead(r.Context(), store.MarkDigestConfigResultItemsReadParams{
-			UserID:  userID,
-			Column2: body.ConfigID,
-		})
-	} else {
-		_, _ = s.queries.MarkDigestConfigResultItemsRead(r.Context(), store.MarkDigestConfigResultItemsReadParams{
-			UserID:  userID,
-			Column2: nil,
-		})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "digest results marked read"})

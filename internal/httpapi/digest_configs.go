@@ -1,6 +1,10 @@
 package httpapi
 
 import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -234,22 +238,36 @@ func (s *Server) handleUpdateDigestResultStatus(w http.ResponseWriter, r *http.R
 	if req.Status == "unread" {
 		req.Status = "new"
 	}
-	result, err := s.queries.UpdateDigestResultStatus(r.Context(), store.UpdateDigestResultStatusParams{
-		ID:     id,
-		UserID: userID,
-		Status: req.Status,
+	// Status update and its cascade commit together. Returning the cascade error
+	// was not enough on its own: the status update had already committed, so a
+	// failed cascade still left the result read with its items digested.
+	var result store.DigestResult
+	err = s.inDigestTx(r.Context(), "update-digest-result-status", func(ctx context.Context, q *store.Queries) error {
+		r, err := q.UpdateDigestResultStatus(ctx, store.UpdateDigestResultStatusParams{
+			ID:     id,
+			UserID: userID,
+			Status: req.Status,
+		})
+		if err != nil {
+			return err
+		}
+		result = r
+		// Spec: when a digest result transitions to read, all of its linked items
+		// move from digested to read.
+		if req.Status == "read" {
+			if err := q.MarkDigestResultItemsRead(ctx, result.ID); err != nil {
+				return fmt.Errorf("flipping digest items: %w", err)
+			}
+		}
+		return nil
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "digest result not found")
-		return
-	}
-	// Spec: when a digest result transitions to read, all of its linked items
-	// move from digested to read.
-	if req.Status == "read" {
-		if err := s.queries.MarkDigestResultItemsRead(r.Context(), result.ID); err != nil {
-			writeServerError(w, "failed to update linked items", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "digest result not found")
 			return
 		}
+		writeServerError(w, "failed to update digest result", err)
+		return
 	}
 	writeJSON(w, http.StatusOK, result)
 }

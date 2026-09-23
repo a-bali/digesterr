@@ -301,43 +301,17 @@ func (s *Server) handleReaderMarkAllAsRead(w http.ResponseWriter, r *http.Reques
 // configID is nil) read together with their linked items' digested->read
 // cascade, in one transaction. A partial chain (results read, items still
 // digested) is the failure the old three-statement sequence could leave.
+//
+// The work itself lives in markDigestResultsRead, shared with the REST
+// handlers: the Reader and REST paths must not drift on whether the cascade is
+// transactional, which is exactly the drift this function used to represent.
 func (s *Server) markDigestScopeRead(ctx context.Context, userID int64, configID *int64) error {
 	if configID != nil {
 		if _, err := s.queries.GetDigestConfig(ctx, store.GetDigestConfigParams{ID: *configID, UserID: userID}); err != nil {
 			return nil // missing scope: best-effort OK, same as before
 		}
 	}
-	db := s.queries.DB()
-	if db == nil {
-		return fmt.Errorf("mark-digest-read requires a *sql.DB-backed Queries")
-	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("beginning mark-digest-read: %w", err)
-	}
-	defer tx.Rollback()
-	qtx := s.queries.WithTx(tx)
-
-	if configID != nil {
-		if err := qtx.MarkDigestConfigRead(ctx, store.MarkDigestConfigReadParams{ConfigID: *configID, UserID: userID}); err != nil {
-			return fmt.Errorf("marking digest config read: %w", err)
-		}
-	} else {
-		if err := qtx.MarkAllUserDigestResultsRead(ctx, userID); err != nil {
-			return fmt.Errorf("marking all digest results read: %w", err)
-		}
-	}
-	params := store.MarkDigestConfigResultItemsReadParams{UserID: userID, Column2: nil}
-	if configID != nil {
-		params.Column2 = *configID
-	}
-	if _, err := qtx.MarkDigestConfigResultItemsRead(ctx, params); err != nil {
-		return fmt.Errorf("flipping digest items: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing mark-digest-read: %w", err)
-	}
-	return nil
+	return s.markDigestResultsRead(ctx, userID, configID)
 }
 
 // handleReaderNoOp answers 200 "OK" for Google Reader management endpoints
