@@ -6,9 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"digesterr/internal/auth"
 	"digesterr/internal/config"
 	"digesterr/internal/logbuf"
-	"digesterr/internal/auth"
 )
 
 // cookieSecureFor builds a server with the given cookie_secure setting and
