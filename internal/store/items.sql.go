@@ -876,6 +876,13 @@ type ListItemsByFeedSortedDateDescRow struct {
 
 // Preview query for the middle pane: excludes hash, url, author, and
 // internal metadata not needed for list display.
+//
+// The bodies are capped at 8192 characters, not 500: the row's excerpt is
+// flattened from this prefix server-side (feed.ExcerptForPreview), and a cut is
+// a CHARACTER count over RAW HTML, so a body opening with inline SVG or a long
+// srcset list can spend several KB of markup before its first word of prose.
+// At 500 chars those rows rendered an EMPTY excerpt that filled in only after
+// the item was opened. The cap still keeps whole articles out of the response.
 func (q *Queries) ListItemsByFeedSortedDateDesc(ctx context.Context, arg ListItemsByFeedSortedDateDescParams) ([]ListItemsByFeedSortedDateDescRow, error) {
 	rows, err := q.db.QueryContext(ctx, listItemsByFeedSortedDateDesc,
 		arg.FeedID,
