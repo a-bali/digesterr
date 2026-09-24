@@ -777,6 +777,76 @@ func (p *Poller) drainEmailInboxes(ctx context.Context) {
 	}
 }
 
+// deleteDisposableItem removes an item the caller judged disposable, and
+// reports whether it was actually removed.
+//
+// DeleteItem refuses to remove a saved or digest-linked row (it returns no
+// rows), because either condition can appear between the moment the caller
+// listed the item and the moment it deletes it: the user can save it, and a
+// concurrent digest generation can link it into a result (the link is ON DELETE
+// CASCADE, so the delete would silently strip the item out of a generated
+// digest). Refusal is the guard working, not an error, so it is reported as
+// kept rather than logged as a failure.
+func (p *Poller) deleteDisposableItem(ctx context.Context, itemID int64) (bool, error) {
+	_, err := p.queries.DeleteItem(ctx, itemID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// recordPollFailure applies the failure bookkeeping for a failed poll and
+// returns the error unchanged. Two rules make it correct:
+//
+//   - A caller-cancelled poll (SIGTERM, client disconnect) says nothing about
+//     the feed. Recording it would back off a perfectly healthy source and
+//     show the user an error they did not cause, so it is skipped. Our own
+//     per-feed timeout arrives as DeadlineExceeded and IS a real failure.
+//
+//   - The writes run on a DETACHED context. A poll that failed because its
+//     context expired (the poll timeout) would otherwise issue its backoff
+//     through that expired context, the driver would reject the write, and the
+//     feed would be retried on every single cycle forever with no backoff and
+//     no visible error. Detaching also keeps a cancelled-at-shutdown write from
+//     landing half-applied.
+func (p *Poller) recordPollFailure(ctx context.Context, feed store.Feed, err error, logger *slog.Logger) error {
+	if errors.Is(err, context.Canceled) {
+		logger.Debug("poll cancelled by caller; not recording a feed failure", "error", err)
+		return err
+	}
+
+	bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
+	// Back off the feed so a persistently broken source is retried with
+	// growing gaps instead of every cycle.
+	if e := p.queries.RecordFeedFailure(bctx, feed.ID); e != nil {
+		logger.Debug("failed to record feed backoff", "error", e)
+	}
+	// feeds.last_error is rendered in the sidebar tooltip: keep the full
+	// error in the log, but store a bounded copy like digest configs do.
+	msg := err.Error()
+	if len(msg) > 500 {
+		msg = msg[:500] + "…"
+	}
+	if e := p.queries.UpdateFeedError(bctx, store.UpdateFeedErrorParams{
+		ID:    feed.ID,
+		Error: msg,
+	}); e != nil {
+		logger.Error("failed to record feed error", "error", e)
+	}
+	if _, ue := p.queries.UpdateFeedStatus(bctx, store.UpdateFeedStatusParams{
+		ID:     feed.ID,
+		Status: "error",
+	}); ue != nil {
+		logger.Error("failed to update feed status", "error", ue)
+	}
+	return err
+}
+
 func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher) error {
 	start := time.Now()
 	logger := slog.With("feed_id", feed.ID, "feed_name", feed.Name, "feed_url", feed.Url)
@@ -815,31 +885,15 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	}
 	if err != nil {
 		logger.Warn("failed to fetch feed", "error", err)
-		// Back off the feed so a persistently broken source is retried with
-		// growing gaps instead of every cycle.
-		if e := p.queries.RecordFeedFailure(ctx, feed.ID); e != nil {
-			logger.Debug("failed to record feed backoff", "error", e)
-		}
-		// feeds.last_error is rendered in the sidebar tooltip: keep the full
-		// error in the log, but store a bounded copy like digest configs do.
-		msg := err.Error()
-		if len(msg) > 500 {
-			msg = msg[:500] + "…"
-		}
-		p.queries.UpdateFeedError(ctx, store.UpdateFeedErrorParams{
-			ID:    feed.ID,
-			Error: msg,
-		})
-		if _, ue := p.queries.UpdateFeedStatus(ctx, store.UpdateFeedStatusParams{
-			ID:     feed.ID,
-			Status: "error",
-		}); ue != nil {
-			logger.Error("failed to update feed status", "error", ue)
-		}
-		return err
+		return p.recordPollFailure(ctx, feed, err, logger)
 	}
 
 	newCount := 0
+	// Item writes that failed for a reason other than "already exists". A poll
+	// whose writes all failed must not be recorded as a success: it would clear
+	// the backoff, stamp last_fetched_at, and hide a feed that can store nothing.
+	writeFailures := 0
+	var firstWriteErr error
 	// Normalize GUID/comment URL for feed types that need it, and fingerprint
 	// every fetched item up front so scores can be refreshed before insert.
 	candidates := make([]fetchedCandidate, 0, len(items))
@@ -918,7 +972,11 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 			if errors.Is(err, sql.ErrNoRows) {
 				logger.Debug("item already exists", "hash", h)
 			} else {
+				// A real write failure, not a duplicate: the feed is not being
+				// ingested. Counted so the poll cannot be recorded as a success.
 				logger.Error("failed to create item", "hash", h, "error", err)
+				writeFailures++
+				firstWriteErr = err
 			}
 			continue
 		}
@@ -952,12 +1010,23 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 		for _, c := range candidates {
 			if !enrichedHashes[c.hash] && c.item.Points == 0 {
 				if id, ok := insertedThisPoll[c.hash]; ok {
-					if _, err := p.queries.DeleteItem(ctx, id); err != nil {
+					if _, err := p.deleteDisposableItem(ctx, id); err != nil {
 						logger.Warn("failed to clean up unenriched zero-score item", "item_id", id, "hash", c.hash, "error", err)
 					}
 				}
 			}
 		}
+	}
+
+	// A poll whose item writes failed is NOT a success: recording one would
+	// clear the backoff and stamp last_fetched_at, so a feed that can never
+	// store anything (full disk, broken table) would look perfectly healthy
+	// while delivering nothing. Report it through the same path as a fetch
+	// failure, which also applies the backoff.
+	if writeFailures > 0 {
+		logger.Error("poll completed with item write failures", "failed", writeFailures, "new_items", newCount)
+		return p.recordPollFailure(ctx, feed, fmt.Errorf("storing %d of %d fetched items failed: %w",
+			writeFailures, len(candidates), firstWriteErr), logger)
 	}
 
 	// Success clears the backoff window (and stamps last_fetched_at).
@@ -1142,9 +1211,10 @@ func (p *Poller) enrichForPoll(ctx context.Context, feed store.Feed, candidates 
 				continue
 			}
 			if ei.Points == 0 && si.Points > 0 && feed.MinScore > 0 && si.Points < feed.MinScore {
-				if _, err := p.queries.DeleteItem(ctx, si.ID); err != nil {
+				deleted, err := p.deleteDisposableItem(ctx, si.ID)
+				if err != nil {
 					errcount++
-				} else {
+				} else if deleted {
 					removed++
 				}
 				continue
@@ -1519,10 +1589,11 @@ func (p *Poller) enrichTwitterItems(ctx context.Context, feed store.Feed, tf *Tw
 		// items that already had scores are only updated, never removed.)
 		if snapshots[i].Points == 0 && items[i].Points > 0 &&
 			feed.MinScore > 0 && items[i].Points < feed.MinScore {
-			if _, err := p.queries.DeleteItem(ctx, items[i].ID); err != nil {
+			deleted, err := p.deleteDisposableItem(ctx, items[i].ID)
+			if err != nil {
 				logger.Warn("failed to delete below-threshold item", "item_id", items[i].ID, "error", err)
 				errcount++
-			} else {
+			} else if deleted {
 				logger.Info("removed item below min_score after enrichment",
 					"title", items[i].Title, "points", items[i].Points, "min_score", feed.MinScore)
 				removed++

@@ -66,7 +66,21 @@ RETURNING *;
 SELECT * FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY last_enriched_at IS NULL DESC, last_enriched_at ASC, published_at DESC;
 
 -- name: DeleteItem :one
-DELETE FROM items WHERE id = ? RETURNING id;
+-- Refuses to remove a row that must be kept. The score-cleanup passes call this
+-- for items they consider disposable, but the row may have become valuable since
+-- they listed it: a digest generation can link it into a result between the
+-- listing and this delete (the link is ON DELETE CASCADE, so the delete would
+-- silently strip the item out of an already-generated digest), and the user can
+-- save it at any moment. Both conditions are re-checked HERE, atomically with
+-- the delete, instead of trusting the caller's earlier snapshot.
+--
+-- Returns no row (sql.ErrNoRows) when the item was kept, so a caller can tell
+-- "refused" from "deleted".
+DELETE FROM items
+WHERE items.id = ?
+  AND items.is_saved = 0
+  AND NOT EXISTS (SELECT 1 FROM digest_result_items dri WHERE dri.item_id = items.id)
+RETURNING items.id;
 
 -- name: DeleteUnkeptFeedItems :execrows
 -- Removes a feed's disposable items on feed deletion: everything that is

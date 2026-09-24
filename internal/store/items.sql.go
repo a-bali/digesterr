@@ -225,9 +225,23 @@ func (q *Queries) DeleteExpiredItems(ctx context.Context, createdAt time.Time) (
 }
 
 const deleteItem = `-- name: DeleteItem :one
-DELETE FROM items WHERE id = ? RETURNING id
+DELETE FROM items
+WHERE items.id = ?
+  AND items.is_saved = 0
+  AND NOT EXISTS (SELECT 1 FROM digest_result_items dri WHERE dri.item_id = items.id)
+RETURNING items.id
 `
 
+// Refuses to remove a row that must be kept. The score-cleanup passes call this
+// for items they consider disposable, but the row may have become valuable since
+// they listed it: a digest generation can link it into a result between the
+// listing and this delete (the link is ON DELETE CASCADE, so the delete would
+// silently strip the item out of an already-generated digest), and the user can
+// save it at any moment. Both conditions are re-checked HERE, atomically with
+// the delete, instead of trusting the caller's earlier snapshot.
+//
+// Returns no row (sql.ErrNoRows) when the item was kept, so a caller can tell
+// "refused" from "deleted".
 func (q *Queries) DeleteItem(ctx context.Context, id int64) (int64, error) {
 	row := q.db.QueryRowContext(ctx, deleteItem, id)
 	var id_2 int64
