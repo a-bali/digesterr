@@ -267,10 +267,14 @@ describe('FeedSidebar mark-all-as-read confirmation', () => {
     wrapper.unmount()
   })
 
-  // The user's report: a category with nothing unread showed no hover button at
-  // all, while every other row keeps its buttons. It must be present and
-  // disabled instead, so the control does not appear to be missing.
-  it('keeps the category mark-read button present but disabled at zero unread', async () => {
+  // A category with NOTHING unread must still offer the control, and it must be
+  // pressable. An earlier round made it disabled to keep it discoverable, which
+  // produced the bug reported from PROD: the button carried `opacity-0` but also
+  // `disabled:opacity-30`, which is emitted later in the compiled sheet, so a
+  // disabled control resolved to opacity .3 — a permanent, faint, unpressable
+  // button. The action itself is harmless on an empty scope: it toasts
+  // "nothing to mark as read".
+  it('keeps the category mark-read button enabled at zero unread', async () => {
     const { digestApi: dApi } = await import('../services/api')
     vi.mocked(dApi.listConfigs).mockResolvedValue([])
     const wrapper = await mountSidebar()
@@ -281,12 +285,18 @@ describe('FeedSidebar mark-all-as-read confirmation', () => {
 
     const btn = wrapper.find('button[data-mark-category-read="Food"]')
     expect(btn.exists()).toBe(true)
-    expect((btn.element as HTMLButtonElement).disabled).toBe(true)
+    expect((btn.element as HTMLButtonElement).disabled).toBe(false)
 
+    // Visible only on hover/focus — never unconditionally painted.
+    const classes = btn.classes()
+    expect(classes).not.toContain('opacity-100')
+    expect(classes).toContain('opacity-0')
+    expect(classes).toContain('group-hover/cat:opacity-100')
+
+    // The action still fires, so the user gets the "nothing unread" answer.
     await btn.trigger('click')
     await flushPromises()
-    // A disabled control must not fire the action.
-    expect(wrapper.emitted('markAllRead')).toBeUndefined()
+    expect(wrapper.emitted('markAllRead')?.[0]).toEqual([{ kind: 'category', name: 'Food' }])
     wrapper.unmount()
   })
 
@@ -304,6 +314,23 @@ describe('FeedSidebar mark-all-as-read confirmation', () => {
     await flushPromises()
     expect(wrapper.emitted('markAllRead')?.[0]).toEqual([{ kind: 'category', name: 'Food' }])
     wrapper.unmount()
+  })
+
+  // The hover rule for a NAMED group must be a literal in the source: Tailwind
+  // scans text, so a composed `group-hover/${name}:opacity-100` generates no rule
+  // and the row can never be revealed. This is the asymmetric half of the report
+  // ("categories with unread items have no button on hover").
+  it('gives the section and category controls a literal named-group hover class', async () => {
+    const wrapper = await mountSidebar()
+    const { useFeedStore } = await import('../stores/feed')
+    useFeedStore().feeds.push(foodFeed)
+    await flushPromises()
+
+    const cat = wrapper.find('button[data-mark-category-read="Food"]')
+    expect(cat.classes()).toContain('group-hover/cat:opacity-100')
+
+    const section = wrapper.find('button[data-mark-feeds-section-read]')
+    expect(section.classes()).toContain('group-hover/section:opacity-100')
   })
 })
 

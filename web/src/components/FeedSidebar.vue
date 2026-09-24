@@ -46,15 +46,28 @@ const generatingDigests = ref(new Set<number>())
 // device, which is the clutter being removed. The `+` buttons are exempt on
 // purpose: they are the touch user's only way in, so they are always visible.
 //
-// These are helpers rather than inline object literals so the reveal rule stays
-// identical across the four call sites; a group that keeps one half of the rule
-// and drops the other is the drift this prevents.
-function selectedAwareClass(selected: boolean, group: 'group-hover' | 'group-hover/section' | 'group-hover/cat' = 'group-hover') {
-  return selected ? 'opacity-100' : `opacity-0 ${group}:opacity-100 group-focus-within:opacity-100`
-}
-const sectionActionClass = (selected: boolean) => selectedAwareClass(selected, 'group-hover/section')
-const categoryActionClass = (selected: boolean) => selectedAwareClass(selected, 'group-hover/cat')
-const digestBlockActionClass = (selected: boolean) => selectedAwareClass(selected)
+// THE CLASS STRINGS ARE WRITTEN OUT IN FULL, deliberately. An earlier version
+// composed them: `opacity-0 ${group}:opacity-100`. Tailwind scans source as
+// TEXT, so it never saw the literal named-group class and generated NO rule for
+// it — the section and category rows could not be revealed at all, while the
+// digest rows (which use the plain `group`) worked. A composed utility class name
+// is a class that does not exist. `scripts/verify-classes.mjs` guards this.
+//
+// The mark-all-read controls are NEVER disabled. A disabled button cannot be
+// pressed, so the user loses the answer the action gives on an empty scope —
+// `requestMarkAllRead` already toasts "nothing to mark as read", and the tooltip
+// distinguishes the cases via scopeActionLabel / scopeEmptyLabel. Disabling them
+// also made the control permanently PALE and visible: the button carries
+// `opacity-0`, but `disabled:opacity-30` is emitted later in the compiled sheet,
+// so a disabled control resolved to opacity .3 instead of hidden. That stale
+// class is gone too, so nothing depends on stylesheet order.
+const REVEAL_GROUP = 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+const REVEAL_GROUP_SECTION = 'opacity-0 group-hover/section:opacity-100 group-focus-within:opacity-100'
+const REVEAL_GROUP_CAT = 'opacity-0 group-hover/cat:opacity-100 group-focus-within:opacity-100'
+
+const sectionActionClass = (selected: boolean) => (selected ? 'opacity-100' : REVEAL_GROUP_SECTION)
+const categoryActionClass = (selected: boolean) => (selected ? 'opacity-100' : REVEAL_GROUP_CAT)
+const digestBlockActionClass = (selected: boolean) => (selected ? 'opacity-100' : REVEAL_GROUP)
 
 const showAddFeed = ref(false)
 const showEditFeed = ref(false)
@@ -292,9 +305,8 @@ const categoryUnreadCounts = computed(() => {
         >{{ totalDigestUnread }}</span>
       </button>
       <button
-        class="shrink-0 p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default transition-opacity"
+        class="shrink-0 p-1 rounded hover:bg-accent/20 transition-opacity"
         :class="sectionActionClass(feedStore.activeSection === 'digests')"
-        :disabled="totalDigestUnread === 0"
         :title="totalDigestUnread > 0
           ? scopeActionLabel({ kind: 'all-digests' })
           : scopeEmptyLabel({ kind: 'all-digests' })"
@@ -336,8 +348,7 @@ const categoryUnreadCounts = computed(() => {
           data-digest-actions
         >
           <button
-            class="p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default"
-            :disabled="(digestStore.unreadCounts[cfg.id] ?? 0) === 0"
+            class="p-1 rounded hover:bg-accent/20"
             :title="(digestStore.unreadCounts[cfg.id] ?? 0) > 0
               ? scopeActionLabel({ kind: 'digest-config', id: cfg.id, name: cfg.name })
               : scopeEmptyLabel({ kind: 'digest-config', id: cfg.id, name: cfg.name })"
@@ -373,9 +384,8 @@ const categoryUnreadCounts = computed(() => {
         >{{ totalFeedUnread }}</span>
       </button>
       <button
-        class="shrink-0 p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default transition-opacity"
+        class="shrink-0 p-1 rounded hover:bg-accent/20 transition-opacity"
         :class="sectionActionClass(feedStore.activeSection === 'feeds')"
-        :disabled="totalFeedUnread === 0"
         :title="totalFeedUnread > 0
           ? scopeActionLabel({ kind: 'feeds-section' })
           : scopeEmptyLabel({ kind: 'feeds-section' })"
@@ -418,9 +428,8 @@ const categoryUnreadCounts = computed(() => {
           >{{ categoryUnreadCounts[catName] }}</span>
         </button>
         <button
-          class="shrink-0 p-1 rounded hover:bg-accent/20 disabled:opacity-30 disabled:cursor-default transition-opacity"
+          class="shrink-0 p-1 rounded hover:bg-accent/20 transition-opacity"
           :class="categoryActionClass(feedStore.activeCategory === catName)"
-          :disabled="(categoryUnreadCounts[catName] ?? 0) === 0"
           :title="(categoryUnreadCounts[catName] ?? 0) > 0
             ? scopeActionLabel({ kind: 'category', name: catName })
             : scopeEmptyLabel({ kind: 'category', name: catName })"

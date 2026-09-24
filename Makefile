@@ -11,6 +11,7 @@ generate:
 
 build-web:
 	cd web && pnpm install && pnpm build
+	cd web && node scripts/verify-classes.mjs
 	rm -rf cmd/digesterr/static/*
 	cp -r web/dist/. cmd/digesterr/static/
 
