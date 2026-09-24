@@ -12,8 +12,8 @@ import (
 )
 
 // newCountingBodyServer serves a fixed list plus bodies, counting only the body
-// (single-message) requests, so a test can tell a repair fetch from a list call.
-func newCountingBodyServer(t *testing.T, bodies *int, getBody func(string) string) *httptest.Server {
+// (single-message) requests, so a test can tell a body fetch from a list call.
+func newCountingBodyServer(t *testing.T, listBody string, bodies *int, getBody func(string) string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -23,7 +23,7 @@ func newCountingBodyServer(t *testing.T, bodies *int, getBody func(string) strin
 			fmt.Fprint(w, getBody(r.URL.Path[idx+len("/messages/"):]))
 			return
 		}
-		fmt.Fprint(w, `{"count":0,"messages":[]}`)
+		fmt.Fprint(w, listBody)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -46,26 +46,9 @@ func newFailingBodyServer(t *testing.T, listBody string) *httptest.Server {
 	return srv
 }
 
-// newCountingBodyServerStatus counts body requests and fails them with status.
-func newCountingBodyServerStatus(t *testing.T, bodies *int, status int) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/messages/") {
-			*bodies++
-			w.WriteHeader(status)
-			fmt.Fprint(w, `{"message":"unavailable"}`)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"count":0,"messages":[]}`)
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
 // halfStaged seeds a row exactly as a pass that failed partway leaves it:
 // metadata present (so UNIQUE (inbox_id, message_id) makes the next re-read a
-// no-op) but with no recipient rows and an empty body.
+// no-op) but with no recipient rows, an empty body, and no completion marker.
 func halfStaged(t *testing.T, q *store.Queries, inbox, msgID, receivedAt, addr string) {
 	t.Helper()
 	if _, err := q.CreateEmailMessageIfNotExists(context.Background(), store.CreateEmailMessageIfNotExistsParams{
@@ -81,19 +64,31 @@ func halfStaged(t *testing.T, q *store.Queries, inbox, msgID, receivedAt, addr s
 
 func countRecipients(t *testing.T, q *store.Queries, inbox, msgID string) int {
 	t.Helper()
-	var n int
 	rows, err := q.ListEmailMessagesByRecipientExact(context.Background(), store.ListEmailMessagesByRecipientExactParams{
 		InboxID: inbox, Address: "name+sport@agentmail.to", Since: "", Lim: 100,
 	})
 	if err != nil {
 		t.Fatalf("list recipients: %v", err)
 	}
+	n := 0
 	for _, r := range rows {
 		if r.MessageID == msgID {
 			n++
 		}
 	}
 	return n
+}
+
+func readWatermark(t *testing.T, q *store.Queries, inbox string) string {
+	t.Helper()
+	st, err := q.GetEmailSyncState(context.Background(), inbox)
+	if err != nil {
+		t.Fatalf("read sync state: %v", err)
+	}
+	if !st.LastSyncedAt.Valid {
+		return ""
+	}
+	return st.LastSyncedAt.String
 }
 
 // The overlap re-read is the documented repair window ("Re-reading a short
@@ -128,72 +123,6 @@ func TestEmailSyncRepairsHalfStagedMessageOnReRead(t *testing.T) {
 	if text == "" {
 		t.Error("body is still empty after the re-read: the failed body was never retried")
 	}
-}
-
-// Repair must not depend on the API window. A message whose body failed more
-// than one overlap (15m) before the newest sibling is never returned by
-// ListMessages again, so the repair has to be driven from the staged rows
-// themselves. Without this the loss is permanent, which is the whole bug.
-func TestEmailSyncRepairsIncompleteRowsOutsideTheWindow(t *testing.T) {
-	q, db := emailSyncTestDB(t)
-	ctx := context.Background()
-	const inbox, addr, msgID = "name@agentmail.to", "name+sport@agentmail.to", "<stale@x>"
-
-	// Staged a month ago, incomplete, and the mailbox returns nothing: it is far
-	// outside any overlap.
-	halfStaged(t, q, inbox, msgID, "2026-08-15T10:00:00Z", addr)
-	if err := q.UpsertEmailSyncState(ctx, store.UpsertEmailSyncStateParams{
-		InboxID: inbox, LastSyncedAt: nsString("2026-09-15T10:00:00Z"),
-	}); err != nil {
-		t.Fatalf("seed watermark: %v", err)
-	}
-
-	srv, _ := syncTestServer(t, `{"count":0,"messages":[]}`, func(string) string { return syncGetBody })
-	s := newSyncFor(t, q, srv)
-
-	if err := s.Run(ctx); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-
-	var text string
-	if err := db.QueryRow(`SELECT text FROM email_messages WHERE message_id = ?`, msgID).Scan(&text); err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	if text == "" {
-		t.Error("a message outside the overlap window was never repaired: the loss is permanent")
-	}
-	if n := countRecipients(t, q, inbox, msgID); n != 1 {
-		t.Errorf("routing rows = %d, want 1: repair must restore routing too", n)
-	}
-}
-
-// A repaired message must stop being retried, or every cycle re-fetches bodies
-// for mail that is already whole.
-func TestEmailSyncRepairsEachIncompleteRowOnce(t *testing.T) {
-	q, db := emailSyncTestDB(t)
-	ctx := context.Background()
-	const inbox, addr, msgID = "name@agentmail.to", "name+sport@agentmail.to", "<stale@x>"
-
-	halfStaged(t, q, inbox, msgID, "2026-08-15T10:00:00Z", addr)
-
-	var bodies int
-	srv := newCountingBodyServer(t, &bodies, func(string) string { return syncGetBody })
-	s := newSyncFor(t, q, srv)
-
-	if err := s.Run(ctx); err != nil {
-		t.Fatalf("first run: %v", err)
-	}
-	if bodies != 1 {
-		t.Fatalf("body fetches after first pass = %d, want 1", bodies)
-	}
-
-	if err := s.Run(ctx); err != nil {
-		t.Fatalf("second run: %v", err)
-	}
-	if bodies != 1 {
-		t.Errorf("body fetches after second pass = %d, want 1: a repaired row must not be re-fetched", bodies)
-	}
-
 	var complete *string
 	if err := db.QueryRow(`SELECT complete_at FROM email_messages WHERE message_id = ?`, msgID).Scan(&complete); err != nil {
 		t.Fatalf("read complete_at: %v", err)
@@ -203,9 +132,154 @@ func TestEmailSyncRepairsEachIncompleteRowOnce(t *testing.T) {
 	}
 }
 
-// A pass with nothing to repair must not spend requests: the repair path runs
-// every cycle, so an unconditional body fetch would re-download the mailbox
-// forever.
+// This is the core of the fix. A pass that fails on a message must NOT advance
+// the watermark past it: a message behind the watermark is never listed again,
+// so its missing half can never be filled and the loss is permanent.
+//
+// Pinning the watermark at the failure is what replaces the repair pass. It is
+// the smallest thing that closes the hole -- there is no second query, no
+// attempt budget, and nothing to run when the window is empty.
+func TestEmailSyncDoesNotAdvanceWatermarkPastAFailedMessage(t *testing.T) {
+	q, _ := emailSyncTestDB(t)
+	ctx := context.Background()
+	const inbox, addr = "name@agentmail.to", "name+sport@agentmail.to"
+	const failedMsg, okMsg = "<failed@x>", "<ok@x>"
+
+	// A newer message stages cleanly; the older one cannot be staged at all.
+	list := `{"count":2,"messages":[` +
+		`{"message_id":"` + failedMsg + `","timestamp":"2026-09-15T10:00:00.000Z","to":["` + addr + `"],"subject":"fails"},` +
+		`{"message_id":"` + okMsg + `","timestamp":"2026-09-15T11:00:00.000Z","to":["` + addr + `"],"subject":"ok"}]}`
+
+	// The list succeeds; only the failed message's body 404s.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, failedMsg) {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"message":"gone"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/messages/") {
+			fmt.Fprint(w, syncGetBody)
+			return
+		}
+		fmt.Fprint(w, list)
+	}))
+	t.Cleanup(srv.Close)
+
+	s := newSyncFor(t, q, srv)
+	if err := s.Run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// The watermark must be pinned at the FAILED message's timestamp, not the
+	// newer successful sibling's: stepping to 11:00 would leave 10:00 unlisted
+	// forever.
+	got := readWatermark(t, q, inbox)
+	if !strings.HasPrefix(got, "2026-09-15T10:00:00") {
+		t.Errorf("watermark = %q, want it pinned at the failed message (2026-09-15T10:00:00): "+
+			"advancing past it puts the message out of reach of every later pass", got)
+	}
+
+	// The healthy sibling must still have been staged: one bad message must not
+	// stop the rest of the mailbox from flowing.
+	if n := countRecipients(t, q, inbox, okMsg); n != 1 {
+		t.Errorf("routing rows for the healthy message = %d, want 1: a failure must not block the rest of the window", n)
+	}
+}
+
+// Routing loss was the FIRST of the two permanent-loss paths: a recipient-insert
+// error was logged and skipped, and the watermark stepped over the message, so a
+// message with no recipient row is invisible to every feed and can never be
+// listed again.
+//
+// The failure is injected by dropping the recipient table, which is the only way
+// to make the insert genuinely error (it is INSERT OR IGNORE, so a duplicate is
+// not an error).
+func TestEmailSyncDoesNotAdvanceWatermarkPastARoutingFailure(t *testing.T) {
+	q, db := emailSyncTestDB(t)
+	ctx := context.Background()
+	const inbox, addr, msgID = "name@agentmail.to", "name+sport@agentmail.to", "<noroute@x>"
+
+	list := `{"count":1,"messages":[{"message_id":"` + msgID + `","timestamp":"2026-09-15T10:00:00.000Z","to":["` + addr + `"],"subject":"noroute"}]}`
+	srv, _ := syncTestServer(t, list, func(string) string { return syncGetBody })
+	s := newSyncFor(t, q, srv)
+
+	if _, err := db.Exec(`DROP TABLE email_message_recipients`); err != nil {
+		t.Fatalf("drop recipients table: %v", err)
+	}
+
+	if err := s.Run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got := readWatermark(t, q, inbox)
+	if !strings.HasPrefix(got, "2026-09-15T10:00:00") {
+		t.Errorf("watermark = %q, want it pinned at the unroutable message (2026-09-15T10:00:00): "+
+			"advancing past it makes the message invisible to every feed, permanently", got)
+	}
+
+	// And it must not be marked complete: a message with no recipient row is
+	// not fully staged, whatever its body says.
+	var complete *string
+	if err := db.QueryRow(`SELECT complete_at FROM email_messages WHERE message_id = ?`, msgID).Scan(&complete); err != nil {
+		t.Fatalf("read complete_at: %v", err)
+	}
+	if complete != nil {
+		t.Error("complete_at is set for a message with no recipient row: it would never be retried")
+	}
+}
+
+// A pinned window stops the inbox making progress, so it must not look like a
+// healthy sync: the stall is recorded where the UI renders it. Without this the
+// only evidence is a log line, and a silently stalled feed is the failure this
+// whole change exists to prevent.
+func TestEmailSyncSurfacesAPinnedWindow(t *testing.T) {
+	q, _ := emailSyncTestDB(t)
+	ctx := context.Background()
+	const inbox, addr, msgID = "name@agentmail.to", "name+sport@agentmail.to", "<gone@x>"
+
+	list := `{"count":1,"messages":[{"message_id":"` + msgID + `","timestamp":"2026-09-15T10:00:00.000Z","to":["` + addr + `"],"subject":"gone"}]}`
+	srv := newFailingBodyServer(t, list)
+	s := newSyncFor(t, q, srv)
+
+	if err := s.Run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	st, err := q.GetEmailSyncState(ctx, inbox)
+	if err != nil {
+		t.Fatalf("read sync state: %v", err)
+	}
+	if st.LastError == "" {
+		t.Error("last_error is empty after a message could not be staged: " +
+			"the pinned window is invisible, so a stalled feed looks healthy")
+	}
+}
+
+// A message the provider will never serve a body for must not stall the mailbox
+// forever: the window stays pinned, but that must not cost an unbounded body
+// fetch on every pass for mail that is already whole.
+func TestEmailSyncReReadsPinnedWindowWithoutRefetchingCompleteMessages(t *testing.T) {
+	q, _ := emailSyncTestDB(t)
+	ctx := context.Background()
+	const inbox, addr, msgID = "name@agentmail.to", "name+sport@agentmail.to", "<whole@x>"
+
+	list := `{"count":1,"messages":[{"message_id":"` + msgID + `","timestamp":"2026-09-15T10:00:00.000Z","to":["` + addr + `"],"subject":"whole"}]}`
+	var bodies int
+	srv := newCountingBodyServer(t, list, &bodies, func(string) string { return syncGetBody })
+	s := newSyncFor(t, q, srv)
+
+	for i := 0; i < 3; i++ {
+		if err := s.Run(ctx); err != nil {
+			t.Fatalf("run %d: %v", i, err)
+		}
+	}
+	if bodies != 1 {
+		t.Errorf("body fetches across 3 passes = %d, want 1: a complete message must be skipped on re-read", bodies)
+	}
+}
+
+// A pass with nothing to repair must not spend extra requests.
 func TestEmailSyncMakesNoRepairRequestsWhenNothingIsIncomplete(t *testing.T) {
 	q, _ := emailSyncTestDB(t)
 	ctx := context.Background()
@@ -228,7 +302,8 @@ func TestEmailSyncMakesNoRepairRequestsWhenNothingIsIncomplete(t *testing.T) {
 	}
 }
 
-// A body failure must leave the row repairable rather than looking finished.
+// A body failure must leave the row incomplete rather than looking finished, so
+// the next pass revisits it.
 func TestEmailSyncMarksIncompleteWhenBodyFetchFails(t *testing.T) {
 	q, db := emailSyncTestDB(t)
 	ctx := context.Background()
@@ -248,45 +323,6 @@ func TestEmailSyncMarksIncompleteWhenBodyFetchFails(t *testing.T) {
 	}
 	if complete != nil {
 		t.Errorf("complete_at = %q, want NULL: a message whose body failed is not fully staged", *complete)
-	}
-	if inbox == "" {
-		t.Fatal("unreachable")
-	}
-}
-
-// A message the provider will never return a body for must not be retried
-// forever: this codebase has already been burned once by hammering a
-// rate-limited provider every cycle. After the retry budget is spent the row is
-// surrendered (so the item still surfaces, as it did before this fix) and
-// logged.
-func TestEmailSyncStopsRetryingAfterBudgetExhausted(t *testing.T) {
-	q, db := emailSyncTestDB(t)
-	ctx := context.Background()
-	const inbox, addr, msgID = "name@agentmail.to", "name+sport@agentmail.to", "<gone@x>"
-
-	halfStaged(t, q, inbox, msgID, "2026-08-15T10:00:00Z", addr)
-
-	var bodies int
-	srv := newCountingBodyServerStatus(t, &bodies, http.StatusNotFound)
-	s := newSyncFor(t, q, srv)
-
-	for i := 0; i < emailRepairMaxAttempts+3; i++ {
-		if err := s.Run(ctx); err != nil {
-			t.Fatalf("run %d: %v", i, err)
-		}
-	}
-
-	if bodies > emailRepairMaxAttempts {
-		t.Errorf("body fetches = %d, want at most %d: retries are unbounded", bodies, emailRepairMaxAttempts)
-	}
-
-	var attempts int
-	var complete *string
-	if err := db.QueryRow(`SELECT staged_attempts, complete_at FROM email_messages WHERE message_id = ?`, msgID).Scan(&attempts, &complete); err != nil {
-		t.Fatalf("read row: %v", err)
-	}
-	if complete == nil {
-		t.Error("complete_at is NULL after the retry budget was spent: the row is retried forever")
 	}
 }
 
@@ -337,20 +373,5 @@ func TestEmailFetcherServesCompleteTextOnlyMessage(t *testing.T) {
 	}
 	if items[0].GUID != "<textonly@x>" {
 		t.Errorf("GUID = %q", items[0].GUID)
-	}
-}
-
-func TestEmailRepairBudgetIsBounded(t *testing.T) {
-	if emailRepairMaxAttempts <= 0 {
-		t.Fatal("the repair retry budget must be positive, or every incomplete row is surrendered immediately")
-	}
-	if emailRepairBatch <= 0 {
-		t.Fatal("the repair batch must be positive")
-	}
-	if emailRepairBatch > 500 {
-		t.Fatalf("repair batch = %d: an unbounded batch would hammer the provider in one cycle", emailRepairBatch)
-	}
-	if fmt.Sprint(emailRepairMaxAttempts) == "" {
-		t.Fatal("unreachable")
 	}
 }

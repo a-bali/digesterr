@@ -84,7 +84,6 @@ CREATE TABLE email_messages (
     raw_headers TEXT NOT NULL DEFAULT '{}',
     received_at TEXT,
     complete_at DATETIME,
-    staged_attempts INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
     UNIQUE (inbox_id, message_id)
 );

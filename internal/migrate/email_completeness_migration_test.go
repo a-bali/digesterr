@@ -105,14 +105,12 @@ VALUES ('name@agentmail.to', '<withrecip@x>', 'name+sport@agentmail.to')`); err 
 		t.Fatalf("Run: %v", err)
 	}
 
-	for _, col := range []string{"complete_at", "staged_attempts"} {
-		ok, err := HasColumn(db, "email_messages", col)
-		if err != nil {
-			t.Fatalf("HasColumn(%s): %v", col, err)
-		}
-		if !ok {
-			t.Fatalf("email_messages.%s missing after Run", col)
-		}
+	ok, err := HasColumn(db, "email_messages", "complete_at")
+	if err != nil {
+		t.Fatalf("HasColumn(complete_at): %v", err)
+	}
+	if !ok {
+		t.Fatal("email_messages.complete_at missing after Run")
 	}
 
 	cases := []struct {
@@ -135,14 +133,6 @@ VALUES ('name@agentmail.to', '<withrecip@x>', 'name+sport@agentmail.to')`); err 
 		if !tc.wantComplete && complete.Valid {
 			t.Errorf("%s: complete_at is set, want NULL: %s", tc.msgID, tc.why)
 		}
-	}
-
-	var n int
-	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_email_messages_incomplete'`).Scan(&n); err != nil {
-		t.Fatalf("index check: %v", err)
-	}
-	if n != 1 {
-		t.Error("the partial index on incomplete messages was not created")
 	}
 
 	// A second Run must not re-backfill: the half-staged row has to stay

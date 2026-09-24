@@ -452,32 +452,27 @@ WHERE id NOT IN (SELECT MIN(id) FROM digest_result_items GROUP BY result_id, ite
 		name:    "track email staging completeness",
 		stmts: []string{
 			"ALTER TABLE email_messages ADD COLUMN complete_at DATETIME",
-			"ALTER TABLE email_messages ADD COLUMN staged_attempts INTEGER NOT NULL DEFAULT 0",
-			// Backfill, not a blanket NULL: an existing row is complete when it
-			// already has a body or at least one recipient row. Only rows that
-			// are incomplete by that test are left NULL, so the repair pass
-			// looks at exactly the mail that may have been lost — a fresh
+			// Backfill, not a blanket DATETIME('now'): a pre-existing row is
+			// complete when it already has a body or at least one recipient
+			// row, which is the same test the reader applies. Only rows that
+			// fail it are left NULL, so those -- the ones a failed pass may
+			// have half staged -- are re-staged on the next sync. A fresh
 			// install backfills nothing.
 			//
-			// This deliberately does NOT try to tell "text-only newsletter"
-			// from "body never fetched" for rows that have recipients: both are
-			// complete. A row with neither a body nor recipients is the shape a
-			// failed pass leaves behind.
+			// This deliberately does NOT try to tell a "text-only newsletter"
+			// from a "body never fetched" for rows that have recipients: both
+			// are complete. A row with neither a body nor recipients is the
+			// shape a failed pass leaves behind.
 			`UPDATE email_messages
 SET complete_at = DATETIME('now')
 WHERE (text != '' OR html != '')
    OR EXISTS (SELECT 1 FROM email_message_recipients r
               WHERE r.inbox_id = email_messages.inbox_id
                 AND r.message_id = email_messages.message_id)`,
-			// The repair pass scans for incomplete rows on every cycle, so it
-			// needs an index or it is a full table scan of every staged message
-			// each poll.
-			"CREATE INDEX IF NOT EXISTS idx_email_messages_incomplete ON email_messages(complete_at) WHERE complete_at IS NULL",
 		},
 		applied: func(db *sql.DB) (bool, error) {
 			return allTrue(db,
 				columnPresent("email_messages", "complete_at"),
-				columnPresent("email_messages", "staged_attempts"),
 			)
 		},
 	},

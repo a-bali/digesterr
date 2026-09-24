@@ -161,22 +161,34 @@ func (s *EmailSync) Run(ctx context.Context) error {
 	}
 
 	staged, newest := 0, ""
-	// attempted records the messages whose body this pass already tried, so the
-	// repair pass does not fetch the same body twice in one cycle. Bounded by
-	// the window, and it keeps the request count honest: this codebase has
-	// already paid for an unbounded re-fetch.
-	attempted := make(map[string]bool, len(refs))
+	// failedAt is the oldest message this pass could not fully stage.
+	//
+	// The watermark is never advanced past it. That is the whole fix: a message
+	// the watermark steps over falls out of every later window, so its missing
+	// half can never be filled in and the loss is permanent. Pinning the window
+	// at the failure instead means the next pass lists it again and finishes it
+	// -- the overlap re-read IS the repair, so there is no separate repair pass
+	// to run and no retry budget to track.
+	//
+	// Only the oldest failure is kept: pinning there re-lists every newer
+	// message too, and re-reading a complete message costs one list call and no
+	// body fetch (see the completeness check below).
+	failed, failedAt := false, ""
+	fail := func(ref AgentMailMessageRef) {
+		failed = true
+		if ref.Timestamp != "" && (failedAt == "" || ref.Timestamp < failedAt) {
+			failedAt = ref.Timestamp
+		}
+	}
+
 	for _, ref := range refs {
-		attempted[ref.MessageID] = true
 		// Idempotency lives in the schema (UNIQUE inbox_id,message_id): a
-		// re-read of the overlap returns ErrNoRows here and costs nothing.
-		//
-		// ErrNoRows means only that the METADATA row already exists, which is
-		// not the same as the message being fully staged: a pass that failed on
-		// the body or on the recipient insert leaves exactly this shape. So the
-		// recipient and body work below runs either way, and completeness is
-		// what marks the row done.
-		if _, err := s.queries.CreateEmailMessageIfNotExists(ctx, store.CreateEmailMessageIfNotExistsParams{
+		// re-read of the overlap returns ErrNoRows here. That says only that
+		// the METADATA row exists, which is not the same as the message being
+		// fully staged -- a pass that failed on the body or on the recipient
+		// insert leaves exactly that shape. So ErrNoRows falls through to the
+		// completeness check instead of skipping the work.
+		_, err := s.queries.CreateEmailMessageIfNotExists(ctx, store.CreateEmailMessageIfNotExistsParams{
 			InboxID:    inbox,
 			MessageID:  ref.MessageID,
 			ThreadID:   ref.ThreadID,
@@ -185,38 +197,39 @@ func (s *EmailSync) Run(ctx context.Context) error {
 			Subject:    ref.Subject,
 			RawHeaders: encodeHeaders(ref.Headers),
 			ReceivedAt: nsString(ref.Timestamp),
-		}); err != nil {
-			if !errors.Is(err, sql.ErrNoRows) {
-				slog.Warn("failed to stage email message", "inbox", inbox, "message_id", ref.MessageID, "error", err)
-				continue
-			}
-			// The metadata row already exists. That is only a reason to skip
-			// the rest of the work if the row is COMPLETE: an incomplete row is
-			// exactly what this re-read is here to repair.
+		})
+		switch {
+		case err == nil:
+			// New row: incomplete until both halves land below.
+		case errors.Is(err, sql.ErrNoRows):
+			// The metadata row already exists. Skip it only if it is COMPLETE:
+			// an incomplete row is exactly what this re-read is here to finish.
 			//
-			// The completeness check is what keeps the overlap free. Without
-			// it every pass would re-download the body of every message in the
-			// window, which is the unbounded re-fetch this codebase has already
-			// been burned by once.
-			if existing, gerr := s.queries.GetEmailMessageByMessageID(ctx, store.GetEmailMessageByMessageIDParams{
+			// The check is what keeps the overlap free. Without it every pass
+			// would re-download the body of every message in the window, which
+			// is the unbounded re-fetch this codebase has already been burned
+			// by once.
+			existing, gerr := s.queries.GetEmailMessageByMessageID(ctx, store.GetEmailMessageByMessageIDParams{
 				InboxID: inbox, MessageID: ref.MessageID,
-			}); gerr == nil && existing.CompleteAt.Valid {
-				continue // whole: nothing to stage, nothing to repair
-			} else if gerr != nil {
+			})
+			if gerr != nil {
 				slog.Warn("failed to read existing staged message", "inbox", inbox,
 					"message_id", ref.MessageID, "error", gerr)
+				fail(ref)
 				continue
 			}
+			if existing.CompleteAt.Valid {
+				continue // whole: nothing to stage
+			}
+		default:
+			slog.Warn("failed to stage email message", "inbox", inbox, "message_id", ref.MessageID, "error", err)
+			fail(ref)
+			continue
 		}
 
 		// Normalize recipients for the indexed routing query. INSERT OR IGNORE
 		// so re-staging never duplicates; the LIKE-era to_addrs column stays
 		// as the raw record until the old query is retired.
-		//
-		// A failure here must NOT advance the watermark past this message: the
-		// recipient is the routing key, so a message with no recipient row is
-		// invisible to every feed and the loss is permanent. Tracked and
-		// retried instead.
 		routingFailed := false
 		for _, addr := range ref.To {
 			if addr == "" {
@@ -227,32 +240,24 @@ func (s *EmailSync) Run(ctx context.Context) error {
 				MessageID: ref.MessageID,
 				Address:   addr,
 			}); err != nil {
-				slog.Warn("failed to stage email recipient", "inbox", inbox, "message_id", ref.MessageID, "error", err)
+				slog.Warn("failed to stage email recipient", "inbox", inbox,
+					"message_id", ref.MessageID, "address", addr, "error", err)
 				routingFailed = true
+				fail(ref)
 			}
 		}
 
-		outcome := s.stageBody(ctx, inbox, ref)
-		if outcome == stageDeferred {
-			// The row is repairable and the body is missing: leave it
-			// incomplete and let repair fetch it. Do not advance the watermark
-			// for it, so the next pass re-reads it even if repair cannot.
-			//
-			// The attempt budget is NOT charged here. This pass runs every
-			// cycle over the overlap, so charging it would spend a healthily
-			// retried message's budget on window re-reads alone and surrender
-			// mail that was never actually unreachable. The budget belongs to
-			// the repair pass, which is what retries a message once the window
-			// has moved past it.
-			slog.Warn("email body not available yet, leaving the message for repair",
-				"inbox", inbox, "message_id", ref.MessageID)
+		// Completeness is both halves: a message with no recipient row is
+		// invisible to every feed, and one with no body renders as an empty
+		// newsletter. Neither is marked complete below.
+		if err := s.stageBody(ctx, inbox, ref); err != nil {
+			slog.Warn("failed to stage email body", "inbox", inbox,
+				"message_id", ref.MessageID, "error", err)
+			fail(ref)
 			continue
 		}
-		// The body landed. Routing is the other half of completeness, so only
-		// mark the row done when both succeeded: completing a message with no
-		// recipient row would hide it from every feed, which is worse than an
-		// empty body. Repair re-derives the recipients from the stored list.
 		if routingFailed {
+			fail(ref)
 			continue
 		}
 		s.complete(ctx, inbox, ref.MessageID)
@@ -262,17 +267,19 @@ func (s *EmailSync) Run(ctx context.Context) error {
 		}
 	}
 
-	// Repair anything a previous pass left half staged. This is deliberately
-	// NOT limited to the API window: a body that failed more than one overlap
-	// ago is never returned by ListMessages again, so without this the loss is
-	// permanent.
-	s.repairIncomplete(ctx, inbox, attempted)
-
 	// Advance the watermark only after the pass succeeded, so a partial failure
 	// is retried rather than skipped. `newest` is preferred, but when nothing
 	// new arrived the previous watermark is kept (re-sending the old value is
 	// harmless and keeps the row's semantics simple).
+	//
+	// A staging failure pins the window at the failed message instead: leaving
+	// the watermark on it is what makes the next pass re-list and finish it.
+	// Without a timestamp to pin to there is nothing safe to compute, so the
+	// watermark is left entirely alone and the same window is read again.
 	watermark := newest
+	if failed {
+		watermark = failedAt
+	}
 	if watermark == "" {
 		if prev, err := s.queries.GetEmailSyncState(ctx, inbox); err == nil && prev.LastSyncedAt.Valid {
 			watermark = prev.LastSyncedAt.String
@@ -288,186 +295,53 @@ func (s *EmailSync) Run(ctx context.Context) error {
 		slog.Warn("failed to record email sync watermark", "inbox", inbox, "error", err)
 	}
 
+	// Record the failure AFTER the watermark write: UpsertEmailSyncState clears
+	// last_error on success, so recording it first would be immediately wiped
+	// and the stall would be invisible.
+	//
+	// This is the visible half of failing fast. A pinned window means the inbox
+	// stops making progress until the message is resolved, and that must not
+	// look like a healthy sync: last_error is rendered in the UI, so the stall
+	// is reported rather than inferred from a log line nobody reads.
+	if failed {
+		s.recordError(ctx, inbox, fmt.Errorf(
+			"could not fully stage a message in the sync window; the window is pinned at %s and no newer mail will be staged until this clears",
+			watermark))
+	}
+
 	if staged > 0 {
 		slog.Info("staged email messages", "inbox", inbox, "count", staged, "seen", len(refs))
 	}
 	return nil
 }
 
-// emailRepairMaxAttempts bounds how many times a half-staged message is
-// re-attempted before it is surrendered.
-//
-// Bounded deliberately: a body the provider will never return must not be
-// fetched every cycle forever. This codebase has already paid for that lesson
-// once (an unbounded re-fetch produced a provider rate-limit incident), so the
-// budget is small and the row is surrendered rather than retried indefinitely.
-// Surrendering keeps the pre-fix behavior for that message, which is the
-// conservative choice: it still surfaces as an item instead of being lost.
-const emailRepairMaxAttempts = 5
-
-// emailRepairBatch caps how many half-staged rows one cycle repairs, so a large
-// backlog cannot turn a single poll into a request storm against the provider.
-// Oldest first, so the rows nearest to aging out of retention are repaired first
-// and the backlog drains across cycles.
-const emailRepairBatch int64 = 50
-
-// stageOutcome is what a body-fetch attempt concluded.
-//
-// There is deliberately no "permanently failed" outcome: a body-fetch error is
-// never classified as unrecoverable, because guessing wrong discards mail for
-// good. The retry budget in repairIncomplete is what bounds the cost of a body
-// that never arrives.
-type stageOutcome int
-
-const (
-	// stageOK: the body was fetched and stored.
-	stageOK stageOutcome = iota
-	// stageDeferred: the body is missing; a later attempt may still get it.
-	stageDeferred
-)
-
-// stageBody fetches and stores one message's body, reporting whether the
-// attempt succeeded, should be retried, or should be given up on.
+// stageBody fetches and stores one message's body.
 //
 // Bodies come from a single GetMessage. The list endpoint omits them and
 // batch-get silently drops them, so this is the only route.
-func (s *EmailSync) stageBody(ctx context.Context, inbox string, ref AgentMailMessageRef) stageOutcome {
+func (s *EmailSync) stageBody(ctx context.Context, inbox string, ref AgentMailMessageRef) error {
 	msg, err := s.client.GetMessage(ctx, ref.MessageID)
 	if err != nil {
-		// Deliberately NOT classified by status code. A 4xx looks permanent,
-		// but treating it as such would permanently discard a body that a
-		// provider returned transiently (or that a proxy mangled), and that
-		// loss is unrecoverable. The retry budget in repairIncomplete already
-		// bounds the cost of a body that never arrives, so the conservative
-		// choice costs a few requests and can never lose mail.
-		slog.Warn("failed to fetch email body", "inbox", inbox, "message_id", ref.MessageID, "error", err)
-		return stageDeferred
+		return fmt.Errorf("fetching body: %w", err)
 	}
 	if err := s.storeBody(ctx, inbox, ref, msg); err != nil {
-		slog.Warn("failed to store email body", "inbox", inbox, "message_id", ref.MessageID, "error", err)
-		return stageDeferred
+		return fmt.Errorf("storing body: %w", err)
 	}
-	return stageOK
+	return nil
 }
 
-// complete marks a staged message as fully ingested, which is what stops the
-// repair pass from revisiting it. Failures are logged, not fatal: the row simply
-// stays incomplete and is re-attempted, which is the safe direction.
+// complete marks a staged message as fully ingested, which is what lets a later
+// overlap re-read skip it without re-downloading its body.
+//
+// A failure here is logged and not fatal: the row stays incomplete, so the next
+// pass revisits it, which is the safe direction. Returning the error would stall
+// the inbox over a marker write, and the re-read costs one duplicate body fetch.
 func (s *EmailSync) complete(ctx context.Context, inbox, messageID string) {
 	if _, err := s.queries.MarkEmailMessageComplete(ctx, store.MarkEmailMessageCompleteParams{
 		InboxID: inbox, MessageID: messageID,
 	}); err != nil {
 		slog.Warn("failed to mark email message complete", "inbox", inbox, "message_id", messageID, "error", err)
 	}
-}
-
-// repairIncomplete re-attempts messages a previous pass left half staged.
-//
-// This is the part that makes the fix complete rather than partial. Overlap
-// re-reads only cover emailSyncOverlap, so a message whose body failed earlier
-// than that is never returned by ListMessages again: without a repair driven
-// from the staged rows themselves, that message is lost permanently, which is
-// the bug this exists to close.
-//
-// Recipients are re-derived from the stored to_addrs JSON, which the failed pass
-// wrote in full before it failed, so no list call is needed for routing.
-func (s *EmailSync) repairIncomplete(ctx context.Context, inbox string, attempted map[string]bool) {
-	rows, err := s.queries.ListIncompleteEmailMessages(ctx, store.ListIncompleteEmailMessagesParams{
-		MaxAttempts: emailRepairMaxAttempts,
-		Lim:         emailRepairBatch,
-	})
-	if err != nil {
-		slog.Warn("failed to list incomplete staged email", "inbox", inbox, "error", err)
-		return
-	}
-	repaired, surrendered := 0, 0
-	for _, row := range rows {
-		// Recipients first: a row can be complete on the body and still be
-		// unroutable, and routing is the reason a feed can see it at all.
-		routingFailed := false
-		for _, addr := range decodeAddrs(row.ToAddrs) {
-			if err := s.queries.AddEmailMessageRecipient(ctx, store.AddEmailMessageRecipientParams{
-				InboxID:   row.InboxID,
-				MessageID: row.MessageID,
-				Address:   addr,
-			}); err != nil {
-				slog.Warn("failed to repair email recipient", "inbox", row.InboxID,
-					"message_id", row.MessageID, "error", err)
-				routingFailed = true
-			}
-		}
-
-		// A body already present means a previous attempt stored it and only
-		// the completion marker (or routing) was missing: do not re-fetch.
-		if row.Text != "" || row.Html != "" {
-			if !routingFailed {
-				s.complete(ctx, row.InboxID, row.MessageID)
-				repaired++
-			}
-			continue
-		}
-
-		// This pass already tried this body in the window above. Trying again
-		// in the same cycle would double the request cost of every failing
-		// message for no gain.
-		if attempted[row.MessageID] {
-			continue
-		}
-
-		ref := AgentMailMessageRef{MessageID: row.MessageID}
-
-		// Charge the attempt BEFORE fetching, and act on the count it returns:
-		// if this attempt exhausts the budget the row is surrendered even when
-		// the fetch failed, which is what stops a permanently unavailable body
-		// from being retried forever.
-		attempts, aerr := s.queries.BumpEmailMessageStageAttempt(ctx, store.BumpEmailMessageStageAttemptParams{
-			InboxID: row.InboxID, MessageID: row.MessageID,
-		})
-		if aerr != nil {
-			slog.Warn("failed to record email stage attempt", "inbox", row.InboxID,
-				"message_id", row.MessageID, "error", aerr)
-			// Without a recorded attempt the budget cannot be enforced, so do
-			// not fetch: retrying unboundedly is the failure mode this budget
-			// exists to prevent.
-			continue
-		}
-
-		out := s.stageBody(ctx, row.InboxID, ref)
-		switch {
-		case out == stageOK:
-			repaired++
-		case attempts >= emailRepairMaxAttempts:
-			// The budget is spent. Give up on the body and let the message
-			// surface as an item, as it did before this fix, rather than
-			// leaving it invisible forever.
-			surrendered++
-			slog.Warn("surrendering staged email after exhausting the retry budget",
-				"inbox", row.InboxID, "message_id", row.MessageID, "attempts", attempts)
-		default:
-			continue // still retryable: leave complete_at NULL
-		}
-		s.complete(ctx, row.InboxID, row.MessageID)
-	}
-	if repaired > 0 || surrendered > 0 {
-		slog.Info("repaired staged email", "inbox", inbox, "repaired", repaired,
-			"surrendered", surrendered, "incomplete_seen", len(rows))
-	}
-}
-
-// decodeAddrs parses the stored JSON recipient array.
-//
-// A malformed value yields nil rather than an error: the to_addrs column is a
-// record, and a row with unparseable JSON is better left for the next attempt
-// than treated as fatal mid-poll.
-func decodeAddrs(raw string) []string {
-	if raw == "" {
-		return nil
-	}
-	var addrs []string
-	if err := json.Unmarshal([]byte(raw), &addrs); err != nil {
-		return nil
-	}
-	return addrs
 }
 
 // windowStart returns the `after` value for this pass: the stored watermark

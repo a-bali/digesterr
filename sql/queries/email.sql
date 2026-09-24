@@ -7,44 +7,14 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
 
 -- name: MarkEmailMessageComplete :execrows
--- Marks a staged message as fully ingested, which stops the repair pass from
--- revisiting it. Guarded on complete_at IS NULL so a repeated call is a no-op
--- rather than a write, and so the count is meaningful (0 = was already whole).
+-- Marks a staged message as fully ingested. Guarded on complete_at IS NULL so a
+-- repeated call is a no-op rather than a write.
+--
+-- This is what makes the overlap re-read cheap: an incomplete row is re-staged
+-- (and its body re-fetched) on the next pass, a complete one is skipped.
 UPDATE email_messages
 SET complete_at = DATETIME('now')
 WHERE inbox_id = ? AND message_id = ? AND complete_at IS NULL;
-
--- name: BumpEmailMessageStageAttempt :one
--- Charges one attempt against the repair budget and returns the new count, so
--- the caller can decide whether this row has been retried enough to surrender.
---
--- RETURNING, not RowsAffected: an UPDATE's affected-row count is 1 either way,
--- so :execrows could never tell the caller how many attempts a row has had.
---
--- Separate from MarkEmailMessageComplete because the two happen on different
--- outcomes: an attempt is recorded on failure too, and only success completes.
-UPDATE email_messages
-SET staged_attempts = staged_attempts + 1
-WHERE inbox_id = ? AND message_id = ?
-RETURNING staged_attempts;
-
--- name: ListIncompleteEmailMessages :many
--- Messages a previous pass left half staged: metadata is present but the row is
--- neither complete nor surrendered, and the retry budget is not spent.
---
--- This is what makes the repair independent of the API window. Overlap re-reads
--- only cover a few minutes, so a body that failed earlier than that is never
--- returned by ListMessages again; without this query the loss is permanent.
---
--- ReceivedAt carries the value the API DID supply on the pass that failed, so
--- the repair can refetch a body by id. Trying to rebuild it is impossible.
--- Oldest first: the oldest row is the one closest to aging out of retention, so
--- it is the most urgent to repair.
-SELECT * FROM email_messages
-WHERE complete_at IS NULL
-  AND staged_attempts < sqlc.arg(max_attempts)
-ORDER BY created_at ASC, id ASC
-LIMIT sqlc.arg(lim);
 
 -- name: GetEmailMessageByMessageID :one
 SELECT * FROM email_messages WHERE inbox_id = ? AND message_id = ?;
