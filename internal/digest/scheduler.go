@@ -2,6 +2,8 @@ package digest
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -105,7 +107,12 @@ func (s *Scheduler) tick(ctx context.Context) {
 			} else {
 				_, err = s.generator.Generate(ctx, cfg)
 			}
-			if err != nil {
+			if errors.Is(err, ErrGenerationInProgress) {
+				// Not a failure: the previous run for this config is still
+				// going. Writing it to last_error would show the user an error
+				// they did not cause, on a config that is working correctly.
+				cfgLogger.Info("skipping scheduled generation, one is already in progress")
+			} else if err != nil {
 				cfgLogger.Error("scheduled digest generation failed", "error", err)
 				// Truncated like the manual path: this column is rendered in
 				// the UI, and upstream LLM bodies are unbounded.
@@ -127,16 +134,110 @@ func (s *Scheduler) tick(ctx context.Context) {
 
 // cronMatches reports whether a 5-field cron expression matches time t.
 // Weekday follows cron convention: 0 and 7 both mean Sunday.
+//
+// Day-of-month and day-of-week follow Vixie cron: when BOTH are restricted
+// (neither is "*"), the entry fires when EITHER matches. This is the documented
+// crontab(5) rule and the behaviour every other cron implementation has, so
+// "0 8 1 * 1" means "the 1st of the month, and every Monday" rather than the
+// nearly-never "a Monday that is also the 1st".
 func cronMatches(schedule string, t time.Time) bool {
 	parts := strings.Fields(schedule)
 	if len(parts) != 5 {
 		return false
 	}
-	return cronFieldMatches(parts[0], t.Minute(), 0) &&
-		cronFieldMatches(parts[1], t.Hour(), 1) &&
-		cronFieldMatches(parts[2], t.Day(), 2) &&
-		cronFieldMatches(parts[3], int(t.Month()), 3) &&
-		cronFieldMatches(parts[4], cronWeekday(int(t.Weekday())), 4)
+	if !cronFieldMatches(parts[0], t.Minute(), 0) ||
+		!cronFieldMatches(parts[1], t.Hour(), 1) ||
+		!cronFieldMatches(parts[3], int(t.Month()), 3) {
+		return false
+	}
+
+	domRestricted := strings.TrimSpace(parts[2]) != "*"
+	dowRestricted := strings.TrimSpace(parts[4]) != "*"
+	domMatch := cronFieldMatches(parts[2], t.Day(), 2)
+	dowMatch := cronFieldMatches(parts[4], cronWeekday(int(t.Weekday())), 4)
+
+	switch {
+	case domRestricted && dowRestricted:
+		return domMatch || dowMatch
+	case domRestricted:
+		return domMatch
+	case dowRestricted:
+		return dowMatch
+	default:
+		return true
+	}
+}
+
+// ValidateSchedule reports whether a 5-field cron expression can ever run. The
+// scheduler silently ignores an expression it cannot parse, so an invalid
+// schedule means a digest that simply never fires — invisible to the user.
+// Config create/update must reject it instead.
+func ValidateSchedule(schedule string) error {
+	parts := strings.Fields(schedule)
+	if len(parts) != 5 {
+		return fmt.Errorf("schedule must have 5 fields (minute hour day-of-month month day-of-week), got %d", len(parts))
+	}
+	names := []string{"minute", "hour", "day-of-month", "month", "day-of-week"}
+	for i, part := range parts {
+		if err := validateCronField(part, i); err != nil {
+			return fmt.Errorf("invalid %s field %q: %w", names[i], part, err)
+		}
+	}
+	return nil
+}
+
+// validateCronField checks one field's syntax and bounds.
+func validateCronField(field string, fieldIdx int) error {
+	if field == "*" {
+		return nil
+	}
+	for _, part := range strings.Split(field, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return errors.New("empty list element")
+		}
+
+		if idx := strings.Index(part, "/"); idx >= 0 {
+			s, err := strconv.Atoi(part[idx+1:])
+			if err != nil {
+				return fmt.Errorf("step is not a number: %q", part[idx+1:])
+			}
+			if s < 1 {
+				return fmt.Errorf("step must be >= 1, got %d", s)
+			}
+			part = part[:idx]
+		}
+
+		lo, hi := fieldBounds(fieldIdx)
+		if part == "" || part == "*" {
+			continue
+		}
+		if idx := strings.Index(part, "-"); idx >= 0 {
+			l, err := strconv.Atoi(part[:idx])
+			if err != nil {
+				return fmt.Errorf("range start is not a number: %q", part[:idx])
+			}
+			h, err := strconv.Atoi(part[idx+1:])
+			if err != nil {
+				return fmt.Errorf("range end is not a number: %q", part[idx+1:])
+			}
+			if l < lo || h > hi {
+				return fmt.Errorf("range %d-%d outside %d-%d", l, h, lo, hi)
+			}
+			if l > h {
+				return fmt.Errorf("range start %d is after end %d", l, h)
+			}
+			continue
+		}
+		v, err := strconv.Atoi(part)
+		if err != nil {
+			return fmt.Errorf("not a number: %q", part)
+		}
+		if v < lo || v > hi {
+			return fmt.Errorf("value %d outside %d-%d", v, lo, hi)
+		}
+	}
+	return nil
 }
 
 // cronWeekday maps Go's Weekday (Sunday=0..Saturday=6) to cron's field

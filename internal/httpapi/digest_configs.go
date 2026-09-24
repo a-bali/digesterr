@@ -42,6 +42,10 @@ func (s *Server) handleCreateDigestConfig(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "schedule is required")
 		return
 	}
+	if err := digest.ValidateSchedule(req.Schedule); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if req.Config == "" {
 		req.Config = "{}"
 	}
@@ -89,6 +93,10 @@ func (s *Server) handleUpdateDigestConfig(w http.ResponseWriter, r *http.Request
 	}
 	var req createDigestConfigRequest
 	if !decodeBody(w, r, &req) {
+		return
+	}
+	if err := digest.ValidateSchedule(req.Schedule); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if req.Config == "" {

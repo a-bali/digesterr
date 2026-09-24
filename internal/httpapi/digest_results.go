@@ -3,12 +3,14 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
+	"digesterr/internal/digest"
 	"digesterr/internal/store"
 )
 
@@ -190,6 +192,14 @@ func (s *Server) handleGenerateDigest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := s.generator.Generate(r.Context(), cfg, s.resolveLLMClient(r.Context(), userID))
+	if errors.Is(err, digest.ErrGenerationInProgress) {
+		// A run for this config is already going (typically a scheduled tick
+		// that is still on its LLM call). Report it as a conflict rather than
+		// a server error, and do NOT write it to the config's last_error: the
+		// config is healthy, the request was simply too early.
+		writeError(w, http.StatusConflict, "a digest generation for this config is already in progress")
+		return
+	}
 	if err != nil {
 		// The full error is server-side only. Upstream LLM bodies can be long
 		// and carry provider internals, and the config error column is surfaced
@@ -297,14 +307,14 @@ func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Reque
 	}
 
 	type resultPreview struct {
-		ID        int64  `json:"id"`
-		ConfigID  int64  `json:"config_id"`
-		Status    string `json:"status"`
-		CreatedAt string `json:"created_at"`
-		UpdatedAt string `json:"updated_at"`
+		ID         int64  `json:"id"`
+		ConfigID   int64  `json:"config_id"`
+		Status     string `json:"status"`
+		CreatedAt  string `json:"created_at"`
+		UpdatedAt  string `json:"updated_at"`
 		ConfigName string `json:"config_name"`
-		Title     string `json:"title"`
-		ItemCount int64  `json:"item_count"`
+		Title      string `json:"title"`
+		ItemCount  int64  `json:"item_count"`
 	}
 	items := make([]resultPreview, len(results))
 	for i, r := range results {
@@ -326,4 +336,3 @@ func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Reque
 		"total":    total,
 	})
 }
-

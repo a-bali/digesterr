@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { digestApi } from '../services/api'
+import { digestApi, ApiError } from '../services/api'
 import type { DigestConfig, DigestResult, DigestResultItemWithData, DigestResultWithConfigName } from '../types/api'
-import { toastSuccess, toastError } from '../lib/toast'
+import { toastSuccess, toastError, toastInfo } from '../lib/toast'
 import { MARK_SUCCESS_TITLE, MARK_FAILURE_TITLE } from '../lib/markAllRead'
 
 const PAGE_SIZE = 50
@@ -180,7 +180,14 @@ export const useDigestStore = defineStore('digest', () => {
       toastSuccess('Digest generated', configName(configId))
       return result
     } catch (e) {
-      toastError(e, 'Digest generation failed', configName(configId))
+      // 409 means a generation for this config is already running (a scheduled
+      // run still on its LLM call, or a double click). Nothing failed — the
+      // work the user asked for is happening — so it must not read as an error.
+      if (e instanceof ApiError && e.status === 409) {
+        toastInfo('Digest generation already in progress', configName(configId))
+      } else {
+        toastError(e, 'Digest generation failed', configName(configId))
+      }
       return null
     } finally {
       generating.value = false

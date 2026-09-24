@@ -11,6 +11,7 @@ import { toast } from 'vue-sonner'
 // on both the light and the dark tinted card.
 const SUCCESS_GREEN = '#16a34a' // green-600
 const ERROR_RED = '#dc2626' // red-600
+const ACCENT_BLUE = '#2563eb' // blue-600
 
 function CheckIcon() {
   return h(
@@ -28,6 +29,25 @@ function CheckIcon() {
       'data-toast-icon': 'success',
     },
     [h('path', { d: 'M20 6 9 17l-5-5' })],
+  )
+}
+
+function InfoIcon() {
+  return h(
+    'svg',
+    {
+      viewBox: '0 0 24 24',
+      width: 16,
+      height: 16,
+      fill: 'none',
+      stroke: ACCENT_BLUE,
+      'stroke-width': 3,
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+      'aria-hidden': 'true',
+      'data-toast-icon': 'info',
+    },
+    [h('path', { d: 'M12 16v-4M12 8h.01' }), h('circle', { cx: 12, cy: 12, r: 9 })],
   )
 }
 
@@ -87,6 +107,17 @@ export function toastError(e: unknown, fallbackMsg = 'Something went wrong', ent
     icon: CrossIcon,
     description: composeDescription(entity, serverMessage(e)),
   })
+}
+
+/**
+ * Neutral toast for "nothing was wrong, the request was just too early" — a
+ * digest generation that is already running, for instance. It uses the info
+ * style rather than the red X because the user's intent is already being
+ * served: a failure toast here would read as a contradiction ("Generation
+ * failed — already in progress") and send them looking for a fault.
+ */
+export function toastInfo(msg: string, entity?: string) {
+  toast(msg, { icon: InfoIcon, description: entity || undefined })
 }
 
 // "Hacker News — rate limited" / "Hacker News" / "rate limited" / undefined.

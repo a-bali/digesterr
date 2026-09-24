@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"digesterr/internal/feed"
@@ -82,6 +84,15 @@ type Generator struct {
 	// recordFn is called for each outbound HTTP request made during
 	// digest generation (enrichment, comment fetching). Nil means no recording.
 	recordFn func(metrics.Record)
+	// inFlight guards against two generations of the SAME config running at
+	// once. The scheduler fires every minute and each run gets its own
+	// goroutine, and the manual "Generate" button calls the same Generate: a
+	// run slower than a minute (a multi-minute LLM budget is normal) would
+	// otherwise overlap with the next scheduled tick or with a manual click,
+	// producing duplicate digests and paying the LLM twice for the same work.
+	//
+	// Keyed by config ID, so a slow digest never blocks other configs.
+	inFlight sync.Map
 }
 
 func NewGenerator(db *sql.DB, queries *store.Queries, llm llmChatter, poller *feed.Poller) *Generator {
@@ -194,12 +205,43 @@ func decodeDigestOutput(reply string) (llmDigestOutput, error) {
 	return llmDigestOutput{}, err
 }
 
+// ErrGenerationInProgress is returned when a generation for the same config is
+// already running. It is a normal, expected outcome (the scheduler ticked again
+// while a slow run was still going, or the user clicked Generate twice), not an
+// error worth surfacing as a failure — callers should treat it as "skipped".
+var ErrGenerationInProgress = errors.New("digest generation already in progress for this config")
+
+// lockGeneration claims the per-config generation slot. It returns false when
+// another run holds it.
+func (g *Generator) lockGeneration(configID int64) bool {
+	_, loaded := g.inFlight.LoadOrStore(configID, struct{}{})
+	return !loaded
+}
+
+// unlockGeneration releases the slot claimed by lockGeneration.
+func (g *Generator) unlockGeneration(configID int64) {
+	g.inFlight.Delete(configID)
+}
+
 // Generate builds a digest for cfg. An optional llmChatter overrides the
 // Generator's default client for this run: the HTTP layer resolves the
 // caller's per-user model into a client via WithModel and passes it here, so
 // scheduled and manual generations honor the same setting. Empty means "use
 // the default client" — callers that predate the setting pass nothing.
+//
+// Returns ErrGenerationInProgress (without calling the LLM) when another
+// generation for this config is already running.
 func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig, llmOverride ...llmChatter) (*store.DigestResult, error) {
+	// One generation per config at a time. Manual and scheduled runs both come
+	// through here, so the lock is the only thing standing between a slow run
+	// and a duplicate digest (plus a duplicate LLM bill).
+	if !g.lockGeneration(cfg.ID) {
+		slog.With("config_id", cfg.ID, "config_name", cfg.Name).
+			Info("skipping digest generation, one is already in progress")
+		return nil, ErrGenerationInProgress
+	}
+	defer g.unlockGeneration(cfg.ID)
+
 	start := time.Now()
 	genLogger := slog.With("config_id", cfg.ID, "config_name", cfg.Name)
 
