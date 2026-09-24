@@ -2,6 +2,7 @@ package migrate
 
 import (
 	"database/sql"
+	"fmt"
 	"log/slog"
 )
 
@@ -9,9 +10,18 @@ import (
 // outside the migration loop: a unique index cannot be created while colliding
 // rows exist, so these check for collisions first and report them instead of
 // failing quietly. They run after every Run, including on fresh databases.
+//
+// An error here aborts startup. That is only for the case where the index
+// genuinely could not be created: a KNOWN duplicate is reported and startup
+// continues, because the API prevents both duplicate sources and the operator
+// may need the instance up to resolve it (see each helper).
 func runInvariants(db *sql.DB) error {
-	ensureEmailFeedURLUnique(db)
-	ensureUserEmailInboxUnique(db)
+	if err := ensureEmailFeedURLUnique(db); err != nil {
+		return err
+	}
+	if err := ensureUserEmailInboxUnique(db); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -25,8 +35,14 @@ func runInvariants(db *sql.DB) error {
 // per-user setting and costs no migration.
 //
 // Duplicate rows can only arrive by hand-editing the DB, so this reports them
-// and leaves them alone rather than deleting a feed: the operator decides.
-func ensureEmailFeedURLUnique(db *sql.DB) {
+// and leaves them alone rather than deleting a feed: the operator decides. That
+// is why a collision is NOT fatal: the addresses are reachable, the API rejects
+// new ones, and failing startup would leave the operator with no way to fix it.
+//
+// A failure to create the index for any OTHER reason is fatal, and is returned:
+// it means the load-bearing index is silently absent with no known duplicate to
+// explain it.
+func ensureEmailFeedURLUnique(db *sql.DB) error {
 	var dupes int
 	err := db.QueryRow(`
 SELECT count(*) FROM (
@@ -34,8 +50,9 @@ SELECT count(*) FROM (
     GROUP BY url HAVING count(*) > 1
 )`).Scan(&dupes)
 	if err != nil {
-		slog.Warn("email feed url uniqueness check failed", "error", err)
-		return
+		// The check itself failed, so nothing is known about duplicates: this
+		// is not the "known collision" case and must not be waved through.
+		return fmt.Errorf("checking email feed url uniqueness: %w", err)
 	}
 	if dupes > 0 {
 		// Name the addresses but not the owners: this is a log, and the rows
@@ -54,11 +71,12 @@ GROUP BY url HAVING count(*) > 1 ORDER BY url`)
 			}
 		}
 		slog.Warn("unique index on email feed addresses NOT created: resolve the duplicate addresses and restart", "duplicate_addresses", dupes)
-		return
+		return nil
 	}
 	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_feeds_email_url ON feeds(url) WHERE type = 'email'"); err != nil {
-		slog.Warn("failed to create unique index on email feed addresses", "error", err)
+		return fmt.Errorf("creating unique index on email feed addresses: %w", err)
 	}
+	return nil
 }
 
 // ensureUserEmailInboxUnique creates the unique index that makes an AgentMail
@@ -68,9 +86,14 @@ GROUP BY url HAVING count(*) > 1 ORDER BY url`)
 // It is the load-bearing invariant of the per-user email configuration: mail is
 // staged in email_messages per inbox, and a feed reads the rows addressed to its
 // own plus-address, so two accounts sharing a mailbox would each read the other's
-// subscriptions. Without the index nothing rejects that — the second account's
-// save simply succeeds and the two silently share one mailbox.
-func ensureUserEmailInboxUnique(db *sql.DB) {
+// subscriptions. Without the index nothing rejects that, and the second
+// account's save would simply succeed while the two silently share one mailbox.
+// (The API checks first, so this is a backstop against a hand-edited database.)
+//
+// As with the feed-address index, a known collision warns and continues; a
+// failure to create the index for any other reason is returned and aborts
+// startup.
+func ensureUserEmailInboxUnique(db *sql.DB) error {
 	var dupes int
 	err := db.QueryRow(`
 SELECT count(*) FROM (
@@ -78,8 +101,7 @@ SELECT count(*) FROM (
     GROUP BY email_inbox HAVING count(*) > 1
 )`).Scan(&dupes)
 	if err != nil {
-		slog.Warn("user email inbox uniqueness check failed", "error", err)
-		return
+		return fmt.Errorf("checking user email inbox uniqueness: %w", err)
 	}
 	if dupes > 0 {
 		rows, qerr := db.Query(`
@@ -99,9 +121,10 @@ GROUP BY email_inbox HAVING count(*) > 1 ORDER BY email_inbox`)
 			}
 		}
 		slog.Warn("unique index on users.email_inbox NOT created: give each account its own mailbox and restart", "duplicate_inboxes", dupes)
-		return
+		return nil
 	}
 	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_inbox ON users(email_inbox) WHERE email_inbox != ''"); err != nil {
-		slog.Warn("failed to create unique index on users.email_inbox", "error", err)
+		return fmt.Errorf("creating unique index on users.email_inbox: %w", err)
 	}
+	return nil
 }

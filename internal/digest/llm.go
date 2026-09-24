@@ -13,6 +13,34 @@ import (
 	"time"
 )
 
+// llmResponseLimit bounds how much of an LLM response is read into memory.
+//
+// Every other fetcher in this repo bounds its read (rss.go and
+// twitter_fetcher.go at 10MB, email_client.go at 8MB, the Jina extractor at
+// 500KB); these two call sites were the outlier. A digest response is a few KB
+// of JSON, so 10MB is generous while still guaranteeing that a malformed or
+// hostile response cannot exhaust memory.
+const llmResponseLimit = 10 << 20
+
+// readBoundedBody reads at most llmResponseLimit bytes and reports an error when
+// the response exceeds it, rather than silently truncating.
+//
+// Truncation would be worse than an error here: a truncated JSON body fails to
+// parse with a confusing syntax error, whereas an explicit over-limit error
+// names the real problem.
+func readBoundedBody(r io.Reader) ([]byte, error) {
+	// One byte past the limit, so hitting the cap is distinguishable from a
+	// response that exactly fills it.
+	body, err := io.ReadAll(io.LimitReader(r, llmResponseLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > llmResponseLimit {
+		return nil, fmt.Errorf("response exceeds the %d byte limit", llmResponseLimit)
+	}
+	return body, nil
+}
+
 // LLMRecordFunc records an outbound LLM API call.
 type LLMRecordFunc func(timestamp time.Time, url string, statusCode int, durationMs int64, bytes int64, err string)
 
@@ -106,7 +134,7 @@ func (c *LLMClient) Models(ctx context.Context) ([]string, error) {
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := readBoundedBody(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("reading models response: %w", err)
 	}
@@ -210,7 +238,7 @@ func (c *LLMClient) Chat(ctx context.Context, systemPrompt, userPrompt string) (
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := readBoundedBody(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("reading response: %w", err)
 	}

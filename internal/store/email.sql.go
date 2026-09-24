@@ -28,6 +28,33 @@ func (q *Queries) AddEmailMessageRecipient(ctx context.Context, arg AddEmailMess
 	return err
 }
 
+const bumpEmailMessageStageAttempt = `-- name: BumpEmailMessageStageAttempt :one
+UPDATE email_messages
+SET staged_attempts = staged_attempts + 1
+WHERE inbox_id = ? AND message_id = ?
+RETURNING staged_attempts
+`
+
+type BumpEmailMessageStageAttemptParams struct {
+	InboxID   string `json:"inbox_id"`
+	MessageID string `json:"message_id"`
+}
+
+// Charges one attempt against the repair budget and returns the new count, so
+// the caller can decide whether this row has been retried enough to surrender.
+//
+// RETURNING, not RowsAffected: an UPDATE's affected-row count is 1 either way,
+// so :execrows could never tell the caller how many attempts a row has had.
+//
+// Separate from MarkEmailMessageComplete because the two happen on different
+// outcomes: an attempt is recorded on failure too, and only success completes.
+func (q *Queries) BumpEmailMessageStageAttempt(ctx context.Context, arg BumpEmailMessageStageAttemptParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, bumpEmailMessageStageAttempt, arg.InboxID, arg.MessageID)
+	var staged_attempts int64
+	err := row.Scan(&staged_attempts)
+	return staged_attempts, err
+}
+
 const createEmailMessageIfNotExists = `-- name: CreateEmailMessageIfNotExists :one
 INSERT OR IGNORE INTO email_messages (
     inbox_id, message_id, thread_id, from_addr, to_addrs,
@@ -93,14 +120,26 @@ func (q *Queries) DeleteEmailSyncStateForInbox(ctx context.Context, inboxID stri
 }
 
 const deleteExpiredEmailMessages = `-- name: DeleteExpiredEmailMessages :execrows
-DELETE FROM email_messages WHERE received_at IS NOT NULL AND received_at < ?
+DELETE FROM email_messages
+WHERE DATETIME(COALESCE(received_at, created_at)) < DATETIME(CAST(?1 AS TEXT))
 `
 
-// Retention sweep: staged mail older than the cutoff. received_at is TEXT
-// holding RFC3339, so the cutoff is passed in the same format (see the
-// timestamp note on ListEmailMessagesByRecipient).
-func (q *Queries) DeleteExpiredEmailMessages(ctx context.Context, receivedAt sql.NullString) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteExpiredEmailMessages, receivedAt)
+// Retention sweep: staged mail older than the cutoff.
+//
+// DATETIME() on BOTH sides, for two reasons:
+//
+//  1. received_at is nullable. A message whose provider timestamp was missing
+//     was stored as NULL, and `received_at < ?` is NULL (never true) for
+//     those rows, so they were exempt from retention and accumulated forever.
+//     COALESCE onto created_at gives them an age to be swept by.
+//  2. The two columns are stored in DIFFERENT formats: received_at holds
+//     RFC3339 ("2026-09-23T18:35:03.000Z") and created_at holds SQLite's
+//     DATETIME form ("2026-09-23 18:35:03"). Compared as raw TEXT, ' ' (0x20)
+//     sorts before 'T' (0x54), so a same-day row compares as older than it is
+//     and can be deleted early. DATETIME() normalizes both to a comparable
+//     form.
+func (q *Queries) DeleteExpiredEmailMessages(ctx context.Context, cutoff string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteExpiredEmailMessages, cutoff)
 	if err != nil {
 		return 0, err
 	}
@@ -108,7 +147,7 @@ func (q *Queries) DeleteExpiredEmailMessages(ctx context.Context, receivedAt sql
 }
 
 const getEmailMessageByMessageID = `-- name: GetEmailMessageByMessageID :one
-SELECT id, inbox_id, message_id, thread_id, from_addr, to_addrs, subject, text, html, raw_headers, received_at, created_at FROM email_messages WHERE inbox_id = ? AND message_id = ?
+SELECT id, inbox_id, message_id, thread_id, from_addr, to_addrs, subject, text, html, raw_headers, received_at, complete_at, staged_attempts, created_at FROM email_messages WHERE inbox_id = ? AND message_id = ?
 `
 
 type GetEmailMessageByMessageIDParams struct {
@@ -131,6 +170,8 @@ func (q *Queries) GetEmailMessageByMessageID(ctx context.Context, arg GetEmailMe
 		&i.Html,
 		&i.RawHeaders,
 		&i.ReceivedAt,
+		&i.CompleteAt,
+		&i.StagedAttempts,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -188,9 +229,10 @@ func (q *Queries) ListEmailFeedURLs(ctx context.Context) ([]ListEmailFeedURLsRow
 }
 
 const listEmailMessagesByRecipient = `-- name: ListEmailMessagesByRecipient :many
-SELECT id, inbox_id, message_id, thread_id, from_addr, to_addrs, subject, text, html, raw_headers, received_at, created_at FROM email_messages
+SELECT id, inbox_id, message_id, thread_id, from_addr, to_addrs, subject, text, html, raw_headers, received_at, complete_at, staged_attempts, created_at FROM email_messages
 WHERE email_messages.inbox_id = ?1
   AND email_messages.to_addrs LIKE '%' || CAST(?2 AS TEXT) || '%'
+  AND email_messages.complete_at IS NOT NULL
   AND (email_messages.received_at IS NULL
        OR CAST(email_messages.received_at AS TEXT) > CAST(?3 AS TEXT))
 ORDER BY email_messages.received_at DESC, email_messages.id DESC
@@ -247,6 +289,8 @@ func (q *Queries) ListEmailMessagesByRecipient(ctx context.Context, arg ListEmai
 			&i.Html,
 			&i.RawHeaders,
 			&i.ReceivedAt,
+			&i.CompleteAt,
+			&i.StagedAttempts,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -263,12 +307,13 @@ func (q *Queries) ListEmailMessagesByRecipient(ctx context.Context, arg ListEmai
 }
 
 const listEmailMessagesByRecipientExact = `-- name: ListEmailMessagesByRecipientExact :many
-SELECT m.id, m.inbox_id, m.message_id, m.thread_id, m.from_addr, m.to_addrs, m.subject, m.text, m.html, m.raw_headers, m.received_at, m.created_at
+SELECT m.id, m.inbox_id, m.message_id, m.thread_id, m.from_addr, m.to_addrs, m.subject, m.text, m.html, m.raw_headers, m.received_at, m.complete_at, m.staged_attempts, m.created_at
 FROM email_messages m
 JOIN email_message_recipients r
   ON r.inbox_id = m.inbox_id AND r.message_id = m.message_id
 WHERE m.inbox_id = ?1
   AND r.address = ?2
+  AND m.complete_at IS NOT NULL
   AND (m.received_at IS NULL OR m.received_at > CAST(?3 AS TEXT))
 ORDER BY m.received_at DESC, m.id DESC
 LIMIT ?4
@@ -283,7 +328,9 @@ type ListEmailMessagesByRecipientExactParams struct {
 
 // Indexed twin of ListEmailMessagesByRecipient: exact equality over the
 // normalized recipient table instead of a leading-wildcard LIKE on the JSON
-// array. Same contract (inbox + address + since window, newest first).
+// array. Same contract (inbox + address + since window, newest first), plus the
+// completeness filter: a half-staged row has no recipient row yet, so it never
+// reaches the reader as an empty newsletter.
 func (q *Queries) ListEmailMessagesByRecipientExact(ctx context.Context, arg ListEmailMessagesByRecipientExactParams) ([]EmailMessage, error) {
 	rows, err := q.db.QueryContext(ctx, listEmailMessagesByRecipientExact,
 		arg.InboxID,
@@ -310,6 +357,8 @@ func (q *Queries) ListEmailMessagesByRecipientExact(ctx context.Context, arg Lis
 			&i.Html,
 			&i.RawHeaders,
 			&i.ReceivedAt,
+			&i.CompleteAt,
+			&i.StagedAttempts,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -323,6 +372,90 @@ func (q *Queries) ListEmailMessagesByRecipientExact(ctx context.Context, arg Lis
 		return nil, err
 	}
 	return items, nil
+}
+
+const listIncompleteEmailMessages = `-- name: ListIncompleteEmailMessages :many
+SELECT id, inbox_id, message_id, thread_id, from_addr, to_addrs, subject, text, html, raw_headers, received_at, complete_at, staged_attempts, created_at FROM email_messages
+WHERE complete_at IS NULL
+  AND staged_attempts < ?1
+ORDER BY created_at ASC, id ASC
+LIMIT ?2
+`
+
+type ListIncompleteEmailMessagesParams struct {
+	MaxAttempts int64 `json:"max_attempts"`
+	Lim         int64 `json:"lim"`
+}
+
+// Messages a previous pass left half staged: metadata is present but the row is
+// neither complete nor surrendered, and the retry budget is not spent.
+//
+// This is what makes the repair independent of the API window. Overlap re-reads
+// only cover a few minutes, so a body that failed earlier than that is never
+// returned by ListMessages again; without this query the loss is permanent.
+//
+// ReceivedAt carries the value the API DID supply on the pass that failed, so
+// the repair can refetch a body by id. Trying to rebuild it is impossible.
+// Oldest first: the oldest row is the one closest to aging out of retention, so
+// it is the most urgent to repair.
+func (q *Queries) ListIncompleteEmailMessages(ctx context.Context, arg ListIncompleteEmailMessagesParams) ([]EmailMessage, error) {
+	rows, err := q.db.QueryContext(ctx, listIncompleteEmailMessages, arg.MaxAttempts, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EmailMessage{}
+	for rows.Next() {
+		var i EmailMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.InboxID,
+			&i.MessageID,
+			&i.ThreadID,
+			&i.FromAddr,
+			&i.ToAddrs,
+			&i.Subject,
+			&i.Text,
+			&i.Html,
+			&i.RawHeaders,
+			&i.ReceivedAt,
+			&i.CompleteAt,
+			&i.StagedAttempts,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markEmailMessageComplete = `-- name: MarkEmailMessageComplete :execrows
+UPDATE email_messages
+SET complete_at = DATETIME('now')
+WHERE inbox_id = ? AND message_id = ? AND complete_at IS NULL
+`
+
+type MarkEmailMessageCompleteParams struct {
+	InboxID   string `json:"inbox_id"`
+	MessageID string `json:"message_id"`
+}
+
+// Marks a staged message as fully ingested, which stops the repair pass from
+// revisiting it. Guarded on complete_at IS NULL so a repeated call is a no-op
+// rather than a write, and so the count is meaningful (0 = was already whole).
+func (q *Queries) MarkEmailMessageComplete(ctx context.Context, arg MarkEmailMessageCompleteParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markEmailMessageComplete, arg.InboxID, arg.MessageID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const setEmailSyncError = `-- name: SetEmailSyncError :exec

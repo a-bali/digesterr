@@ -164,11 +164,26 @@ CREATE TABLE email_messages (
     html        TEXT    NOT NULL DEFAULT '',   -- sanitized on ingest, never raw
     raw_headers TEXT    NOT NULL DEFAULT '{}',
     received_at TEXT,
+    -- complete_at marks a staged message as fully ingested: metadata AND its
+    -- recipient rows AND its body. NULL means a pass left it half staged, which
+    -- the repair pass re-attempts. UNIQUE (inbox_id, message_id) makes ingest
+    -- exactly-once, but idempotency is not completeness: a row can exist with no
+    -- body and no recipients, and without this marker that row was read as
+    -- "already staged" and never repaired.
+    complete_at DATETIME,
+    -- staged_attempts charges the bounded repair budget, so a message whose body
+    -- the provider will never return cannot be retried every cycle forever.
+    staged_attempts INTEGER NOT NULL DEFAULT 0,
     created_at  DATETIME NOT NULL DEFAULT (DATETIME('now')),
     -- Idempotency: re-polling an overlapping window must insert nothing new.
     -- This, not the poll watermark, is what makes ingestion exactly-once.
     UNIQUE (inbox_id, message_id)
 );
+
+-- The repair pass scans for half-staged rows every cycle, so this is a partial
+-- index: it holds only the rows with complete_at IS NULL, which is normally
+-- none. A plain index would be maintained on every insert for no benefit.
+CREATE INDEX IF NOT EXISTS idx_email_messages_incomplete ON email_messages(complete_at) WHERE complete_at IS NULL;
 
 -- email_message_recipients normalizes a staged message's recipient list so
 -- routing a feed's plus-address is an indexed equality join instead of a

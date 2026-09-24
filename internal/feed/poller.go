@@ -556,12 +556,17 @@ func (p *Poller) ExpireOldData(ctx context.Context) (itemsDeleted, digestsDelete
 		slog.Debug("deleted expired refresh tokens", "count", n)
 	}
 	// Staged email older than the item retention window is dead weight: it was
-	// already ingested into feed items (or skipped). received_at is TEXT
-	// holding RFC3339 (see the email timestamp note), so the cutoff is passed
-	// in the same shape — never a bound time.Time, which compares unequal.
+	// already ingested into feed items (or skipped).
+	//
+	// The cutoff is a plain string and the comparison happens in SQL, because
+	// received_at may be NULL (a missing provider timestamp) and the two
+	// timestamp columns are stored in different formats; see the query's own
+	// comment. Passing a bound time.Time here would compare unequal against
+	// every row, which is what the other timestamp note in this file warns
+	// about.
 	if p.expireItems > 0 {
 		cutoff := time.Now().Add(-p.expireItems).UTC().Format(time.RFC3339Nano)
-		if n, err := qtx.DeleteExpiredEmailMessages(ctx, sql.NullString{String: cutoff, Valid: true}); err != nil {
+		if n, err := qtx.DeleteExpiredEmailMessages(ctx, cutoff); err != nil {
 			slog.Warn("failed to delete expired staged email", "error", err)
 		} else if n > 0 {
 			slog.Debug("deleted expired staged email", "count", n)

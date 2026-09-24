@@ -83,6 +83,8 @@ CREATE TABLE email_messages (
     html TEXT NOT NULL DEFAULT '',
     raw_headers TEXT NOT NULL DEFAULT '{}',
     received_at TEXT,
+    complete_at DATETIME,
+    staged_attempts INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
     UNIQUE (inbox_id, message_id)
 );
@@ -285,9 +287,8 @@ func TestEmailSyncSanitizesOnIngest(t *testing.T) {
 }
 
 // A text-only newsletter must still produce a readable item.
-// stageWithRecipients stages a message plus its normalized recipient rows,
-// mirroring what the sync stage writes on ingest (the Fetch path reads the
-// recipient rows, never the to_addrs JSON directly).
+// stageWithRecipients stages a complete message plus its normalized recipient
+// rows, the state the sync leaves a fully ingested message in.
 func stageWithRecipients(t *testing.T, q *store.Queries, inbox, msgID, receivedAt string, addrs []string, subject string) {
 	t.Helper()
 	toJSON, err := json.Marshal(addrs)
@@ -307,6 +308,13 @@ func stageWithRecipients(t *testing.T, q *store.Queries, inbox, msgID, receivedA
 		}); err != nil {
 			t.Fatalf("stage recipient: %v", err)
 		}
+	}
+	// Completeness is what the production path records; the reader filters on
+	// it, so a fixture that skips this is modelling a half-staged message.
+	if _, err := q.MarkEmailMessageComplete(context.Background(), store.MarkEmailMessageCompleteParams{
+		InboxID: inbox, MessageID: msgID,
+	}); err != nil {
+		t.Fatalf("mark complete: %v", err)
 	}
 }
 

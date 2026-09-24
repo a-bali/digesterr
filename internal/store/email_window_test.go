@@ -34,6 +34,8 @@ CREATE TABLE email_messages (
     html        TEXT    NOT NULL DEFAULT '',
     raw_headers TEXT    NOT NULL DEFAULT '{}',
     received_at TEXT,
+    complete_at DATETIME,
+    staged_attempts INTEGER NOT NULL DEFAULT 0,
     created_at  DATETIME NOT NULL DEFAULT (DATETIME('now')),
     UNIQUE (inbox_id, message_id)
 );
@@ -68,16 +70,32 @@ func emailTestDB(t *testing.T) *Queries {
 	return New(db)
 }
 
-// stage inserts a message with an explicit RFC3339 timestamp, the format the
-// AgentMail API returns in ref.timestamp.
+// stage inserts a COMPLETE message with an explicit RFC3339 timestamp, the
+// format the AgentMail API returns in ref.timestamp. Completeness is recorded
+// because the read queries filter on it: a row without complete_at models a
+// message a failed pass left half staged, which is not served.
 func stage(t *testing.T, q *Queries, inbox, msgID, to, subject, received string) {
 	t.Helper()
-	_, err := q.CreateEmailMessageIfNotExists(context.Background(), CreateEmailMessageIfNotExistsParams{
+	ctx := context.Background()
+	_, err := q.CreateEmailMessageIfNotExists(ctx, CreateEmailMessageIfNotExistsParams{
 		InboxID: inbox, MessageID: msgID, ToAddrs: `["` + to + `"]`,
-		Subject: subject, ReceivedAt: ns(received),
+		Subject: subject, Text: subject, Html: "<p>" + subject + "</p>",
+		ReceivedAt: ns(received),
 	})
 	if err != nil {
 		t.Fatalf("stage %s: %v", msgID, err)
+	}
+	if _, err := q.MarkEmailMessageComplete(ctx, MarkEmailMessageCompleteParams{
+		InboxID: inbox, MessageID: msgID,
+	}); err != nil {
+		t.Fatalf("stage complete %s: %v", msgID, err)
+	}
+	// The indexed routing query joins the normalized recipient table, so a
+	// complete message needs its recipient row too.
+	if err := q.AddEmailMessageRecipient(ctx, AddEmailMessageRecipientParams{
+		InboxID: inbox, MessageID: msgID, Address: to,
+	}); err != nil {
+		t.Fatalf("stage recipient %s: %v", msgID, err)
 	}
 }
 
@@ -170,6 +188,11 @@ func TestEmailRecipientMatching(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stage multi: %v", err)
 	}
+	if _, err := q.MarkEmailMessageComplete(context.Background(), MarkEmailMessageCompleteParams{
+		InboxID: inbox, MessageID: "<multi@x>",
+	}); err != nil {
+		t.Fatalf("complete multi: %v", err)
+	}
 	news := listFor(t, q, inbox, "name+news@agentmail.to", "", 50)
 	if len(news) != 2 {
 		t.Fatalf("news feed = %v, want both news messages", subjects(news))
@@ -223,6 +246,13 @@ func TestEmailMessageInsertIsIdempotent(t *testing.T) {
 	}
 	if first == 0 {
 		t.Fatal("first insert returned id 0")
+	}
+	// Complete it, so the read queries below see it: they filter on
+	// completeness, and an incomplete row is intentionally not served.
+	if _, err := q.MarkEmailMessageComplete(ctx, MarkEmailMessageCompleteParams{
+		InboxID: inbox, MessageID: "<m1@x>",
+	}); err != nil {
+		t.Fatalf("complete: %v", err)
 	}
 
 	// Same message again, as an overlapping poll window delivers it.

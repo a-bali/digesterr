@@ -6,6 +6,46 @@ INSERT OR IGNORE INTO email_messages (
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
 
+-- name: MarkEmailMessageComplete :execrows
+-- Marks a staged message as fully ingested, which stops the repair pass from
+-- revisiting it. Guarded on complete_at IS NULL so a repeated call is a no-op
+-- rather than a write, and so the count is meaningful (0 = was already whole).
+UPDATE email_messages
+SET complete_at = DATETIME('now')
+WHERE inbox_id = ? AND message_id = ? AND complete_at IS NULL;
+
+-- name: BumpEmailMessageStageAttempt :one
+-- Charges one attempt against the repair budget and returns the new count, so
+-- the caller can decide whether this row has been retried enough to surrender.
+--
+-- RETURNING, not RowsAffected: an UPDATE's affected-row count is 1 either way,
+-- so :execrows could never tell the caller how many attempts a row has had.
+--
+-- Separate from MarkEmailMessageComplete because the two happen on different
+-- outcomes: an attempt is recorded on failure too, and only success completes.
+UPDATE email_messages
+SET staged_attempts = staged_attempts + 1
+WHERE inbox_id = ? AND message_id = ?
+RETURNING staged_attempts;
+
+-- name: ListIncompleteEmailMessages :many
+-- Messages a previous pass left half staged: metadata is present but the row is
+-- neither complete nor surrendered, and the retry budget is not spent.
+--
+-- This is what makes the repair independent of the API window. Overlap re-reads
+-- only cover a few minutes, so a body that failed earlier than that is never
+-- returned by ListMessages again; without this query the loss is permanent.
+--
+-- ReceivedAt carries the value the API DID supply on the pass that failed, so
+-- the repair can refetch a body by id. Trying to rebuild it is impossible.
+-- Oldest first: the oldest row is the one closest to aging out of retention, so
+-- it is the most urgent to repair.
+SELECT * FROM email_messages
+WHERE complete_at IS NULL
+  AND staged_attempts < sqlc.arg(max_attempts)
+ORDER BY created_at ASC, id ASC
+LIMIT sqlc.arg(lim);
+
 -- name: GetEmailMessageByMessageID :one
 SELECT * FROM email_messages WHERE inbox_id = ? AND message_id = ?;
 
@@ -30,6 +70,7 @@ SELECT * FROM email_messages WHERE inbox_id = ? AND message_id = ?;
 SELECT * FROM email_messages
 WHERE email_messages.inbox_id = @inbox_id
   AND email_messages.to_addrs LIKE '%' || CAST(sqlc.arg(address) AS TEXT) || '%'
+  AND email_messages.complete_at IS NOT NULL
   AND (email_messages.received_at IS NULL
        OR CAST(email_messages.received_at AS TEXT) > CAST(sqlc.arg(since) AS TEXT))
 ORDER BY email_messages.received_at DESC, email_messages.id DESC
@@ -77,10 +118,22 @@ DELETE FROM email_messages WHERE inbox_id = ?;
 DELETE FROM email_sync_state WHERE inbox_id = ?;
 
 -- name: DeleteExpiredEmailMessages :execrows
--- Retention sweep: staged mail older than the cutoff. received_at is TEXT
--- holding RFC3339, so the cutoff is passed in the same format (see the
--- timestamp note on ListEmailMessagesByRecipient).
-DELETE FROM email_messages WHERE received_at IS NOT NULL AND received_at < ?;
+-- Retention sweep: staged mail older than the cutoff.
+--
+-- DATETIME() on BOTH sides, for two reasons:
+--
+--  1. received_at is nullable. A message whose provider timestamp was missing
+--     was stored as NULL, and `received_at < ?` is NULL (never true) for
+--     those rows, so they were exempt from retention and accumulated forever.
+--     COALESCE onto created_at gives them an age to be swept by.
+--  2. The two columns are stored in DIFFERENT formats: received_at holds
+--     RFC3339 ("2026-09-23T18:35:03.000Z") and created_at holds SQLite's
+--     DATETIME form ("2026-09-23 18:35:03"). Compared as raw TEXT, ' ' (0x20)
+--     sorts before 'T' (0x54), so a same-day row compares as older than it is
+--     and can be deleted early. DATETIME() normalizes both to a comparable
+--     form.
+DELETE FROM email_messages
+WHERE DATETIME(COALESCE(received_at, created_at)) < DATETIME(CAST(sqlc.arg(cutoff) AS TEXT));
 
 -- name: AddEmailMessageRecipient :exec
 -- Records one recipient of a staged message. INSERT OR IGNORE so re-staging
@@ -91,13 +144,16 @@ VALUES (?, ?, ?);
 -- name: ListEmailMessagesByRecipientExact :many
 -- Indexed twin of ListEmailMessagesByRecipient: exact equality over the
 -- normalized recipient table instead of a leading-wildcard LIKE on the JSON
--- array. Same contract (inbox + address + since window, newest first).
+-- array. Same contract (inbox + address + since window, newest first), plus the
+-- completeness filter: a half-staged row has no recipient row yet, so it never
+-- reaches the reader as an empty newsletter.
 SELECT m.*
 FROM email_messages m
 JOIN email_message_recipients r
   ON r.inbox_id = m.inbox_id AND r.message_id = m.message_id
 WHERE m.inbox_id = sqlc.arg(inbox_id)
   AND r.address = sqlc.arg(address)
+  AND m.complete_at IS NOT NULL
   AND (m.received_at IS NULL OR m.received_at > CAST(sqlc.arg(since) AS TEXT))
 ORDER BY m.received_at DESC, m.id DESC
 LIMIT sqlc.arg(lim);

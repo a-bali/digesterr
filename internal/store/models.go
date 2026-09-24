@@ -41,18 +41,20 @@ type DigestResultItem struct {
 }
 
 type EmailMessage struct {
-	ID         int64          `json:"id"`
-	InboxID    string         `json:"inbox_id"`
-	MessageID  string         `json:"message_id"`
-	ThreadID   string         `json:"thread_id"`
-	FromAddr   string         `json:"from_addr"`
-	ToAddrs    string         `json:"to_addrs"`
-	Subject    string         `json:"subject"`
-	Text       string         `json:"text"`
-	Html       string         `json:"html"`
-	RawHeaders string         `json:"raw_headers"`
-	ReceivedAt sql.NullString `json:"received_at"`
-	CreatedAt  time.Time      `json:"created_at"`
+	ID             int64          `json:"id"`
+	InboxID        string         `json:"inbox_id"`
+	MessageID      string         `json:"message_id"`
+	ThreadID       string         `json:"thread_id"`
+	FromAddr       string         `json:"from_addr"`
+	ToAddrs        string         `json:"to_addrs"`
+	Subject        string         `json:"subject"`
+	Text           string         `json:"text"`
+	Html           string         `json:"html"`
+	RawHeaders     string         `json:"raw_headers"`
+	ReceivedAt     sql.NullString `json:"received_at"`
+	CompleteAt     sql.NullTime   `json:"complete_at"`
+	StagedAttempts int64          `json:"staged_attempts"`
+	CreatedAt      time.Time      `json:"created_at"`
 }
 
 type EmailMessageRecipient struct {
