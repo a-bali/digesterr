@@ -114,8 +114,31 @@ function mountList(opts: { savedItems?: Item[]; items?: Item[]; showingSaved?: b
       ...(opts.compact !== undefined ? { compact: opts.compact } : {}),
     },
     global: { plugins: [pinia] },
+    // Pull-to-refresh binds its listeners on `document`, so a detached mount
+    // never sees a touch event. Attaching is what makes the gesture testable.
+    attachTo: document.body,
   })
   return { store, wrapper }
+}
+
+// Minimal TouchEvent harness: jsdom has no TouchEvent, so dispatch plain Events
+// with a `touches` array. The pull-to-refresh composable listens at document
+// level, so bubbling is required.
+function touch(el: Element, type: string, x: number, y: number) {
+  const ev = new Event(type, { cancelable: true, bubbles: true }) as any
+  ev.touches = [{ clientX: x, clientY: y }]
+  el.dispatchEvent(ev)
+  return ev
+}
+
+// Perform a full pull-down gesture on the list: down 200px (past the 70px
+// threshold after the 2x damping) and release.
+async function pullToRefresh(wrapper: ReturnType<typeof mount>) {
+  const row = resultRows(wrapper)[0]?.element ?? wrapper.element
+  touch(row, 'touchstart', 100, 100)
+  touch(row, 'touchmove', 100, 300)
+  touch(row, 'touchend', 100, 300)
+  await flushPromises()
 }
 
 // The dropdown content renders inside a reka-ui portal (teleported to
@@ -868,6 +891,69 @@ describe('middle pane header counts', () => {
     await wrapper.vm.$nextTick()
 
     expect(headerCount(wrapper)).toBe('1/1')
+  })
+
+  // The Saved view is paginated, so the SERVER owns the order. The component
+  // must render exactly what it was given: re-sorting here could only reorder
+  // the loaded page, which is how choosing "Oldest" changed the label while the
+  // list stayed newest-first.
+  it('renders saved items in the order the server returned them', async () => {
+    const saved = [
+      makeItem({ id: 1, title: 'First', published_at: '2026-08-10T08:00:00Z' }),
+      makeItem({ id: 2, title: 'Second', published_at: '2026-08-14T08:00:00Z' }),
+    ]
+    const { store, wrapper } = mountList({ showingSaved: true, savedItems: saved })
+
+    // Oldest first, as delivered — even though the store's sort says otherwise.
+    store.sort = 'date_desc'
+    await wrapper.vm.$nextTick()
+
+    const rows = resultRows(wrapper)
+    expect(rows[0].text()).toContain('First')
+    expect(rows[1].text()).toContain('Second')
+  })
+
+  it('shows the Saved view the date order the server actually applied', async () => {
+    const { store, wrapper } = mountList({ showingSaved: true, savedItems: [makeItem({ status: 'saved' })] })
+
+    // A score sort picked in a feed view must not label the Saved list: the
+    // Saved view only has date orders, and the server collapses anything else
+    // to date_desc. An honest label is the whole point of the fix.
+    store.sort = 'score_desc'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('Newest')
+
+    store.sort = 'date_asc'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('Oldest')
+  })
+
+  // Pull-to-refresh reloads the ACTIVE view. The Saved view is not a feed, so
+  // refreshItems() returned early there and the gesture did nothing at all.
+  it('pull-to-refresh reloads the saved list in the Saved view', async () => {
+    const { store, wrapper } = mountList({
+      showingSaved: true,
+      savedItems: [makeItem({ status: 'saved' })],
+      activeFeedId: null,
+    })
+    const fetchSaved = vi.spyOn(store, 'fetchSavedItems').mockResolvedValue(undefined)
+    const refreshFeed = vi.spyOn(store, 'refreshItems').mockResolvedValue(undefined)
+
+    await pullToRefresh(wrapper)
+
+    expect(fetchSaved).toHaveBeenCalledTimes(1)
+    expect(refreshFeed).not.toHaveBeenCalled()
+  })
+
+  it('pull-to-refresh still reloads the feed in a feed view', async () => {
+    const { store, wrapper } = mountList()
+    const fetchSaved = vi.spyOn(store, 'fetchSavedItems').mockResolvedValue(undefined)
+    const refreshFeed = vi.spyOn(store, 'refreshItems').mockResolvedValue(undefined)
+
+    await pullToRefresh(wrapper)
+
+    expect(refreshFeed).toHaveBeenCalledTimes(1)
+    expect(fetchSaved).not.toHaveBeenCalled()
   })
 
   it('reports the saved view against its server total', async () => {

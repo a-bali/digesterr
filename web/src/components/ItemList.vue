@@ -41,9 +41,13 @@ const scrollEl = ref<HTMLElement | null>(null)
 
 // Pull-down-to-refresh on touch devices. Silent UI (no dim/error toast) but
 // clean replace — user's explicit refresh action, should not merge stale items.
+//
+// The Saved view needs its own fetcher: refreshItems() reloads the active FEED
+// (or the multi-feed view) and returns early when neither is set, so in Saved it
+// did nothing at all. fetchSavedItems reloads the saved list.
 const { pull: pullDistance, refreshing: pullRefreshing } = usePullToRefresh(
   scrollEl,
-  () => feedStore.refreshItems({ silent: true, replace: true }),
+  () => (props.showingSaved ? feedStore.fetchSavedItems() : feedStore.refreshItems({ silent: true, replace: true })),
 )
 
 // Touch devices have no hover, so on a phone the mark-above/below action is
@@ -144,11 +148,12 @@ function onMinScore(v: number | null) { feedStore.changeMinScore(v) }
 const displayItems = computed(() => {
   if (feedStore.isMultiView) return feedStore.multiItems as any[]
   if (!props.showingSaved) return feedStore.items
-  // No status filtering here: the Saved view is paginated, so the server applies
-  // the read-state filter (see handleListSavedItems) and returns only matching
-  // rows. Filtering the loaded page would narrow to whatever happens to be in
-  // memory and report a total that ignores the filter.
-  return sortSavedItems(props.savedItems, feedStore.sort)
+  // Rendered exactly as received: the Saved view is paginated, so the SERVER
+  // owns both the read-state filter and the order (see handleListSavedItems).
+  // Filtering or sorting the loaded page here would touch only the rows in
+  // memory and leave the remaining pages in the old order — which is exactly how
+  // the sort label came to disagree with the list.
+  return props.savedItems
 })
 
 // Simple type-based favicon URL for items that carry feed_type.
@@ -166,15 +171,6 @@ function feedTypeIcon(feedType: string): string {
 // Feed name for multi-view items.
 function feedNameFor(item: any): string {
   return item.feed_name ?? ''
-}
-
-// The Saved view fetches once without server-side ordering, so filtering and
-// sorting happen client-side there. Feed views rely on the server params.
-function sortSavedItems(list: any[], _sort: FeedSort): any[] {
-  // The server returns the Saved view newest-first; client-side re-sorting was
-  // dropped with the server-side Saved endpoint (GET /api/saved) so one code
-  // path owns the order. The parameter stays so FilterBar wiring is unchanged.
-  return [...list]
 }
 
 const scale = computed(() => {
@@ -258,7 +254,7 @@ async function markBelowRead(item: any) {
   <div class="h-full overflow-y-auto overflow-x-hidden overscroll-contain" ref="scrollEl" @scroll="onListScroll">
     <FilterBar
       :status-filter="(feedStore.filter as FilterStatus)"
-      :sort-value="(SCORE_MAP_REV[feedStore.sort] ?? 'newest') as FilterSort"
+      :sort-value="(SCORE_MAP_REV[showingSaved ? feedStore.savedSort : feedStore.sort] ?? 'newest') as FilterSort"
       :min-score="feedStore.minScore"
       :score-supported="scoreSupported"
       :loaded-count="loadedCount"

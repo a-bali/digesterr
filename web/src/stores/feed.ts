@@ -79,6 +79,12 @@ export const useFeedStore = defineStore('feed', () => {
   // the content pane while the ROW kept its old status icon until a reload
   // ("mark unread is not showing as unread until I reload the view").
   const savedItems = ref<Item[]>([])
+
+  // The Saved view's sort, derived from the shared `sort` ref so the FilterBar
+  // stays a single control: the view offers only date orders (it mixes feed
+  // types, so a cross-feed score order is not meaningful), and score selections
+  // made in a feed view must not leak in as a sort the API would reject.
+  const savedSort = computed(() => (sort.value === 'date_asc' ? 'date_asc' : 'date_desc'))
   // The Saved VIEW's total for the current status filter. Distinct from
   // savedCount, which is the sidebar badge's unfiltered tally: sharing one ref
   // would make filtering the view silently rewrite the badge.
@@ -457,6 +463,10 @@ export const useFeedStore = defineStore('feed', () => {
     if (isMultiView.value || activeFeedId.value) {
       fetchFirstPage()
     }
+    // The Saved view's order is applied server-side, so a direction change has
+    // to refetch rather than re-sort the loaded rows: the list is paginated, and
+    // reordering one page would leave the remaining pages in the old order.
+    if (showingSaved.value) fetchSavedItems()
   }
 
   function changeMinScore(n: number | null) {
@@ -689,6 +699,11 @@ export const useFeedStore = defineStore('feed', () => {
     try {
       const resp = await feedApi.savedItems({
         status: filter.value === 'all' || filter.value === 'saved' ? undefined : filter.value,
+        // The Saved view offers only the two date orders (it mixes feed types,
+        // so a cross-feed score order is not meaningful there), and the server
+        // applies the direction — sorting the loaded page client-side would
+        // reorder only the rows in memory and leave the rest behind.
+        sort: savedSort.value,
         limit: PAGE_SIZE,
         offset: replace ? 0 : savedItems.value.length,
       })
@@ -719,7 +734,7 @@ export const useFeedStore = defineStore('feed', () => {
   }
 
   return {
-    feeds, activeFeedId, activeCategory, activeSection, items, multiItems, selectedItem, savedItems, savedCount, savedTotal, showingSaved, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
+    feeds, activeFeedId, activeCategory, activeSection, items, multiItems, selectedItem, savedItems, savedCount, savedTotal, showingSaved, savedSort, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
     activeFeed, isMultiView, supportsScore, unreadCounts, backgroundRefreshing,
     fetchFeeds, setActiveFeed, setActiveCategory, setActiveSection, clearActiveView, fetchFirstPage, refreshItems, fetchMoreItems,
     selectItem, updateItemStatus, unsaveItem, deleteExtraction, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, fetchSavedItems, fetchMoreSavedItems, fetchSavedCount, markFeedRead, markAllRead, markReadAbove, markReadBelow,

@@ -280,6 +280,22 @@ func (s *Server) handleListSavedItems(w http.ResponseWriter, r *http.Request) {
 
 	status := r.URL.Query().Get("status")
 
+	// sort selects the direction. The Saved view mixes feed types, so a
+	// cross-feed score ordering is not meaningful here and the UI does not
+	// offer it — an unsupported value is rejected rather than silently ignored,
+	// because ignoring it is what let the label disagree with the list.
+	sort := r.URL.Query().Get("sort")
+	var ascending int64
+	switch sort {
+	case "", "date_desc":
+		ascending = 0
+	case "date_asc":
+		ascending = 1
+	default:
+		writeError(w, http.StatusBadRequest, "invalid sort; must be date_desc or date_asc")
+		return
+	}
+
 	paginated := false
 	limit := int64(0)
 	offset := int64(0)
@@ -303,12 +319,35 @@ func (s *Server) handleListSavedItems(w http.ResponseWriter, r *http.Request) {
 		limit = -1
 	}
 
-	rows, err := s.queries.ListSavedItemsByUser(r.Context(), store.ListSavedItemsByUserParams{
-		UserID: userID,
-		Status: status,
-		Lim:    limit,
-		Off:    offset,
-	})
+	// One statement per direction (sqlc cannot bind a parameter inside ORDER BY),
+	// mirroring how handleListFeedItems dispatches its sorted queries. sqlc gives
+	// each statement its own row type, but the two select the same columns, so
+	// the ascending rows convert to the shared type and everything below stays
+	// direction agnostic.
+	var rows []store.ListSavedItemsByUserRow
+	var err error
+	if ascending == 1 {
+		var asc []store.ListSavedItemsByUserAscRow
+		asc, err = s.queries.ListSavedItemsByUserAsc(r.Context(), store.ListSavedItemsByUserAscParams{
+			UserID: userID,
+			Status: status,
+			Lim:    limit,
+			Off:    offset,
+		})
+		if err == nil {
+			rows = make([]store.ListSavedItemsByUserRow, len(asc))
+			for i, row := range asc {
+				rows[i] = store.ListSavedItemsByUserRow(row)
+			}
+		}
+	} else {
+		rows, err = s.queries.ListSavedItemsByUser(r.Context(), store.ListSavedItemsByUserParams{
+			UserID: userID,
+			Status: status,
+			Lim:    limit,
+			Off:    offset,
+		})
+	}
 	if err != nil {
 		writeServerError(w, "failed to list saved items", err)
 		return

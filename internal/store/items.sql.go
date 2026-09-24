@@ -1603,7 +1603,7 @@ type ListSavedItemsByUserRow struct {
 //
 // LIMIT -1 means "no limit" in SQLite, so an unpaginated call (lim = -1) returns
 // the whole list and callers that pass no limit keep working. Paging is offset
-// based and the ORDER BY ends in i.id DESC for that reason: (published_at,
+// based and the ORDER BY ends in i.id for that reason: (published_at,
 // created_at) is not unique, so a page boundary inside a tie would otherwise
 // duplicate or skip rows between requests.
 func (q *Queries) ListSavedItemsByUser(ctx context.Context, arg ListSavedItemsByUserParams) ([]ListSavedItemsByUserRow, error) {
@@ -1620,6 +1620,94 @@ func (q *Queries) ListSavedItemsByUser(ctx context.Context, arg ListSavedItemsBy
 	items := []ListSavedItemsByUserRow{}
 	for rows.Next() {
 		var i ListSavedItemsByUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Content,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.IsSaved,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.FeedID,
+			&i.FeedName,
+			&i.FeedType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSavedItemsByUserAsc = `-- name: ListSavedItemsByUserAsc :many
+SELECT i.id, i.title, substr(i.content, 1, 8192) AS content, i.comment_url, i.points, i.comments_count,
+       i.published_at, i.status, i.is_saved, substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,
+       i.feed_id, f.name AS feed_name, f.type AS feed_type
+FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = ?1 AND i.is_saved = 1
+  AND (i.status = ?2 OR ?2 = '')
+ORDER BY i.published_at ASC, i.created_at ASC, i.id ASC
+LIMIT ?4 OFFSET ?3
+`
+
+type ListSavedItemsByUserAscParams struct {
+	UserID int64  `json:"user_id"`
+	Status string `json:"status"`
+	Off    int64  `json:"off"`
+	Lim    int64  `json:"lim"`
+}
+
+type ListSavedItemsByUserAscRow struct {
+	ID             int64        `json:"id"`
+	Title          string       `json:"title"`
+	Content        string       `json:"content"`
+	CommentUrl     string       `json:"comment_url"`
+	Points         int64        `json:"points"`
+	CommentsCount  int64        `json:"comments_count"`
+	PublishedAt    sql.NullTime `json:"published_at"`
+	Status         string       `json:"status"`
+	IsSaved        int64        `json:"is_saved"`
+	ExtractContent string       `json:"extract_content"`
+	ExtractStatus  string       `json:"extract_status"`
+	FeedID         int64        `json:"feed_id"`
+	FeedName       string       `json:"feed_name"`
+	FeedType       string       `json:"feed_type"`
+}
+
+// Oldest-first twin of ListSavedItemsByUser, selected by sort=date_asc. sqlc
+// cannot bind a parameter inside ORDER BY (it leaves the placeholder in the
+// generated SQL, which SQLite then rejects), so a direction is a separate
+// statement, the same shape as the ListItemsByFeedSorted* family. Keep every
+// clause except the ordering identical to ListSavedItemsByUser: the two must
+// return the same set, or the direction silently changes which items exist.
+//
+// The tie-break is i.id ASC (mirroring the DESC twin's i.id DESC) so paging
+// walks the list without gaps or repeats in either direction.
+func (q *Queries) ListSavedItemsByUserAsc(ctx context.Context, arg ListSavedItemsByUserAscParams) ([]ListSavedItemsByUserAscRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSavedItemsByUserAsc,
+		arg.UserID,
+		arg.Status,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSavedItemsByUserAscRow{}
+	for rows.Next() {
+		var i ListSavedItemsByUserAscRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Title,

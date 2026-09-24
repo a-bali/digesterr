@@ -155,9 +155,10 @@ WHERE f.user_id = ? AND i.is_saved = 1;
 --
 -- LIMIT -1 means "no limit" in SQLite, so an unpaginated call (lim = -1) returns
 -- the whole list and callers that pass no limit keep working. Paging is offset
--- based and the ORDER BY ends in i.id DESC for that reason: (published_at,
+-- based and the ORDER BY ends in i.id for that reason: (published_at,
 -- created_at) is not unique, so a page boundary inside a tie would otherwise
 -- duplicate or skip rows between requests.
+--
 SELECT i.id, i.title, substr(i.content, 1, 8192) AS content, i.comment_url, i.points, i.comments_count,
        i.published_at, i.status, i.is_saved, substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,
        i.feed_id, f.name AS feed_name, f.type AS feed_type
@@ -166,6 +167,26 @@ JOIN feeds f ON f.id = i.feed_id
 WHERE f.user_id = @user_id AND i.is_saved = 1
   AND (i.status = @status OR @status = '')
 ORDER BY i.published_at DESC, i.created_at DESC, i.id DESC
+LIMIT @lim OFFSET @off;
+
+-- name: ListSavedItemsByUserAsc :many
+-- Oldest-first twin of ListSavedItemsByUser, selected by sort=date_asc. sqlc
+-- cannot bind a parameter inside ORDER BY (it leaves the placeholder in the
+-- generated SQL, which SQLite then rejects), so a direction is a separate
+-- statement, the same shape as the ListItemsByFeedSorted* family. Keep every
+-- clause except the ordering identical to ListSavedItemsByUser: the two must
+-- return the same set, or the direction silently changes which items exist.
+--
+-- The tie-break is i.id ASC (mirroring the DESC twin's i.id DESC) so paging
+-- walks the list without gaps or repeats in either direction.
+SELECT i.id, i.title, substr(i.content, 1, 8192) AS content, i.comment_url, i.points, i.comments_count,
+       i.published_at, i.status, i.is_saved, substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,
+       i.feed_id, f.name AS feed_name, f.type AS feed_type
+FROM items i
+JOIN feeds f ON f.id = i.feed_id
+WHERE f.user_id = @user_id AND i.is_saved = 1
+  AND (i.status = @status OR @status = '')
+ORDER BY i.published_at ASC, i.created_at ASC, i.id ASC
 LIMIT @lim OFFSET @off;
 
 -- name: CountSavedItemsByUser :one

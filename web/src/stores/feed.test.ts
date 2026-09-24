@@ -40,7 +40,7 @@ describe('feed store saved view pagination', () => {
 
     await store.fetchSavedItems()
 
-    expect(feedApi.savedItems).toHaveBeenCalledWith({ status: undefined, limit: 50, offset: 0 })
+    expect(feedApi.savedItems).toHaveBeenCalledWith({ status: undefined, sort: 'date_desc', limit: 50, offset: 0 })
     expect(store.savedItems).toHaveLength(2)
     expect(store.hasMore).toBe(true)
     expect(store.savedTotal).toBe(7)
@@ -63,7 +63,7 @@ describe('feed store saved view pagination', () => {
     })
     await store.fetchMoreSavedItems()
 
-    expect(feedApi.savedItems).toHaveBeenLastCalledWith({ status: undefined, limit: 50, offset: 2 })
+    expect(feedApi.savedItems).toHaveBeenLastCalledWith({ status: undefined, sort: 'date_desc', limit: 50, offset: 2 })
     expect(store.savedItems.map(i => i.id)).toEqual([1, 2, 3, 4])
     expect(store.hasMore).toBe(false)
   })
@@ -76,7 +76,7 @@ describe('feed store saved view pagination', () => {
     store.filter = 'unread'
     await store.fetchSavedItems()
 
-    expect(feedApi.savedItems).toHaveBeenCalledWith({ status: 'unread', limit: 50, offset: 0 })
+    expect(feedApi.savedItems).toHaveBeenCalledWith({ status: 'unread', sort: 'date_desc', limit: 50, offset: 0 })
   })
 
   it('does not page when there is nothing more to load', async () => {
