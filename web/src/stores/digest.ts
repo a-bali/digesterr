@@ -21,6 +21,13 @@ export const useDigestStore = defineStore('digest', () => {
   const loadingMore = ref(false)
   const loadingContent = ref(false)
   const hasMore = ref(false)
+  // How many rows the SERVER has already served for the current view. This is
+  // the paging offset, not the local array length: the two diverge because the
+  // background refresh merges page one into a list that may reach further, and
+  // because a row can drop out of the served window when its status changes.
+  // Deriving the offset from results.value.length skipped real rows after
+  // either happened.
+  const nextOffset = ref(0)
   const unreadCounts = ref<Record<number, number>>({})
   const allResults = ref<DigestResultWithConfigName[]>([])
   const showingAllDigests = ref(false)
@@ -154,10 +161,14 @@ export const useDigestStore = defineStore('digest', () => {
     resultItems.value = []
     loading.value = true
     hasMore.value = false
+    nextOffset.value = 0
     try {
       const resp = await digestApi.listResults(id, { limit: PAGE_SIZE, offset: 0, ...listQueryOpts() })
       if (rid !== resultsReq) return
       results.value = resp.results.map(normalize)
+      // Advance the served offset past page one, or the first fetchMoreResults
+      // would ask for offset 0 again and pagination would stall.
+      nextOffset.value = resp.results.length
       hasMore.value = resp.has_more
     } catch (e) {
       if (rid !== resultsReq) return
@@ -291,14 +302,25 @@ export const useDigestStore = defineStore('digest', () => {
     const cfgId = activeConfigId.value
     if (!hasMore.value || loadingMore.value || loading.value) return
     const rid = ++resultsReq
-    // Capture the offset at request time so a newer request can't shift the
-    // list out from under this page append.
-    const offset = results.value.length
+    // The offset counts rows the SERVER has served, not rows on screen. Using
+    // results.value.length sent the next request past rows that the refresh had
+    // dropped, silently skipping results the user never saw.
+    const offset = nextOffset.value
     loadingMore.value = true
     try {
       const resp = await digestApi.listResults(cfgId, { limit: PAGE_SIZE, offset, ...listQueryOpts() })
       if (rid !== resultsReq) return
-      results.value.push(...resp.results.map(normalize))
+      const page = resp.results.map(normalize)
+      // Advance by what was SERVED, so the next page starts where this one
+      // ended even if some of it was filtered out of the visible list.
+      nextOffset.value = offset + page.length
+      const have = new Set(results.value.map(r => r.id))
+      const fresh = page.filter(r => !have.has(r.id))
+      if (listQueryOpts().status != null) {
+        results.value.push(...fresh.filter(r => r.status === listQueryOpts().status))
+      } else {
+        results.value.push(...fresh)
+      }
       hasMore.value = resp.has_more
     } catch {
       // silent
@@ -317,19 +339,23 @@ export const useDigestStore = defineStore('digest', () => {
       loadingMore.value = true
     }
     try {
+      const offset = replace ? 0 : nextOffset.value
       const resp = await digestApi.listAllResults({
         limit: PAGE_SIZE,
-        offset: replace ? 0 : allResults.value.length,
+        offset,
         ...listQueryOpts(),
       })
       if (rid !== resultsReq) return
       // normalize() maps the API's "new" to "unread". Without it the All-Digests
       // view rendered unread results as read (grey, no dot) and the Unread
       // filter matched nothing, because the status never equalled 'unread'.
+      const page = resp.results.map(normalize)
+      nextOffset.value = offset + page.length
       if (replace) {
-        allResults.value = resp.results.map(normalize)
+        allResults.value = page
       } else {
-        allResults.value.push(...resp.results.map(normalize))
+        const have = new Set(allResults.value.map(r => r.id))
+        allResults.value.push(...page.filter(r => !have.has(r.id)))
       }
       hasMore.value = resp.has_more
     } catch (e) {
@@ -346,6 +372,7 @@ export const useDigestStore = defineStore('digest', () => {
     selectedResult.value = null
     resultItems.value = []
     allResults.value = []
+    nextOffset.value = 0
     loadAllResults(true)
   }
 
@@ -368,10 +395,39 @@ export const useDigestStore = defineStore('digest', () => {
   // there another page after the ones I have", and a first-page response cannot
   // know that — adopting its value would re-enable infinite scroll on a fully
   // loaded list, or stop it early.
-  function mergeById<T extends DigestResult>(loaded: T[], fetched: T[]): T[] {
+  //
+  // Three corrections on top of that merge, all reported after it shipped:
+  //
+  //   - The sort is the SERVER's, in the user's selected direction. mergeById
+  //     used to hardcode newest-first, so a refresh dropped a refreshed row at
+  //     the top of a list the user had set to "Oldest", contradicting the order
+  //     on screen.
+  //   - Rows that no longer belong are DROPPED. The merge only added or
+  //     updated, so a result marked read from another client stayed visible
+  //     under the unread filter that excludes it.
+  //   - The paging offset counts rows the SERVER served, tracked in nextOffset,
+  //     not the local array length. Rows retained from an earlier page that the
+  //     server no longer returns inflated the length, so the next request
+  //     skipped real rows.
+  //
+  // Visibility is reconciled against what the server currently serves:
+  //
+  //   - Rows failing the active status filter are dropped, so a result marked
+  //     read elsewhere disappears from an unread view instead of lingering.
+  //   - When the response reports NO further rows, it describes the server's
+  //     entire set, so any loaded row it does not return is gone (deleted, or
+  //     filtered out server-side) and is removed too. When further rows DO
+  //     exist the client may legitimately hold rows from a deeper page that
+  //     this page-one refresh knows nothing about, so those are kept -- that is
+  //     what stops the refresh truncating a scrolled list.
+  function mergeById<T extends DigestResult>(loaded: T[], fetched: T[], hasMore: boolean): T[] {
     if (fetched.length === 0) return loaded
     const byId = new Map<number, T>()
     for (const r of fetched) byId.set(r.id, r)
+
+    const opts = listQueryOpts()
+    const matchesFilter = (r: T) => opts.status == null || normalize({ ...r }).status === opts.status
+
     const seen = new Set<number>()
     const out = loaded.map(r => {
       const fresh = byId.get(r.id)
@@ -384,11 +440,21 @@ export const useDigestStore = defineStore('digest', () => {
     for (const r of fetched) {
       if (!seen.has(r.id)) out.push(r)
     }
-    // Newest first, matching the server's ordering, so a refreshed row that
-    // moved to the top actually appears there.
-    return out.sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-    )
+
+    // The client's paging offset counts rows the SERVER served, so it is a
+    // high-water mark that only grows. results.value.length is not usable here:
+    // it diverges as soon as the refresh merges page one into a longer list, or
+    // a row drops out of the served window.
+    nextOffset.value = Math.max(nextOffset.value, fetched.length)
+
+    // Order in the direction the user selected, so a refreshed row lands where
+    // the server puts it rather than jumping to the top of an "Oldest" list.
+    const dir = opts.sort === 'oldest' ? 1 : -1
+
+    const kept = hasMore ? out : out.filter(r => byId.has(r.id))
+    const filtered = kept.filter(matchesFilter)
+    filtered.sort((a, b) => dir * (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()))
+    return filtered
   }
 
   async function silentRefresh() {
@@ -397,7 +463,7 @@ export const useDigestStore = defineStore('digest', () => {
       configs.value = await digestApi.listConfigs()
       if (showingAllDigests.value) {
         const resp = await digestApi.listAllResults({ limit: PAGE_SIZE, offset: 0, ...listQueryOpts() })
-        allResults.value = mergeById(allResults.value, resp.results.map(normalize))
+        allResults.value = mergeById(allResults.value, resp.results.map(normalize), resp.has_more)
         return
       }
       const cfgId = activeConfigId.value
@@ -405,7 +471,7 @@ export const useDigestStore = defineStore('digest', () => {
         const rid = ++resultsReq
         const resp = await digestApi.listResults(cfgId, { limit: PAGE_SIZE, offset: 0, ...listQueryOpts() })
         if (rid !== resultsReq) return
-        results.value = mergeById(results.value, resp.results.map(normalize))
+        results.value = mergeById(results.value, resp.results.map(normalize), resp.has_more)
       }
     } catch {
       // silent
@@ -507,17 +573,47 @@ export const useDigestStore = defineStore('digest', () => {
     }
     // Reset paging: the loaded rows answered the OLD query.
     hasMore.value = false
+    nextOffset.value = 0
     await setActiveConfig(activeConfigId.value)
+  }
+
+  // toggleResultFilter is the single funnel for changing the digest status
+  // filter: it sets the filter AND refetches.
+  //
+  // The 'u' shortcut used to assign resultFilter directly, while the list's own
+  // dropdown went through a computed setter that also called refetchList. Both
+  // mutate the same state, so the shortcut left the PREVIOUS query's rows on
+  // screen: the filter control showed "Unread" while the list still held the
+  // unfiltered page. One funnel, so the two entry points cannot drift again.
+  function toggleResultFilter() {
+    resultFilter.value = resultFilter.value === 'unread' ? 'all' : 'unread'
+    void refetchList()
+  }
+
+  // setResultFilter is the explicit-value twin of toggleResultFilter, for the
+  // dropdown. Both entry points go through one path so neither can change the
+  // filter without re-querying.
+  function setResultFilter(v: 'all' | 'unread' | 'read') {
+    resultFilter.value = v
+    void refetchList()
+  }
+
+  // setResultSort is the same funnel for the sort direction: the order is
+  // applied by the SERVER, so changing it must re-query rather than re-sort the
+  // loaded page.
+  function setResultSort(v: 'newest' | 'oldest') {
+    resultSort.value = v
+    void refetchList()
   }
 
   return {
     configs, activeConfigId, results, selectedResult, resultItems,
-    loading, generating, loadingMore, loadingContent, hasMore, activeConfig, unreadCounts, backgroundRefreshing,
+    loading, generating, loadingMore, loadingContent, hasMore, nextOffset, activeConfig, unreadCounts, backgroundRefreshing,
     allResults, showingAllDigests, resultFilter, resultSort,
     fetchConfigs, createConfig, updateConfig, deleteConfig,
     setActiveConfig, selectResult, selectResultById, generateNow, markResultRead, deleteResult,
     updateResultStatus, silentRefresh, fetchUnreadCounts, fetchMoreResults,
     loadAllResults, enterAllDigestsMode, exitAllDigestsMode, markAllRead, markReadAbove, markReadBelow,
-    refetchList,
+    refetchList, toggleResultFilter, setResultFilter, setResultSort,
   }
 })

@@ -75,7 +75,7 @@ describe('digest store silent refresh', () => {
     expect(store.hasMore).toBe(true)
   })
 
-  it('does not shrink a fully loaded list when the refresh reports no more', async () => {
+  it('drops a loaded row the server no longer returns once it reports no more', async () => {
     const api = await mockApi()
     const store = useDigestStore()
     store.activeConfigId = 1
@@ -91,8 +91,40 @@ describe('digest store silent refresh', () => {
 
     await store.silentRefresh()
 
-    expect(store.results.map(r => r.id)).toEqual([30, 20, 10])
+    // 10 is gone. This assertion was the OPPOSITE when the merge first landed:
+    // it demanded [30, 20, 10], on the reasoning that a refresh must never
+    // shrink the list. That was wrong. With has_more false the server has
+    // returned its COMPLETE set, so a row it omits no longer exists for this
+    // view -- it was deleted, or its status took it out of the active filter.
+    // Keeping it left the user looking at a result the server does not have,
+    // and its stale presence inflated the paging offset. The no-truncation
+    // guarantee is about a refresh that still has further pages to come; see
+    // the has_more=true case below.
+    expect(store.results.map(r => r.id)).toEqual([30, 20])
     expect(store.hasMore).toBe(false)
+  })
+
+  it('keeps rows from a deeper page while further pages still exist', async () => {
+    const api = await mockApi()
+    const store = useDigestStore()
+    store.activeConfigId = 1
+    // Three pages loaded; the refresh will only ask for page one.
+    store.results = [result(30), result(20), result(10)]
+    store.hasMore = true
+
+    ;(api.listConfigs as any).mockResolvedValue([])
+    ;(api.listResults as any).mockResolvedValue({
+      results: [result(30), result(20)],
+      has_more: true,
+    })
+
+    await store.silentRefresh()
+
+    // 10 is kept: page one says nothing about it, and there are further pages
+    // that might hold it. Dropping rows here is what made a user who had
+    // scrolled to page three watch pages two and three vanish every ten seconds.
+    expect(store.results.map(r => r.id)).toEqual([30, 20, 10])
+    expect(store.hasMore).toBe(true)
   })
 
   it('refreshes the All-Digests list too, not only a single config', async () => {

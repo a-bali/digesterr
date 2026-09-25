@@ -115,6 +115,12 @@ func TestRunTicksServesMinutesSkippedBySlowGeneration(t *testing.T) {
 	}
 	addItems(t, queries, feedObj.ID, "late-tick", 1)
 
+	// The config must predate the occurrence under test. created_at defaults
+	// to the real wall clock, which is LATER than this test's pinned 05:00
+	// scheduler clock, so without this the pre-creation guard would skip the
+	// 05:03 occurrence for a reason unrelated to what the test asserts.
+	setConfigCreatedAt(t, db, cfg.ID, time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC))
+
 	gen := NewGenerator(db, queries, fakeLLM{resp: digestReplyForItem("late-tick")}, feed.NewPoller(queries))
 	s := NewScheduler(queries, gen, time.UTC)
 

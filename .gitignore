@@ -7,6 +7,9 @@ bin/
 /digesterr
 *.db*
 data/
+# The bound port the server records for `digesterr healthcheck` (see
+# cmd/digesterr/healthcheck.go). Runtime state, not source.
+.digesterr-port
 
 # Air
 tmp/

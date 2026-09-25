@@ -172,8 +172,31 @@ func (s *Server) handleSignin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSignout(w http.ResponseWriter, r *http.Request) {
+	// The token may arrive as a cookie OR in the JSON body, because handleRefresh
+	// accepts both. A non-browser client that signs in and refreshes with a body
+	// token has no cookie to read, so looking only at the cookie left it unable
+	// to revoke: the row survived and the token stayed valid until expiry, which
+	// is exactly the state signout exists to end.
+	token := ""
 	if cookie, err := r.Cookie("refresh_token"); err == nil {
-		s.auth.DeleteRefreshToken(r.Context(), cookie.Value)
+		token = cookie.Value
+	}
+	if token == "" && r.Body != nil {
+		var req refreshRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+			token = req.RefreshToken
+		}
+	}
+	if token != "" {
+		if err := s.auth.DeleteRefreshToken(r.Context(), token); err != nil {
+			// Revocation failed: report it rather than answering "signed out".
+			// A client that believes it revoked a live credential is worse off
+			// than one that knows it did not.
+			slog.Error("signout: failed to delete refresh token",
+				logging.CategoryAttr(logging.CategoryAuth), "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to revoke refresh token")
+			return
+		}
 	}
 	http.SetCookie(w, s.refreshCookie(r, "", -1))
 	writeJSON(w, http.StatusOK, map[string]string{"message": "signed out"})

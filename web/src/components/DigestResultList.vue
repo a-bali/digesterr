@@ -36,13 +36,12 @@ const { onScroll } = useInfiniteScroll({
 // one was unreachable. Changing either re-queries page one.
 const digestFilter = computed({
   get: () => digestStore.resultFilter,
-  set: v => { digestStore.resultFilter = v; digestStore.refetchList() },
+  set: v => digestStore.setResultFilter(v),
 })
 const sortOrder = computed({
   get: () => digestStore.resultSort,
-  set: v => { digestStore.resultSort = v; digestStore.refetchList() },
+  set: v => digestStore.setResultSort(v),
 })
-
 const STATUS_OPTIONS: { value: FilterStatus; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'unread', label: 'Unread' },
