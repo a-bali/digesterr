@@ -200,6 +200,14 @@ func (s *Server) handleGenerateDigest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "a digest generation for this config is already in progress")
 		return
 	}
+	if errors.Is(err, digest.ErrNoUnreadItems) {
+		// Nothing to digest. Not a failure, so it must not be stored as one —
+		// and the response says so, so the UI can report it as a quiet no-op
+		// instead of "Digest generation failed" on a healthy config.
+		s.queries.ClearDigestConfigError(r.Context(), configID)
+		writeError(w, http.StatusConflict, "no unread items to digest")
+		return
+	}
 	if err != nil {
 		// The full error is server-side only. Upstream LLM bodies can be long
 		// and carry provider internals, and the config error column is surfaced

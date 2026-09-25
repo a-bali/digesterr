@@ -184,7 +184,14 @@ export const useDigestStore = defineStore('digest', () => {
       // run still on its LLM call, or a double click). Nothing failed — the
       // work the user asked for is happening — so it must not read as an error.
       if (e instanceof ApiError && e.status === 409) {
-        toastInfo('Digest generation already in progress', configName(configId))
+        // The same status covers "nothing to digest", which is also not a
+        // failure: a quiet stretch is a normal outcome for a working config.
+        const msg = e.message || ''
+        if (/no unread items/i.test(msg)) {
+          toastInfo('No unread items to digest', configName(configId))
+        } else {
+          toastInfo('Digest generation already in progress', configName(configId))
+        }
       } else {
         toastError(e, 'Digest generation failed', configName(configId))
       }

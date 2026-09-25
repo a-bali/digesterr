@@ -214,12 +214,15 @@ export const useFeedStore = defineStore('feed', () => {
     }
   }
 
-  async function fetchFeeds() {
+  // fetchFeeds reloads the feed list (and the unread counts that come with it).
+  // `silent` is for the background poll: a transient failure there must not
+  // raise an error toast the user never asked for, every 10 seconds.
+  async function fetchFeeds(opts?: { silent?: boolean }) {
     try {
       feeds.value = await feedApi.list()
       unreadCounts.value = await feedApi.unreadCounts()
     } catch (e) {
-      toastError(e, 'Failed to load feeds')
+      if (!opts?.silent) toastError(e, 'Failed to load feeds')
     }
   }
 
@@ -685,9 +688,13 @@ export const useFeedStore = defineStore('feed', () => {
 
   // loadSavedPage loads one page of the Saved view, replacing or appending.
   // Mirrors loadMultiPage: same PAGE_SIZE, same request-id guard, same
-  // hasMore/total bookkeeping. The status filter is sent to the SERVER rather
-  // than applied to the loaded rows, because a client-side filter would only
-  // ever see the pages fetched so far.
+  // hasMore/total bookkeeping.
+  //
+  // The Saved view ALWAYS shows every saved item, whatever the persisted
+  // read-state filter says: saving something is an explicit act of keeping it,
+  // so a global "Unread only" setting (meant for browsing feeds) must not hide
+  // it. The filter is therefore never sent here. The list is paginated, so the
+  // decision has to be made server-side — the client only ever holds one page.
   async function loadSavedPage(replace: boolean) {
     const rid = ++fetchReq
     if (replace) {
@@ -698,7 +705,7 @@ export const useFeedStore = defineStore('feed', () => {
     }
     try {
       const resp = await feedApi.savedItems({
-        status: filter.value === 'all' || filter.value === 'saved' ? undefined : filter.value,
+        // Deliberately no `status`: '' on the server means every saved item.
         // The Saved view offers only the two date orders (it mixes feed types,
         // so a cross-feed score order is not meaningful there), and the server
         // applies the direction — sorting the loaded page client-side would

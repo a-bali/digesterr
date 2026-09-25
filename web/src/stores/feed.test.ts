@@ -68,7 +68,12 @@ describe('feed store saved view pagination', () => {
     expect(store.hasMore).toBe(false)
   })
 
-  it('sends the read-state filter to the server', async () => {
+  // The Saved view ALWAYS shows every saved item. It used to forward the
+  // persisted read-state filter to the server, so a global "Unread only" setting
+  // (meant for browsing feeds) silently hid saved items the user had explicitly
+  // chosen to keep. Saving something is an act of keeping it, so the filter must
+  // not apply here at all.
+  it('sends NO read-state filter, even when one is set for feeds', async () => {
     const { feedApi } = await import('../services/api')
     const store = useFeedStore()
     ;(feedApi.savedItems as any).mockResolvedValue({ items: [], has_more: false, total: 0 })
@@ -76,7 +81,7 @@ describe('feed store saved view pagination', () => {
     store.filter = 'unread'
     await store.fetchSavedItems()
 
-    expect(feedApi.savedItems).toHaveBeenCalledWith({ status: 'unread', sort: 'date_desc', limit: 50, offset: 0 })
+    expect(feedApi.savedItems).toHaveBeenCalledWith({ sort: 'date_desc', limit: 50, offset: 0 })
   })
 
   it('does not page when there is nothing more to load', async () => {

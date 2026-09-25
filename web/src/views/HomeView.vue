@@ -172,6 +172,20 @@ useKeyboardShortcuts({
       digestStore.resultFilter = digestStore.resultFilter === 'unread' ? 'all' : 'unread'
       return
     }
+    // The Saved view always shows every saved item, so there is nothing here for
+    // 'u' to toggle. The one filter it could reach is the persisted item
+    // filter, which this view ignores: flipping that would be invisible AND
+    // would overwrite the filter the user set for their feeds.
+    //
+    // This is a deliberate no-op, not a copy of the digest case above. A digest
+    // view can redirect 'u' to the digest's OWN filter (results carry their own
+    // read state), so the keypress still does something visible there. Saved
+    // items have no equivalent view-local filter — adding one would contradict
+    // the rule that Saved always shows everything — so there is nowhere to
+    // redirect to and doing nothing is the only honest behaviour. The only
+    // property shared with the digest case is that neither overwrites the
+    // persisted item filter.
+    if (feedStore.showingSaved) return
     feedStore.changeFilter(feedStore.filter === 'unread' ? 'all' : 'unread')
   },
   refreshCounts: () => {
@@ -205,6 +219,14 @@ onMounted(() => {
     feedStore.fetchUnreadCounts()
     digestStore.fetchUnreadCounts()
     feedStore.fetchSavedCount()
+    // Feed rows carry last_error/last_error_severity, and a poll on the server
+    // clears a feed's error as soon as it recovers. Nothing else refetches the
+    // feed list on a timer, so without this the sidebar kept showing the red
+    // (or amber) mark after the condition had already gone — the error only
+    // disappeared on a reload or some unrelated feed action. Digest configs
+    // refresh their own list in the same tick (silentRefresh), which is why
+    // digest errors cleared but feed errors did not.
+    feedStore.fetchFeeds({ silent: true })
     digestStore.silentRefresh()
   }, 10000)
   // External clients (e.g. NetNewsWire via the Reader API) can change item

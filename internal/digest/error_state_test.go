@@ -48,11 +48,15 @@ func TestSchedulerSetsErrorOnFailure(t *testing.T) {
 		t.Fatalf("create digest config: %v", err)
 	}
 
-	// Create a scheduler with a nil generator that returns an error
-	s := NewScheduler(queries, &Generator{queries: queries}, nil)
+	// Items to digest, so the run reaches the LLM instead of stopping at the
+	// empty-pool skip (an empty pool is a normal outcome, not a failure).
+	addItems(t, queries, feedObj.ID, "errstate", 1)
+
+	// A scheduler whose LLM always fails: a genuine generation failure.
+	gen := NewGenerator(nil, queries, failingChatter{}, feed.NewPoller(queries))
+	s := NewScheduler(queries, gen, nil)
 	s.tick(ctx)
 
-	// The generator has no LLM, so Generate should fail.
 	// Give the goroutine a moment to complete.
 	// We check the config error state directly.
 	cfgAfter, err := queries.GetDigestConfig(ctx, store.GetDigestConfigParams{

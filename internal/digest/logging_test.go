@@ -3,6 +3,7 @@ package digest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -310,8 +311,20 @@ func TestGeneratorFetchCommentsInfoLogs(t *testing.T) {
 	testutil.AssertAllCategorized(t, capture)
 }
 
+// failingChatter is a Chatter whose every call fails. Used where a test needs a
+// genuine generation failure rather than a normal no-op outcome.
+type failingChatter struct{}
+
+func (failingChatter) Chat(_ context.Context, _, _ string) (string, error) {
+	return "", errors.New("llm unavailable")
+}
+
 // TestSchedulerGenerationFailureLogs verifies a failed scheduled digest
 // generation is logged at error with config context.
+//
+// The failure has to be a REAL one. This test used to rely on the config having
+// no unread items, which is no longer an error — an empty pool is a normal
+// outcome, deliberately reported as a skip rather than a failure.
 func TestSchedulerGenerationFailureLogs(t *testing.T) {
 	_, queries, cleanup := setupDigestTest(t)
 	defer cleanup()
@@ -338,6 +351,11 @@ func TestSchedulerGenerationFailureLogs(t *testing.T) {
 		t.Fatalf("create feed: %v", err)
 	}
 
+	// An item to digest, so the run reaches the LLM instead of stopping at the
+	// empty-pool skip. With no LLM configured the chat call fails, which is the
+	// real failure this test asserts is logged.
+	addItems(t, queries, feedObj.ID, "logging", 1)
+
 	cfg, err := queries.CreateDigestConfig(ctx, store.CreateDigestConfigParams{
 		UserID:   user.ID,
 		Name:     "Hourly Digest",
@@ -349,7 +367,11 @@ func TestSchedulerGenerationFailureLogs(t *testing.T) {
 	}
 
 	capture := testutil.CaptureSlog(t, slog.LevelInfo)
-	s := NewScheduler(queries, &Generator{queries: queries}, nil)
+	// A Chatter that always fails. The generation must reach the LLM (there is
+	// an item to digest now) and fail there, which is what this test asserts is
+	// logged as an error.
+	gen := NewGenerator(nil, queries, failingChatter{}, feed.NewPoller(queries))
+	s := NewScheduler(queries, gen, nil)
 	s.tick(ctx)
 
 	start, ok := capture.Find("scheduled digest generation")

@@ -3,10 +3,12 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
 
+	"digesterr/internal/digest"
 	"digesterr/internal/store"
 	"digesterr/internal/testutil"
 )
@@ -68,6 +70,11 @@ func TestHTTPRequestLogHiddenAtInfo(t *testing.T) {
 
 // TestHTTP5xxWarn verifies a 500 response promotes the request to a warn
 // record and that the failed action itself is logged at error with context.
+//
+// The generation must fail for a REAL reason. This test used to rely on the
+// config's feed having no unread items, but an empty pool is no longer an error
+// — it is a normal outcome reported as a conflict, not a 500. An LLM endpoint
+// returning 500 is an unambiguous, reproducible failure.
 func TestHTTP5xxWarn(t *testing.T) {
 	server, queries := setupTestServer(t)
 	user := createTestUser(t, queries, "genfail@example.com", "password123")
@@ -76,7 +83,7 @@ func TestHTTP5xxWarn(t *testing.T) {
 	feedObj, err := queries.CreateFeed(t.Context(), store.CreateFeedParams{
 		UserID: user.ID,
 		Type:   "rss",
-		Name:   "Empty Feed",
+		Name:   "Feed",
 		Url:    "https://example.com/feed.xml",
 		Config: "{}",
 		Status: "active",
@@ -84,9 +91,29 @@ func TestHTTP5xxWarn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create feed: %v", err)
 	}
+	// One unread item, so the run gets past the empty-pool check and reaches
+	// the LLM, where it fails.
+	if _, err := queries.CreateItem(t.Context(), store.CreateItemParams{
+		FeedID: feedObj.ID,
+		Hash:   "genfail-1",
+		Title:  "Item",
+		Url:    "https://example.com/genfail-1",
+		Status: "unread",
+	}); err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+
+	// An LLM endpoint that always fails.
+	mockLLM := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"upstream exploded"}`))
+	}))
+	t.Cleanup(mockLLM.Close)
+	server.llmClient = digest.NewLLMClient(mockLLM.URL, "test-key", "test-model")
+
 	cfg, err := queries.CreateDigestConfig(t.Context(), store.CreateDigestConfigParams{
 		UserID:   user.ID,
-		Name:     "Empty Config",
+		Name:     "Failing Config",
 		Schedule: "* * * * *",
 		Config:   `{"feeds":[{"id":` + strconv.FormatInt(feedObj.ID, 10) + `,"highlights":2,"comments":5}]}`,
 	})

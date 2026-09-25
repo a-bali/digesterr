@@ -62,6 +62,24 @@ describe('digest store generation conflict', () => {
     expect(toastInfo.mock.calls[0][0]).toMatch(/already in progress/i)
   })
 
+  it('reports an empty item pool as info, not as a failure', async () => {
+    // The same 409 as an in-progress run, but for the other normal outcome:
+    // there was nothing new to digest. A quiet stretch must not read as
+    // "Digest generation failed" on a config that is working correctly.
+    const { digestApi, ApiError } = await import('../services/api')
+    ;(digestApi.generate as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new ApiError(409, { error: 'no unread items to digest' }),
+    )
+
+    const store = useDigestStore()
+    const result = await store.generateNow(7)
+
+    expect(result).toBeNull()
+    expect(toastError).not.toHaveBeenCalled()
+    expect(toastInfo).toHaveBeenCalledTimes(1)
+    expect(toastInfo.mock.calls[0][0]).toMatch(/no unread items/i)
+  })
+
   it('still reports a real failure as an error', async () => {
     const { digestApi, ApiError } = await import('../services/api')
     ;(digestApi.generate as ReturnType<typeof vi.fn>).mockRejectedValueOnce(

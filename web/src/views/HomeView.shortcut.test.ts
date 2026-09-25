@@ -83,6 +83,34 @@ async function mountAt(path: string) {
   return { wrapper, router }
 }
 
+describe("'u' shortcut in the saved view", () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.clearAllMocks()
+  })
+
+  it('does nothing, and does not touch the persisted item filter', async () => {
+    // Saved always shows every saved item, so there is no view-local filter for
+    // 'u' to redirect to (unlike a digest view, which has its own). The risk is
+    // not that the keypress is inert, it is that it silently flips the stored
+    // item filter — which the user cannot see from here, and which the next
+    // feed visit would then honour.
+    const { useFeedStore } = await import('../stores/feed')
+    const { wrapper } = await mountAt('/saved')
+    const feedStore = useFeedStore()
+    await flushPromises()
+
+    const before = feedStore.filter
+    pressU()
+    await flushPromises()
+
+    expect(feedStore.filter).toBe(before)
+    expect(feedStore.showingSaved).toBe(true)
+    expect(localStorage.getItem('digesterr-filter')).toBeNull()
+    wrapper.unmount()
+  })
+})
+
 describe("'u' shortcut in digest view", () => {
   beforeEach(() => {
     localStorage.clear()

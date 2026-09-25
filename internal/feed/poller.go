@@ -1039,8 +1039,19 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 		logger.Error("failed to record feed success", "error", err)
 	}
 
+	// A successful poll clears whatever the last failure left behind, at EITHER
+	// severity. Called unconditionally: the query is a no-op when there is
+	// nothing to clear, and this path cannot know the row's current error state
+	// — the `feed` struct was read before the failure was recorded, so gating on
+	// feed.LastError left a fresh error in place forever.
+	//
+	// Clearing only when status was 'error' was the original bug: enrichment
+	// failures record a WARNING and never touch status, so their last_error was
+	// permanent — it survived every successful poll and had no other clear path.
+	_ = p.queries.ClearFeedError(ctx, feed.ID)
+	// Only an errored feed returns to 'active'. A feed the user paused must not
+	// be un-paused by a poll, and this is about the error, not the lifecycle.
 	if feed.Status == "error" {
-		_ = p.queries.ClearFeedError(ctx, feed.ID)
 		_, _ = p.queries.UpdateFeedStatus(ctx, store.UpdateFeedStatusParams{
 			ID:     feed.ID,
 			Status: "active",
