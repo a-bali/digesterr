@@ -15,11 +15,38 @@ const countAllDigestResultsByUser = `-- name: CountAllDigestResultsByUser :one
 SELECT CAST(COUNT(*) AS INTEGER) AS count
 FROM digest_results dr
 JOIN digest_configs dc ON dc.id = dr.config_id
-WHERE dr.user_id = ?
+WHERE dr.user_id = ?1
+  AND (dr.status = ?2 OR ?2 IS NULL)
 `
 
-func (q *Queries) CountAllDigestResultsByUser(ctx context.Context, userID int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countAllDigestResultsByUser, userID)
+type CountAllDigestResultsByUserParams struct {
+	UserID int64          `json:"user_id"`
+	Status sql.NullString `json:"status"`
+}
+
+func (q *Queries) CountAllDigestResultsByUser(ctx context.Context, arg CountAllDigestResultsByUserParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAllDigestResultsByUser, arg.UserID, arg.Status)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countDigestResultsByConfig = `-- name: CountDigestResultsByConfig :one
+SELECT CAST(COUNT(*) AS INTEGER) AS count
+FROM digest_results
+WHERE config_id = ?1
+  AND user_id = ?2
+  AND (status = ?3 OR ?3 IS NULL)
+`
+
+type CountDigestResultsByConfigParams struct {
+	ConfigID int64          `json:"config_id"`
+	UserID   int64          `json:"user_id"`
+	Status   sql.NullString `json:"status"`
+}
+
+func (q *Queries) CountDigestResultsByConfig(ctx context.Context, arg CountDigestResultsByConfigParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countDigestResultsByConfig, arg.ConfigID, arg.UserID, arg.Status)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -208,15 +235,17 @@ SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
        + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
 FROM digest_results dr
 JOIN digest_configs dc ON dc.id = dr.config_id
-WHERE dr.user_id = ?
-ORDER BY dr.created_at DESC
-LIMIT ? OFFSET ?
+WHERE dr.user_id = ?1
+  AND (dr.status = ?2 OR ?2 IS NULL)
+ORDER BY dr.created_at DESC, dr.id DESC
+LIMIT ?4 OFFSET ?3
 `
 
 type ListAllDigestResultsByUserParams struct {
-	UserID int64 `json:"user_id"`
-	Limit  int64 `json:"limit"`
-	Offset int64 `json:"offset"`
+	UserID int64          `json:"user_id"`
+	Status sql.NullString `json:"status"`
+	Offset int64          `json:"offset"`
+	Limit  int64          `json:"limit"`
 }
 
 type ListAllDigestResultsByUserRow struct {
@@ -233,8 +262,17 @@ type ListAllDigestResultsByUserRow struct {
 
 // Preview query for the middle pane: excludes heavy content/config_snapshot,
 // pre-computes title and item_count from the stored JSON.
+//
+// status is applied server-side for the same reason as the per-config query:
+// the All-Digests list has the identical filter control, and filtering only the
+// loaded page left older matches unreachable.
 func (q *Queries) ListAllDigestResultsByUser(ctx context.Context, arg ListAllDigestResultsByUserParams) ([]ListAllDigestResultsByUserRow, error) {
-	rows, err := q.db.QueryContext(ctx, listAllDigestResultsByUser, arg.UserID, arg.Limit, arg.Offset)
+	rows, err := q.db.QueryContext(ctx, listAllDigestResultsByUser,
+		arg.UserID,
+		arg.Status,
+		arg.Offset,
+		arg.Limit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -242,6 +280,79 @@ func (q *Queries) ListAllDigestResultsByUser(ctx context.Context, arg ListAllDig
 	items := []ListAllDigestResultsByUserRow{}
 	for rows.Next() {
 		var i ListAllDigestResultsByUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ConfigID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ConfigName,
+			&i.Title,
+			&i.ItemCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllDigestResultsByUserOldestFirst = `-- name: ListAllDigestResultsByUserOldestFirst :many
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       dc.name AS config_name,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
+FROM digest_results dr
+JOIN digest_configs dc ON dc.id = dr.config_id
+WHERE dr.user_id = ?1
+  AND (dr.status = ?2 OR ?2 IS NULL)
+ORDER BY dr.created_at ASC, dr.id ASC
+LIMIT ?4 OFFSET ?3
+`
+
+type ListAllDigestResultsByUserOldestFirstParams struct {
+	UserID int64          `json:"user_id"`
+	Status sql.NullString `json:"status"`
+	Offset int64          `json:"offset"`
+	Limit  int64          `json:"limit"`
+}
+
+type ListAllDigestResultsByUserOldestFirstRow struct {
+	ID         int64     `json:"id"`
+	UserID     int64     `json:"user_id"`
+	ConfigID   int64     `json:"config_id"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	ConfigName string    `json:"config_name"`
+	Title      string    `json:"title"`
+	ItemCount  int64     `json:"item_count"`
+}
+
+// Oldest-first twin of ListAllDigestResultsByUser; see its comment for why the
+// sort direction is a separate statement rather than a bound parameter.
+func (q *Queries) ListAllDigestResultsByUserOldestFirst(ctx context.Context, arg ListAllDigestResultsByUserOldestFirstParams) ([]ListAllDigestResultsByUserOldestFirstRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAllDigestResultsByUserOldestFirst,
+		arg.UserID,
+		arg.Status,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllDigestResultsByUserOldestFirstRow{}
+	for rows.Next() {
+		var i ListAllDigestResultsByUserOldestFirstRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -432,14 +543,19 @@ SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
        COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
        + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
 FROM digest_results dr
-WHERE config_id = ? AND user_id = ? ORDER BY created_at ASC LIMIT ? OFFSET ?
+WHERE dr.config_id = ?1
+  AND dr.user_id = ?2
+  AND (dr.status = ?3 OR ?3 IS NULL)
+ORDER BY dr.created_at ASC, dr.id ASC
+LIMIT ?5 OFFSET ?4
 `
 
 type ListDigestResultsByConfigOldestFirstPaginatedParams struct {
-	ConfigID int64 `json:"config_id"`
-	UserID   int64 `json:"user_id"`
-	Limit    int64 `json:"limit"`
-	Offset   int64 `json:"offset"`
+	ConfigID int64          `json:"config_id"`
+	UserID   int64          `json:"user_id"`
+	Status   sql.NullString `json:"status"`
+	Offset   int64          `json:"offset"`
+	Limit    int64          `json:"limit"`
 }
 
 type ListDigestResultsByConfigOldestFirstPaginatedRow struct {
@@ -453,12 +569,18 @@ type ListDigestResultsByConfigOldestFirstPaginatedRow struct {
 	ItemCount int64     `json:"item_count"`
 }
 
+// Sort is a SEPARATE statement, not a bound sort direction. SQLite cannot take
+// a direction as a parameter, and sqlc does not collect parameters that appear
+// only inside ORDER BY expressions: it emits the literal @name and binds
+// nothing, so the request fails at runtime with "missing named argument".
+// Verified against the driver, so the sort variants stay explicit.
 func (q *Queries) ListDigestResultsByConfigOldestFirstPaginated(ctx context.Context, arg ListDigestResultsByConfigOldestFirstPaginatedParams) ([]ListDigestResultsByConfigOldestFirstPaginatedRow, error) {
 	rows, err := q.db.QueryContext(ctx, listDigestResultsByConfigOldestFirstPaginated,
 		arg.ConfigID,
 		arg.UserID,
-		arg.Limit,
+		arg.Status,
 		arg.Offset,
+		arg.Limit,
 	)
 	if err != nil {
 		return nil, err
@@ -496,14 +618,19 @@ SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
        COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
        + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
 FROM digest_results dr
-WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+WHERE dr.config_id = ?1
+  AND dr.user_id = ?2
+  AND (dr.status = ?3 OR ?3 IS NULL)
+ORDER BY dr.created_at DESC, dr.id DESC
+LIMIT ?5 OFFSET ?4
 `
 
 type ListDigestResultsByConfigPaginatedParams struct {
-	ConfigID int64 `json:"config_id"`
-	UserID   int64 `json:"user_id"`
-	Limit    int64 `json:"limit"`
-	Offset   int64 `json:"offset"`
+	ConfigID int64          `json:"config_id"`
+	UserID   int64          `json:"user_id"`
+	Status   sql.NullString `json:"status"`
+	Offset   int64          `json:"offset"`
+	Limit    int64          `json:"limit"`
 }
 
 type ListDigestResultsByConfigPaginatedRow struct {
@@ -519,12 +646,27 @@ type ListDigestResultsByConfigPaginatedRow struct {
 
 // Preview query for the middle pane: excludes heavy content/config_snapshot,
 // pre-computes title and item_count from the stored JSON.
+//
+// The status filter is applied HERE, not in the browser. Filtering only the
+// rows the client happened to have loaded could only hide already-fetched
+// rows, so an older match sitting on page three was unreachable. Paginating a
+// filtered query is what makes the control mean what it says.
+//
+// An unread result is stored as 'new' (generator.go); the handler translates
+// the API's 'unread' before it reaches this query. narg keeps "no filter" NULL.
+//
+// The id tiebreak keeps paging stable when several results share created_at.
+//
+// NOTE: kept ASCII-only. An em dash inside a comment makes sqlc 1.31.1 fail to
+// parse the whole queries file (it emits `extraneous input` for unrelated
+// statements and generates nothing), so prose here uses plain hyphens.
 func (q *Queries) ListDigestResultsByConfigPaginated(ctx context.Context, arg ListDigestResultsByConfigPaginatedParams) ([]ListDigestResultsByConfigPaginatedRow, error) {
 	rows, err := q.db.QueryContext(ctx, listDigestResultsByConfigPaginated,
 		arg.ConfigID,
 		arg.UserID,
-		arg.Limit,
+		arg.Status,
 		arg.Offset,
+		arg.Limit,
 	)
 	if err != nil {
 		return nil, err

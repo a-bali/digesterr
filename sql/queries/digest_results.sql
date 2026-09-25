@@ -12,20 +12,56 @@ SELECT * FROM digest_results WHERE config_id = ? AND user_id = ? ORDER BY create
 -- name: ListDigestResultsByConfigPaginated :many
 -- Preview query for the middle pane: excludes heavy content/config_snapshot,
 -- pre-computes title and item_count from the stored JSON.
+--
+-- The status filter is applied HERE, not in the browser. Filtering only the
+-- rows the client happened to have loaded could only hide already-fetched
+-- rows, so an older match sitting on page three was unreachable. Paginating a
+-- filtered query is what makes the control mean what it says.
+--
+-- An unread result is stored as 'new' (generator.go writes it, and the
+-- unread-count queries count status='new'). The handler translates the API's
+-- 'unread' in, and the browser translates 'new' back to 'unread' on the way
+-- out. narg keeps "no filter" NULL.
+--
+-- The id tiebreak keeps paging stable when several results share created_at.
+--
+-- NOTE: kept ASCII-only. An em dash inside a comment makes sqlc 1.31.1 fail to
+-- parse the whole queries file (it emits `extraneous input` for unrelated
+-- statements and generates nothing), so prose here uses plain hyphens.
 SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
        CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
        COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
        + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
 FROM digest_results dr
-WHERE config_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
+WHERE dr.config_id = sqlc.arg(config_id)
+  AND dr.user_id = sqlc.arg(user_id)
+  AND (dr.status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+ORDER BY dr.created_at DESC, dr.id DESC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: ListDigestResultsByConfigOldestFirstPaginated :many
+-- Sort is a SEPARATE statement, not a bound sort direction. SQLite cannot take
+-- a direction as a parameter, and sqlc does not collect parameters that appear
+-- only inside ORDER BY expressions: it emits the literal @name and binds
+-- nothing, so the request fails at runtime with "missing named argument".
+-- Verified against the driver, so the sort variants stay explicit.
 SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
        CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
        COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
        + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
 FROM digest_results dr
-WHERE config_id = ? AND user_id = ? ORDER BY created_at ASC LIMIT ? OFFSET ?;
+WHERE dr.config_id = sqlc.arg(config_id)
+  AND dr.user_id = sqlc.arg(user_id)
+  AND (dr.status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+ORDER BY dr.created_at ASC, dr.id ASC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
+-- name: CountDigestResultsByConfig :one
+SELECT CAST(COUNT(*) AS INTEGER) AS count
+FROM digest_results
+WHERE config_id = sqlc.arg(config_id)
+  AND user_id = sqlc.arg(user_id)
+  AND (status = sqlc.narg(status) OR sqlc.narg(status) IS NULL);
 
 -- name: ListDigestResultsByUserStatusPaginated :many
 -- Reader-stream page for a user-wide digest status.
@@ -88,6 +124,10 @@ LIMIT ?;
 -- name: ListAllDigestResultsByUser :many
 -- Preview query for the middle pane: excludes heavy content/config_snapshot,
 -- pre-computes title and item_count from the stored JSON.
+--
+-- status is applied server-side for the same reason as the per-config query:
+-- the All-Digests list has the identical filter control, and filtering only the
+-- loaded page left older matches unreachable.
 SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
        dc.name AS config_name,
        CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
@@ -95,15 +135,32 @@ SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
        + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
 FROM digest_results dr
 JOIN digest_configs dc ON dc.id = dr.config_id
-WHERE dr.user_id = ?
-ORDER BY dr.created_at DESC
-LIMIT ? OFFSET ?;
+WHERE dr.user_id = sqlc.arg(user_id)
+  AND (dr.status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+ORDER BY dr.created_at DESC, dr.id DESC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
+-- name: ListAllDigestResultsByUserOldestFirst :many
+-- Oldest-first twin of ListAllDigestResultsByUser; see its comment for why the
+-- sort direction is a separate statement rather than a bound parameter.
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       dc.name AS config_name,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
+FROM digest_results dr
+JOIN digest_configs dc ON dc.id = dr.config_id
+WHERE dr.user_id = sqlc.arg(user_id)
+  AND (dr.status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+ORDER BY dr.created_at ASC, dr.id ASC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: CountAllDigestResultsByUser :one
 SELECT CAST(COUNT(*) AS INTEGER) AS count
 FROM digest_results dr
 JOIN digest_configs dc ON dc.id = dr.config_id
-WHERE dr.user_id = ?;
+WHERE dr.user_id = sqlc.arg(user_id)
+  AND (dr.status = sqlc.narg(status) OR sqlc.narg(status) IS NULL);
 
 -- name: ListDigestResultsByUserStatus :many
 SELECT * FROM digest_results WHERE user_id = ? AND status = ? ORDER BY created_at DESC;

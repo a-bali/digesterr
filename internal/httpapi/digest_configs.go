@@ -138,6 +138,56 @@ func (s *Server) handleDeleteDigestConfig(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
 }
 
+// digestListStatusParam parses the status filter shared by the per-config and
+// all-digests list endpoints.
+//
+// The API speaks 'unread'/'read'/'all'; the DB stores an unread result as 'new'
+// (generator.go writes 'new', and the unread-count queries count status='new').
+// Translating here keeps that storage detail behind the API instead of leaking
+// it into the browser, which would otherwise have to know unread means new.
+//
+// An unrecognised value is treated as "no filter" rather than an error: a stale
+// client sending ?status=digested should get results, not a 400.
+func digestListStatusParam(r *http.Request) sql.NullString {
+	switch r.URL.Query().Get("status") {
+	case "unread":
+		return sql.NullString{String: "new", Valid: true}
+	case "read":
+		return sql.NullString{String: "read", Valid: true}
+	}
+	return sql.NullString{}
+}
+
+// digestListSortIsOldest reports whether the client asked for oldest-first.
+// The sort direction selects a whole STATEMENT rather than a bound parameter:
+// SQLite cannot parameterise a sort direction, and sqlc drops parameters that
+// appear only inside ORDER BY expressions (it emits a literal @name and binds
+// nothing, which fails at runtime).
+func digestListSortIsOldest(r *http.Request) bool {
+	return r.URL.Query().Get("sort") == "oldest"
+}
+
+// oldestRowsToPreview maps the oldest-first row type onto the newest-first one.
+// The two queries project identical columns; only the ORDER BY differs, so the
+// handler can share one response-building path. A type assertion/conversion is
+// not possible across distinct named struct types, hence the field-wise copy.
+func oldestRowsToPreview(rows []store.ListDigestResultsByConfigOldestFirstPaginatedRow) []store.ListDigestResultsByConfigPaginatedRow {
+	out := make([]store.ListDigestResultsByConfigPaginatedRow, len(rows))
+	for i, r := range rows {
+		out[i] = store.ListDigestResultsByConfigPaginatedRow{
+			ID:        r.ID,
+			UserID:    r.UserID,
+			ConfigID:  r.ConfigID,
+			Status:    r.Status,
+			CreatedAt: r.CreatedAt,
+			UpdatedAt: r.UpdatedAt,
+			Title:     r.Title,
+			ItemCount: r.ItemCount,
+		}
+	}
+	return out
+}
+
 func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
 	configID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -158,21 +208,42 @@ func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request)
 			offset = v
 		}
 	}
+	status := digestListStatusParam(r)
 
 	// Fetch one row beyond the page. has_more is derived from that extra row,
 	// so it must be requested — asking for exactly `limit` rows makes
 	// len(results) > limit unsatisfiable and pinned has_more to false, which
 	// stopped every config at page one. The all-results endpoint next door
 	// uses the same limit+1 shape.
-	results, err := s.queries.ListDigestResultsByConfigPaginated(r.Context(), store.ListDigestResultsByConfigPaginatedParams{
-		ConfigID: configID,
-		UserID:   userID,
-		Limit:    int64(limit + 1),
-		Offset:   int64(offset),
-	})
-	if err != nil {
-		writeServerError(w, "failed to list digest results", err)
-		return
+	//
+	// The sort direction picks the statement: see digestListSortIsOldest.
+	var results []store.ListDigestResultsByConfigPaginatedRow
+	if digestListSortIsOldest(r) {
+		rows, err := s.queries.ListDigestResultsByConfigOldestFirstPaginated(r.Context(), store.ListDigestResultsByConfigOldestFirstPaginatedParams{
+			ConfigID: configID,
+			UserID:   userID,
+			Status:   status,
+			Limit:    int64(limit + 1),
+			Offset:   int64(offset),
+		})
+		if err != nil {
+			writeServerError(w, "failed to list digest results", err)
+			return
+		}
+		results = oldestRowsToPreview(rows)
+	} else {
+		rows, err := s.queries.ListDigestResultsByConfigPaginated(r.Context(), store.ListDigestResultsByConfigPaginatedParams{
+			ConfigID: configID,
+			UserID:   userID,
+			Status:   status,
+			Limit:    int64(limit + 1),
+			Offset:   int64(offset),
+		})
+		if err != nil {
+			writeServerError(w, "failed to list digest results", err)
+			return
+		}
+		results = rows
 	}
 
 	hasMore := len(results) > limit

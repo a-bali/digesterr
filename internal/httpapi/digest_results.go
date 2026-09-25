@@ -299,6 +299,27 @@ func (s *Server) handleDigestUnreadCounts(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, result)
 }
 
+// allOldestRowsToPreview maps the oldest-first All-Digests row type onto the
+// newest-first one so both sort paths share one response builder. Same
+// rationale as oldestRowsToPreview.
+func allOldestRowsToPreview(rows []store.ListAllDigestResultsByUserOldestFirstRow) []store.ListAllDigestResultsByUserRow {
+	out := make([]store.ListAllDigestResultsByUserRow, len(rows))
+	for i, r := range rows {
+		out[i] = store.ListAllDigestResultsByUserRow{
+			ID:         r.ID,
+			UserID:     r.UserID,
+			ConfigID:   r.ConfigID,
+			Status:     r.Status,
+			CreatedAt:  r.CreatedAt,
+			UpdatedAt:  r.UpdatedAt,
+			ConfigName: r.ConfigName,
+			Title:      r.Title,
+			ItemCount:  r.ItemCount,
+		}
+	}
+	return out
+}
+
 func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
 
@@ -315,14 +336,33 @@ func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	results, err := s.queries.ListAllDigestResultsByUser(r.Context(), store.ListAllDigestResultsByUserParams{
-		UserID: userID,
-		Limit:  int64(limit + 1),
-		Offset: int64(offset),
-	})
-	if err != nil {
-		writeServerError(w, "failed to list digest results", err)
-		return
+	status := digestListStatusParam(r)
+
+	var results []store.ListAllDigestResultsByUserRow
+	if digestListSortIsOldest(r) {
+		rows, err := s.queries.ListAllDigestResultsByUserOldestFirst(r.Context(), store.ListAllDigestResultsByUserOldestFirstParams{
+			UserID: userID,
+			Status: status,
+			Limit:  int64(limit + 1),
+			Offset: int64(offset),
+		})
+		if err != nil {
+			writeServerError(w, "failed to list digest results", err)
+			return
+		}
+		results = allOldestRowsToPreview(rows)
+	} else {
+		rows, err := s.queries.ListAllDigestResultsByUser(r.Context(), store.ListAllDigestResultsByUserParams{
+			UserID: userID,
+			Status: status,
+			Limit:  int64(limit + 1),
+			Offset: int64(offset),
+		})
+		if err != nil {
+			writeServerError(w, "failed to list digest results", err)
+			return
+		}
+		results = rows
 	}
 
 	hasMore := len(results) > limit
@@ -332,7 +372,11 @@ func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Reque
 
 	var total int64
 	if hasMore || offset > 0 {
-		total, err = s.queries.CountAllDigestResultsByUser(r.Context(), userID)
+		var err error
+		total, err = s.queries.CountAllDigestResultsByUser(r.Context(), store.CountAllDigestResultsByUserParams{
+			UserID: userID,
+			Status: status,
+		})
 		if err != nil {
 			writeServerError(w, "failed to count digest results", err)
 			return

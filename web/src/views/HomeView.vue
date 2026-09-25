@@ -324,8 +324,16 @@ watch(
       digestStore.exitAllDigestsMode()
       if (digestStore.activeConfigId !== configId) await digestStore.setActiveConfig(configId)
       if (resultId) {
-        const result = digestStore.results.find(r => r.id === resultId)
-        if (result) await digestStore.selectResult(result)
+        // Resolve from the loaded list when possible, otherwise fetch the
+        // result by id. Searching only the loaded page meant a deep link to a
+        // result past page one silently selected nothing; the id is enough to
+        // ask the server directly.
+        const loaded = digestStore.results.find(r => r.id === resultId)
+        if (loaded) {
+          await digestStore.selectResult(loaded)
+        } else {
+          await digestStore.selectResultById(resultId)
+        }
       } else { digestStore.selectedResult = null; digestStore.resultItems = [] }
     } else if (path === '/saved') {
       showingSaved.value = true; sidebarOpen.value = false

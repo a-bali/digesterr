@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import { useDigestStore } from '../stores/digest'
-import FilterBar, { type FilterStatus, type FilterSort } from './FilterBar.vue'
+import FilterBar, { type FilterStatus } from './FilterBar.vue'
 import Skeleton from './ui/Skeleton.vue'
 import { Circle, CircleDot, LoaderCircle, CheckCircle2, ChevronsUp, ChevronsDown } from 'lucide-vue-next'
 import { useInfiniteScroll } from '../composables/useInfiniteScroll'
@@ -29,14 +29,19 @@ const { onScroll } = useInfiniteScroll({
   threshold: 200,
 })
 
-// The status filter lives in the digest store so the 'u' shortcut can reach it
-// from HomeView; see resultFilter's comment in stores/digest.ts. Sort order is
-// purely presentational, so it stays local.
+// The status filter and sort order live in the digest store so the 'u'
+// shortcut can reach them from HomeView; see resultFilter's comment in
+// stores/digest.ts. Both are applied SERVER-side now: filtering or sorting only
+// the loaded rows made "Oldest" the reverse of page one, and a match past page
+// one was unreachable. Changing either re-queries page one.
 const digestFilter = computed({
   get: () => digestStore.resultFilter,
-  set: v => { digestStore.resultFilter = v },
+  set: v => { digestStore.resultFilter = v; digestStore.refetchList() },
 })
-const sortOrder = ref<FilterSort>('newest')
+const sortOrder = computed({
+  get: () => digestStore.resultSort,
+  set: v => { digestStore.resultSort = v; digestStore.refetchList() },
+})
 
 const STATUS_OPTIONS: { value: FilterStatus; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -44,15 +49,12 @@ const STATUS_OPTIONS: { value: FilterStatus; label: string }[] = [
   { value: 'read', label: 'Read' },
 ]
 
+// Rendered in the order the server returned them. No client-side filter or
+// sort: the query already applied both, and re-sorting here would only reorder
+// the loaded page (undoing the server's work) and mis-handle the newest-first
+// contract the store maintains.
 const visibleResults = computed<DigestResultWithConfigName[]>(() => {
-  const source = props.showingAll ? digestStore.allResults : digestStore.results
-  const filtered = digestFilter.value === 'all'
-    ? source
-    : source.filter(res => res.status === digestFilter.value)
-  const dir = sortOrder.value === 'newest' ? -1 : 1
-  return [...filtered].sort(
-    (a, b) => dir * (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
-  )
+  return props.showingAll ? digestStore.allResults : digestStore.results
 })
 
 function itemCount(result: DigestResult): number {
