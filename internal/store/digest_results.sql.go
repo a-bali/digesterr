@@ -793,7 +793,7 @@ func (q *Queries) ListUnreadDigestItemsByFeed(ctx context.Context, arg ListUnrea
 	return items, nil
 }
 
-const markAllDigestReadAbove = `-- name: MarkAllDigestReadAbove :exec
+const markAllDigestReadAbove = `-- name: MarkAllDigestReadAbove :many
 UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
 WHERE digest_results.user_id = ?1
   AND digest_results.status = 'new'
@@ -802,6 +802,7 @@ WHERE digest_results.user_id = ?1
     OR (digest_results.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = ?2)
         AND digest_results.id > ?2)
   )
+RETURNING id
 `
 
 type MarkAllDigestReadAboveParams struct {
@@ -811,12 +812,30 @@ type MarkAllDigestReadAboveParams struct {
 
 // Mark all digest results at or above the boundary result as read.
 // See MarkDigestConfigReadAbove for the boundary rationale.
-func (q *Queries) MarkAllDigestReadAbove(ctx context.Context, arg MarkAllDigestReadAboveParams) error {
-	_, err := q.db.ExecContext(ctx, markAllDigestReadAbove, arg.UserID, arg.BoundaryID)
-	return err
+func (q *Queries) MarkAllDigestReadAbove(ctx context.Context, arg MarkAllDigestReadAboveParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, markAllDigestReadAbove, arg.UserID, arg.BoundaryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
-const markAllDigestReadBelow = `-- name: MarkAllDigestReadBelow :exec
+const markAllDigestReadBelow = `-- name: MarkAllDigestReadBelow :many
 UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
 WHERE digest_results.user_id = ?1
   AND digest_results.status = 'new'
@@ -825,6 +844,7 @@ WHERE digest_results.user_id = ?1
     OR (digest_results.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = ?2)
         AND digest_results.id < ?2)
   )
+RETURNING id
 `
 
 type MarkAllDigestReadBelowParams struct {
@@ -834,22 +854,66 @@ type MarkAllDigestReadBelowParams struct {
 
 // Mark all digest results strictly below the boundary result as read.
 // See MarkDigestConfigReadAbove for the boundary rationale.
-func (q *Queries) MarkAllDigestReadBelow(ctx context.Context, arg MarkAllDigestReadBelowParams) error {
-	_, err := q.db.ExecContext(ctx, markAllDigestReadBelow, arg.UserID, arg.BoundaryID)
-	return err
+func (q *Queries) MarkAllDigestReadBelow(ctx context.Context, arg MarkAllDigestReadBelowParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, markAllDigestReadBelow, arg.UserID, arg.BoundaryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
-const markAllUserDigestResultsRead = `-- name: MarkAllUserDigestResultsRead :exec
-UPDATE digest_results SET status = 'read', updated_at = DATETIME('now') WHERE user_id = ? AND status = 'new'
+const markAllUserDigestResultsRead = `-- name: MarkAllUserDigestResultsRead :many
+UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
+WHERE user_id = ? AND status = 'new'
+RETURNING id
 `
 
-func (q *Queries) MarkAllUserDigestResultsRead(ctx context.Context, userID int64) error {
-	_, err := q.db.ExecContext(ctx, markAllUserDigestResultsRead, userID)
-	return err
+// RETURNING id, not :exec: the caller must cascade into the linked ITEMS of the
+// results this statement actually transitioned. Deriving that set from a state
+// test instead (status = 'read') also matches every result that was already read
+// before the request, so an unrelated mark-read swept those results' items too.
+func (q *Queries) MarkAllUserDigestResultsRead(ctx context.Context, userID int64) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, markAllUserDigestResultsRead, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
-const markDigestConfigRead = `-- name: MarkDigestConfigRead :exec
-UPDATE digest_results SET status = 'read', updated_at = DATETIME('now') WHERE config_id = ? AND user_id = ? AND status = 'new'
+const markDigestConfigRead = `-- name: MarkDigestConfigRead :many
+UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
+WHERE config_id = ? AND user_id = ? AND status = 'new'
+RETURNING id
 `
 
 type MarkDigestConfigReadParams struct {
@@ -857,12 +921,31 @@ type MarkDigestConfigReadParams struct {
 	UserID   int64 `json:"user_id"`
 }
 
-func (q *Queries) MarkDigestConfigRead(ctx context.Context, arg MarkDigestConfigReadParams) error {
-	_, err := q.db.ExecContext(ctx, markDigestConfigRead, arg.ConfigID, arg.UserID)
-	return err
+// RETURNING id for the same reason as MarkAllUserDigestResultsRead.
+func (q *Queries) MarkDigestConfigRead(ctx context.Context, arg MarkDigestConfigReadParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, markDigestConfigRead, arg.ConfigID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
-const markDigestConfigReadAbove = `-- name: MarkDigestConfigReadAbove :exec
+const markDigestConfigReadAbove = `-- name: MarkDigestConfigReadAbove :many
 UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
 WHERE digest_results.config_id = ?1
   AND digest_results.user_id = ?2
@@ -872,6 +955,7 @@ WHERE digest_results.config_id = ?1
     OR (digest_results.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = ?3)
         AND digest_results.id > ?3)
   )
+RETURNING id
 `
 
 type MarkDigestConfigReadAboveParams struct {
@@ -893,12 +977,33 @@ type MarkDigestConfigReadAboveParams struct {
 //
 // Both directions EXCLUDE the boundary result, matching the item endpoints:
 // "above" is strictly before it, "below" strictly after it.
-func (q *Queries) MarkDigestConfigReadAbove(ctx context.Context, arg MarkDigestConfigReadAboveParams) error {
-	_, err := q.db.ExecContext(ctx, markDigestConfigReadAbove, arg.ConfigID, arg.UserID, arg.BoundaryID)
-	return err
+//
+// RETURNING id so the cascade can be driven by the rows this statement
+// transitioned rather than by a status test over the whole config.
+func (q *Queries) MarkDigestConfigReadAbove(ctx context.Context, arg MarkDigestConfigReadAboveParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, markDigestConfigReadAbove, arg.ConfigID, arg.UserID, arg.BoundaryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
-const markDigestConfigReadBelow = `-- name: MarkDigestConfigReadBelow :exec
+const markDigestConfigReadBelow = `-- name: MarkDigestConfigReadBelow :many
 UPDATE digest_results SET status = 'read', updated_at = DATETIME('now')
 WHERE digest_results.config_id = ?1
   AND digest_results.user_id = ?2
@@ -908,6 +1013,7 @@ WHERE digest_results.config_id = ?1
     OR (digest_results.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = ?3)
         AND digest_results.id < ?3)
   )
+RETURNING id
 `
 
 type MarkDigestConfigReadBelowParams struct {
@@ -918,37 +1024,27 @@ type MarkDigestConfigReadBelowParams struct {
 
 // Mark digest results strictly below the boundary result as read, within a
 // config. See MarkDigestConfigReadAbove for the boundary rationale.
-func (q *Queries) MarkDigestConfigReadBelow(ctx context.Context, arg MarkDigestConfigReadBelowParams) error {
-	_, err := q.db.ExecContext(ctx, markDigestConfigReadBelow, arg.ConfigID, arg.UserID, arg.BoundaryID)
-	return err
-}
-
-const markDigestConfigResultItemsRead = `-- name: MarkDigestConfigResultItemsRead :execrows
-UPDATE items SET status = 'read', updated_at = DATETIME('now')
-WHERE status = 'digested'
-  AND id IN (
-    SELECT dri.item_id FROM digest_result_items dri
-    JOIN digest_results dr ON dr.id = dri.result_id
-    WHERE dr.user_id = ?1
-      AND dr.status = 'read'
-      AND (?2 IS NULL OR dr.config_id = ?2)
-  )
-`
-
-type MarkDigestConfigResultItemsReadParams struct {
-	UserID  int64       `json:"user_id"`
-	Column2 interface{} `json:"column_2"`
-}
-
-// Cascade for mark-config-read / mark-all-read: flips digested items of every
-// result that just transitioned new -> read for the given config (or all
-// configs when configID is NULL).
-func (q *Queries) MarkDigestConfigResultItemsRead(ctx context.Context, arg MarkDigestConfigResultItemsReadParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, markDigestConfigResultItemsRead, arg.UserID, arg.Column2)
+func (q *Queries) MarkDigestConfigReadBelow(ctx context.Context, arg MarkDigestConfigReadBelowParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, markDigestConfigReadBelow, arg.ConfigID, arg.UserID, arg.BoundaryID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected()
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markDigestResultItemsRead = `-- name: MarkDigestResultItemsRead :exec
