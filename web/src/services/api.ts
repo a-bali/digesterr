@@ -105,7 +105,12 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   if (res.status === 401) {
     setAuthToken(null)
     onUnauthorized?.()
-    throw new ApiError(401, { error: 'unauthorized' })
+    // Keep the server's message instead of a hardcoded "unauthorized". The
+    // signin endpoint answers 401 with "invalid email or password", and the
+    // login form renders e.message — overwriting every 401 with a generic
+    // string told the user nothing about why the credential was rejected.
+    const body = await parseBody(res)
+    throw new ApiError(401, body)
   }
   const body = await parseBody(res)
   if (!res.ok) throw new ApiError(res.status, body)
@@ -217,16 +222,16 @@ export const digestApi = {
   getConfig: (id: number) => api<DigestConfig>(`/digest-configs/${id}`),
   generate: (configId: number) =>
     api<DigestResult>(`/digest-configs/${configId}/generate`, { method: 'POST' }),
-  listResults: (configId: number, opts?: { limit?: number; offset?: number }) =>
-    api<{ results: DigestResult[]; has_more: boolean }>(`/digest-configs/${configId}/results${qs({ limit: opts?.limit, offset: opts?.offset })}`),
+  listResults: (configId: number, opts?: { limit?: number; offset?: number; status?: string; sort?: string }) =>
+    api<{ results: DigestResult[]; has_more: boolean }>(`/digest-configs/${configId}/results${qs({ limit: opts?.limit, offset: opts?.offset, status: opts?.status, sort: opts?.sort })}`),
   getResult: (id: number) => api<DigestResult>(`/digest-results/${id}`),
   updateResultStatus: (id: number, status: string) =>
     api<DigestResult>(`/digest-results/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   deleteResult: (id: number) => api<void>(`/digest-results/${id}`, { method: 'DELETE' }),
   listResultItems: (resultId: number) => api<DigestResultItemWithData[]>(`/digest-results/${resultId}/items`),
   unreadCounts: () => api<Record<number, number>>('/digest-unread-counts'),
-  listAllResults: (opts?: { limit?: number; offset?: number }) =>
-    api<AllDigestResultsResponse>(`/digest-results${qs({ limit: opts?.limit, offset: opts?.offset })}`),
+  listAllResults: (opts?: { limit?: number; offset?: number; status?: string; sort?: string }) =>
+    api<AllDigestResultsResponse>(`/digest-results${qs({ limit: opts?.limit, offset: opts?.offset, status: opts?.status, sort: opts?.sort })}`),
   markAllRead: (configId?: number) => api<{ message: string }>('/digest-results/mark-read', {
     method: 'POST',
     body: JSON.stringify(configId ? { config_id: configId } : {}),

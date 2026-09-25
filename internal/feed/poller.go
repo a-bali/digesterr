@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -975,6 +977,19 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 		})
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
+				// INSERT OR IGNORE returned no row: the item is already
+				// stored. That is the ONLY thing this tells us, and for
+				// twitter it is also the branch where the title may have
+				// changed — the hash excludes the title, so a pinned badge
+				// appearing or disappearing is invisible to it. The refresh
+				// used to live on an `id == 0` branch below, which SQLite
+				// never produces (an ignored insert yields an empty result
+				// set, not a zero id), so it was dead code.
+				if feed.Type == "twitter" {
+					if rerr := p.refreshTwitterTitle(ctx, feed.ID, item.GUID, item.Title); rerr != nil {
+						logger.Debug("twitter title refresh failed", "guid", item.GUID, "error", rerr)
+					}
+				}
 				logger.Debug("item already exists", "hash", h)
 			} else {
 				// A real write failure, not a duplicate: the feed is not being
@@ -990,14 +1005,6 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 			newCount++
 			if feed.ExtractContent != 0 {
 				p.setItemExtractionPending(ctx, id, logger)
-			}
-		} else if feed.Type == "twitter" {
-			// Twitter titles carry volatile state (📌 pinned badge, RT
-			// provenance). The item hash excludes the title, so an existing
-			// row is invisible to CreateItemIfNotExists — refresh its title
-			// when the fetched one changed (e.g. tweet got pinned/unpinned).
-			if err := p.refreshTwitterTitle(ctx, feed.ID, item.GUID, item.Title); err != nil {
-				logger.Debug("twitter title refresh failed", "guid", item.GUID, "error", err)
 			}
 		}
 	}
@@ -1116,7 +1123,8 @@ func (p *Poller) enrichForPoll(ctx context.Context, feed store.Feed, candidates 
 
 	// Collect existing items needing refresh (not Twitter — feed-scoped).
 	var existing []store.Item
-	if _, isTwitter := enricher.(*TwitterFetcher); !isTwitter {
+	_, isTwitterEnricher := enricher.(*TwitterFetcher)
+	if !isTwitterEnricher {
 		window := p.enrichmentWindow
 		if window <= 0 {
 			window = 24 * time.Hour
@@ -1131,6 +1139,57 @@ func (p *Poller) enrichForPoll(ctx context.Context, feed store.Feed, candidates 
 		})
 		if err != nil {
 			logger.Error("failed to list items for enrichment", "error", err)
+		}
+	}
+
+	// Every re-polled candidate that is ALREADY STORED must be enriched as its
+	// real row, not as the placeholder built from the feed payload.
+	//
+	// The placeholder has no row id, and every DB write keys on the id, so
+	// enriching one persists nothing — the stored score never moves. The
+	// eligibility query above only covers rows that are recently fetched,
+	// unread and not recently enriched, so a re-poll of a READ or OLD story
+	// was left with a placeholder and its score was frozen for good.
+	//
+	// Look the candidates' hashes up directly, whatever their status or age:
+	// which rows are worth REFRESHING stays a policy question, but a score that
+	// was obtained must always be persistable. This supersedes the eligible set
+	// for any hash both cover (the items are identical modulo the fields
+	// enrichment updates).
+	if !isTwitterEnricher && len(candidates) > 0 {
+		hashes := make([]string, 0, len(candidates))
+		for _, c := range candidates {
+			hashes = append(hashes, c.hash)
+		}
+		encoded, err := json.Marshal(hashes)
+		if err != nil {
+			logger.Error("failed to encode enrichment hashes", "error", err)
+		} else {
+			rows, err := p.queries.ListItemsByHashesForEnrichment(ctx, store.ListItemsByHashesForEnrichmentParams{
+				FeedID: feed.ID,
+				Hashes: string(encoded),
+			})
+			if err != nil {
+				logger.Error("failed to list stored items for enrichment", "error", err)
+			} else {
+				// The candidate-derived entry first; the stored row replaces it
+				// for any hash it covers. A map keeps that deterministic even
+				// if either list ever repeats a hash.
+				merged := make(map[string]store.Item, len(existing)+len(rows))
+				for _, it := range existing {
+					merged[it.Hash] = it
+				}
+				for _, it := range rows {
+					merged[it.Hash] = it
+				}
+				existing = existing[:0]
+				for _, it := range merged {
+					existing = append(existing, it)
+				}
+				// Stable order so a poll's log and its outbound requests are
+				// reproducible: map iteration alone is randomised.
+				sort.Slice(existing, func(i, j int) bool { return existing[i].ID < existing[j].ID })
+			}
 		}
 	}
 
@@ -1221,6 +1280,7 @@ func (p *Poller) enrichForPoll(ctx context.Context, feed store.Feed, candidates 
 		// comparison below detects actual score changes.
 		existingByID[existing[i].ID] = &store.Item{
 			ID:            existing[i].ID,
+			Status:        existing[i].Status,
 			Points:        origScores[existing[i].Hash],
 			CommentsCount: existing[i].CommentsCount,
 			CommentUrl:    existing[i].CommentUrl,
@@ -1235,7 +1295,15 @@ func (p *Poller) enrichForPoll(ctx context.Context, feed store.Feed, candidates 
 				skipped++
 				continue
 			}
-			if ei.Points == 0 && si.Points > 0 && feed.MinScore > 0 && si.Points < feed.MinScore {
+			// UNREAD only. This branch discards a row that just gained a
+			// below-min_score reading, which is meant for rows the poll has
+			// effectively just delivered. A row the user has already READ (or
+			// saved, or digested) is theirs: deleting it re-inserted the story
+			// as unread on the next cycle — the prod 2026-09-18 reappearance —
+			// and DeleteItem's own guard only covers is_saved and digest links.
+			// Widening the enrichment set to include read rows made this
+			// reachable for them, so the status test is load-bearing.
+			if ei.Status == "unread" && ei.Points == 0 && si.Points > 0 && feed.MinScore > 0 && si.Points < feed.MinScore {
 				deleted, err := p.deleteDisposableItem(ctx, si.ID)
 				if err != nil {
 					errcount++

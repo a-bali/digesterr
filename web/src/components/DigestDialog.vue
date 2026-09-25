@@ -63,23 +63,30 @@ const form = reactive({
   prompt: DEFAULT_PROMPT,
 })
 
-// The min-score threshold only makes sense when at least one selected source
-// can produce scores. An empty selection means "all feeds", which may include
-// score-capable feeds, so it stays enabled.
+// The min-score threshold only makes sense when a selected source can produce
+// scores. An empty selection means "all feeds", which may include score-capable
+// feeds, so it stays enabled.
 //
-// Both modes are considered, not just the visible one: the selection for the
-// OTHER mode still contributes to the digest (the user can switch back and
-// forth), so a score-capable feed picked under Feeds must keep the field
-// enabled while the Categories tab is showing.
+// ONLY the active mode is considered, because buildConfig emits only the active
+// mode's sources: the toggle chooses which namespace the digest draws from, so
+// the two arrays are alternatives, not a union. Counting the inactive mode kept
+// the field enabled for a digest that saves no score-capable source at all, so
+// the user could set a min_score that silently does nothing.
 const hasScoreCapableSource = computed(() => {
   const scoreCapable = (f: { type: string }) => SCORE_FEED_TYPES.has(f.type)
-  if (sourceIdsByMode.categories.length === 0 && sourceIdsByMode.feeds.length === 0) return true
-  const categoryIds = new Set(sourceIdsByMode.categories.map(v => String(v)))
-  const feedIds = new Set(sourceIdsByMode.feeds.map(v => String(v)))
-  return feedStore.feeds.some(f => {
-    if (feedIds.has(String(f.id)) && scoreCapable(f)) return true
-    return !!f.category && categoryIds.has(f.category) && scoreCapable(f)
-  })
+  if (sourceIds.value.length === 0) return true
+  const feedIds = new Set(feedStore.feeds.map(f => String(f.id)))
+  if (sourceMode.value === 'feeds') {
+    const picked = new Set(sourceIds.value.map(v => String(v)))
+    return feedStore.feeds.some(f => picked.has(String(f.id)) && scoreCapable(f))
+  }
+  // Categories: a category is score-capable when any feed it contains is.
+  // A selected name that matches no feed cannot be checked, so it does not
+  // count as capable (the empty-selection case above already returned).
+  const picked = new Set(sourceIds.value.map(v => String(v)))
+  return feedStore.feeds.some(f =>
+    !!f.category && picked.has(f.category) && scoreCapable(f) && feedIds.has(String(f.id)),
+  )
 })
 
 watch(

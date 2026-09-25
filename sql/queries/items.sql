@@ -62,6 +62,22 @@ SET points = ?, comments_count = ?, comment_url = ?, updated_at = DATETIME('now'
 WHERE id = ?
 RETURNING *;
 
+-- name: ListItemsByHashesForEnrichment :many
+-- Existing rows for the given (feed-scoped) hashes, so a re-poll enriches the
+-- REAL row rather than the ID-less candidate placeholder built from the feed
+-- payload. Every DB write keys on the row id, so enriching a placeholder
+-- persists nothing.
+--
+-- Deliberately NOT an eligibility filter. ListUnreadItemsForEnrichment narrows
+-- to recently fetched, unread, not-recently-enriched rows, which left a re-poll
+-- of a READ or OLD story enriching a placeholder instead: its score never
+-- moved again. This returns the row whatever its status or age, so a score can
+-- always be persisted; which rows are worth REFRESHING is the caller's
+-- decision, and the cost of an extra lookup is bounded by the poll's candidates.
+SELECT * FROM items
+WHERE feed_id = sqlc.arg(feed_id)
+  AND hash IN (SELECT value FROM json_each(sqlc.arg(hashes)));
+
 -- name: ListUnreadItemsForEnrichment :many
 SELECT * FROM items WHERE feed_id = ? AND status = 'unread' AND fetched_at > ? AND (last_enriched_at IS NULL OR last_enriched_at < ?) ORDER BY last_enriched_at IS NULL DESC, last_enriched_at ASC, published_at DESC;
 

@@ -190,6 +190,36 @@ describe('DigestDialog min score', () => {
     expect(dialogBody().textContent).toContain('Twitter')
   })
 
+  // buildConfig saves ONLY the active mode's sources, so the inactive mode's
+  // picks cannot make the digest score-capable. Counting them kept min-score
+  // enabled for a digest that would apply it to nothing.
+  it('ignores the inactive mode selection when deciding if scores apply', async () => {
+    mountDialog()
+    await flushPromises()
+
+    // The non-capable RSS feed sits in Tech; the score-capable HN feed sits in
+    // News. Picking News under Feeds and then Tech under Categories leaves a
+    // capable pick in the INACTIVE mode and a non-capable one in the active
+    // mode — which is what the saved config will contain.
+    const hnNews = makeFeed({ id: 2, type: 'hn', category: 'News', name: 'HN News' })
+    const store = useFeedStore()
+    store.feeds = [rssFeed, hnNews]
+    await flushPromises()
+
+    findButton('Feeds').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await selectSource('HN News')
+    expect(minScoreInput().disabled).toBe(false)
+
+    findButton('Categories').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await selectSource('Tech')
+
+    // Tech holds only the RSS feed, so min-score does nothing for this config.
+    // The Feeds side still holds HN, but that selection is not saved.
+    expect(minScoreInput().disabled).toBe(true)
+  })
+
   it('includes min_score in the saved config payload', async () => {
     const wrapper = mountDialog()
     await flushPromises()

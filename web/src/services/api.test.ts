@@ -80,7 +80,7 @@ describe('api', () => {
 
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: false, status: 401,
-      json: () => Promise.resolve({ error: 'unauthorized' }),
+      text: () => Promise.resolve(JSON.stringify({ error: 'unauthorized' })),
     } as any)
 
     await expect(api('/protected')).rejects.toThrow()
@@ -91,11 +91,23 @@ describe('api', () => {
     setAuthToken('old-token')
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: false, status: 401,
-      json: () => Promise.resolve({ error: 'unauthorized' }),
+      text: () => Promise.resolve(JSON.stringify({ error: 'unauthorized' })),
     } as any)
 
     await expect(api('/protected')).rejects.toThrow()
     expect(getAuthToken()).toBeNull()
+  })
+
+  // A 401 from signin carries the reason the credential was rejected. The
+  // generic "unauthorized" string replaced it, so the login form showed a
+  // message that told the user nothing about what to fix.
+  it('surfaces the server 401 message instead of a generic one', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false, status: 401,
+      text: () => Promise.resolve(JSON.stringify({ error: 'invalid email or password' })),
+    } as any)
+
+    await expect(api('/auth/signin', { method: 'POST' })).rejects.toThrow('invalid email or password')
   })
 
   it('converts a non-JSON error body (proxy HTML) into a readable ApiError message', async () => {

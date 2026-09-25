@@ -29,6 +29,11 @@ export const useDigestStore = defineStore('digest', () => {
   // only reachable from that one component, so pressing 'u' in a digest view
   // silently flipped the ITEM filter and left the digest list unchanged.
   const resultFilter = ref<'all' | 'unread' | 'read'>('all')
+  // Sort order for the digest result list. In the store for the same reason as
+  // resultFilter, and because both are now sent to the SERVER: filtering and
+  // sorting only the loaded page made "Oldest" the reverse of page one and left
+  // older matches unreachable. A watcher refetches page one when either changes.
+  const resultSort = ref<'newest' | 'oldest'>('newest')
 
   const activeConfig = computed(() => configs.value.find(c => c.id === activeConfigId.value) || null)
 
@@ -132,6 +137,16 @@ export const useDigestStore = defineStore('digest', () => {
     }
   }
 
+  // listQueryOpts are the filter/sort options both list endpoints take. Sent to
+  // the server so the controls apply to the whole table rather than the loaded
+  // page; see resultSort's comment.
+  function listQueryOpts() {
+    return {
+      status: resultFilter.value === 'all' ? undefined : resultFilter.value,
+      sort: resultSort.value === 'oldest' ? 'oldest' : undefined,
+    }
+  }
+
   async function setActiveConfig(id: number) {
     const rid = ++resultsReq
     activeConfigId.value = id
@@ -140,7 +155,7 @@ export const useDigestStore = defineStore('digest', () => {
     loading.value = true
     hasMore.value = false
     try {
-      const resp = await digestApi.listResults(id, { limit: PAGE_SIZE, offset: 0 })
+      const resp = await digestApi.listResults(id, { limit: PAGE_SIZE, offset: 0, ...listQueryOpts() })
       if (rid !== resultsReq) return
       results.value = resp.results.map(normalize)
       hasMore.value = resp.has_more
@@ -152,16 +167,17 @@ export const useDigestStore = defineStore('digest', () => {
     }
   }
 
-  async function selectResult(result: DigestResult) {
+  async function selectResult(result: DigestResult, prefetched?: DigestResult) {
     // Already selected with content loaded: nothing to fetch.
     if (selectedResult.value?.id === result.id && selectedResult.value?.content && resultItems.value.length > 0) return
     // Set preview immediately so the content pane renders while we fetch.
     selectedResult.value = result
-    // List endpoints omit the heavy content field. Fetch the full result
-    // so DigestContent can parse and render it.
     loadingContent.value = true
     try {
-      const full = await digestApi.getResult(result.id)
+      // prefetched is the full row when the caller already resolved it by id
+      // (see selectResultById); otherwise fetch it — list endpoints omit the
+      // heavy content field, which DigestContent needs.
+      const full = prefetched ?? await digestApi.getResult(result.id)
       if (selectedResult.value?.id !== result.id) { loadingContent.value = false; return }
       selectedResult.value = full
     } catch {
@@ -175,6 +191,27 @@ export const useDigestStore = defineStore('digest', () => {
       resultItems.value = items
     } catch (e) {
       toastError(e, 'Failed to load result items')
+    }
+  }
+
+  // selectResultById loads a result the list does not hold — a deep link to a
+  // result beyond the loaded page, or outside the active status filter.
+  //
+  // selectResult() takes a DigestResult it can already see, so a caller that
+  // only has an ID had no way in: the route handler searched the loaded page,
+  // found nothing, and left the content pane empty. Fetching by id is the one
+  // resolution that does not depend on which page the client happens to have.
+  async function selectResultById(resultId: number) {
+    if (selectedResult.value?.id === resultId && selectedResult.value?.content) return
+    try {
+      const full = normalize(await digestApi.getResult(resultId))
+      // Pass the fetched row through so selectResult does not refetch it.
+      await selectResult(full, full)
+    } catch {
+      // A stale or foreign id is not an error worth a toast: the route simply
+      // points at a result this user cannot see.
+      selectedResult.value = null
+      resultItems.value = []
     }
   }
 
@@ -259,7 +296,7 @@ export const useDigestStore = defineStore('digest', () => {
     const offset = results.value.length
     loadingMore.value = true
     try {
-      const resp = await digestApi.listResults(cfgId, { limit: PAGE_SIZE, offset })
+      const resp = await digestApi.listResults(cfgId, { limit: PAGE_SIZE, offset, ...listQueryOpts() })
       if (rid !== resultsReq) return
       results.value.push(...resp.results.map(normalize))
       hasMore.value = resp.has_more
@@ -283,6 +320,7 @@ export const useDigestStore = defineStore('digest', () => {
       const resp = await digestApi.listAllResults({
         limit: PAGE_SIZE,
         offset: replace ? 0 : allResults.value.length,
+        ...listQueryOpts(),
       })
       if (rid !== resultsReq) return
       // normalize() maps the API's "new" to "unread". Without it the All-Digests
@@ -316,17 +354,58 @@ export const useDigestStore = defineStore('digest', () => {
     allResults.value = []
   }
 
+  // silentRefresh is the 10-second background poll. It must MERGE what it
+  // fetches into the loaded list, never assign over it.
+  //
+  // Assigning the first page replaced the whole list, so a user who had
+  // scrolled to page three watched pages two and three disappear every ten
+  // seconds. It also only handled the single-config branch, so All-Digests was
+  // never refreshed at all.
+  //
+  // mergeById refreshes the rows that came back (status, item count, title) and
+  // appends ones the list does not have yet, leaving already-loaded rows in
+  // place. hasMore is intentionally NOT taken from the refresh: it answers "is
+  // there another page after the ones I have", and a first-page response cannot
+  // know that — adopting its value would re-enable infinite scroll on a fully
+  // loaded list, or stop it early.
+  function mergeById<T extends DigestResult>(loaded: T[], fetched: T[]): T[] {
+    if (fetched.length === 0) return loaded
+    const byId = new Map<number, T>()
+    for (const r of fetched) byId.set(r.id, r)
+    const seen = new Set<number>()
+    const out = loaded.map(r => {
+      const fresh = byId.get(r.id)
+      if (!fresh) return r
+      seen.add(r.id)
+      // Keep any field the preview omits that we already had (content is only
+      // fetched by selectResult, so a refresh must not drop it).
+      return { ...r, ...fresh }
+    })
+    for (const r of fetched) {
+      if (!seen.has(r.id)) out.push(r)
+    }
+    // Newest first, matching the server's ordering, so a refreshed row that
+    // moved to the top actually appears there.
+    return out.sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    )
+  }
+
   async function silentRefresh() {
     backgroundRefreshing.value = true
     try {
       configs.value = await digestApi.listConfigs()
+      if (showingAllDigests.value) {
+        const resp = await digestApi.listAllResults({ limit: PAGE_SIZE, offset: 0, ...listQueryOpts() })
+        allResults.value = mergeById(allResults.value, resp.results.map(normalize))
+        return
+      }
       const cfgId = activeConfigId.value
       if (cfgId) {
         const rid = ++resultsReq
-        const resp = await digestApi.listResults(cfgId, { limit: PAGE_SIZE, offset: 0 })
+        const resp = await digestApi.listResults(cfgId, { limit: PAGE_SIZE, offset: 0, ...listQueryOpts() })
         if (rid !== resultsReq) return
-        results.value = resp.results.map(normalize)
-        hasMore.value = resp.has_more
+        results.value = mergeById(results.value, resp.results.map(normalize))
       }
     } catch {
       // silent
@@ -417,13 +496,28 @@ export const useDigestStore = defineStore('digest', () => {
     }
   }
 
+  // refetchList reloads page one with the current filter/sort. The filter and
+  // sort are server-side now, so changing either has to re-query rather than
+  // re-derive from the loaded rows: the rows matching a new filter may not be
+  // loaded at all.
+  async function refetchList() {
+    if (showingAllDigests.value || !activeConfigId.value) {
+      await loadAllResults(true)
+      return
+    }
+    // Reset paging: the loaded rows answered the OLD query.
+    hasMore.value = false
+    await setActiveConfig(activeConfigId.value)
+  }
+
   return {
     configs, activeConfigId, results, selectedResult, resultItems,
     loading, generating, loadingMore, loadingContent, hasMore, activeConfig, unreadCounts, backgroundRefreshing,
-    allResults, showingAllDigests, resultFilter,
+    allResults, showingAllDigests, resultFilter, resultSort,
     fetchConfigs, createConfig, updateConfig, deleteConfig,
-    setActiveConfig, selectResult, generateNow, markResultRead, deleteResult,
+    setActiveConfig, selectResult, selectResultById, generateNow, markResultRead, deleteResult,
     updateResultStatus, silentRefresh, fetchUnreadCounts, fetchMoreResults,
     loadAllResults, enterAllDigestsMode, exitAllDigestsMode, markAllRead, markReadAbove, markReadBelow,
+    refetchList,
   }
 })

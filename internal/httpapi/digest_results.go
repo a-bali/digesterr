@@ -44,27 +44,53 @@ func (s *Server) inDigestTx(ctx context.Context, what string, fn func(context.Co
 // items, in one transaction. configID nil means every result the user owns.
 func (s *Server) markDigestResultsRead(ctx context.Context, userID int64, configID *int64) error {
 	return s.inDigestTx(ctx, "mark-digest-read", func(ctx context.Context, q *store.Queries) error {
+		var readIDs []int64
 		if configID != nil {
-			if err := q.MarkDigestConfigRead(ctx, store.MarkDigestConfigReadParams{
+			ids, err := q.MarkDigestConfigRead(ctx, store.MarkDigestConfigReadParams{
 				ConfigID: *configID,
 				UserID:   userID,
-			}); err != nil {
+			})
+			if err != nil {
 				return fmt.Errorf("marking digest config read: %w", err)
 			}
+			readIDs = ids
 		} else {
-			if err := q.MarkAllUserDigestResultsRead(ctx, userID); err != nil {
+			ids, err := q.MarkAllUserDigestResultsRead(ctx, userID)
+			if err != nil {
 				return fmt.Errorf("marking all digest results read: %w", err)
 			}
+			readIDs = ids
 		}
-		params := store.MarkDigestConfigResultItemsReadParams{UserID: userID}
-		if configID != nil {
-			params.Column2 = *configID
-		}
-		if _, err := q.MarkDigestConfigResultItemsRead(ctx, params); err != nil {
-			return fmt.Errorf("flipping digest items: %w", err)
-		}
-		return nil
+		return cascadeItemsForReadResults(ctx, q, userID, readIDs)
 	})
+}
+
+// cascadeItemsForReadResults flips the linked items of exactly the results that
+// just transitioned new -> read.
+//
+// Driving the cascade by RESULT ID rather than by a status test is the point:
+// selecting items with a join on `dr.status = 'read'` also matches every result
+// that was already read before the request, so an unrelated mark-read rewrote
+// updated_at on those results' items and silently consumed any item still
+// 'digested' under an older read result.
+//
+// An empty id set issues no statement at all — there is nothing to cascade, and
+// the previous shape's status test would happily have swept the account.
+func cascadeItemsForReadResults(ctx context.Context, q *store.Queries, userID int64, resultIDs []int64) error {
+	if len(resultIDs) == 0 {
+		return nil
+	}
+	ids, err := json.Marshal(resultIDs)
+	if err != nil {
+		return fmt.Errorf("encoding result ids: %w", err)
+	}
+	if _, err := q.MarkDigestResultItemsReadByResultIDs(ctx, store.MarkDigestResultItemsReadByResultIDsParams{
+		UserID: userID,
+		Ids:    string(ids),
+	}); err != nil {
+		return fmt.Errorf("flipping digest items: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) handleMarkDigestResultsRead(w http.ResponseWriter, r *http.Request) {
@@ -116,51 +142,54 @@ func (s *Server) handleMarkDigestRelative(w http.ResponseWriter, r *http.Request
 	// Results and their cascade commit together: a failed cascade must not
 	// leave results read with their items still digested.
 	err = s.inDigestTx(r.Context(), "mark-digest-read-relative", func(ctx context.Context, q *store.Queries) error {
+		var readIDs []int64
 		if body.ConfigID != nil {
 			if direction == "above" {
-				if err := q.MarkDigestConfigReadAbove(ctx, store.MarkDigestConfigReadAboveParams{
+				ids, err := q.MarkDigestConfigReadAbove(ctx, store.MarkDigestConfigReadAboveParams{
 					ConfigID:   *body.ConfigID,
 					UserID:     userID,
 					BoundaryID: resultID,
-				}); err != nil {
+				})
+				if err != nil {
 					return fmt.Errorf("marking digest config read above: %w", err)
 				}
+				readIDs = ids
 			} else {
-				if err := q.MarkDigestConfigReadBelow(ctx, store.MarkDigestConfigReadBelowParams{
+				ids, err := q.MarkDigestConfigReadBelow(ctx, store.MarkDigestConfigReadBelowParams{
 					ConfigID:   *body.ConfigID,
 					UserID:     userID,
 					BoundaryID: resultID,
-				}); err != nil {
+				})
+				if err != nil {
 					return fmt.Errorf("marking digest config read below: %w", err)
 				}
+				readIDs = ids
 			}
 		} else {
 			if direction == "above" {
-				if err := q.MarkAllDigestReadAbove(ctx, store.MarkAllDigestReadAboveParams{
+				ids, err := q.MarkAllDigestReadAbove(ctx, store.MarkAllDigestReadAboveParams{
 					UserID:     userID,
 					BoundaryID: resultID,
-				}); err != nil {
+				})
+				if err != nil {
 					return fmt.Errorf("marking digest read above: %w", err)
 				}
+				readIDs = ids
 			} else {
-				if err := q.MarkAllDigestReadBelow(ctx, store.MarkAllDigestReadBelowParams{
+				ids, err := q.MarkAllDigestReadBelow(ctx, store.MarkAllDigestReadBelowParams{
 					UserID:     userID,
 					BoundaryID: resultID,
-				}); err != nil {
+				})
+				if err != nil {
 					return fmt.Errorf("marking digest read below: %w", err)
 				}
+				readIDs = ids
 			}
 		}
 
-		// Cascade: flip digested items for the newly read results.
-		params := store.MarkDigestConfigResultItemsReadParams{UserID: userID}
-		if body.ConfigID != nil {
-			params.Column2 = *body.ConfigID
-		}
-		if _, err := q.MarkDigestConfigResultItemsRead(ctx, params); err != nil {
-			return fmt.Errorf("flipping digest items: %w", err)
-		}
-		return nil
+		// Cascade only the results this operation transitioned, not every
+		// already-read result in scope.
+		return cascadeItemsForReadResults(ctx, q, userID, readIDs)
 	})
 	if err != nil {
 		writeServerError(w, "failed to mark digest results read", err)
@@ -270,6 +299,27 @@ func (s *Server) handleDigestUnreadCounts(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, result)
 }
 
+// allOldestRowsToPreview maps the oldest-first All-Digests row type onto the
+// newest-first one so both sort paths share one response builder. Same
+// rationale as oldestRowsToPreview.
+func allOldestRowsToPreview(rows []store.ListAllDigestResultsByUserOldestFirstRow) []store.ListAllDigestResultsByUserRow {
+	out := make([]store.ListAllDigestResultsByUserRow, len(rows))
+	for i, r := range rows {
+		out[i] = store.ListAllDigestResultsByUserRow{
+			ID:         r.ID,
+			UserID:     r.UserID,
+			ConfigID:   r.ConfigID,
+			Status:     r.Status,
+			CreatedAt:  r.CreatedAt,
+			UpdatedAt:  r.UpdatedAt,
+			ConfigName: r.ConfigName,
+			Title:      r.Title,
+			ItemCount:  r.ItemCount,
+		}
+	}
+	return out
+}
+
 func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
 
@@ -286,14 +336,33 @@ func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	results, err := s.queries.ListAllDigestResultsByUser(r.Context(), store.ListAllDigestResultsByUserParams{
-		UserID: userID,
-		Limit:  int64(limit + 1),
-		Offset: int64(offset),
-	})
-	if err != nil {
-		writeServerError(w, "failed to list digest results", err)
-		return
+	status := digestListStatusParam(r)
+
+	var results []store.ListAllDigestResultsByUserRow
+	if digestListSortIsOldest(r) {
+		rows, err := s.queries.ListAllDigestResultsByUserOldestFirst(r.Context(), store.ListAllDigestResultsByUserOldestFirstParams{
+			UserID: userID,
+			Status: status,
+			Limit:  int64(limit + 1),
+			Offset: int64(offset),
+		})
+		if err != nil {
+			writeServerError(w, "failed to list digest results", err)
+			return
+		}
+		results = allOldestRowsToPreview(rows)
+	} else {
+		rows, err := s.queries.ListAllDigestResultsByUser(r.Context(), store.ListAllDigestResultsByUserParams{
+			UserID: userID,
+			Status: status,
+			Limit:  int64(limit + 1),
+			Offset: int64(offset),
+		})
+		if err != nil {
+			writeServerError(w, "failed to list digest results", err)
+			return
+		}
+		results = rows
 	}
 
 	hasMore := len(results) > limit
@@ -303,7 +372,11 @@ func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Reque
 
 	var total int64
 	if hasMore || offset > 0 {
-		total, err = s.queries.CountAllDigestResultsByUser(r.Context(), userID)
+		var err error
+		total, err = s.queries.CountAllDigestResultsByUser(r.Context(), store.CountAllDigestResultsByUserParams{
+			UserID: userID,
+			Status: status,
+		})
 		if err != nil {
 			writeServerError(w, "failed to count digest results", err)
 			return

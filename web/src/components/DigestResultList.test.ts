@@ -147,24 +147,46 @@ describe('DigestResultList', () => {
     expect(scoreInput?.disabled).toBe(true)
   })
 
-  it('filters the list when a status is selected', async () => {
+  // The filter is applied SERVER-side now. These tests pin that the control
+  // issues a refetch with the right query, rather than filtering the two loaded
+  // rows: filtering locally could only hide rows already fetched, so a match
+  // past page one was unreachable.
+  it('asks the server for a status-filtered page when a status is selected', async () => {
     const wrapper = mountList()
-    expect(resultRows(wrapper)).toHaveLength(2)
+    const store = useDigestStore()
+    store.activeConfigId = 1
+    const { digestApi } = await import('../services/api')
+    ;(digestApi.listResults as any).mockClear()
+    ;(digestApi.listResults as any).mockResolvedValue({ results: [makeResult({ id: 7, status: 'new' })], has_more: false })
 
     await openMenu(wrapper, 0)
     await clickItem('Unread')
-    expect(resultRows(wrapper)).toHaveLength(1)
-    expect(resultRows(wrapper)[0].find('[data-item-time]').attributes('title')).toBe(absoluteTime('2026-08-13T08:00:00Z'))
-    expect(wrapper.html()).toContain('Unread')
 
-    await openMenu(wrapper, 0)
-    await clickItem('Read')
+    // The request carries the filter, and the API's own vocabulary is used
+    // ('unread'), not the storage value ('new').
+    expect(digestApi.listResults).toHaveBeenCalled()
+    const opts = (digestApi.listResults as any).mock.calls.at(-1)[1]
+    expect(opts.status).toBe('unread')
+
+    // The rendered list is whatever the server returned, NOT a local subset.
     expect(resultRows(wrapper)).toHaveLength(1)
-    expect(resultRows(wrapper)[0].find('[data-item-time]').attributes('title')).toBe(absoluteTime('2026-08-12T09:30:00Z'))
+    expect(wrapper.html()).toContain('Unread')
+  })
+
+  it('drops the status filter from the query when All is selected', async () => {
+    const wrapper = mountList()
+    const store = useDigestStore()
+    store.activeConfigId = 1
+    store.resultFilter = 'read'
+    const { digestApi } = await import('../services/api')
+    ;(digestApi.listResults as any).mockClear()
+    ;(digestApi.listResults as any).mockResolvedValue({ results: [], has_more: false })
 
     await openMenu(wrapper, 0)
     await clickItem('All')
-    expect(resultRows(wrapper)).toHaveLength(2)
+
+    const opts = (digestApi.listResults as any).mock.calls.at(-1)[1]
+    expect(opts.status).toBeUndefined()
     expect(wrapper.html()).toContain('All')
   })
 
@@ -182,19 +204,47 @@ describe('DigestResultList', () => {
     expect(disabled.map(i => i.textContent?.trim())).toEqual(['Highest score', 'Lowest score'])
   })
 
-  it('sorts by date ascending when Oldest first is selected', async () => {
+  // The sort is applied SERVER-side too. Sorting the loaded page client-side
+  // returned page one reversed, which is not the oldest results at all.
+  it('asks the server for oldest-first when Oldest first is selected', async () => {
     const wrapper = mountList()
-
-    // Default (newest first): the Aug 13 digest renders before Aug 12.
-    expect(resultRows(wrapper)[0].find('[data-item-time]').attributes('title')).toBe(absoluteTime('2026-08-13T08:00:00Z'))
+    const store = useDigestStore()
+    store.activeConfigId = 1
+    const { digestApi } = await import('../services/api')
+    ;(digestApi.listResults as any).mockClear()
+    // Server responds already ordered: oldest first.
+    ;(digestApi.listResults as any).mockResolvedValue({
+      results: [
+        makeResult({ id: 2, created_at: '2026-08-12T09:30:00Z' }),
+        makeResult({ id: 1, created_at: '2026-08-13T08:00:00Z' }),
+      ],
+      has_more: false,
+    })
 
     await openMenu(wrapper, 1)
     await clickItem('Oldest')
 
+    const opts = (digestApi.listResults as any).mock.calls.at(-1)[1]
+    expect(opts.sort).toBe('oldest')
+
+    // Rendered in the order the server returned, with no local re-sort.
     const rows = resultRows(wrapper).map(r => r.find('[data-item-time]').attributes('title'))
-    expect(rows[0]).toBe(absoluteTime('2026-08-12T09:30:00Z'))
-    expect(rows[1]).toBe(absoluteTime('2026-08-13T08:00:00Z'))
+    expect(rows).toEqual([absoluteTime('2026-08-12T09:30:00Z'), absoluteTime('2026-08-13T08:00:00Z')])
     expect(wrapper.html()).toContain('Oldest')
+  })
+
+  it('does not re-sort a server-ordered list client-side', async () => {
+    const wrapper = mountList()
+    const store = useDigestStore()
+    // Deliberately NOT in newest-first order, to prove nothing re-sorts it.
+    store.results = [
+      makeResult({ id: 2, created_at: '2026-08-12T09:30:00Z' }),
+      makeResult({ id: 1, created_at: '2026-08-13T08:00:00Z' }),
+    ]
+    await flushPromises()
+
+    const rows = resultRows(wrapper).map(r => r.find('[data-item-time]').attributes('title'))
+    expect(rows).toEqual([absoluteTime('2026-08-12T09:30:00Z'), absoluteTime('2026-08-13T08:00:00Z')])
   })
 })
 
