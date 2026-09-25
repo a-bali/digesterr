@@ -205,6 +205,14 @@ func decodeDigestOutput(reply string) (llmDigestOutput, error) {
 	return llmDigestOutput{}, err
 }
 
+// ErrNoUnreadItems is returned when a config has nothing to digest. It is a
+// normal outcome, not a failure: the pool is empty because every candidate was
+// already read or digested — a quiet stretch, or a catch-up run hours after the
+// occurrence it is recovering, by which time the items are long read. Recording
+// it as an error painted a permanent-looking red mark on a healthy config and
+// made a routine quiet morning read as a broken app.
+var ErrNoUnreadItems = errors.New("no unread items to digest")
+
 // ErrGenerationInProgress is returned when a generation for the same config is
 // already running. It is a normal, expected outcome (the scheduler ticked again
 // while a slow run was still going, or the user clicked Generate twice), not an
@@ -302,7 +310,10 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig, llmOve
 	}
 
 	if len(filtered) == 0 {
-		return nil, fmt.Errorf("no unread items found for digest config %d", cfg.ID)
+		// Not an error: there is simply nothing new to digest. Reported as a
+		// sentinel so callers can treat it as "nothing to do" rather than a
+		// failure worth showing the user.
+		return nil, ErrNoUnreadItems
 	}
 
 	g.enrichAndExtractItems(ctx, filtered, genLogger)

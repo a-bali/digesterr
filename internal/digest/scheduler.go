@@ -267,6 +267,15 @@ func (s *Scheduler) generate(ctx context.Context, cfg store.DigestConfig, cfgLog
 		// Writing it to last_error would show the user an error they did not
 		// cause, on a config that is working correctly.
 		cfgLogger.Info("skipping scheduled generation, one is already in progress")
+	} else if errors.Is(err, ErrNoUnreadItems) {
+		// Also not a failure: the config is healthy, there was simply nothing
+		// new to summarise. The stored error is cleared rather than kept,
+		// because leaving one here reproduces the exact symptom this branch
+		// exists to remove: a permanent-looking red mark on a working config.
+		// A genuine failure cannot be hidden by this for long — it will recur
+		// on the next run that actually has items to digest.
+		cfgLogger.Info("skipping scheduled generation, no unread items to digest")
+		_ = s.queries.ClearDigestConfigError(ctx, cfg.ID)
 	} else if err != nil {
 		cfgLogger.Error("scheduled digest generation failed", "error", err)
 		// Truncated like the manual path: this column is rendered in the UI,

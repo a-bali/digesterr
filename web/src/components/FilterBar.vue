@@ -7,11 +7,21 @@ import { Filter, ArrowUpDown, Check, CircleOff } from 'lucide-vue-next'
 export type FilterStatus = 'all' | 'unread' | 'read' | 'digested' | 'saved'
 export type FilterSort = 'newest' | 'oldest' | 'highest' | 'lowest'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   statusFilter: FilterStatus
   sortValue: FilterSort
   minScore: number | null
   scoreSupported: boolean
+  // Whether the read-state filter APPLIES here. False in the Saved view, which
+  // always shows every saved item: offering "Unread" there would be a control
+  // that silently does nothing. Mirrors scoreSupported, which is false wherever
+  // a cross-feed score order is not meaningful.
+  //
+  // Declared as an optional prop with an explicit default in withDefaults: an
+  // absent Boolean prop is cast to false, so defaulting to "required, true"
+  // silently disabled the filter in every caller that omitted it (the digest
+  // results list and each feed view). Only the Saved view passes false.
+  statusSupported?: boolean
   // Lazy-loaded count and the full count for the current filter. Both describe
   // the same result set (the server's total is filter-aware), so `loaded` can
   // never exceed `total` and the pair reads as "how much of this list is here".
@@ -19,13 +29,15 @@ const props = defineProps<{
   totalCount: number
   feedName?: string | null
   statusOptions: { value: FilterStatus; label: string }[]
-}>()
+}>(), { statusSupported: true })
 
 const emit = defineEmits<{
   (e: 'update:statusFilter', v: FilterStatus): void
   (e: 'update:sortValue', v: FilterSort): void
   (e: 'update:minScore', v: number | null): void
 }>()
+
+const statusApplies = computed(() => props.statusSupported)
 
 const SORT_OPTIONS: { value: FilterSort; label: string }[] = [
   { value: 'newest', label: 'Newest' },
@@ -49,7 +61,12 @@ const isFilterDefault = computed(() => {
 const isSortDefault = computed(() => props.sortValue === 'newest')
 
 const filterLabel = computed(() => {
-  const opt = props.statusOptions.find(o => o.value === props.statusFilter)
+  // Where the status filter does not apply the label must not report the
+  // caller's persisted filter — the list shows everything, so the honest label
+  // is "All" whatever the stored value is.
+  const opt = statusApplies.value
+    ? props.statusOptions.find(o => o.value === props.statusFilter)
+    : props.statusOptions.find(o => o.value === 'all')
   let label = opt?.label ?? 'All'
   if (props.scoreSupported && props.minScore != null && props.minScore > 0) {
     label += ' \u2265' + props.minScore
@@ -62,7 +79,8 @@ const sortLabel = computed(() => SORT_SHORT[props.sortValue])
 const filterItems = computed<MenuItem[]>(() =>
   props.statusOptions.map(opt => ({
     label: opt.label,
-    icon: props.statusFilter === opt.value ? Check : undefined,
+    icon: statusApplies.value && props.statusFilter === opt.value ? Check : undefined,
+    disabled: !statusApplies.value,
     onClick: () => emit('update:statusFilter', opt.value),
   })),
 )

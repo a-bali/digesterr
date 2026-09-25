@@ -257,6 +257,7 @@ async function markBelowRead(item: any) {
       :sort-value="(SCORE_MAP_REV[showingSaved ? feedStore.savedSort : feedStore.sort] ?? 'newest') as FilterSort"
       :min-score="feedStore.minScore"
       :score-supported="scoreSupported"
+      :status-supported="!showingSaved"
       :loaded-count="loadedCount"
       :total-count="totalCount"
       :feed-name="showingSaved ? 'Saved' : (feedStore.isMultiView ? (feedStore.activeCategory ?? 'All Feeds') : feedStore.activeFeed?.name ?? null)"
