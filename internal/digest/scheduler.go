@@ -32,6 +32,22 @@ type Scheduler struct {
 	// evaluations, which is not otherwise observable — a minute that is
 	// evaluated against an empty item pool produces no result and no log.
 	onEvaluate func(time.Time)
+	// tickInterval is the ticker period. Nil/zero means one minute; a test
+	// shortens it so Start's real ordering (watermark then catch-up, or the
+	// reverse) can be exercised without waiting a minute.
+	tickInterval time.Duration
+	// afterCatchUp, when set, runs once catch-up has returned. It exists so a
+	// test can observe the scheduling order -- specifically that the watermark
+	// was pinned BEFORE recovery, which is the fix -- without racing goroutines.
+	afterCatchUp func()
+}
+
+// tickPeriod resolves the ticker interval, defaulting to one minute.
+func (s *Scheduler) tickPeriod() time.Duration {
+	if s.tickInterval > 0 {
+		return s.tickInterval
+	}
+	return time.Minute
 }
 
 // Startup catch-up bounds.
@@ -90,8 +106,19 @@ func (s *Scheduler) Start(ctx context.Context) {
 	// Create the ticker before catch-up so its anchor is process start and
 	// not delayed by however long recovery takes. Go buffers one tick, so a
 	// fire during catch-up is delivered as soon as the loop is reached.
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(s.tickPeriod())
 	defer ticker.Stop()
+
+	// The watermark is pinned BEFORE catch-up, not after. catchUp blocks on
+	// wg.Wait for the whole recovery, and the ticker is already running, so
+	// reading the clock afterwards moved the watermark past every minute the
+	// recovery occupied -- minutesSince then had nothing to replay and those
+	// occurrences were skipped permanently and silently. Pinning it here makes
+	// the first tick evaluate the minutes recovery consumed.
+	//
+	// Catch-up's own minute is not replayed (minutesSince is strictly after the
+	// watermark), and if catch-up generated for it, alreadyServed skips it.
+	watermark := s.startupWatermark()
 
 	// A restart does not guarantee a tick inside the scheduled minute. The
 	// eviction/restart that prompted this catch-up landed at :03 while the
@@ -100,6 +127,10 @@ func (s *Scheduler) Start(ctx context.Context) {
 	// before serving ticks so a missed occurrence is recovered, not lost.
 	s.catchUp(ctx)
 
+	if s.afterCatchUp != nil {
+		s.afterCatchUp()
+	}
+
 	// A tick can be late. Generation for one config may run longer than the
 	// ticker interval, and Go holds only a single pending tick: the other
 	// fires are dropped, and the minutes they stood for were never evaluated,
@@ -107,7 +138,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 	// last minute evaluated and, on each tick, evaluate every minute since.
 	// This is the startup catch-up applied continuously, and it is what makes
 	// a slow generation cost latency instead of occurrences.
-	lastEvaluated := s.currentTime().In(s.loc).Truncate(time.Minute)
+	lastEvaluated := watermark
 
 	for {
 		select {
@@ -176,6 +207,12 @@ func (s *Scheduler) tickAt(ctx context.Context, now time.Time) {
 		if !cronMatches(cfg.Schedule, now) {
 			continue
 		}
+		// An occurrence that predates the config was never missed. This path
+		// replays minutes after a slow recovery, so the guard belongs here too
+		// -- not only in catchUp, which sees just the one most recent minute.
+		if occurrencePredatesConfig(now, cfg, s.loc) {
+			continue
+		}
 		cfgLogger := slog.With("config_id", cfg.ID, "config_name", cfg.Name)
 		if s.alreadyServed(ctx, cfg, now, cfgLogger) {
 			continue
@@ -223,12 +260,10 @@ func (s *Scheduler) catchUp(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		// An occurrence from before the config existed was never missed — the
-		// config could not have run then. Without this a config created at
-		// 05:30 on a "0 5 * * *" schedule immediately back-fills that morning's
-		// 05:00 digest, which the user never scheduled. A one-minute slack
-		// absorbs the second-resolution truncation of created_at.
-		if missed.Before(cfg.CreatedAt.In(s.loc).Truncate(time.Minute)) {
+		// An occurrence from before the config existed was never missed -- the
+		// config could not have run then. Shared with the replayed-tick path so
+		// the two cannot drift.
+		if occurrencePredatesConfig(missed, cfg, s.loc) {
 			continue
 		}
 		// Too stale to be useful: a digest from most of a day ago would be
@@ -289,6 +324,29 @@ func previousOccurrence(schedule string, now time.Time) (time.Time, bool) {
 // would be a duplicate. The same recency rule guards the normal tick.
 func (s *Scheduler) alreadyServed(ctx context.Context, cfg store.DigestConfig, now time.Time, cfgLogger *slog.Logger) bool {
 	return s.servedSince(ctx, cfg, now.Add(-recentGenerationWindow), cfgLogger)
+}
+
+// startupWatermark is the minute before which no evaluation is owed. Start
+// pins it BEFORE catch-up runs: catch-up blocks for the whole recovery, so a
+// watermark read afterwards lands past every minute recovery occupied and
+// those occurrences are skipped with nothing recorded. See Start.
+func (s *Scheduler) startupWatermark() time.Time {
+	return s.currentTime().In(s.loc).Truncate(time.Minute)
+}
+
+// occurrencePredatesConfig reports whether a minute a tick is about to evaluate
+// happened before the config existed.
+//
+// An occurrence from before the config existed was never missed -- the config
+// could not have run then. Without this, a config created at 05:30 on a
+// "0 5 * * *" schedule back-fills that morning's 05:00 digest, which the user
+// never scheduled. Both the startup catch-up and a REPLAYED minute (a tick
+// after a slow recovery evaluates minutes that already elapsed) go through this
+// one helper so the two paths cannot drift.
+//
+// The one-minute slack absorbs the second-resolution truncation of created_at.
+func occurrencePredatesConfig(missed time.Time, cfg store.DigestConfig, loc *time.Location) bool {
+	return missed.Before(cfg.CreatedAt.In(loc).Truncate(time.Minute))
 }
 
 // servedSince reports whether a digest result exists at or after since.
