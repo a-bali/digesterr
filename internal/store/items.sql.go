@@ -1200,6 +1200,73 @@ func (q *Queries) ListItemsByFeedStreamPage(ctx context.Context, arg ListItemsBy
 	return items, nil
 }
 
+const listItemsByHashesForEnrichment = `-- name: ListItemsByHashesForEnrichment :many
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items
+WHERE feed_id = ?1
+  AND hash IN (SELECT value FROM json_each(?2))
+`
+
+type ListItemsByHashesForEnrichmentParams struct {
+	FeedID int64       `json:"feed_id"`
+	Hashes interface{} `json:"hashes"`
+}
+
+// Existing rows for the given (feed-scoped) hashes, so a re-poll enriches the
+// REAL row rather than the ID-less candidate placeholder built from the feed
+// payload. Every DB write keys on the row id, so enriching a placeholder
+// persists nothing.
+//
+// Deliberately NOT an eligibility filter. ListUnreadItemsForEnrichment narrows
+// to recently fetched, unread, not-recently-enriched rows, which left a re-poll
+// of a READ or OLD story enriching a placeholder instead: its score never
+// moved again. This returns the row whatever its status or age, so a score can
+// always be persisted; which rows are worth REFRESHING is the caller's
+// decision, and the cost of an extra lookup is bounded by the poll's candidates.
+func (q *Queries) ListItemsByHashesForEnrichment(ctx context.Context, arg ListItemsByHashesForEnrichmentParams) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsByHashesForEnrichment, arg.FeedID, arg.Hashes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+			&i.IsSaved,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listItemsByUserRead = `-- name: ListItemsByUserRead :many
 SELECT i.id, i.feed_id, i.hash, i.title, i.url, i.content, i.author, i.comment_url, i.points, i.comments_count, i.published_at, i.status, i.fetched_at, i.created_at, i.updated_at, i.last_enriched_at, i.extract_content, i.extract_status, i.extract_retries, i.extract_date, i.is_saved FROM items i
 JOIN feeds f ON f.id = i.feed_id
