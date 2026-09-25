@@ -28,11 +28,20 @@ RUN CGO_ENABLED=0 go build -ldflags "-s -w -X digesterr/internal/httpapi.Version
 # ---- Stage 3: runtime ----
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata \
-    && adduser -D -u 1000 app
+    && adduser -D -u 1000 app \
+    && mkdir -p /data && chown app:app /data
 COPY --from=build /out/digesterr /usr/local/bin/digesterr
+# The default DB path is relative ("digesterr.db"), so it resolves against the
+# working directory. Without a WORKDIR that is / , which app cannot write: the
+# container dies at startup on a fresh volume with a permission error, and the
+# mounted data directory is not where a relative path would look anyway.
+WORKDIR /data
 USER app
+# SERVER_PORT is configurable, so the probe reads the same variable the server
+# does. Hardcoding 8080 left the healthcheck failing forever on any other port,
+# which reads as an unhealthy container serving traffic perfectly well.
 EXPOSE 8080
 # /healthz is unauthenticated so cluster probes and this check both work.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
+  CMD wget -qO- "http://127.0.0.1:${SERVER_PORT:-8080}/healthz" || exit 1
 ENTRYPOINT ["digesterr"]

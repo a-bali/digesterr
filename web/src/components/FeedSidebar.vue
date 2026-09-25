@@ -176,19 +176,24 @@ async function deleteFeed(id: number) {
 }
 
 async function addDigest(data: { name: string; schedule: string; config: string }) {
-  await digestStore.createConfig(data.name, data.schedule, data.config)
-  showAddDigest.value = false
+  // Close only on success: on failure the dialog stays open with the user's
+  // input intact, next to the toast that says what went wrong.
+  if (await digestStore.createConfig(data.name, data.schedule, data.config)) {
+    showAddDigest.value = false
+  }
 }
 
 async function saveEditDigest(data: { name: string; schedule: string; config: string }) {
   if (!editingDigest.value) return
-  await digestStore.updateConfig(editingDigest.value.id, data.name, data.schedule, data.config)
-  showEditDigest.value = false; editingDigest.value = null
+  if (await digestStore.updateConfig(editingDigest.value.id, data.name, data.schedule, data.config)) {
+    showEditDigest.value = false; editingDigest.value = null
+  }
 }
 
 async function deleteDigest(id: number) {
-  await digestStore.deleteConfig(id)
-  showEditDigest.value = false; editingDigest.value = null
+  if (await digestStore.deleteConfig(id)) {
+    showEditDigest.value = false; editingDigest.value = null
+  }
 }
 
 async function generateNow(e: Event, cfgId: number) {

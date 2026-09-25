@@ -341,28 +341,30 @@ describe('create / update / delete report both outcomes', () => {
     const store = useDigestStore()
 
     ;(digestApi.createConfig as any).mockResolvedValue({ id: 1, name: 'D', schedule: '*', config: '{}' })
-    await store.createConfig('D', '*', '{}')
+    await expect(store.createConfig('D', '*', '{}')).resolves.toBe(true)
     expect(toast.success).toHaveBeenCalledWith('Digest config created', expect.anything())
 
     ;(digestApi.updateConfig as any).mockResolvedValue({ id: 1, name: 'D2', schedule: '*', config: '{}' })
-    await store.updateConfig(1, 'D2', '*', '{}')
+    await expect(store.updateConfig(1, 'D2', '*', '{}')).resolves.toBe(true)
     expect(toast.success).toHaveBeenCalledWith('Digest config updated', expect.anything())
 
     ;(digestApi.deleteConfig as any).mockResolvedValue(undefined)
-    await store.deleteConfig(1)
+    await expect(store.deleteConfig(1)).resolves.toBe(true)
     expect(toast.success).toHaveBeenCalledWith('Digest config deleted', expect.anything())
   })
 
-  it('digest config failures toast the failure and do not throw', async () => {
+  // The boolean is what lets the caller keep its dialog open on failure, so a
+  // false here is load-bearing, not a cosmetic return value.
+  it('digest config failures toast the failure and report false', async () => {
     const { digestApi } = await import('../services/api')
     ;(digestApi.createConfig as any).mockRejectedValue(new Error('bad'))
     ;(digestApi.updateConfig as any).mockRejectedValue(new Error('bad'))
     ;(digestApi.deleteConfig as any).mockRejectedValue(new Error('bad'))
 
     const store = useDigestStore()
-    await expect(store.createConfig('D', '*', '{}')).resolves.toBeNull()
-    await expect(store.updateConfig(1, 'D', '*', '{}')).resolves.toBeUndefined()
-    await expect(store.deleteConfig(1)).resolves.toBeUndefined()
+    await expect(store.createConfig('D', '*', '{}')).resolves.toBe(false)
+    await expect(store.updateConfig(1, 'D', '*', '{}')).resolves.toBe(false)
+    await expect(store.deleteConfig(1)).resolves.toBe(false)
 
     expect(toast.error).toHaveBeenCalledTimes(3)
   })

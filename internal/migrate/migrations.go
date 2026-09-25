@@ -324,18 +324,29 @@ FROM feeds f LEFT JOIN categories c ON c.id = f.category_id`,
 		stmts:   []string{"DROP INDEX IF EXISTS idx_items_feed_guid"},
 	},
 	// Deduplicate items sharing the same (feed_id, hash): they arise when the
-	// unique index was never created due to pre-existing duplicates. Keep the
-	// oldest row; protect saved items and items linked to digest results.
+	// unique index was never created due to pre-existing duplicates.
+	//
+	// The previous version kept the oldest row but SKIPPED any duplicate that
+	// was saved or linked to a digest result. That left a duplicate in place
+	// whenever the protected row was not the oldest one, and migration 35's
+	// UNIQUE index over (feed_id, hash) then failed on it — aborting startup on
+	// every retry, forever, with no way out but hand-editing the database.
+	//
+	// The protections exist so that no *state* is lost, not so that a
+	// particular row survives. So the oldest row is kept and everything the
+	// discarded rows carried is folded onto it: is_saved, the read/digested
+	// status, the richer points/comments_count, and every digest link. Items
+	// with an empty hash are exempt — the unique index is partial (hash != '')
+	// precisely because those legitimately collide.
+	//
+	// The digest link re-pointing needs the unique index on
+	// digest_result_items(result_id, item_id) out of the way: two rows in the
+	// same result that collapse onto one keeper would collide mid-update. It is
+	// dropped and rebuilt, deduplicating the links in between.
 	{
 		version: 34,
 		name:    "deduplicate items by feed_id and hash",
-		stmts: []string{`DELETE FROM items
-WHERE hash != ''
-  AND id NOT IN (
-    SELECT MIN(id) FROM items WHERE hash != '' GROUP BY feed_id, hash
-  )
-  AND is_saved = 0
-  AND NOT EXISTS (SELECT 1 FROM digest_result_items dri WHERE dri.item_id = items.id)`},
+		build:   dedupeItemsByFeedHash,
 		applied: noRows(`SELECT count(*) FROM (
     SELECT feed_id, hash FROM items WHERE hash != ''
     GROUP BY feed_id, hash HAVING count(*) > 1
@@ -344,7 +355,19 @@ WHERE hash != ''
 	{
 		version: 35,
 		name:    "create items.feed_hash unique index",
-		stmts:   []string{"CREATE UNIQUE INDEX IF NOT EXISTS idx_items_feed_hash ON items(feed_id, hash) WHERE hash != ''"},
+		// Runs the dedup first: a database that already recorded v34 under the
+		// old rule still holds the duplicate that made this index fail, and a
+		// recorded version is never re-run. Without this, such a database is
+		// stuck permanently — v34 is marked done, so nothing ever retries it.
+		build: func(db *sql.DB) ([]string, error) {
+			stmts, err := dedupeItemsByFeedHash(db)
+			if err != nil {
+				return nil, err
+			}
+			return append(stmts,
+				"CREATE UNIQUE INDEX IF NOT EXISTS idx_items_feed_hash ON items(feed_id, hash) WHERE hash != ''",
+			), nil
+		},
 	},
 	{
 		version: 36,
@@ -443,9 +466,17 @@ WHERE id NOT IN (SELECT MIN(id) FROM digest_result_items GROUP BY result_id, ite
 		name:      "enforce NOT NULL on items.points and items.comments_count",
 		disableFK: true,
 		build:     itemsPointsNotNullRebuild,
-		// Baseline when the column is already NOT NULL: nothing to rebuild, so a
-		// current database is left untouched.
-		applied: columnNotNull("items", "points"),
+		// Baseline when BOTH rebuilt columns are already NOT NULL. Checking only
+		// points would baseline a database whose rebuild was interrupted after
+		// points was applied, leaving comments_count nullable and never
+		// rebuilding it — the migration would be recorded as done while its
+		// stated post-condition does not hold.
+		applied: func(db *sql.DB) (bool, error) {
+			return allTrue(db,
+				columnNotNull("items", "points"),
+				columnNotNull("items", "comments_count"),
+			)
+		},
 	},
 	{
 		version: 43,
@@ -637,3 +668,148 @@ func allTrue(db *sql.DB, guards ...func(*sql.DB) (bool, error)) (bool, error) {
 	}
 	return true, nil
 }
+
+// dedupeItemsByFeedHash returns the statements that collapse items sharing a
+// non-empty (feed_id, hash) onto the oldest such row.
+//
+// Merging rather than deleting the protected rows is what makes the unique
+// index creatable: the old rule kept any saved or digest-linked duplicate, so a
+// duplicate whose oldest row was unprotected survived and made the index
+// creation fail — permanently, since the migration recording the delete was
+// already marked applied. Every piece of state a discarded row carried is
+// therefore folded onto the keeper:
+//
+//   - is_saved and the read/digested status, so an article does not un-save or
+//     re-appear as unread merely because its row lost a dedup race;
+//   - points and comments_count by MAX, so a re-poll that enriched the newer
+//     row does not lose its score to the older one (the values are absolute
+//     counters, not deltas, so the larger is the more recent observation);
+//   - every digest_result_items link, re-pointed at the keeper.
+//
+// Digest links need care in two ways. A highlight flag must not be lost when
+// the highlighted link is the one that gets deduplicated away, so highlights are
+// propagated to every link in the same result that refers to the same keeper
+// BEFORE any link is re-pointed. And the unique index on
+// digest_result_items(result_id, item_id) has to be dropped for the duration:
+// re-pointing can collapse two links in one result onto the same keeper, which
+// the index would reject mid-update. It is recreated afterwards.
+//
+// Both migrations 34 and 35 build from this. 35 repeats the work because a
+// database that already recorded 34 under the old rule still holds the
+// duplicate, and a recorded version is never re-run — so 34 alone cannot
+// unwedge it. Running the (idempotent) sequence twice is harmless.
+//
+// Legacy databases may predate digest_result_items entirely, or hold a nullable
+// points column; both are handled by inspecting the actual schema.
+func dedupeItemsByFeedHash(db *sql.DB) ([]string, error) {
+	cols, err := columnsOf(db, "items")
+	if err != nil {
+		return nil, err
+	}
+	for _, required := range []string{"id", "feed_id", "hash"} {
+		if !cols[required] {
+			// Nothing to deduplicate on: a table this old predates the whole
+			// hash concept, and the caller's index is partial on hash != ''
+			// anyway.
+			return nil, nil
+		}
+	}
+	hasLinks, err := tableExists(db, "digest_result_items")
+	if err != nil {
+		return nil, err
+	}
+
+	stmts := []string{
+		// A stale temp table can survive on a connection that was reused after
+		// an interrupted run, and CREATE TABLE would then fail on the name.
+		`DROP TABLE IF EXISTS _dup_item_survivors`,
+		// doomed_id -> keep_id for every row that is about to be discarded.
+		// The keeper is the oldest row of the group, matching the previous
+		// behaviour so ids stay stable for the common case.
+		`CREATE TEMP TABLE _dup_item_survivors AS
+SELECT i.id AS doomed_id,
+       (SELECT MIN(s.id) FROM items s WHERE s.feed_id = i.feed_id AND s.hash = i.hash) AS keep_id
+FROM items i
+WHERE i.hash != ''
+  AND i.id NOT IN (SELECT MIN(id) FROM items WHERE hash != '' GROUP BY feed_id, hash)`,
+	}
+
+	if hasLinks {
+		// group(expr) maps an item id to the id that will represent its group.
+		group := func(v string) string {
+			return fmt.Sprintf(
+				"COALESCE((SELECT m.keep_id FROM _dup_item_survivors m WHERE m.doomed_id = %s), %s)", v, v)
+		}
+		stmts = append(stmts,
+			// Propagate highlights first, while the doomed links still exist:
+			// if any link in a result points at any row of this group and is
+			// highlighted, every link to the group becomes highlighted, so the
+			// survivor inherits the flag no matter which link is dropped.
+			fmt.Sprintf(`UPDATE digest_result_items SET is_highlight = 1
+WHERE is_highlight = 0 AND EXISTS (
+  SELECT 1 FROM digest_result_items x
+  WHERE x.result_id = digest_result_items.result_id
+    AND x.is_highlight = 1
+    AND %s = %s)`, group("x.item_id"), group("digest_result_items.item_id")),
+			`DROP INDEX IF EXISTS idx_digest_result_items_unique`,
+			fmt.Sprintf(`UPDATE digest_result_items
+SET item_id = %s
+WHERE EXISTS (SELECT 1 FROM _dup_item_survivors m WHERE m.doomed_id = digest_result_items.item_id)`,
+				group("digest_result_items.item_id")),
+			// Links that collapsed onto the same (result, item) are now
+			// duplicates; keep the earliest.
+			`DELETE FROM digest_result_items
+WHERE id NOT IN (SELECT MIN(id) FROM digest_result_items GROUP BY result_id, item_id)`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_digest_result_items_unique ON digest_result_items(result_id, item_id)`,
+		)
+	}
+
+	// Fold the discarded rows' state onto the keeper. Each subquery is guarded
+	// by the survivors table, so a column absent from a very old database never
+	// appears in the statement at all.
+	merges := make([]string, 0, 4)
+	numeric := func(col string) string {
+		return fmt.Sprintf(`%s = MAX(COALESCE(%s, 0), COALESCE((SELECT MAX(COALESCE(x.%s, 0)) FROM items x
+    JOIN _dup_item_survivors m ON m.doomed_id = x.id WHERE m.keep_id = items.id), 0))`, col, col, col)
+	}
+	if cols["is_saved"] {
+		merges = append(merges, numeric("is_saved"))
+	}
+	if cols["points"] {
+		merges = append(merges, numeric("points"))
+	}
+	if cols["comments_count"] {
+		merges = append(merges, numeric("comments_count"))
+	}
+	if cols["status"] {
+		// A row is settled if ANY row in its group was: read beats digested
+		// beats unread. Otherwise deleting a read duplicate would resurface
+		// the article as unread.
+		merges = append(merges, `status = CASE
+    WHEN status = 'read' OR EXISTS (SELECT 1 FROM items d JOIN _dup_item_survivors m ON m.doomed_id = d.id
+        WHERE m.keep_id = items.id AND d.status = 'read') THEN 'read'
+    WHEN status = 'digested' OR EXISTS (SELECT 1 FROM items d JOIN _dup_item_survivors m ON m.doomed_id = d.id
+        WHERE m.keep_id = items.id AND d.status = 'digested') THEN 'digested'
+    ELSE status END`)
+	}
+	if len(merges) > 0 {
+		stmts = append(stmts, fmt.Sprintf(
+			"UPDATE items SET\n    %s\nWHERE id IN (SELECT keep_id FROM _dup_item_survivors)",
+			strings.Join(merges, ",\n    ")))
+	}
+
+	return append(stmts,
+		`DELETE FROM items WHERE id IN (SELECT doomed_id FROM _dup_item_survivors)`,
+		`DROP TABLE IF EXISTS _dup_item_survivors`,
+	), nil
+}
+
+// tableExists reports whether the named table is present. table is always a
+// constant from this package.
+func tableExists(db *sql.DB, table string) (bool, error) {
+	var n int
+	err := db.QueryRow(
+		"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&n)
+	return n > 0, err
+}
+

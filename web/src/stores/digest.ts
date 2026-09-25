@@ -80,30 +80,36 @@ export const useDigestStore = defineStore('digest', () => {
     }
   }
 
-  async function createConfig(name: string, schedule: string, config: string) {
+  // createConfig/updateConfig/deleteConfig each report whether the mutation
+  // actually happened. The caller needs that to decide whether to close its
+  // dialog: closing on failure loses everything the user typed, and the toast
+  // that explains the failure disappears with the form.
+  async function createConfig(name: string, schedule: string, config: string): Promise<boolean> {
     try {
       const cfg = await digestApi.createConfig({ name, schedule, config })
       configs.value.push(cfg)
       toastSuccess('Digest config created', cfg.name || name)
-      return cfg
+      return true
     } catch (e) {
       toastError(e, 'Failed to create digest config', name)
-      return null
+      return false
     }
   }
 
-  async function updateConfig(id: number, name: string, schedule: string, config: string) {
+  async function updateConfig(id: number, name: string, schedule: string, config: string): Promise<boolean> {
     try {
       const updated = await digestApi.updateConfig(id, { name, schedule, config })
       const idx = configs.value.findIndex(c => c.id === id)
       if (idx !== -1) configs.value[idx] = updated
       toastSuccess('Digest config updated', name)
+      return true
     } catch (e) {
       toastError(e, 'Failed to update digest config', name)
+      return false
     }
   }
 
-  async function deleteConfig(id: number) {
+  async function deleteConfig(id: number): Promise<boolean> {
     // Capture the name first: after the delete it is gone from `configs`, and the
     // toast has to name what was deleted.
     const name = configs.value.find(c => c.id === id)?.name
@@ -119,8 +125,10 @@ export const useDigestStore = defineStore('digest', () => {
         resultItems.value = []
       }
       toastSuccess('Digest config deleted', name)
+      return true
     } catch (e) {
       toastError(e, 'Failed to delete digest config', name)
+      return false
     }
   }
 
@@ -232,8 +240,19 @@ export const useDigestStore = defineStore('digest', () => {
   }
 
   async function fetchMoreResults() {
+    // The paging target depends on which list is on screen. In All-Digests mode
+    // there is no active config, so this used to return immediately — and since
+    // the list's infinite-scroll handler is wired to this function, "All
+    // Digests" silently stopped at the first page even when the server reported
+    // more. Delegating rather than duplicating keeps one pagination path.
+    if (!activeConfigId.value) {
+      if (showingAllDigests.value && hasMore.value && !loadingMore.value && !loading.value) {
+        await loadAllResults(false)
+      }
+      return
+    }
     const cfgId = activeConfigId.value
-    if (!cfgId || !hasMore.value || loadingMore.value || loading.value) return
+    if (!hasMore.value || loadingMore.value || loading.value) return
     const rid = ++resultsReq
     // Capture the offset at request time so a newer request can't shift the
     // list out from under this page append.

@@ -27,6 +27,11 @@ type Scheduler struct {
 	// now returns the current time. Nil means time.Now; tests override it to
 	// place the scheduler at a specific instant.
 	now func() time.Time
+	// onEvaluate, when set, is called with each minute the scheduler decides
+	// to evaluate. Production leaves it nil; it exists so a test can count
+	// evaluations, which is not otherwise observable — a minute that is
+	// evaluated against an empty item pool produces no result and no log.
+	onEvaluate func(time.Time)
 }
 
 // Startup catch-up bounds.
@@ -95,10 +100,19 @@ func (s *Scheduler) Start(ctx context.Context) {
 	// before serving ticks so a missed occurrence is recovered, not lost.
 	s.catchUp(ctx)
 
+	// A tick can be late. Generation for one config may run longer than the
+	// ticker interval, and Go holds only a single pending tick: the other
+	// fires are dropped, and the minutes they stood for were never evaluated,
+	// so a config scheduled inside one of them silently did not run. Track the
+	// last minute evaluated and, on each tick, evaluate every minute since.
+	// This is the startup catch-up applied continuously, and it is what makes
+	// a slow generation cost latency instead of occurrences.
+	lastEvaluated := s.currentTime().In(s.loc).Truncate(time.Minute)
+
 	for {
 		select {
 		case <-ticker.C:
-			s.tick(ctx)
+			lastEvaluated = s.runTicks(ctx, lastEvaluated)
 		case <-ctx.Done():
 			slog.Info("digest scheduler stopped")
 			return
@@ -106,14 +120,57 @@ func (s *Scheduler) Start(ctx context.Context) {
 	}
 }
 
+// runTicks serves every minute that has elapsed since lastEvaluated and
+// returns the new watermark. Split out from the loop so the late-tick
+// behaviour is testable without waiting a real minute.
+//
+// The watermark advances only up to the current minute and only forwards.
+// Advancing on a first pass and then reusing the value is what stops a
+// generation slower than the interval from re-evaluating (and so
+// re-generating) minutes already served.
+func (s *Scheduler) runTicks(ctx context.Context, lastEvaluated time.Time) time.Time {
+	now := s.currentTime().In(s.loc).Truncate(time.Minute)
+	for _, m := range minutesSince(lastEvaluated, now) {
+		s.tickAt(ctx, m)
+	}
+	if now.After(lastEvaluated) {
+		return now
+	}
+	return lastEvaluated
+}
+
+// minutesSince returns every whole minute strictly after from up to and
+// including to. A caller that just moved from `from` to `to` owes an
+// evaluation to each of them, in order.
+//
+// A non-positive span yields nothing: the clock can stand still between two
+// fires, and a backwards step (NTP correction) must not replay minutes.
+func minutesSince(from, to time.Time) []time.Time {
+	from, to = from.Truncate(time.Minute), to.Truncate(time.Minute)
+	var out []time.Time
+	for m := from.Add(time.Minute); !m.After(to); m = m.Add(time.Minute) {
+		out = append(out, m)
+	}
+	return out
+}
+
+// tick evaluates every config due at the current minute.
 func (s *Scheduler) tick(ctx context.Context) {
+	s.tickAt(ctx, s.currentTime().In(s.loc))
+}
+
+// tickAt evaluates every config whose schedule matches the minute now, and
+// runs the due generations concurrently.
+func (s *Scheduler) tickAt(ctx context.Context, now time.Time) {
+	if s.onEvaluate != nil {
+		s.onEvaluate(now)
+	}
 	configs, err := s.queries.ListAllDigestConfigs(ctx)
 	if err != nil {
 		slog.Error("failed to list digest configs for scheduling", "error", err)
 		return
 	}
 
-	now := s.currentTime().In(s.loc)
 	var wg sync.WaitGroup
 	for _, cfg := range configs {
 		if !cronMatches(cfg.Schedule, now) {
