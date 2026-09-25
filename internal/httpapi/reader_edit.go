@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"digesterr/internal/logging"
 	"digesterr/internal/store"
 )
 
@@ -281,9 +282,22 @@ func (s *Server) handleReaderMarkAllAsRead(w http.ResponseWriter, r *http.Reques
 			return
 		}
 
-	default:
-		// reading-list, all, empty/missing s, or any unrecognized stream
-		// (e.g. a label): mark everything read.
+	case strings.HasPrefix(stream, readerLabelPrefix):
+		// A feed category, advertised as a label stream (see readerLabelID).
+		// This must be handled explicitly: categories are per-user, so the
+		// category name is only meaningful combined with userID.
+		category := strings.TrimPrefix(stream, readerLabelPrefix)
+		if err := s.queries.MarkCategoryItemsRead(ctx, store.MarkCategoryItemsReadParams{
+			UserID:   userID,
+			Category: category,
+		}); err != nil {
+			writeServerError(w, "failed to mark category read", err)
+			return
+		}
+
+	case stream == "" || stream == readerStreamReadingList:
+		// The reading-list tag IS the whole account, so this scope is global by
+		// definition. An empty/missing `s` is the same request.
 		if err := s.markDigestScopeRead(ctx, userID, nil); err != nil {
 			writeServerError(w, "failed to mark all digest results read", err)
 			return
@@ -292,6 +306,15 @@ func (s *Server) handleReaderMarkAllAsRead(w http.ResponseWriter, r *http.Reques
 			writeServerError(w, "failed to mark all items read", err)
 			return
 		}
+
+	default:
+		// An unknown stream id is NOT a request to mark everything read. It is
+		// answered OK, because Google Reader clients treat a non-200 as a
+		// retryable failure and would hammer the endpoint, but nothing is
+		// modified: silently widening an unrecognized scope to the whole
+		// account turns a client typo or an unsupported stream into data loss.
+		slog.Info("mark-all-as-read: ignoring unrecognized stream",
+			logging.CategoryAttr(logging.CategoryHTTP), "stream", stream, "user_id", userID)
 	}
 
 	writeText(w, http.StatusOK, "OK")

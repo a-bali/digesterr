@@ -9,3 +9,13 @@ tmp/
 web/node_modules
 web/dist
 digesterr.dev.yaml
+# Local SQLite databases. .gitignore already excludes these, but the Docker
+# build context is sent to the daemon before any ignore file is consulted from
+# outside the tree, and a dev database at the default relative path sits in the
+# repo root. Without this the whole file is shipped as build context (and baked
+# into the build stage's layer) — hundreds of MB of one user's feeds, items and
+# digest history.
+*.db
+*.db-shm
+*.db-wal
+*.db-journal

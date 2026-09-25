@@ -36,7 +36,17 @@ func newUserResponse(u store.User) userResponse {
 	return userResponse{ID: u.ID, Email: u.Email, CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt}
 }
 
-// refreshCookie builds the refresh-token cookie scoped to /api/auth/refresh.
+// refreshCookie builds the refresh-token cookie scoped to /api/auth.
+//
+// The path must cover every endpoint that has to READ the token, not just the
+// one that refreshes it. It used to be /api/auth/refresh, which meant a browser
+// never sent the cookie to /api/auth/signout: the handler's r.Cookie lookup
+// failed, the database row was never deleted, and the token stayed usable for
+// its full seven-day lifetime via the refresh endpoint's JSON-body fallback.
+// Scoping to /api/auth keeps the credential off the rest of the API (it is the
+// one cookie the SPA cannot read, so it should travel as little as possible)
+// while making revocation work. Widening to "/" would also work but would
+// attach the token to every request for no reason.
 //
 // Secure defaults to the request's TLS state, which is correct when the app
 // terminates TLS itself but silently wrong behind a TLS-terminating proxy: the
@@ -52,7 +62,7 @@ func (s *Server) refreshCookie(r *http.Request, value string, maxAge int) *http.
 	return &http.Cookie{
 		Name:     "refresh_token",
 		Value:    value,
-		Path:     "/api/auth/refresh",
+		Path:     "/api/auth",
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   secure,

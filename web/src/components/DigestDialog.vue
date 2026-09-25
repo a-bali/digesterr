@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch } from 'vue'
 import { useFeedStore } from '../stores/feed'
+import { SCORE_FEED_TYPES } from '../lib/feeds'
 import Dialog from './ui/Dialog.vue'
 import Input from './ui/Input.vue'
 import Button from './ui/Button.vue'
@@ -16,9 +17,10 @@ const emit = defineEmits<{
 
 const feedStore = useFeedStore()
 
-// Feed types that produce a real score (points/upvotes) for their items.
-// Plain RSS/Atom feeds never get scores.
-const SCORE_CAPABLE_TYPES = ['hn', 'lobsters', 'reddit']
+// Score capability comes from the shared SCORE_FEED_TYPES set. A local copy
+// here drifted from it (it omitted twitter), which disabled the min-score field
+// for Twitter sources whose items DO carry points — the server sets
+// item.points from the tweet's favourite count.
 
 const DEFAULT_PROMPT = 'You are a research assistant digesting news articles. For each article provided below, produce a 2-3 sentence highlight giving the concrete takeaway and why it matters — skip introductory phrases like "The article discusses" or "The author explains". Use the comments and extracted content to enrich your analysis.'
 
@@ -33,13 +35,27 @@ const categoryItems = computed(() => {
 })
 
 const sourceMode = ref<'categories' | 'feeds'>('categories')
+// Selections are kept per mode, not shared. A category name and a feed id are
+// different kinds of value, so a single array cannot hold both: switching modes
+// used to leave the other mode's values in place, silently clearing what the
+// user had picked (the TagInput could not match them) and — worse — submitting
+// whatever the user then typed for the NEW mode together with stale entries.
+// Keeping two arrays means a round trip through the toggle returns the user to
+// exactly what they had.
+const sourceIdsByMode = reactive<{ categories: TagValue[]; feeds: TagValue[] }>({
+  categories: [],
+  feeds: [],
+})
+const sourceIds = computed<TagValue[]>({
+  get: () => sourceIdsByMode[sourceMode.value],
+  set: (ids) => { sourceIdsByMode[sourceMode.value] = ids },
+})
 // Deleting a digest config discards its generated results — confirm first
 // (same pattern as delete-feed in FeedDialog).
 const confirmDelete = ref(false)
 const form = reactive({
   name: '',
   schedule: '0 8 * * *',
-  sourceIds: [] as TagValue[],
   highlights: 5,
   comments: 10,
   maxItems: 100,
@@ -50,13 +66,20 @@ const form = reactive({
 // The min-score threshold only makes sense when at least one selected source
 // can produce scores. An empty selection means "all feeds", which may include
 // score-capable feeds, so it stays enabled.
+//
+// Both modes are considered, not just the visible one: the selection for the
+// OTHER mode still contributes to the digest (the user can switch back and
+// forth), so a score-capable feed picked under Feeds must keep the field
+// enabled while the Categories tab is showing.
 const hasScoreCapableSource = computed(() => {
-  if (form.sourceIds.length === 0) return true
-  const ids = new Set(form.sourceIds.map(v => String(v)))
-  if (sourceMode.value === 'feeds') {
-    return feedStore.feeds.some(f => ids.has(String(f.id)) && SCORE_CAPABLE_TYPES.includes(f.type))
-  }
-  return feedStore.feeds.some(f => f.category && ids.has(f.category) && SCORE_CAPABLE_TYPES.includes(f.type))
+  const scoreCapable = (f: { type: string }) => SCORE_FEED_TYPES.has(f.type)
+  if (sourceIdsByMode.categories.length === 0 && sourceIdsByMode.feeds.length === 0) return true
+  const categoryIds = new Set(sourceIdsByMode.categories.map(v => String(v)))
+  const feedIds = new Set(sourceIdsByMode.feeds.map(v => String(v)))
+  return feedStore.feeds.some(f => {
+    if (feedIds.has(String(f.id)) && scoreCapable(f)) return true
+    return !!f.category && categoryIds.has(f.category) && scoreCapable(f)
+  })
 })
 
 watch(
@@ -83,7 +106,10 @@ watch(
       } catch { /* defaults */ }
       form.name = cfg.name
       form.schedule = cfg.schedule
-      form.sourceIds = ids
+      // A saved config names exactly one mode's sources, so the other mode
+      // starts empty rather than inheriting a stale selection.
+      sourceIdsByMode.categories = mode === 'categories' ? ids : []
+      sourceIdsByMode.feeds = mode === 'feeds' ? ids : []
       form.highlights = highlights
       form.comments = comments
       form.maxItems = maxItems
@@ -93,7 +119,8 @@ watch(
     } else {
       form.name = ''
       form.schedule = '0 8 * * *'
-      form.sourceIds = []
+      sourceIdsByMode.categories = []
+      sourceIdsByMode.feeds = []
       form.highlights = 5
       form.comments = 10
       form.maxItems = 100
@@ -113,10 +140,14 @@ function buildConfig(): string {
     min_score: Number(form.minScore) || 0,
     prompt: form.prompt || undefined,
   }
+  // Only the active mode's sources are emitted: the toggle chooses which
+  // namespace the digest draws from, so the two arrays are alternatives, not a
+  // union. The per-mode arrays exist so switching modes does not destroy the
+  // other side's picks while the dialog is open (see sourceIdsByMode).
   if (sourceMode.value === 'categories') {
-    c.categories = form.sourceIds.map(name => ({ name, highlights: form.highlights, comments: form.comments }))
+    c.categories = sourceIds.value.map(name => ({ name, highlights: form.highlights, comments: form.comments }))
   } else {
-    c.feeds = form.sourceIds.map(id => ({ id, highlights: form.highlights, comments: form.comments }))
+    c.feeds = sourceIds.value.map(id => ({ id, highlights: form.highlights, comments: form.comments }))
   }
   return JSON.stringify(c)
 }
@@ -148,13 +179,13 @@ function submit() {
           <TagInput
             v-if="sourceMode === 'categories'"
             :items="categoryItems"
-            v-model="form.sourceIds"
+            v-model="sourceIds"
             placeholder="Search categories…"
           />
           <TagInput
             v-else
             :items="feedStore.feeds.map(f => ({ label: f.name + ' (' + f.type + ')', value: f.id }))"
-            v-model="form.sourceIds"
+            v-model="sourceIds"
             placeholder="Search feeds…"
           />
         </div>
@@ -170,7 +201,7 @@ function submit() {
         <p class="text-xs text-muted-foreground mt-0.5">
           {{ hasScoreCapableSource
             ? 'Only include items with at least this many points/upvotes (0 = include all). Scores are refreshed when the digest is generated.'
-            : 'None of the selected sources provide scores (only HN, Lobsters and Reddit do); this setting has no effect.' }}
+            : 'None of the selected sources provide scores (only HN, Lobsters, Reddit and Twitter do); this setting has no effect.' }}
         </p>
       </div>
       <div class="space-y-1">

@@ -1135,19 +1135,28 @@ func (p *Poller) enrichForPoll(ctx context.Context, feed store.Feed, candidates 
 	}
 
 	// Merge candidates + existing, dedup by hash.
+	//
+	// The existing row WINS a hash collision. A candidate is a placeholder built
+	// from the feed payload: it has no row id, so putting it in the list means
+	// enrichment updates the placeholder and every DB write that keys on the id
+	// (UpdateItemPointsAndComments) matches nothing — the stored score silently
+	// never refreshes, and the enriched score is thrown away. Re-polling a story
+	// is the normal case for a score feed, so this was the common path, not an
+	// edge: the fix is for the real row to take the slot and be enriched.
 	haveHash := make(map[string]bool, len(candidates))
-	for _, c := range candidates {
-		haveHash[c.hash] = true
+	for i := range existing {
+		haveHash[existing[i].Hash] = true
 	}
 	allPtrs := make([]*store.Item, 0, len(candidates)+len(existing))
-	for _, c := range candidates {
-		allPtrs = append(allPtrs, scored[c.hash])
-	}
 	for i := range existing {
-		if !haveHash[existing[i].Hash] {
-			haveHash[existing[i].Hash] = true
-			allPtrs = append(allPtrs, &existing[i])
+		allPtrs = append(allPtrs, &existing[i])
+	}
+	for _, c := range candidates {
+		if haveHash[c.hash] {
+			continue
 		}
+		haveHash[c.hash] = true
+		allPtrs = append(allPtrs, scored[c.hash])
 	}
 
 	if len(allPtrs) == 0 {

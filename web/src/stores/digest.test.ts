@@ -180,3 +180,75 @@ describe('digest store status normalisation', () => {
     expect(store.results.map(r => r.status)).toEqual(['unread'])
   })
 })
+
+// The All-Digests list wires its infinite-scroll handler to fetchMoreResults,
+// which used to bail out immediately whenever there was no active config — i.e.
+// always, in that mode. The list therefore stopped at the first page with the
+// server still reporting more, and no amount of scrolling revealed the rest.
+describe('digest store All-Digests pagination', () => {
+  // This file's global beforeEach only resets Pinia, so mock call counts and
+  // implementations carry over between tests; these assertions are all about
+  // call counts.
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('fetchMoreResults appends the next page while in All-Digests mode', async () => {
+    const { digestApi } = await import('../services/api')
+    ;(digestApi.listAllResults as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ results: [{ id: 1, status: 'new', config_name: 'c' }], has_more: true })
+      .mockResolvedValueOnce({ results: [{ id: 2, status: 'new', config_name: 'c' }], has_more: false })
+
+    const store = useDigestStore()
+    await store.enterAllDigestsMode()
+    expect(store.allResults.map(r => r.id)).toEqual([1])
+    expect(store.hasMore).toBe(true)
+
+    await store.fetchMoreResults()
+
+    expect(store.allResults.map(r => r.id)).toEqual([1, 2])
+    expect(store.hasMore).toBe(false)
+    // The second call must be a continuation, not a restart.
+    expect(digestApi.listAllResults).toHaveBeenLastCalledWith({ limit: expect.any(Number), offset: 1 })
+  })
+
+  it('fetchMoreResults is a no-op in All-Digests mode when the server says there is no more', async () => {
+    const { digestApi } = await import('../services/api')
+    ;(digestApi.listAllResults as ReturnType<typeof vi.fn>)
+      .mockResolvedValue({ results: [{ id: 1, status: 'new', config_name: 'c' }], has_more: false })
+
+    const store = useDigestStore()
+    await store.enterAllDigestsMode()
+    expect(digestApi.listAllResults).toHaveBeenCalledTimes(1)
+
+    await store.fetchMoreResults()
+
+    expect(digestApi.listAllResults).toHaveBeenCalledTimes(1)
+    expect(store.allResults.map(r => r.id)).toEqual([1])
+  })
+
+  it('fetchMoreResults does nothing when neither a config nor All-Digests mode is active', async () => {
+    const { digestApi } = await import('../services/api')
+
+    const store = useDigestStore()
+    await store.fetchMoreResults()
+
+    expect(digestApi.listAllResults).not.toHaveBeenCalled()
+    expect(digestApi.listResults).not.toHaveBeenCalled()
+    expect(store.allResults).toEqual([])
+  })
+
+  it('fetchMoreResults still pages a single config rather than All-Digests', async () => {
+    const { digestApi } = await import('../services/api')
+    ;(digestApi.listResults as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ results: [{ id: 1, status: 'new' }], has_more: true })
+      .mockResolvedValueOnce({ results: [{ id: 2, status: 'new' }], has_more: false })
+
+    const store = useDigestStore()
+    await store.setActiveConfig(5)
+    await store.fetchMoreResults()
+
+    expect(store.results.map(r => r.id)).toEqual([1, 2])
+    expect(digestApi.listAllResults).not.toHaveBeenCalled()
+  })
+})

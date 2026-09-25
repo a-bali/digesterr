@@ -70,8 +70,10 @@ func TestRefreshCookieKeepsProtectiveAttributes(t *testing.T) {
 	if !c.HttpOnly {
 		t.Error("refresh cookie must stay HttpOnly: it is the one credential the SPA cannot read")
 	}
-	if c.Path != "/api/auth/refresh" {
-		t.Errorf("Path = %q, want /api/auth/refresh", c.Path)
+	// The path is asserted in signout_revocation_test.go, which also proves it
+	// is what makes signout able to revoke the token.
+	if c.Path != "/api/auth" {
+		t.Errorf("Path = %q, want /api/auth", c.Path)
 	}
 	if c.SameSite != http.SameSiteLaxMode {
 		t.Errorf("SameSite = %v, want Lax", c.SameSite)

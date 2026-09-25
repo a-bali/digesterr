@@ -46,6 +46,10 @@ function makeFeed(overrides: Partial<Feed>): Feed {
 
 const rssFeed = makeFeed({ id: 1, type: 'rss', name: 'RSS Blog' })
 const hnFeed = makeFeed({ id: 2, type: 'hn', name: 'Hacker News' })
+// Twitter items DO carry points — the server sets item.points from the tweet's
+// favourite count (internal/feed/twitter_fetcher.go). The dialog's own type list
+// used to omit twitter, so selecting a Twitter feed disabled min-score.
+const twitterFeed = makeFeed({ id: 3, type: 'twitter', category: 'Social', name: 'X Account' })
 
 // The dialog renders inside a reka-ui DialogPortal (teleported to
 // document.body), so read the live DOM, not the wrapper.
@@ -133,6 +137,57 @@ describe('DigestDialog min score', () => {
 
     expect(minScoreInput().disabled).toBe(false)
     expect(dialogBody().textContent).toContain('at least this many')
+  })
+
+  // twitter was missing from the dialog's own capability list, so a Twitter
+  // source disabled a threshold the server can actually apply. The list now
+  // comes from the shared SCORE_FEED_TYPES, and this pins it.
+  it('is enabled when a twitter feed is selected', async () => {
+    mountDialog()
+    await flushPromises()
+
+    const store = useFeedStore()
+    store.feeds = [rssFeed, twitterFeed]
+    await flushPromises()
+
+    findButton('Feeds').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await selectSource('X Account')
+
+    expect(minScoreInput().disabled).toBe(false)
+    expect(dialogBody().textContent).toContain('at least this many')
+  })
+
+  it('is enabled when a category containing only a twitter feed is selected', async () => {
+    mountDialog()
+    await flushPromises()
+
+    const store = useFeedStore()
+    store.feeds = [rssFeed, twitterFeed]
+    await flushPromises()
+
+    // The Social category holds only the twitter feed.
+    await selectSource('Social')
+
+    expect(minScoreInput().disabled).toBe(false)
+  })
+
+  // The explanatory copy names the score-capable types, so it has to name them
+  // all: it told users that only HN, Lobsters and Reddit provide scores.
+  it('names twitter among the score-capable types in the disabled copy', async () => {
+    mountDialog()
+    await flushPromises()
+
+    const store = useFeedStore()
+    store.feeds = [rssFeed]
+    await flushPromises()
+
+    findButton('Feeds').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await selectSource('RSS Blog')
+
+    expect(minScoreInput().disabled).toBe(true)
+    expect(dialogBody().textContent).toContain('Twitter')
   })
 
   it('includes min_score in the saved config payload', async () => {
@@ -249,5 +304,92 @@ describe('DigestDialog delete confirmation', () => {
     await flushPromises()
 
     expect(document.body.querySelector('[data-delete-digest]')).toBeNull()
+  })
+})
+
+// A category name and a feed id are different kinds of value, so one shared
+// selection array cannot hold both. Switching the Source toggle used to leave
+// the other mode's values in place, which silently discarded the user's picks
+// (and submitted stale entries from the wrong namespace).
+describe('DigestDialog source-mode selections', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    vi.clearAllMocks()
+  })
+
+  function parsedEmittedConfig(wrapper: ReturnType<typeof mountDialog>) {
+    const form = document.body.querySelector('form') as HTMLFormElement
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    const emitted = wrapper.emitted('save') as unknown as Array<{ config: string }>[]
+    // Read the LATEST emit: the helper is called more than once in a test, and
+    // each call submits the form again.
+    return JSON.parse(emitted[emitted.length - 1][0].config)
+  }
+
+  it('restores the category selection when switching back from Feeds', async () => {
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    await selectSource('Tech')
+    findButton('Feeds').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    findButton('Categories').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    const config = parsedEmittedConfig(wrapper)
+    expect(config.categories?.map((c: any) => c.name)).toEqual(['Tech'])
+  })
+
+  it('keeps a feed selection separate from a category selection', async () => {
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    await selectSource('Tech')
+    findButton('Feeds').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await selectSource('Hacker News')
+
+    const config = parsedEmittedConfig(wrapper)
+    // Only the active mode is emitted, and it must not contain the category.
+    expect(config.feeds?.map((f: any) => f.id)).toEqual([2])
+    expect(config.categories).toBeUndefined()
+  })
+
+  it('does not carry a feed id into the category selection', async () => {
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    findButton('Feeds').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await selectSource('Hacker News')
+    findButton('Categories').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await selectSource('Tech')
+
+    const config = parsedEmittedConfig(wrapper)
+    expect(config.categories?.map((c: any) => c.name)).toEqual(['Tech'])
+    // The feed id 2 must not appear as a category name.
+    expect(config.categories?.some((c: any) => String(c.name) === '2')).toBe(false)
+  })
+
+  it('seeds only the saved mode when editing a config', async () => {
+    const wrapper = mountDialog({
+      config: {
+        id: 1, user_id: 1, name: 'D', schedule: '*',
+        config: JSON.stringify({ feeds: [{ id: 2, highlights: 5, comments: 10 }] }),
+        last_error: '', last_error_at: null, created_at: '', updated_at: '',
+      },
+    })
+    await flushPromises()
+
+    // The saved config names feeds, so Feeds mode is active and holds the id.
+    const feedConfig = parsedEmittedConfig(wrapper)
+    expect(feedConfig.feeds?.map((f: any) => f.id)).toEqual([2])
+
+    // Categories mode starts empty: it must not inherit the feed id.
+    findButton('Categories').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    const catConfig = parsedEmittedConfig(wrapper)
+    expect(catConfig.categories).toEqual([])
   })
 })

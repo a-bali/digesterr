@@ -24,7 +24,12 @@ func feedStreamID(id int64) string { return fmt.Sprintf("feed/%d", id) }
 func digestStreamID(id int64) string { return fmt.Sprintf("digest/%d", id) }
 
 // readerLabelID builds the Google Reader label/tag id for a category name.
-func readerLabelID(name string) string { return fmt.Sprintf("user/-/label/%s", name) }
+func readerLabelID(name string) string { return readerLabelPrefix + name }
+
+// readerLabelPrefix is the stream-id prefix shared by every category label.
+// Kept in one place so the handlers that PARSE a label id cannot drift from the
+// one that builds it.
+const readerLabelPrefix = "user/-/label/"
 
 type readerCategory struct {
 	ID    string `json:"id"`
