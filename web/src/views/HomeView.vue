@@ -169,7 +169,11 @@ useKeyboardShortcuts({
     // the item filter is not what the user is looking at, and flipping it had
     // no visible effect while silently overwriting the persisted item filter.
     if (digestMode.value) {
-      digestStore.resultFilter = digestStore.resultFilter === 'unread' ? 'all' : 'unread'
+      // Goes through the store so the filter change also REFETCHES. Assigning
+      // resultFilter here left the previous query's rows on screen: the menu
+      // showed "Unread" while the list still held the unfiltered page, and only
+      // the menu's own setter knew to re-query.
+      digestStore.toggleResultFilter()
       return
     }
     // The Saved view always shows every saved item, so there is nothing here for

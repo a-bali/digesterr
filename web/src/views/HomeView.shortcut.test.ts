@@ -190,6 +190,29 @@ describe("'u' shortcut in digest view", () => {
     expect(wrapper.text()).toContain('Unread')
     wrapper.unmount()
   })
+
+  it('re-queries the list when the shortcut toggles the filter', async () => {
+    // The filter is applied SERVER-side, so the keypress must reach the API.
+    //
+    // The dropdown did (its computed setter called refetchList); the shortcut
+    // assigned resultFilter directly, so the control flipped to "Unread" while
+    // the list still held the unfiltered page and the two disagreed. Asserting
+    // on the filter VALUE cannot catch that — it is correct either way. Only
+    // the request proves the list was actually requeryied.
+    const { digestApi } = await import('../services/api')
+    const { wrapper } = await mountAt('/digests/7')
+    await flushPromises()
+    vi.mocked(digestApi.listResults).mockClear()
+
+    pressU()
+    await flushPromises()
+
+    expect(vi.mocked(digestApi.listResults)).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ status: 'unread', offset: 0 }),
+    )
+    wrapper.unmount()
+  })
 })
 
 // Shift+A must mark read for whichever list is ON SCREEN, exactly like the
