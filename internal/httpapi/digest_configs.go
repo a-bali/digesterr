@@ -327,6 +327,18 @@ func (s *Server) handleUpdateDigestResultStatus(w http.ResponseWriter, r *http.R
 	// failed cascade still left the result read with its items digested.
 	var result store.DigestResult
 	err = s.inDigestTx(r.Context(), "update-digest-result-status", func(ctx context.Context, q *store.Queries) error {
+		// Read the current status INSIDE the transaction so the cascade keys on
+		// the transition, not on the requested value. The single-result endpoint
+		// used to cascade whenever the request asked for "read", so repeating
+		// mark-read on a result read weeks ago swept its linked items again --
+		// and an item shared with a NEWER digest (a regeneration re-links it and
+		// sets it back to 'digested') was consumed out of that unread digest.
+		// The bulk and relative paths already key on the transition; this is the
+		// same rule for the one-result case.
+		before, err := q.GetDigestResult(ctx, store.GetDigestResultParams{ID: id, UserID: userID})
+		if err != nil {
+			return err
+		}
 		r, err := q.UpdateDigestResultStatus(ctx, store.UpdateDigestResultStatusParams{
 			ID:     id,
 			UserID: userID,
@@ -337,8 +349,9 @@ func (s *Server) handleUpdateDigestResultStatus(w http.ResponseWriter, r *http.R
 		}
 		result = r
 		// Spec: when a digest result transitions to read, all of its linked items
-		// move from digested to read.
-		if req.Status == "read" {
+		// move from digested to read. Only on the TRANSITION: a request that does
+		// not change the status has nothing to cascade.
+		if req.Status == "read" && before.Status != "read" {
 			if err := q.MarkDigestResultItemsRead(ctx, result.ID); err != nil {
 				return fmt.Errorf("flipping digest items: %w", err)
 			}

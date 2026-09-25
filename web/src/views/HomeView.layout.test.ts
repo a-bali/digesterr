@@ -235,3 +235,70 @@ describe('HomeView: stacked desktop layout', () => {
     expect(wrapper.find('.h-drawer').exists()).toBe(true)
   })
 })
+
+// On mobile the list pane is not unmounted when content opens: it slides
+// off-screen (translate + zero width) so its scroll position survives. The
+// wrapper carried `pointer-events-none`, which stops the MOUSE only — the
+// off-screen list stayed in the tab order and the accessibility tree, so
+// tabbing out of the content pane walked into invisible rows. The drawer got
+// `inert` for exactly this; the list behind the content did not.
+describe('HomeView: off-screen list on mobile is inert', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    setActivePinia(createPinia())
+    localStorage.clear()
+    vi.clearAllMocks()
+    desktop = false
+    mqls.length = 0
+    vi.mocked(feedApi.list).mockResolvedValue([makeFeed()] as never)
+    vi.mocked(feedApi.getItems).mockResolvedValue({
+      items: [makeItem(1, 'First item')], total: 1, has_more: false,
+    } as never)
+    vi.mocked(itemApi.getItem).mockResolvedValue(makeItem(1, 'First item') as never)
+  })
+
+  it('removes the off-screen list from interaction once content is open', async () => {
+    // Route straight to an item so the content pane is open on mount.
+    const wrapper = await mountAt('/feeds/1/1')
+    await flushPromises()
+
+    // Two elements make up the off-screen list: the outer wrapper that leaves
+    // the flex flow (and carries inert) and the inner one that slides out. The
+    // inert binding is on the OUTER wrapper, so that is what to assert on.
+    const inner = wrapper.findAll('div').find(d => d.classes().includes('-translate-x-full'))
+    expect(inner, 'the list must slide off-screen when content opens').toBeTruthy()
+
+    const outer = inner!.element.parentElement as HTMLElement
+    expect(outer, 'the sliding list must have an outer wrapper').toBeTruthy()
+    // inert is what actually takes it out of the tab order; the transform alone
+    // leaves every row focusable, which is the defect.
+    //
+    // Assert the VALUE, not mere presence. inert is a BOOLEAN attribute, so
+    // presence means inert -- which makes an `[inert]` selector a tautology
+    // here: Vue writes inert="false" for a false binding (jsdom has no `inert`
+    // property, so every binding becomes an attribute) and that ALSO reads as
+    // inert. Only the literal value distinguishes the two.
+    expect(outer.getAttribute('inert')).toBe('true')
+    expect(outer.getAttribute('aria-hidden')).toBe('true')
+  })
+
+  it('leaves the list interactive while it is the visible pane', async () => {
+    // No item selected: the list is on screen, so its wrapper must NOT be inert
+    // -- otherwise the fix disables the very pane the user is looking at.
+    //
+    // Scoped to the list wrapper on purpose: the closed sidebar drawer is
+    // legitimately inert in this state, so a blanket "nothing is inert"
+    // assertion would fail on correct code.
+    const wrapper = await mountAt('/feeds/1')
+    await flushPromises()
+
+    const inner = wrapper.findAll('div').find(d => d.classes().includes('-translate-x-full'))
+    expect(inner, 'the list must be on screen, not slid away').toBeUndefined()
+
+    const listWrapper = wrapper.findAll('div').find(d =>
+      d.classes().includes('flex-1') && d.classes().includes('min-w-0'),
+    )
+    expect(listWrapper, 'the visible list wrapper must exist').toBeTruthy()
+    expect(listWrapper!.attributes('inert')).toBeUndefined()
+  })
+})

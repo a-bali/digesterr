@@ -886,12 +886,15 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
              tech. Sliding it off-screen with -translate-x-full keeps it in the
              accessibility tree and in the tab order, so tabbing from the top of
              the page landed on the hidden sidebar's controls. inert removes the
-             whole subtree from interaction; the transition still animates. -->
+             whole subtree from interaction; the transition still animates.
+             Bound as `cond ? true : undefined`: a false value renders the
+             attribute inert="false", and PRESENCE of a boolean attribute means
+             inert — so the open drawer would have been inerted too. -->
         <aside
           class="h-drawer fixed left-0 top-12 z-40 w-64 bg-sidebar border-r shadow-xl transition-transform duration-200 flex flex-col"
           :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
-          :inert="!sidebarOpen"
-          :aria-hidden="!sidebarOpen"
+          :inert="!sidebarOpen ? true : undefined"
+          :aria-hidden="!sidebarOpen ? 'true' : undefined"
         >
           <div class="flex-1 min-h-0 overflow-y-auto p-3">
             <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @select-category="selectCategory" @select-section="selectSection" @show-saved="showSaved" @mark-all-read="onSidebarMarkAllRead" />
@@ -904,10 +907,22 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
         <!-- List pane. Never unmounted on selection change (remounting resets
              scroll). On mobile, when content is shown, the wrapper leaves the
              flex flow (zero-width + absolute overlay off-screen) so the content
-             pane takes the full width — display:none would also zero scrollTop. -->
+             pane takes the full width — display:none would also zero scrollTop.
+             pointer-events-none stops the MOUSE but not the KEYBOARD: the
+             off-screen list stayed in the tab order and the accessibility tree,
+             so tabbing from the content pane walked into rows the user cannot
+             see. inert is the same fix the drawer got above.
+
+             Bound as `cond ? true : undefined`, not `:inert="cond"`: with a
+             false value Vue writes the attribute inert="false", and inert is a
+             boolean attribute, so PRESENCE means inert. Undefined removes it
+             outright, which is unambiguous in jsdom (no `inert` property, so
+             every binding becomes an attribute) and in browsers alike. -->
         <div
           class="min-w-0"
           :class="!isTablet && showContentPane ? 'relative w-0 flex-none' : 'flex-1'"
+          :inert="!isTablet && showContentPane ? true : undefined"
+          :aria-hidden="!isTablet && showContentPane ? 'true' : undefined"
         >
           <div
             class="absolute inset-0 flex flex-col transition-transform duration-200"
