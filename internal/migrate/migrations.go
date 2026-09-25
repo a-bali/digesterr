@@ -466,6 +466,12 @@ WHERE id NOT IN (SELECT MIN(id) FROM digest_result_items GROUP BY result_id, ite
 		name:      "enforce NOT NULL on items.points and items.comments_count",
 		disableFK: true,
 		build:     itemsPointsNotNullRebuild,
+		// The predicate tests SCHEMA SHAPE, so it stays meaningful after the
+		// version is recorded: if the columns are nullable again (restored from
+		// a backup taken before the rebuild, or a rebuild interrupted after
+		// being recorded), startup would otherwise never repair it and every
+		// request scanning a NULL row would fail.
+		recheck: true,
 		// Baseline when BOTH rebuilt columns are already NOT NULL. Checking only
 		// points would baseline a database whose rebuild was interrupted after
 		// points was applied, leaving comments_count nullable and never

@@ -52,6 +52,11 @@ func TestCatchUpGeneratesMissedOccurrence(t *testing.T) {
 		t.Fatalf("create digest config: %v", err)
 	}
 
+	// The config must predate the occurrence under test, or the pre-creation
+	// guard skips catch-up for a reason unrelated to what this test asserts
+	// (and the test would pass without exercising its guard at all).
+	setConfigCreatedAt(t, db, cfg.ID, time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC))
+
 	gen := NewGenerator(db, queries,
 		fakeLLM{resp: `{"title":"CATCHUP","summary":"s","highlights":[]}`},
 		feed.NewPoller(queries))
@@ -123,6 +128,11 @@ func TestCatchUpDoesNotDuplicateRecentDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create digest config: %v", err)
 	}
+
+	// The config must predate the occurrence under test, or the pre-creation
+	// guard skips catch-up for a reason unrelated to what this test asserts
+	// (and the test would pass without exercising its guard at all).
+	setConfigCreatedAt(t, db, cfg.ID, time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC))
 
 	gen := NewGenerator(db, queries,
 		fakeLLM{resp: `{"title":"FIRST","summary":"s","highlights":[]}`},
@@ -203,6 +213,11 @@ func TestTickDoesNotDuplicateAManualGeneration(t *testing.T) {
 		t.Fatalf("create digest config: %v", err)
 	}
 
+	// The config must predate the occurrence under test, or the pre-creation
+	// guard skips catch-up for a reason unrelated to what this test asserts
+	// (and the test would pass without exercising its guard at all).
+	setConfigCreatedAt(t, db, cfg.ID, time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC))
+
 	gen := NewGenerator(db, queries,
 		fakeLLM{resp: `{"title":"TICK","summary":"s","highlights":[]}`},
 		feed.NewPoller(queries))
@@ -275,6 +290,11 @@ func TestCatchUpDoesNotDuplicateAcrossHourlyRestart(t *testing.T) {
 		t.Fatalf("create digest config: %v", err)
 	}
 
+	// The config must predate the occurrence under test, or the pre-creation
+	// guard skips catch-up for a reason unrelated to what this test asserts
+	// (and the test would pass without exercising its guard at all).
+	setConfigCreatedAt(t, db, cfg.ID, time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC))
+
 	gen := NewGenerator(db, queries,
 		fakeLLM{resp: `{"title":"HOURLY","summary":"s","highlights":[]}`},
 		feed.NewPoller(queries))
@@ -346,6 +366,11 @@ func TestCatchUpGeneratesAfterRecencyWindowCloses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create digest config: %v", err)
 	}
+
+	// The config must predate the occurrence under test, or the pre-creation
+	// guard skips catch-up for a reason unrelated to what this test asserts
+	// (and the test would pass without exercising its guard at all).
+	setConfigCreatedAt(t, db, cfg.ID, time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC))
 
 	gen := NewGenerator(db, queries,
 		fakeLLM{resp: `{"title":"WINDOW","summary":"s","highlights":[]}`},
@@ -420,6 +445,11 @@ func TestCatchUpSkipsStaleOccurrence(t *testing.T) {
 		t.Fatalf("create digest config: %v", err)
 	}
 
+	// The config must predate the occurrence under test, or the pre-creation
+	// guard skips catch-up for a reason unrelated to what this test asserts
+	// (and the test would pass without exercising its guard at all).
+	setConfigCreatedAt(t, db, cfg.ID, time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC))
+
 	gen := NewGenerator(db, queries,
 		fakeLLM{resp: `{"title":"STALE","summary":"s","highlights":[]}`},
 		feed.NewPoller(queries))
@@ -476,6 +506,11 @@ func TestCatchUpOwnsTheCurrentMinute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create digest config: %v", err)
 	}
+
+	// The config must predate the occurrence under test, or the pre-creation
+	// guard skips catch-up for a reason unrelated to what this test asserts
+	// (and the test would pass without exercising its guard at all).
+	setConfigCreatedAt(t, db, cfg.ID, time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC))
 
 	gen := NewGenerator(db, queries,
 		fakeLLM{resp: `{"title":"CURRENT","summary":"s","highlights":[]}`},
@@ -539,6 +574,11 @@ func TestStartRunsCatchUpBeforeServingTicks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create digest config: %v", err)
 	}
+
+	// The config must predate the occurrence under test, or the pre-creation
+	// guard skips catch-up for a reason unrelated to what this test asserts
+	// (and the test would pass without exercising its guard at all).
+	setConfigCreatedAt(t, db, cfg.ID, time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC))
 
 	gen := NewGenerator(db, queries,
 		fakeLLM{resp: `{"title":"START","summary":"s","highlights":[]}`},

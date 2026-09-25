@@ -159,23 +159,28 @@ func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Fetch one row beyond the page. has_more is derived from that extra row,
+	// so it must be requested — asking for exactly `limit` rows makes
+	// len(results) > limit unsatisfiable and pinned has_more to false, which
+	// stopped every config at page one. The all-results endpoint next door
+	// uses the same limit+1 shape.
 	results, err := s.queries.ListDigestResultsByConfigPaginated(r.Context(), store.ListDigestResultsByConfigPaginatedParams{
 		ConfigID: configID,
 		UserID:   userID,
-		Limit:    int64(limit),
+		Limit:    int64(limit + 1),
 		Offset:   int64(offset),
 	})
 	if err != nil {
 		writeServerError(w, "failed to list digest results", err)
 		return
 	}
-	if results == nil {
-		results = []store.ListDigestResultsByConfigPaginatedRow{}
-	}
 
 	hasMore := len(results) > limit
 	if hasMore {
 		results = results[:limit]
+	}
+	if results == nil {
+		results = []store.ListDigestResultsByConfigPaginatedRow{}
 	}
 
 	type resultPreview struct {

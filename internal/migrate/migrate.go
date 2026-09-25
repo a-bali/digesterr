@@ -42,6 +42,12 @@ type migration struct {
 	// rebuilds: SQLite ignores PRAGMA foreign_keys inside a transaction, so the
 	// toggle happens on a dedicated connection around it.
 	disableFK bool
+	// recheck consults applied even after the version is recorded, so a
+	// database whose post-condition no longer holds is repaired rather than
+	// skipped. Only for migrations whose applied predicate tests SCHEMA SHAPE
+	// (a column's nullability), never for data-dependent ones — those would
+	// re-run their work on ordinary data changes.
+	recheck bool
 }
 
 // Run initialises a fresh database (applying the embedded schema) or brings an
@@ -55,7 +61,14 @@ func Run(db *sql.DB) error {
 		return fmt.Errorf("checking for existing schema: %w", err)
 	}
 	if fresh {
-		if _, err := db.Exec(schema.DDL); err != nil {
+		// The schema DDL is many statements. Without a transaction a failure
+		// part-way (an interrupted startup, a disk error) leaves a database
+		// that is neither fresh nor complete, and the next start no longer
+		// looks fresh — so the embedded schema is never re-applied and the
+		// missing tables are never created. Wrapping it makes creation
+		// all-or-nothing, so a partially created database is still "fresh"
+		// on the next attempt.
+		if err := applySchemaAtomic(db, schema.DDL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
 		slog.Info("database schema initialized")
@@ -85,8 +98,29 @@ func Run(db *sql.DB) error {
 	}
 
 	for _, m := range migrations {
-		if applied[m.version] {
+		// A recorded version is normally final. recheck opts a migration out of
+		// that: its own applied predicate is consulted even when the version is
+		// already recorded, so a database whose post-condition does not hold is
+		// repaired instead of failing forever on a constraint violation.
+		//
+		// This is an explicit per-migration opt-in rather than the default,
+		// because most applied predicates are data-dependent (a dedupe
+		// migration reports "done" when no duplicates remain, which stops being
+		// true the moment new ones arrive). Re-checking those would re-run
+		// their work on ordinary data changes.
+		if applied[m.version] && !m.recheck {
 			continue
+		}
+		if applied[m.version] {
+			ok, err := m.applied(db)
+			if err != nil {
+				return fmt.Errorf("re-checking migration %q: %w", m.name, err)
+			}
+			if ok {
+				continue
+			}
+			slog.Warn("recorded migration does not satisfy its post-condition; re-running",
+				"version", m.version, "name", m.name)
 		}
 		if m.applied != nil {
 			ok, err := m.applied(db)
@@ -129,7 +163,7 @@ func runMigration(ctx context.Context, db *sql.DB, m migration) error {
 	}
 	if len(stmts) == 0 {
 		_, err := db.ExecContext(ctx,
-			"INSERT INTO schema_migrations (version, name) VALUES (?, ?)", m.version, m.name)
+			"INSERT OR REPLACE INTO schema_migrations (version, name) VALUES (?, ?)", m.version, m.name)
 		return err
 	}
 	conn, err := db.Conn(ctx)
@@ -158,8 +192,35 @@ func runMigration(ctx context.Context, db *sql.DB, m migration) error {
 			return err
 		}
 	}
+	// OR REPLACE, not a plain INSERT: a migration re-run because its recorded
+	// post-condition no longer held must be able to refresh its own row rather
+	// than failing on the primary key it already occupies.
 	if _, err := tx.ExecContext(ctx,
-		"INSERT INTO schema_migrations (version, name) VALUES (?, ?)", m.version, m.name); err != nil {
+		"INSERT OR REPLACE INTO schema_migrations (version, name) VALUES (?, ?)", m.version, m.name); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// applySchemaAtomic runs the embedded schema DDL in a single transaction.
+//
+// The DDL has no BEGIN/COMMIT of its own, so each statement autocommitted. A
+// failure part-way through left a database with SOME tables: isFresh then
+// reports false on the next start (users exists), the embedded schema is never
+// re-applied, and the tables that were never created stay missing — the
+// migrations cannot create them either, since they only add columns and indexes
+// to tables they assume exist.
+//
+// SQLite supports transactional DDL, so one transaction makes creation
+// all-or-nothing: a failed attempt rolls back to a database with no tables,
+// which the next start still sees as fresh and retries cleanly.
+func applySchemaAtomic(db *sql.DB, ddl string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(ddl); err != nil {
 		return err
 	}
 	return tx.Commit()

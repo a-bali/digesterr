@@ -105,7 +105,12 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   if (res.status === 401) {
     setAuthToken(null)
     onUnauthorized?.()
-    throw new ApiError(401, { error: 'unauthorized' })
+    // Keep the server's message instead of a hardcoded "unauthorized". The
+    // signin endpoint answers 401 with "invalid email or password", and the
+    // login form renders e.message — overwriting every 401 with a generic
+    // string told the user nothing about why the credential was rejected.
+    const body = await parseBody(res)
+    throw new ApiError(401, body)
   }
   const body = await parseBody(res)
   if (!res.ok) throw new ApiError(res.status, body)

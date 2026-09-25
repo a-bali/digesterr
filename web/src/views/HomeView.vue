@@ -870,9 +870,16 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
       <!-- Tablet (2-pane) & Mobile (1-pane): drawer sidebar -->
       <template v-else>
         <div v-if="sidebarOpen" class="fixed inset-0 z-30" @click="sidebarOpen = false"><div class="absolute inset-0 bg-black/50" /></div>
+        <!-- A closed drawer must not be reachable by keyboard or assistive
+             tech. Sliding it off-screen with -translate-x-full keeps it in the
+             accessibility tree and in the tab order, so tabbing from the top of
+             the page landed on the hidden sidebar's controls. inert removes the
+             whole subtree from interaction; the transition still animates. -->
         <aside
           class="h-drawer fixed left-0 top-12 z-40 w-64 bg-sidebar border-r shadow-xl transition-transform duration-200 flex flex-col"
           :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
+          :inert="!sidebarOpen"
+          :aria-hidden="!sidebarOpen"
         >
           <div class="flex-1 min-h-0 overflow-y-auto p-3">
             <FeedSidebar ref="sidebar" :showing-saving="showingSaved" @select-feed="selectFeed" @select-digest-config="selectDigestConfig" @select-category="selectCategory" @select-section="selectSection" @show-saved="showSaved" @mark-all-read="onSidebarMarkAllRead" />

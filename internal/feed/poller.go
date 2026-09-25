@@ -975,6 +975,19 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 		})
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
+				// INSERT OR IGNORE returned no row: the item is already
+				// stored. That is the ONLY thing this tells us, and for
+				// twitter it is also the branch where the title may have
+				// changed — the hash excludes the title, so a pinned badge
+				// appearing or disappearing is invisible to it. The refresh
+				// used to live on an `id == 0` branch below, which SQLite
+				// never produces (an ignored insert yields an empty result
+				// set, not a zero id), so it was dead code.
+				if feed.Type == "twitter" {
+					if rerr := p.refreshTwitterTitle(ctx, feed.ID, item.GUID, item.Title); rerr != nil {
+						logger.Debug("twitter title refresh failed", "guid", item.GUID, "error", rerr)
+					}
+				}
 				logger.Debug("item already exists", "hash", h)
 			} else {
 				// A real write failure, not a duplicate: the feed is not being
@@ -990,14 +1003,6 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 			newCount++
 			if feed.ExtractContent != 0 {
 				p.setItemExtractionPending(ctx, id, logger)
-			}
-		} else if feed.Type == "twitter" {
-			// Twitter titles carry volatile state (📌 pinned badge, RT
-			// provenance). The item hash excludes the title, so an existing
-			// row is invisible to CreateItemIfNotExists — refresh its title
-			// when the fetched one changed (e.g. tweet got pinned/unpinned).
-			if err := p.refreshTwitterTitle(ctx, feed.ID, item.GUID, item.Title); err != nil {
-				logger.Debug("twitter title refresh failed", "guid", item.GUID, "error", err)
 			}
 		}
 	}

@@ -223,6 +223,14 @@ func (s *Scheduler) catchUp(ctx context.Context) {
 		if !ok {
 			continue
 		}
+		// An occurrence from before the config existed was never missed — the
+		// config could not have run then. Without this a config created at
+		// 05:30 on a "0 5 * * *" schedule immediately back-fills that morning's
+		// 05:00 digest, which the user never scheduled. A one-minute slack
+		// absorbs the second-resolution truncation of created_at.
+		if missed.Before(cfg.CreatedAt.In(s.loc).Truncate(time.Minute)) {
+			continue
+		}
 		// Too stale to be useful: a digest from most of a day ago would be
 		// presented as today's, and the next occurrence is imminent anyway.
 		if now.Sub(missed) > catchUpGrace {
@@ -230,8 +238,19 @@ func (s *Scheduler) catchUp(ctx context.Context) {
 		}
 
 		cfgLogger := slog.With("config_id", cfg.ID, "config_name", cfg.Name)
-		// Anchored on the occurrence, not the clock: see servedSince.
-		if s.servedSince(ctx, cfg, missed, cfgLogger) {
+		// Anchored on the occurrence, with a look-back of the same recency
+		// window the normal tick uses.
+		//
+		// Anchoring on the occurrence alone is not enough: a manual digest at
+		// 04:59:30, thirty seconds before a 05:00 occurrence, is older than the
+		// occurrence and so would not count as having served it — catch-up
+		// would generate a second digest minutes after the user made one.
+		//
+		// Widening to the whole clock instead is also wrong: the pod restarts
+		// hourly, so a digest generated at 05:00:53 is already an hour old when
+		// the 06:00 restart runs catch-up, and a plain 30-minute recency window
+		// would call it unserved and duplicate it once per hour.
+		if s.servedSince(ctx, cfg, missed.Add(-recentGenerationWindow), cfgLogger) {
 			continue
 		}
 		cfgLogger.Info("catching up missed scheduled digest generation",
