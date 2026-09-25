@@ -37,13 +37,13 @@ COPY --from=build /out/digesterr /usr/local/bin/digesterr
 # mounted data directory is not where a relative path would look anyway.
 WORKDIR /data
 USER app
-# The probe must follow the same port the server resolves, not a hardcoded 8080:
-# a container on any other port read as unhealthy while serving traffic fine.
-# SERVER_PORT and PORT are both honoured by config.applyEnv; a YAML server.port
-# or the -port flag cannot be read from a static probe, so an operator who sets
-# the port that way must pass one of these env vars too.
+# The probe asks the binary itself, which resolves the port the same way the
+# server does: the port recorded at startup (covering CLI flags and YAML), then
+# the config file, then SERVER_PORT/PORT, then the built-in default. Reading the
+# env vars alone made a container serving on a YAML or -port port report
+# unhealthy, so an operator who set the port that way had to duplicate it as an
+# env var anyway. /healthz is unauthenticated, so the probe needs no credentials.
 EXPOSE 8080
-# /healthz is unauthenticated so cluster probes and this check both work.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- "http://127.0.0.1:${SERVER_PORT:-${PORT:-8080}}/healthz" || exit 1
+  CMD ["digesterr", "healthcheck"]
 ENTRYPOINT ["digesterr"]

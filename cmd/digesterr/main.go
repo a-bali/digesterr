@@ -49,6 +49,14 @@ func staticFileSystem() http.FileSystem {
 }
 
 func main() {
+	// `digesterr healthcheck` is a probe subcommand, dispatched before flag
+	// parsing so its own flags are not consumed by the server's flag set. The
+	// container HEALTHCHECK calls it, and it has to resolve the effective port
+	// itself -- see healthcheck.go.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(runHealthcheck(os.Args[2:]))
+	}
+
 	configPath := flag.String("config", "", "path to YAML config file (default ~/.digesterr.yaml)")
 	flag.StringVar(configPath, "c", "", "path to YAML config file (shorthand for -config)")
 	dbFlag := flag.String("db", "", "SQLite database path (overrides config file and env)")
@@ -154,6 +162,16 @@ func main() {
 			errCh <- err
 		}
 	}()
+
+	// Record the port we actually bound, so the health probe does not have to
+	// re-derive it from a subset of the inputs. Written after the listener is
+	// live: the probe must not read a port that is not yet serving. A failure
+	// only degrades the probe's detection (it falls back to resolving the
+	// config), so it is logged and not fatal.
+	if err := writePortFile(portFilePath(*configPath), cfg.Server.Port); err != nil {
+		slog.Warn("could not record bound port for the health probe", "error", err)
+	}
+	defer os.Remove(portFilePath(*configPath))
 
 	select {
 	case err := <-errCh:

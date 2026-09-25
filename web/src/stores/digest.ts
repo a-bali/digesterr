@@ -166,6 +166,9 @@ export const useDigestStore = defineStore('digest', () => {
       const resp = await digestApi.listResults(id, { limit: PAGE_SIZE, offset: 0, ...listQueryOpts() })
       if (rid !== resultsReq) return
       results.value = resp.results.map(normalize)
+      // Advance the served offset past page one, or the first fetchMoreResults
+      // would ask for offset 0 again and pagination would stall.
+      nextOffset.value = resp.results.length
       hasMore.value = resp.has_more
     } catch (e) {
       if (rid !== resultsReq) return
