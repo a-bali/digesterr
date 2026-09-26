@@ -270,6 +270,23 @@ UPDATE digest_results SET status = sqlc.arg(status), updated_at = DATETIME('now'
 WHERE id IN (SELECT value FROM json_each(sqlc.arg(ids)))
   AND user_id = sqlc.arg(user_id) AND status != sqlc.arg(status);
 
+-- name: TransitionDigestResultStatusByIDs :many
+-- Batch status update that RETURNS the ids it actually changed, so a caller
+-- can act on the TRANSITION rather than on the ids it submitted.
+--
+-- The submit-set twin above cannot express this: `status != @status` confines
+-- the update to rows that really move, but the caller still only holds the ids
+-- it asked for, so a downstream cascade driven by that set also fires for
+-- unchanged rows. Same defect class as the reader cascade fixed in 39baa90 --
+-- there the fix was to drive the cascade from the transitioned id set.
+--
+-- Ownership stays in the predicate, so a foreign id simply matches nothing and
+-- is absent from the result.
+UPDATE digest_results SET status = sqlc.arg(status), updated_at = DATETIME('now')
+WHERE id IN (SELECT value FROM json_each(sqlc.arg(ids)))
+  AND user_id = sqlc.arg(user_id) AND status != sqlc.arg(status)
+RETURNING id;
+
 -- name: MarkDigestResultItemsReadByResultIDs :execrows
 -- Batch twin of MarkDigestResultItemsRead for the digest cascade: flips
 -- linked items of every listed result in one statement.

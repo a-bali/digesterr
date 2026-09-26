@@ -421,7 +421,12 @@ export const useDigestStore = defineStore('digest', () => {
   //     this page-one refresh knows nothing about, so those are kept -- that is
   //     what stops the refresh truncating a scrolled list.
   function mergeById<T extends DigestResult>(loaded: T[], fetched: T[], hasMore: boolean): T[] {
-    if (fetched.length === 0) return loaded
+    // An EMPTY page is authoritative when the server reports no further rows: it
+    // then describes the server's entire set, so every loaded row is gone (read
+    // elsewhere, deleted, or filtered out) and retaining them left results on
+    // screen that the server no longer serves. With further rows the response
+    // says nothing about a loaded deeper page, so those stay.
+    if (fetched.length === 0) return hasMore ? loaded : []
     const byId = new Map<number, T>()
     for (const r of fetched) byId.set(r.id, r)
 
@@ -461,14 +466,21 @@ export const useDigestStore = defineStore('digest', () => {
     backgroundRefreshing.value = true
     try {
       configs.value = await digestApi.listConfigs()
+      // One generation counter guards BOTH branches. The All-Digests branch used
+      // to assign allResults.value with no check, so a background refresh that
+      // resolved after a user-initiated load clobbered it with stale page-one
+      // data. Claiming the generation before the request is what makes the check
+      // meaningful: the newer call bumps resultsReq, so this one detects that it
+      // was superseded even though it started first.
+      const rid = ++resultsReq
       if (showingAllDigests.value) {
         const resp = await digestApi.listAllResults({ limit: PAGE_SIZE, offset: 0, ...listQueryOpts() })
+        if (rid !== resultsReq) return
         allResults.value = mergeById(allResults.value, resp.results.map(normalize), resp.has_more)
         return
       }
       const cfgId = activeConfigId.value
       if (cfgId) {
-        const rid = ++resultsReq
         const resp = await digestApi.listResults(cfgId, { limit: PAGE_SIZE, offset: 0, ...listQueryOpts() })
         if (rid !== resultsReq) return
         results.value = mergeById(results.value, resp.results.map(normalize), resp.has_more)

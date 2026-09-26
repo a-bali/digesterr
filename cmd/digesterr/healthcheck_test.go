@@ -33,7 +33,7 @@ func TestResolveProbePortPrefersRecordedPortFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := resolveProbePort(cfgPath, "", portFile)
+	got, err := resolveProbePort(cfgPath, "", []string{portFile})
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestResolveProbePortFollowsYAMLViaConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No port file.
-	if got, err := resolveProbePort(cfgPath, "", filepath.Join(dir, "absent")); err != nil {
+	if got, err := resolveProbePort(cfgPath, "", []string{filepath.Join(dir, "absent")}); err != nil {
 		t.Fatalf("resolve: %v", err)
 	} else if got != 7002 {
 		t.Errorf("port = %d, want 7002 from the YAML", got)
@@ -66,7 +66,7 @@ func TestResolveProbePortFlagOverridesConfig(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte("server:\n  port: 7003\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := resolveProbePort(cfgPath, "7004", filepath.Join(dir, "absent")); err != nil {
+	if got, err := resolveProbePort(cfgPath, "7004", []string{filepath.Join(dir, "absent")}); err != nil {
 		t.Fatalf("resolve: %v", err)
 	} else if got != 7004 {
 		t.Errorf("port = %d, want the -port flag value 7004", got)
@@ -89,7 +89,7 @@ func TestResolveProbePortFlagOverridesRecordedPort(t *testing.T) {
 	if err := os.WriteFile(portFile, []byte("8080\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := resolveProbePort(cfgPath, "59998", portFile); err != nil {
+	if got, err := resolveProbePort(cfgPath, "59998", []string{portFile}); err != nil {
 		t.Fatalf("resolve: %v", err)
 	} else if got != 59998 {
 		t.Errorf("port = %d, want the explicit -port value 59998: a recorded port must not "+
@@ -106,7 +106,7 @@ func TestResolveProbePortEnvStillWorks(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte("server:\n  port: 7006\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := resolveProbePort(cfgPath, "", filepath.Join(dir, "absent")); err != nil {
+	if got, err := resolveProbePort(cfgPath, "", []string{filepath.Join(dir, "absent")}); err != nil {
 		t.Fatalf("resolve: %v", err)
 	} else if got != 7005 {
 		t.Errorf("port = %d, want 7005 from SERVER_PORT (env beats the file)", got)
@@ -115,7 +115,7 @@ func TestResolveProbePortEnvStillWorks(t *testing.T) {
 
 func TestResolveProbePortFallsBackToDefault(t *testing.T) {
 	dir := t.TempDir()
-	got, err := resolveProbePort(filepath.Join(dir, "absent.yaml"), "", filepath.Join(dir, "absent"))
+	got, err := resolveProbePort(filepath.Join(dir, "absent.yaml"), "", []string{filepath.Join(dir, "absent")})
 	if err != nil {
 		t.Fatalf("resolve on a missing config must not error (defaults apply): %v", err)
 	}
@@ -136,7 +136,7 @@ func TestResolveProbePortIgnoresGarbagePortFile(t *testing.T) {
 	if err := os.WriteFile(portFile, []byte("not-a-port\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := resolveProbePort(cfgPath, "", portFile); err != nil {
+	if got, err := resolveProbePort(cfgPath, "", []string{portFile}); err != nil {
 		t.Fatalf("resolve: %v", err)
 	} else if got != 7008 {
 		t.Errorf("port = %d, want 7008: a corrupt port file must fall through to the config", got)

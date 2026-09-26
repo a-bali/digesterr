@@ -165,13 +165,29 @@ func main() {
 
 	// Record the port we actually bound, so the health probe does not have to
 	// re-derive it from a subset of the inputs. Written after the listener is
-	// live: the probe must not read a port that is not yet serving. A failure
-	// only degrades the probe's detection (it falls back to resolving the
-	// config), so it is logged and not fatal.
-	if err := writePortFile(portFilePath(*configPath), cfg.Server.Port); err != nil {
-		slog.Warn("could not record bound port for the health probe", "error", err)
+	// live: the probe must not read a port that is not yet serving.
+	//
+	// It is recorded at EVERY location the probe searches (see
+	// portFileWriteLocations). Writing to only one was the bug: the probe is a
+	// separate process with a static command line, so a record beside an absolute
+	// -c config was invisible to a no-argument container probe, which then
+	// derived a different port and could report healthy while probing some other
+	// process. A failure is not fatal -- it degrades the probe's detection to
+	// config resolution -- but each failed location is logged.
+	var portFiles []string
+	for _, p := range portFileWriteLocations(*configPath, cfg.DB.Path) {
+		if err := writePortFile(p, cfg.Server.Port); err != nil {
+			slog.Warn("could not record bound port for the health probe",
+				"error", err, "path", p)
+			continue
+		}
+		portFiles = append(portFiles, p)
 	}
-	defer os.Remove(portFilePath(*configPath))
+	defer func() {
+		for _, p := range portFiles {
+			_ = os.Remove(p)
+		}
+	}()
 
 	select {
 	case err := <-errCh:

@@ -1237,6 +1237,53 @@ func (q *Queries) MarkDigestResultItemsReadByResultIDs(ctx context.Context, arg 
 	return result.RowsAffected()
 }
 
+const transitionDigestResultStatusByIDs = `-- name: TransitionDigestResultStatusByIDs :many
+UPDATE digest_results SET status = ?1, updated_at = DATETIME('now')
+WHERE id IN (SELECT value FROM json_each(?2))
+  AND user_id = ?3 AND status != ?1
+RETURNING id
+`
+
+type TransitionDigestResultStatusByIDsParams struct {
+	Status string      `json:"status"`
+	Ids    interface{} `json:"ids"`
+	UserID int64       `json:"user_id"`
+}
+
+// Batch status update that RETURNS the ids it actually changed, so a caller
+// can act on the TRANSITION rather than on the ids it submitted.
+//
+// The submit-set twin above cannot express this: `status != @status` confines
+// the update to rows that really move, but the caller still only holds the ids
+// it asked for, so a downstream cascade driven by that set also fires for
+// unchanged rows. Same defect class as the reader cascade fixed in 39baa90 --
+// there the fix was to drive the cascade from the transitioned id set.
+//
+// Ownership stays in the predicate, so a foreign id simply matches nothing and
+// is absent from the result.
+func (q *Queries) TransitionDigestResultStatusByIDs(ctx context.Context, arg TransitionDigestResultStatusByIDsParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, transitionDigestResultStatusByIDs, arg.Status, arg.Ids, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateDigestResultStatus = `-- name: UpdateDigestResultStatus :one
 UPDATE digest_results
 SET status = ?, updated_at = DATETIME('now')

@@ -160,18 +160,25 @@ func (s *Server) applyEditTagBatch(ctx context.Context, userID int64, b *editTag
 		return err
 	}
 	if err := apply(b.digestRead, "digest-read", func(ctx context.Context, q *store.Queries, ids string) error {
-		if _, err := q.UpdateDigestResultStatusByIDs(ctx, store.UpdateDigestResultStatusByIDsParams{Status: "read", Ids: ids, UserID: userID}); err != nil {
+		// Cascade only the results that ACTUALLY transitioned. Driving it from
+		// the submitted id set made a re-add of the read tag to an already-read
+		// result consume an item that a LATER digest generation had re-linked
+		// and set back to 'digested' -- the same state-test-vs-transition defect
+		// fixed for the bulk, per-config and relative paths in 39baa90, which
+		// the Reader path was left out of.
+		//
+		// TransitionDigestResultStatusByIDs returns exactly the ids it changed,
+		// so the cascade is driven by the transition itself. An id set that
+		// matched nothing issues no cascade statement at all.
+		changed, err := q.TransitionDigestResultStatusByIDs(ctx, store.TransitionDigestResultStatusByIDsParams{
+			Status: "read",
+			Ids:    ids,
+			UserID: userID,
+		})
+		if err != nil {
 			return err
 		}
-		// Spec: result read -> linked items digested -> read, same tx. userID is
-		// passed because the cascade must enforce ownership itself: it receives the
-		// submitted result ids directly, so it cannot rely on the result update
-		// above having matched a row.
-		_, err := q.MarkDigestResultItemsReadByResultIDs(ctx, store.MarkDigestResultItemsReadByResultIDsParams{
-			UserID: userID,
-			Ids:    ids,
-		})
-		return err
+		return cascadeItemsForReadResults(ctx, q, userID, changed)
 	}); err != nil {
 		return err
 	}
@@ -295,9 +302,17 @@ func (s *Server) handleReaderMarkAllAsRead(w http.ResponseWriter, r *http.Reques
 			return
 		}
 
-	case stream == "" || stream == readerStreamReadingList:
+	case stream == "" || stream == readerStreamReadingList || stream == readerStreamFresh:
 		// The reading-list tag IS the whole account, so this scope is global by
 		// definition. An empty/missing `s` is the same request.
+		//
+		// `fresh` belongs here because it is a LISTING alias of the reading
+		// list (see streamEntries: `fresh` resolves to exactly the unread items
+		// plus new results that the reading list shows). Leaving it to the
+		// default branch made mark-all a silent no-op on the one stream a reader
+		// client is most likely to issue it from, while listing returned real
+		// data -- the client saw unread items, asked to clear them, got 200, and
+		// nothing changed.
 		if err := s.markDigestScopeRead(ctx, userID, nil); err != nil {
 			writeServerError(w, "failed to mark all digest results read", err)
 			return
