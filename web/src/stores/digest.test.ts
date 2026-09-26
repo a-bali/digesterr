@@ -64,7 +64,12 @@ describe('digest store stale-request guards', () => {
   it('fetchMoreResults continues from the cursor captured at request time', async () => {
     const { digestApi } = await import('../services/api')
     ;(digestApi.listResults as ReturnType<typeof vi.fn>).mockResolvedValue({
-      results: [{ id: 1 }, { id: 2 }],
+      // created_at present, as the API always returns it: the cursor pair is
+      // built from the deepest row's id AND timestamp.
+      results: [
+        { id: 1, created_at: '2026-09-02T00:00:00Z' },
+        { id: 2, created_at: '2026-09-01T00:00:00Z' },
+      ],
       has_more: true,
     })
 
@@ -78,7 +83,10 @@ describe('digest store stale-request guards', () => {
 
     // The cursor is the last row held, captured before the request resolved and
     // regardless of later mutations to the list.
-    expect(digestApi.listResults).toHaveBeenLastCalledWith(1, { limit: 50, cursor: 2 })
+    // The pair travels together: the id alone cannot be resolved once that row is
+    // deleted, so the boundary carries its own timestamp.
+    expect(digestApi.listResults).toHaveBeenLastCalledWith(1, expect.objectContaining({ limit: 50, cursor: 2 }))
+    expect((digestApi.listResults as any).mock.calls.at(-1)![1].cursorAt).toBeTruthy()
     pending.resolve({ results: [{ id: 3 }], has_more: false })
     await morePromise
     expect(store.results.map(r => r.id)).toEqual([1, 2, 3])
@@ -143,7 +151,7 @@ describe('digest store status normalisation', () => {
     const { digestApi } = await import('../services/api')
     ;(digestApi.listAllResults as ReturnType<typeof vi.fn>).mockResolvedValue({
       results: [
-        { id: 1, status: 'new', config_name: 'c' },
+        { id: 1, status: 'new', config_name: 'c', created_at: '2026-09-02T00:00:00Z' },
         { id: 2, status: 'read', config_name: 'c' },
       ],
       has_more: false,
@@ -197,8 +205,8 @@ describe('digest store All-Digests pagination', () => {
   it('fetchMoreResults appends the next page while in All-Digests mode', async () => {
     const { digestApi } = await import('../services/api')
     ;(digestApi.listAllResults as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({ results: [{ id: 1, status: 'new', config_name: 'c' }], has_more: true })
-      .mockResolvedValueOnce({ results: [{ id: 2, status: 'new', config_name: 'c' }], has_more: false })
+      .mockResolvedValueOnce({ results: [{ id: 1, status: 'new', config_name: 'c', created_at: '2026-09-02T00:00:00Z' }], has_more: true })
+      .mockResolvedValueOnce({ results: [{ id: 2, status: 'new', config_name: 'c', created_at: '2026-09-01T00:00:00Z' }], has_more: false })
 
     const store = useDigestStore()
     await store.enterAllDigestsMode()
@@ -211,13 +219,14 @@ describe('digest store All-Digests pagination', () => {
     expect(store.hasMore).toBe(false)
     // The second call must be a continuation, not a restart: the cursor is the
     // last row served, so the next page starts after it.
-    expect(digestApi.listAllResults).toHaveBeenLastCalledWith({ limit: expect.any(Number), cursor: 1 })
+    expect(digestApi.listAllResults).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: 1 }))
+    expect((digestApi.listAllResults as any).mock.calls.at(-1)![0].cursorAt).toBeTruthy()
   })
 
   it('fetchMoreResults is a no-op in All-Digests mode when the server says there is no more', async () => {
     const { digestApi } = await import('../services/api')
     ;(digestApi.listAllResults as ReturnType<typeof vi.fn>)
-      .mockResolvedValue({ results: [{ id: 1, status: 'new', config_name: 'c' }], has_more: false })
+      .mockResolvedValue({ results: [{ id: 1, status: 'new', config_name: 'c', created_at: '2026-09-02T00:00:00Z' }], has_more: false })
 
     const store = useDigestStore()
     await store.enterAllDigestsMode()

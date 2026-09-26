@@ -34,6 +34,13 @@ export const useDigestStore = defineStore('digest', () => {
   // id of a row actually held cannot drift that way: the next page continues
   // FROM that row regardless of what happened before it.
   const nextCursor = ref<number | null>(null)
+  // The created_at of the row nextCursor names. Sent alongside the id so the
+  // server can order pages WITHOUT looking that row up: a lookup returns nothing
+  // once the row is deleted, and an unresolvable boundary reads as "end of list",
+  // making every deeper result unreachable. Carrying the timestamp means the
+  // boundary survives the row's deletion -- which is the normal case here, since
+  // deleting the deepest loaded row makes it the boundary.
+  const nextCursorAt = ref<string | null>(null)
   const unreadCounts = ref<Record<number, number>>({})
   const allResults = ref<DigestResultWithConfigName[]>([])
   const showingAllDigests = ref(false)
@@ -160,11 +167,55 @@ export const useDigestStore = defineStore('digest', () => {
     }
   }
 
-  // The cursor for the next page: the id of the last row the server served in
-  // THIS response. null when the page was empty, which the API reads as "first
-  // page" -- and an empty page is the end of the list anyway.
-  function lastCursorOf(rows: { id: number }[]): number | null {
-    return rows.length > 0 ? rows[rows.length - 1].id : null
+  // Points the cursor at a row: both the id AND its timestamp, so the pair is
+  // self-contained and does not depend on the row still existing server-side.
+  // The last row of the list IN THE CURRENT ORDER, which is the deepest one
+  // loaded -- "deepest" is direction-dependent, hence reading it off the ordered
+  // list rather than assuming the highest or lowest id.
+  function cursorFromRow(row: { id: number; created_at: string } | undefined) {
+    nextCursor.value = row ? row.id : null
+    nextCursorAt.value = row ? row.created_at : null
+  }
+
+  // After a delete, point the cursor at the deepest row still loaded. When the
+  // deleted row was itself the deepest (the usual case for deleting the last row
+  // on screen), no loaded row is deeper, so the deleted row's own boundary is
+  // preserved -- the server can still order pages after it even though the row is
+  // gone. Only when the cursor cannot be preserved at all does it reset to page
+  // one, which is safe (it re-reads from the top) but loses the scroll position.
+  function reanchorCursorAfterDelete() {
+    const opts = listQueryOpts()
+    const dir = opts.sort === 'oldest' ? 1 : -1
+    const ordered = [...results.value].sort(
+      (a, b) => dir * (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
+    )
+    const deepest = dir === -1 ? ordered[ordered.length - 1] : ordered[0]
+    if (deepest && deepest.id !== nextCursor.value) {
+      cursorFromRow(deepest)
+      return
+    }
+    if (deepest) {
+      // The deepest loaded row IS the deleted one (already filtered out above),
+      // so this branch means nothing deeper is loaded: keep the existing pair.
+      return
+    }
+    nextCursor.value = null
+    nextCursorAt.value = null
+  }
+
+  // The paging arguments for the current boundary, or {} for the first page.
+  //
+  // The id is sent whenever there is one; the timestamp is sent alongside it when
+  // available. Both is the robust form (the server orders by value, so the page
+  // resolves even after that row is deleted). The id alone still works via the
+  // server's lookup fallback, so a row that somehow lacks a timestamp degrades to
+  // the previous behaviour rather than silently restarting the list at page one.
+  function cursorQuery(): { cursor?: number; cursorAt?: string } {
+    if (nextCursor.value == null) return {}
+    return {
+      cursor: nextCursor.value,
+      ...(nextCursorAt.value != null ? { cursorAt: nextCursorAt.value } : {}),
+    }
   }
 
   // The server's count of the current filtered set, for the header's
@@ -188,9 +239,10 @@ export const useDigestStore = defineStore('digest', () => {
       const resp = await digestApi.listResults(id, { limit: PAGE_SIZE, ...listQueryOpts() })
       if (rid !== resultsReq) return
       results.value = resp.results.map(normalize)
-      // Continue from the last row on this page; a null cursor means "first
+      // Continue from the last (deepest) row of this page; null means "first
       // page", so an empty first page also leaves nothing to continue from.
-      nextCursor.value = lastCursorOf(resp.results)
+      // The rows arrive in the requested order, so the last one IS the deepest.
+      cursorFromRow(resp.results[resp.results.length - 1])
       hasMore.value = resp.has_more
       resultsTotal.value = resp.total ?? resp.results.length
     } catch (e) {
@@ -304,6 +356,15 @@ export const useDigestStore = defineStore('digest', () => {
         selectedResult.value = null
         resultItems.value = []
       }
+      // Re-anchor the paging boundary when the deleted row WAS the boundary: the
+      // list may hold no row beyond it yet, so keep the deleted row's own
+      // (created_at, id) -- a boundary the next page can still follow, because
+      // the pair is self-contained and does not need the row to exist. Clearing
+      // it instead would send the next request to page one and lose the
+      // scrolled position.
+      if (nextCursor.value === resultId) {
+        reanchorCursorAfterDelete()
+      }
       toastSuccess('Digest deleted', label)
     } catch (e) {
       toastError(e, 'Failed to delete digest', label)
@@ -327,16 +388,22 @@ export const useDigestStore = defineStore('digest', () => {
     const rid = ++resultsReq
     // Continue from the row the previous page ended on. A cursor that is null
     // here would re-fetch page one, so a non-null one is required to page.
-    const cursor = nextCursor.value
-    if (cursor == null) return
+    if (nextCursor.value == null) return
+    const cursor = cursorQuery()
     loadingMore.value = true
     try {
-      const resp = await digestApi.listResults(cfgId, { limit: PAGE_SIZE, cursor, ...listQueryOpts() })
+      const resp = await digestApi.listResults(cfgId, { limit: PAGE_SIZE, ...cursor, ...listQueryOpts() })
       if (rid !== resultsReq) return
       const page = resp.results.map(normalize)
-      // Advance to the last row SERVED, so the next page continues from where
+      // Advance to the last row SERVED (the page is in the requested order, so
+      // the last one is the deepest), so the next request continues from where
       // this one ended even if some rows were filtered out of the visible list.
-      nextCursor.value = lastCursorOf(resp.results) ?? cursor
+      // Leaving the boundary alone when the page came back empty is deliberate:
+      // an empty page here is either the end of the list or a boundary the server
+      // could not resolve, and the "load more" affordance is gated on has_more.
+      if (resp.results.length > 0) {
+        cursorFromRow(resp.results[resp.results.length - 1])
+      }
       const have = new Set(results.value.map(r => r.id))
       const fresh = page.filter(r => !have.has(r.id))
       if (listQueryOpts().status != null) {
@@ -363,10 +430,10 @@ export const useDigestStore = defineStore('digest', () => {
       loadingMore.value = true
     }
     try {
-      const cursor = replace ? undefined : nextCursor.value ?? undefined
+      const cursor = replace ? {} : cursorQuery()
       const resp = await digestApi.listAllResults({
         limit: PAGE_SIZE,
-        cursor,
+        ...cursor,
         ...listQueryOpts(),
       })
       if (rid !== resultsReq) return
@@ -374,7 +441,8 @@ export const useDigestStore = defineStore('digest', () => {
       // view rendered unread results as read (grey, no dot) and the Unread
       // filter matched nothing, because the status never equalled 'unread'.
       const page = resp.results.map(normalize)
-      nextCursor.value = lastCursorOf(resp.results)
+      // Deepest row of the ordered page; see fetchMoreResults.
+      cursorFromRow(resp.results[resp.results.length - 1])
       if (replace) {
         allResults.value = page
       } else {
@@ -480,16 +548,18 @@ export const useDigestStore = defineStore('digest', () => {
     const filtered = kept.filter(matchesFilter)
     filtered.sort((a, b) => dir * (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()))
 
-    // The cursor continues from the last row in the current ordering -- which,
-    // because the loaded set is a contiguous prefix of the server's, is the
-    // DEEPEST row the client holds. Deriving it from the list (rather than
-    // counting page one) is what keeps the boundary correct after a refresh
-    // merges page one into a longer list: counting gave a number that grew
-    // independently of which rows were actually held, and the row that later
-    // shifted into that count was skipped permanently. An empty list leaves
-    // nothing to continue from, which reads as "first page" and is the safe
-    // restart.
-    nextCursor.value = filtered.length > 0 ? filtered[filtered.length - 1].id : null
+    // The cursor continues from the DEEPEST row held -- the one the next page
+    // must follow. Deepest is direction-dependent: on a newest-first list that is
+    // the last element, on an oldest-first list it is the FIRST. Reading it as
+    // "the last element" unconditionally pointed an oldest-first list at its
+    // NEWEST row, i.e. the top, which is not a boundary at all.
+    //
+    // Deriving it from the rows held (rather than counting pages served) also
+    // keeps it correct after a refresh merges page one into a longer list. And
+    // because the pair carries the row's own timestamp, the boundary still
+    // resolves after that row is deleted -- which is the normal outcome of
+    // deleting the deepest loaded row.
+    cursorFromRow(dir === -1 ? filtered[filtered.length - 1] : filtered[0])
     return filtered
   }
 

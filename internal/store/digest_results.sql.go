@@ -315,17 +315,20 @@ JOIN digest_configs dc ON dc.id = dr.config_id
 WHERE dr.user_id = ?1
   AND (dr.status = ?2 OR ?2 IS NULL)
   AND (
-    dr.created_at < (SELECT br.created_at FROM digest_results br WHERE br.id = ?3)
-    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = ?3)
-        AND dr.id < ?3)
+    dr.created_at < COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(?3 AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = ?4))
+    OR (dr.created_at = COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(?3 AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = ?4))
+        AND dr.id < ?4)
   )
 ORDER BY dr.created_at DESC, dr.id DESC
-LIMIT ?4
+LIMIT ?5
 `
 
 type ListAllDigestResultsByUserAfterCursorParams struct {
 	UserID   int64          `json:"user_id"`
 	Status   sql.NullString `json:"status"`
+	CursorAt sql.NullString `json:"cursor_at"`
 	CursorID int64          `json:"cursor_id"`
 	Limit    int64          `json:"limit"`
 }
@@ -344,11 +347,12 @@ type ListAllDigestResultsByUserAfterCursorRow struct {
 
 // Keyset page for the All-Digests list; see
 // ListDigestResultsByConfigAfterCursor for why a cursor replaces the offset and
-// why the boundary is read from the row rather than bound as a timestamp.
+// why the boundary is supplied by the client rather than looked up by id.
 func (q *Queries) ListAllDigestResultsByUserAfterCursor(ctx context.Context, arg ListAllDigestResultsByUserAfterCursorParams) ([]ListAllDigestResultsByUserAfterCursorRow, error) {
 	rows, err := q.db.QueryContext(ctx, listAllDigestResultsByUserAfterCursor,
 		arg.UserID,
 		arg.Status,
+		arg.CursorAt,
 		arg.CursorID,
 		arg.Limit,
 	)
@@ -394,17 +398,20 @@ JOIN digest_configs dc ON dc.id = dr.config_id
 WHERE dr.user_id = ?1
   AND (dr.status = ?2 OR ?2 IS NULL)
   AND (
-    dr.created_at > (SELECT br.created_at FROM digest_results br WHERE br.id = ?3)
-    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = ?3)
-        AND dr.id > ?3)
+    dr.created_at > COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(?3 AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = ?4))
+    OR (dr.created_at = COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(?3 AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = ?4))
+        AND dr.id > ?4)
   )
 ORDER BY dr.created_at ASC, dr.id ASC
-LIMIT ?4
+LIMIT ?5
 `
 
 type ListAllDigestResultsByUserAfterCursorOldestFirstParams struct {
 	UserID   int64          `json:"user_id"`
 	Status   sql.NullString `json:"status"`
+	CursorAt sql.NullString `json:"cursor_at"`
 	CursorID int64          `json:"cursor_id"`
 	Limit    int64          `json:"limit"`
 }
@@ -426,6 +433,7 @@ func (q *Queries) ListAllDigestResultsByUserAfterCursorOldestFirst(ctx context.C
 	rows, err := q.db.QueryContext(ctx, listAllDigestResultsByUserAfterCursorOldestFirst,
 		arg.UserID,
 		arg.Status,
+		arg.CursorAt,
 		arg.CursorID,
 		arg.Limit,
 	)
@@ -703,18 +711,21 @@ WHERE dr.config_id = ?1
   AND dr.user_id = ?2
   AND (dr.status = ?3 OR ?3 IS NULL)
   AND (
-    dr.created_at < (SELECT br.created_at FROM digest_results br WHERE br.id = ?4)
-    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = ?4)
-        AND dr.id < ?4)
+    dr.created_at < COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(?4 AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = ?5))
+    OR (dr.created_at = COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(?4 AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = ?5))
+        AND dr.id < ?5)
   )
 ORDER BY dr.created_at DESC, dr.id DESC
-LIMIT ?5
+LIMIT ?6
 `
 
 type ListDigestResultsByConfigAfterCursorParams struct {
 	ConfigID int64          `json:"config_id"`
 	UserID   int64          `json:"user_id"`
 	Status   sql.NullString `json:"status"`
+	CursorAt sql.NullString `json:"cursor_at"`
 	CursorID int64          `json:"cursor_id"`
 	Limit    int64          `json:"limit"`
 }
@@ -739,20 +750,31 @@ type ListDigestResultsByConfigAfterCursorRow struct {
 // the next one. Ordering by (created_at, id) and continuing from the last row
 // actually seen makes the page independent of what happened before it.
 //
-// The boundary is read from the row itself rather than passed in: the column
-// stores 'YYYY-MM-DD HH:MM:SS' and a Go time.Time round-trip does not reproduce
-// that byte-for-byte (trailing zero seconds are dropped, and '...:59' does not
-// compare equal to '...:59.000'), so a bound timestamp silently mis-compares and
-// skips rows -- the very bug this replaces.
+// The boundary is (created_at, id) of the last row the client holds, sent BY the
+// client and normalised here with strftime. The column stores
+// 'YYYY-MM-DD HH:MM:SS' while the API hands timestamps out as RFC3339, and
+// comparing those forms directly -- or binding a Go time.Time, which drops
+// trailing zero seconds -- silently mis-matches and skips rows.
 //
-// A deleted boundary row makes the subquery NULL and stops pagination instead of
-// skipping rows: stopping is recoverable (a refresh restarts the list), skipping
-// is not (the row is never served again).
+// The timestamp is COALESCEd: the client-supplied cursor_at is used when
+// present, and the old by-id lookup is the fallback when it is not. The fallback
+// alone was not enough -- resolving the row returns NULL once it is deleted, and
+// an unresolvable boundary yields an EMPTY page indistinguishable from the end of
+// the list, so every deeper result became unreachable while the client kept
+// sending the same gone id. Deleting the deepest loaded row MAKES it the boundary,
+// so that was the normal case rather than a corner one. With cursor_at supplied
+// the page orders correctly even though the row it describes no longer exists.
+//
+// A boundary that resolves by neither route still stops pagination (empty page)
+// rather than resuming from an arbitrary point, and an empty page is
+// indistinguishable from the end of the list -- which is why stopping is only
+// acceptable as a last resort.
 func (q *Queries) ListDigestResultsByConfigAfterCursor(ctx context.Context, arg ListDigestResultsByConfigAfterCursorParams) ([]ListDigestResultsByConfigAfterCursorRow, error) {
 	rows, err := q.db.QueryContext(ctx, listDigestResultsByConfigAfterCursor,
 		arg.ConfigID,
 		arg.UserID,
 		arg.Status,
+		arg.CursorAt,
 		arg.CursorID,
 		arg.Limit,
 	)
@@ -796,18 +818,21 @@ WHERE dr.config_id = ?1
   AND dr.user_id = ?2
   AND (dr.status = ?3 OR ?3 IS NULL)
   AND (
-    dr.created_at > (SELECT br.created_at FROM digest_results br WHERE br.id = ?4)
-    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = ?4)
-        AND dr.id > ?4)
+    dr.created_at > COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(?4 AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = ?5))
+    OR (dr.created_at = COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(?4 AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = ?5))
+        AND dr.id > ?5)
   )
 ORDER BY dr.created_at ASC, dr.id ASC
-LIMIT ?5
+LIMIT ?6
 `
 
 type ListDigestResultsByConfigAfterCursorOldestFirstParams struct {
 	ConfigID int64          `json:"config_id"`
 	UserID   int64          `json:"user_id"`
 	Status   sql.NullString `json:"status"`
+	CursorAt sql.NullString `json:"cursor_at"`
 	CursorID int64          `json:"cursor_id"`
 	Limit    int64          `json:"limit"`
 }
@@ -829,6 +854,7 @@ func (q *Queries) ListDigestResultsByConfigAfterCursorOldestFirst(ctx context.Co
 		arg.ConfigID,
 		arg.UserID,
 		arg.Status,
+		arg.CursorAt,
 		arg.CursorID,
 		arg.Limit,
 	)

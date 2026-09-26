@@ -204,6 +204,31 @@ func digestListCursorParam(r *http.Request) int64 {
 	return 0
 }
 
+// digestListCursorAtParam parses `cursor_at`, the created_at of the row named by
+// `cursor`. The client sends it alongside the id because the server must NOT look
+// the row up: resolving it by id returns NULL once the row is deleted, and an
+// unresolvable boundary yields an EMPTY page that is indistinguishable from the
+// end of the list -- which made every deeper result unreachable while the client
+// kept sending the same gone id.
+//
+// The value is an RFC3339 timestamp as the API hands them out; the query
+// normalises it with strftime to the stored 'YYYY-MM-DD HH:MM:SS' form. An
+// unparseable or missing value falls back to the first page, matching `cursor`.
+func digestListCursorAtParam(r *http.Request) string {
+	raw := r.URL.Query().Get("cursor_at")
+	if raw == "" {
+		return ""
+	}
+	// Accept the shapes we emit (RFC3339, with or without zone) and reject
+	// anything else rather than passing it into the query.
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t.UTC().Format("2006-01-02T15:04:05Z")
+		}
+	}
+	return ""
+}
+
 // cursorRowsToPreview maps the keyset row type onto the offset one so both
 // pagination paths share one response builder. The column list is identical; the
 // signature differs only because sqlc names a row type per query.
@@ -264,6 +289,7 @@ func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request)
 	}
 	status := digestListStatusParam(r)
 	cursorID := digestListCursorParam(r)
+	cursorAt := digestListCursorAtParam(r)
 
 	// Fetch one row beyond the page. has_more is derived from that extra row,
 	// so it must be requested — asking for exactly `limit` rows makes
@@ -279,6 +305,7 @@ func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request)
 				ConfigID: configID,
 				UserID:   userID,
 				Status:   status,
+				CursorAt: sql.NullString{String: cursorAt, Valid: cursorAt != ""},
 				CursorID: cursorID,
 				Limit:    int64(limit + 1),
 			})
@@ -307,6 +334,7 @@ func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request)
 				ConfigID: configID,
 				UserID:   userID,
 				Status:   status,
+				CursorAt: sql.NullString{String: cursorAt, Valid: cursorAt != ""},
 				CursorID: cursorID,
 				Limit:    int64(limit + 1),
 			})

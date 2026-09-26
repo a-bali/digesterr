@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -377,6 +378,7 @@ func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Reque
 
 	status := digestListStatusParam(r)
 	cursorID := digestListCursorParam(r)
+	cursorAt := digestListCursorAtParam(r)
 
 	var results []store.ListAllDigestResultsByUserRow
 	if digestListSortIsOldest(r) {
@@ -384,6 +386,7 @@ func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Reque
 			rows, err := s.queries.ListAllDigestResultsByUserAfterCursorOldestFirst(r.Context(), store.ListAllDigestResultsByUserAfterCursorOldestFirstParams{
 				UserID:   userID,
 				Status:   status,
+				CursorAt: sql.NullString{String: cursorAt, Valid: cursorAt != ""},
 				CursorID: cursorID,
 				Limit:    int64(limit + 1),
 			})
@@ -410,6 +413,7 @@ func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Reque
 			rows, err := s.queries.ListAllDigestResultsByUserAfterCursor(r.Context(), store.ListAllDigestResultsByUserAfterCursorParams{
 				UserID:   userID,
 				Status:   status,
+				CursorAt: sql.NullString{String: cursorAt, Valid: cursorAt != ""},
 				CursorID: cursorID,
 				Limit:    int64(limit + 1),
 			})

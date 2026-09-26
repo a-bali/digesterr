@@ -66,15 +66,25 @@ LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 -- the next one. Ordering by (created_at, id) and continuing from the last row
 -- actually seen makes the page independent of what happened before it.
 --
--- The boundary is read from the row itself rather than passed in: the column
--- stores 'YYYY-MM-DD HH:MM:SS' and a Go time.Time round-trip does not reproduce
--- that byte-for-byte (trailing zero seconds are dropped, and '...:59' does not
--- compare equal to '...:59.000'), so a bound timestamp silently mis-compares and
--- skips rows -- the very bug this replaces.
+-- The boundary is (created_at, id) of the last row the client holds, sent BY the
+-- client and normalised here with strftime. The column stores
+-- 'YYYY-MM-DD HH:MM:SS' while the API hands timestamps out as RFC3339, and
+-- comparing those forms directly -- or binding a Go time.Time, which drops
+-- trailing zero seconds -- silently mis-matches and skips rows.
 --
--- A deleted boundary row makes the subquery NULL and stops pagination instead of
--- skipping rows: stopping is recoverable (a refresh restarts the list), skipping
--- is not (the row is never served again).
+-- The timestamp is COALESCEd: the client-supplied cursor_at is used when
+-- present, and the old by-id lookup is the fallback when it is not. The fallback
+-- alone was not enough -- resolving the row returns NULL once it is deleted, and
+-- an unresolvable boundary yields an EMPTY page indistinguishable from the end of
+-- the list, so every deeper result became unreachable while the client kept
+-- sending the same gone id. Deleting the deepest loaded row MAKES it the boundary,
+-- so that was the normal case rather than a corner one. With cursor_at supplied
+-- the page orders correctly even though the row it describes no longer exists.
+--
+-- A boundary that resolves by neither route still stops pagination (empty page)
+-- rather than resuming from an arbitrary point, and an empty page is
+-- indistinguishable from the end of the list -- which is why stopping is only
+-- acceptable as a last resort.
 SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
        CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
        COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
@@ -84,8 +94,10 @@ WHERE dr.config_id = sqlc.arg(config_id)
   AND dr.user_id = sqlc.arg(user_id)
   AND (dr.status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
   AND (
-    dr.created_at < (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
-    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
+    dr.created_at < COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(sqlc.narg(cursor_at) AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id)))
+    OR (dr.created_at = COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(sqlc.narg(cursor_at) AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id)))
         AND dr.id < sqlc.arg(cursor_id))
   )
 ORDER BY dr.created_at DESC, dr.id DESC
@@ -102,8 +114,10 @@ WHERE dr.config_id = sqlc.arg(config_id)
   AND dr.user_id = sqlc.arg(user_id)
   AND (dr.status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
   AND (
-    dr.created_at > (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
-    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
+    dr.created_at > COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(sqlc.narg(cursor_at) AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id)))
+    OR (dr.created_at = COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(sqlc.narg(cursor_at) AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id)))
         AND dr.id > sqlc.arg(cursor_id))
   )
 ORDER BY dr.created_at ASC, dr.id ASC
@@ -211,7 +225,7 @@ LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 -- name: ListAllDigestResultsByUserAfterCursor :many
 -- Keyset page for the All-Digests list; see
 -- ListDigestResultsByConfigAfterCursor for why a cursor replaces the offset and
--- why the boundary is read from the row rather than bound as a timestamp.
+-- why the boundary is supplied by the client rather than looked up by id.
 SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
        dc.name AS config_name,
        CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
@@ -222,8 +236,10 @@ JOIN digest_configs dc ON dc.id = dr.config_id
 WHERE dr.user_id = sqlc.arg(user_id)
   AND (dr.status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
   AND (
-    dr.created_at < (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
-    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
+    dr.created_at < COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(sqlc.narg(cursor_at) AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id)))
+    OR (dr.created_at = COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(sqlc.narg(cursor_at) AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id)))
         AND dr.id < sqlc.arg(cursor_id))
   )
 ORDER BY dr.created_at DESC, dr.id DESC
@@ -241,8 +257,10 @@ JOIN digest_configs dc ON dc.id = dr.config_id
 WHERE dr.user_id = sqlc.arg(user_id)
   AND (dr.status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
   AND (
-    dr.created_at > (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
-    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
+    dr.created_at > COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(sqlc.narg(cursor_at) AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id)))
+    OR (dr.created_at = COALESCE(CAST(strftime('%Y-%m-%d %H:%M:%S', CAST(sqlc.narg(cursor_at) AS TEXT)) AS TEXT),
+                                  (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id)))
         AND dr.id > sqlc.arg(cursor_id))
   )
 ORDER BY dr.created_at ASC, dr.id ASC
