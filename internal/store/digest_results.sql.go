@@ -652,8 +652,10 @@ type ListDigestResultsByConfigPaginatedRow struct {
 // rows, so an older match sitting on page three was unreachable. Paginating a
 // filtered query is what makes the control mean what it says.
 //
-// An unread result is stored as 'new' (generator.go); the handler translates
-// the API's 'unread' before it reaches this query. narg keeps "no filter" NULL.
+// An unread result is stored as 'new' (generator.go writes it, and the
+// unread-count queries count status='new'). The handler translates the API's
+// 'unread' in, and the browser translates 'new' back to 'unread' on the way
+// out. narg keeps "no filter" NULL.
 //
 // The id tiebreak keeps paging stable when several results share created_at.
 //
