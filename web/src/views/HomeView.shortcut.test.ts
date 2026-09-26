@@ -207,10 +207,13 @@ describe("'u' shortcut in digest view", () => {
     pressU()
     await flushPromises()
 
-    expect(vi.mocked(digestApi.listResults)).toHaveBeenCalledWith(
-      7,
-      expect.objectContaining({ status: 'unread', offset: 0 }),
-    )
+    // First page of the new filtered query means NO cursor: continuing from the
+    // old boundary would page through the previous query's rows.
+    const [cfgArg, opts] = vi.mocked(digestApi.listResults).mock.calls.at(-1)!
+    expect(cfgArg).toBe(7)
+    expect(opts.status).toBe('unread')
+    expect(opts.cursor).toBeUndefined()
+    expect(opts.offset).toBeUndefined()
     wrapper.unmount()
   })
 })

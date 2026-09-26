@@ -320,6 +320,45 @@ func allOldestRowsToPreview(rows []store.ListAllDigestResultsByUserOldestFirstRo
 	return out
 }
 
+// allCursorRowsToPreview / allCursorOldestRowsToPreview map the keyset row types
+// onto the offset one so every pagination path shares one response builder. Same
+// rationale as allOldestRowsToPreview.
+func allCursorRowsToPreview(rows []store.ListAllDigestResultsByUserAfterCursorRow) []store.ListAllDigestResultsByUserRow {
+	out := make([]store.ListAllDigestResultsByUserRow, len(rows))
+	for i, r := range rows {
+		out[i] = store.ListAllDigestResultsByUserRow{
+			ID:         r.ID,
+			UserID:     r.UserID,
+			ConfigID:   r.ConfigID,
+			Status:     r.Status,
+			CreatedAt:  r.CreatedAt,
+			UpdatedAt:  r.UpdatedAt,
+			ConfigName: r.ConfigName,
+			Title:      r.Title,
+			ItemCount:  r.ItemCount,
+		}
+	}
+	return out
+}
+
+func allCursorOldestRowsToPreview(rows []store.ListAllDigestResultsByUserAfterCursorOldestFirstRow) []store.ListAllDigestResultsByUserRow {
+	out := make([]store.ListAllDigestResultsByUserRow, len(rows))
+	for i, r := range rows {
+		out[i] = store.ListAllDigestResultsByUserRow{
+			ID:         r.ID,
+			UserID:     r.UserID,
+			ConfigID:   r.ConfigID,
+			Status:     r.Status,
+			CreatedAt:  r.CreatedAt,
+			UpdatedAt:  r.UpdatedAt,
+			ConfigName: r.ConfigName,
+			Title:      r.Title,
+			ItemCount:  r.ItemCount,
+		}
+	}
+	return out
+}
+
 func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
 
@@ -337,32 +376,61 @@ func (s *Server) handleListAllDigestResults(w http.ResponseWriter, r *http.Reque
 	}
 
 	status := digestListStatusParam(r)
+	cursorID := digestListCursorParam(r)
 
 	var results []store.ListAllDigestResultsByUserRow
 	if digestListSortIsOldest(r) {
-		rows, err := s.queries.ListAllDigestResultsByUserOldestFirst(r.Context(), store.ListAllDigestResultsByUserOldestFirstParams{
-			UserID: userID,
-			Status: status,
-			Limit:  int64(limit + 1),
-			Offset: int64(offset),
-		})
-		if err != nil {
-			writeServerError(w, "failed to list digest results", err)
-			return
+		if cursorID > 0 {
+			rows, err := s.queries.ListAllDigestResultsByUserAfterCursorOldestFirst(r.Context(), store.ListAllDigestResultsByUserAfterCursorOldestFirstParams{
+				UserID:   userID,
+				Status:   status,
+				CursorID: cursorID,
+				Limit:    int64(limit + 1),
+			})
+			if err != nil {
+				writeServerError(w, "failed to list digest results", err)
+				return
+			}
+			results = allCursorOldestRowsToPreview(rows)
+		} else {
+			rows, err := s.queries.ListAllDigestResultsByUserOldestFirst(r.Context(), store.ListAllDigestResultsByUserOldestFirstParams{
+				UserID: userID,
+				Status: status,
+				Limit:  int64(limit + 1),
+				Offset: int64(offset),
+			})
+			if err != nil {
+				writeServerError(w, "failed to list digest results", err)
+				return
+			}
+			results = allOldestRowsToPreview(rows)
 		}
-		results = allOldestRowsToPreview(rows)
 	} else {
-		rows, err := s.queries.ListAllDigestResultsByUser(r.Context(), store.ListAllDigestResultsByUserParams{
-			UserID: userID,
-			Status: status,
-			Limit:  int64(limit + 1),
-			Offset: int64(offset),
-		})
-		if err != nil {
-			writeServerError(w, "failed to list digest results", err)
-			return
+		if cursorID > 0 {
+			rows, err := s.queries.ListAllDigestResultsByUserAfterCursor(r.Context(), store.ListAllDigestResultsByUserAfterCursorParams{
+				UserID:   userID,
+				Status:   status,
+				CursorID: cursorID,
+				Limit:    int64(limit + 1),
+			})
+			if err != nil {
+				writeServerError(w, "failed to list digest results", err)
+				return
+			}
+			results = allCursorRowsToPreview(rows)
+		} else {
+			rows, err := s.queries.ListAllDigestResultsByUser(r.Context(), store.ListAllDigestResultsByUserParams{
+				UserID: userID,
+				Status: status,
+				Limit:  int64(limit + 1),
+				Offset: int64(offset),
+			})
+			if err != nil {
+				writeServerError(w, "failed to list digest results", err)
+				return
+			}
+			results = rows
 		}
-		results = rows
 	}
 
 	hasMore := len(results) > limit

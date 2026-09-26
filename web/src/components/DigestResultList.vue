@@ -56,6 +56,19 @@ const visibleResults = computed<DigestResultWithConfigName[]>(() => {
   return props.showingAll ? digestStore.allResults : digestStore.results
 })
 
+// The total the header pairs with the loaded count: the server's size for the
+// CURRENT filtered set. Passing the loaded length as both numbers rendered
+// "50/50" on a list the server knew held more, so the pair said nothing. Each
+// list keeps its own total because their filters are independent.
+//
+// Guarded against being smaller than the loaded count: the two come from
+// separate requests, so a page can arrive after a filter change the count has
+// not caught up with, and a "120/50" would be nonsense.
+const totalForView = computed(() => {
+  const total = props.showingAll ? digestStore.allResultsTotal : digestStore.resultsTotal
+  return Math.max(total, visibleResults.value.length)
+})
+
 function itemCount(result: DigestResult): number {
   return (result as any).item_count ?? 0
 }
@@ -111,7 +124,7 @@ function onSelect(e: MouseEvent, result: DigestResult) {
       :min-score="null"
       :score-supported="false"
       :loaded-count="visibleResults.length"
-      :total-count="visibleResults.length"
+      :total-count="totalForView"
       :feed-name="feedLabel"
       :status-options="STATUS_OPTIONS"
       @update:status-filter="digestFilter = $event"

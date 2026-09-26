@@ -58,7 +58,7 @@ describe('digest store refresh reconciliation', () => {
     store.activeConfigId = 1
     store.resultSort = 'oldest'
     store.results = [result(10), result(20), result(30)]
-    store.nextOffset = 3
+    store.nextCursor = 30
 
     ;(api.listConfigs as any).mockResolvedValue([])
     // The server returns oldest-first too, matching the query it was given.
@@ -80,7 +80,7 @@ describe('digest store refresh reconciliation', () => {
     store.activeConfigId = 1
     store.resultFilter = 'unread'
     store.results = [result(30), result(20)]
-    store.nextOffset = 2
+    store.nextCursor = 20
 
     ;(api.listConfigs as any).mockResolvedValue([])
     // 30 was marked read elsewhere; 40 is new and still unread.
@@ -101,7 +101,7 @@ describe('digest store refresh reconciliation', () => {
     const store = useDigestStore()
     store.activeConfigId = 1
     store.results = [result(30), result(20), result(10)]
-    store.nextOffset = 3
+    store.nextCursor = 10
 
     ;(api.listConfigs as any).mockResolvedValue([])
     // 20 was deleted server-side. Fewer rows come back than requested with
@@ -116,14 +116,14 @@ describe('digest store refresh reconciliation', () => {
     expect(store.results.map(r => r.id)).toEqual([30, 10])
   })
 
-  it('derives the paging offset from the served window, not the local list length', async () => {
+  it('derives the paging cursor from the last row held, not the local list length', async () => {
     const api = await mockApi()
     const store = useDigestStore()
     store.activeConfigId = 1
     // Two rows loaded, none of which the next refresh returns: the window is
     // full of newer rows, so these two are retained as older pages.
     store.results = [result(2), result(1)]
-    store.nextOffset = 2
+    store.nextCursor = 2
     store.hasMore = true
 
     ;(api.listConfigs as any).mockResolvedValue([])
@@ -132,14 +132,17 @@ describe('digest store refresh reconciliation', () => {
 
     await store.silentRefresh()
 
-    // The union is 54 rows but only 52 were served. Taking the offset from the
-    // local length (54) skipped two real rows on the next page; it must be 52.
+    // The union is 54 rows. A COUNT derived from the local length (54) would
+    // point past rows the server never served, so the next page skipped two real
+    // ones. The cursor is instead the id of the deepest row actually held, which
+    // cannot drift like a count: the next page continues from that row.
     expect(store.results.length).toBe(54)
-    expect(store.nextOffset).toBe(52)
+    const deepest = store.results[store.results.length - 1].id
+    expect(store.nextCursor).toBe(deepest)
 
     ;(api.listResults as any).mockResolvedValue({ results: [], has_more: false })
     await store.fetchMoreResults()
-    expect((api.listResults as any).mock.calls.at(-1)![1].offset).toBe(52)
+    expect((api.listResults as any).mock.calls.at(-1)![1].cursor).toBe(deepest)
   })
 
   it('refreshes All-Digests with the same reconciliation', async () => {
@@ -149,7 +152,7 @@ describe('digest store refresh reconciliation', () => {
     await Promise.resolve()
     store.allResults = [result(50), result(40)]
     store.resultSort = 'oldest'
-    store.nextOffset = 2
+    store.nextCursor = 40
 
     ;(api.listConfigs as any).mockResolvedValue([])
     ;(api.listResults as any).mockResolvedValue({ results: [], has_more: false })

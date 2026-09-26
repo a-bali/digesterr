@@ -304,6 +304,162 @@ func (q *Queries) ListAllDigestResultsByUser(ctx context.Context, arg ListAllDig
 	return items, nil
 }
 
+const listAllDigestResultsByUserAfterCursor = `-- name: ListAllDigestResultsByUserAfterCursor :many
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       dc.name AS config_name,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
+FROM digest_results dr
+JOIN digest_configs dc ON dc.id = dr.config_id
+WHERE dr.user_id = ?1
+  AND (dr.status = ?2 OR ?2 IS NULL)
+  AND (
+    dr.created_at < (SELECT br.created_at FROM digest_results br WHERE br.id = ?3)
+    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = ?3)
+        AND dr.id < ?3)
+  )
+ORDER BY dr.created_at DESC, dr.id DESC
+LIMIT ?4
+`
+
+type ListAllDigestResultsByUserAfterCursorParams struct {
+	UserID   int64          `json:"user_id"`
+	Status   sql.NullString `json:"status"`
+	CursorID int64          `json:"cursor_id"`
+	Limit    int64          `json:"limit"`
+}
+
+type ListAllDigestResultsByUserAfterCursorRow struct {
+	ID         int64     `json:"id"`
+	UserID     int64     `json:"user_id"`
+	ConfigID   int64     `json:"config_id"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	ConfigName string    `json:"config_name"`
+	Title      string    `json:"title"`
+	ItemCount  int64     `json:"item_count"`
+}
+
+// Keyset page for the All-Digests list; see
+// ListDigestResultsByConfigAfterCursor for why a cursor replaces the offset and
+// why the boundary is read from the row rather than bound as a timestamp.
+func (q *Queries) ListAllDigestResultsByUserAfterCursor(ctx context.Context, arg ListAllDigestResultsByUserAfterCursorParams) ([]ListAllDigestResultsByUserAfterCursorRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAllDigestResultsByUserAfterCursor,
+		arg.UserID,
+		arg.Status,
+		arg.CursorID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllDigestResultsByUserAfterCursorRow{}
+	for rows.Next() {
+		var i ListAllDigestResultsByUserAfterCursorRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ConfigID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ConfigName,
+			&i.Title,
+			&i.ItemCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllDigestResultsByUserAfterCursorOldestFirst = `-- name: ListAllDigestResultsByUserAfterCursorOldestFirst :many
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       dc.name AS config_name,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
+FROM digest_results dr
+JOIN digest_configs dc ON dc.id = dr.config_id
+WHERE dr.user_id = ?1
+  AND (dr.status = ?2 OR ?2 IS NULL)
+  AND (
+    dr.created_at > (SELECT br.created_at FROM digest_results br WHERE br.id = ?3)
+    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = ?3)
+        AND dr.id > ?3)
+  )
+ORDER BY dr.created_at ASC, dr.id ASC
+LIMIT ?4
+`
+
+type ListAllDigestResultsByUserAfterCursorOldestFirstParams struct {
+	UserID   int64          `json:"user_id"`
+	Status   sql.NullString `json:"status"`
+	CursorID int64          `json:"cursor_id"`
+	Limit    int64          `json:"limit"`
+}
+
+type ListAllDigestResultsByUserAfterCursorOldestFirstRow struct {
+	ID         int64     `json:"id"`
+	UserID     int64     `json:"user_id"`
+	ConfigID   int64     `json:"config_id"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	ConfigName string    `json:"config_name"`
+	Title      string    `json:"title"`
+	ItemCount  int64     `json:"item_count"`
+}
+
+// Oldest-first twin of ListAllDigestResultsByUserAfterCursor; see its comment.
+func (q *Queries) ListAllDigestResultsByUserAfterCursorOldestFirst(ctx context.Context, arg ListAllDigestResultsByUserAfterCursorOldestFirstParams) ([]ListAllDigestResultsByUserAfterCursorOldestFirstRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAllDigestResultsByUserAfterCursorOldestFirst,
+		arg.UserID,
+		arg.Status,
+		arg.CursorID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllDigestResultsByUserAfterCursorOldestFirstRow{}
+	for rows.Next() {
+		var i ListAllDigestResultsByUserAfterCursorOldestFirstRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ConfigID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ConfigName,
+			&i.Title,
+			&i.ItemCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllDigestResultsByUserOldestFirst = `-- name: ListAllDigestResultsByUserOldestFirst :many
 SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
        dc.name AS config_name,
@@ -523,6 +679,175 @@ func (q *Queries) ListDigestResultsByConfig(ctx context.Context, arg ListDigestR
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDigestResultsByConfigAfterCursor = `-- name: ListDigestResultsByConfigAfterCursor :many
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
+FROM digest_results dr
+WHERE dr.config_id = ?1
+  AND dr.user_id = ?2
+  AND (dr.status = ?3 OR ?3 IS NULL)
+  AND (
+    dr.created_at < (SELECT br.created_at FROM digest_results br WHERE br.id = ?4)
+    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = ?4)
+        AND dr.id < ?4)
+  )
+ORDER BY dr.created_at DESC, dr.id DESC
+LIMIT ?5
+`
+
+type ListDigestResultsByConfigAfterCursorParams struct {
+	ConfigID int64          `json:"config_id"`
+	UserID   int64          `json:"user_id"`
+	Status   sql.NullString `json:"status"`
+	CursorID int64          `json:"cursor_id"`
+	Limit    int64          `json:"limit"`
+}
+
+type ListDigestResultsByConfigAfterCursorRow struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	ConfigID  int64     `json:"config_id"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Title     string    `json:"title"`
+	ItemCount int64     `json:"item_count"`
+}
+
+// Keyset page for the per-config digest list. OFFSET pagination assumes the
+// rows before the boundary never change, which is false here: deleting a result
+// (or changing one so it stops matching the active filter) shifts every later
+// row up by one. A silent refresh only re-reads page one, so the client never
+// learns of the shift, keeps its high-water offset, and the row that moved into
+// the boundary is skipped permanently -- it is on neither the loaded page nor
+// the next one. Ordering by (created_at, id) and continuing from the last row
+// actually seen makes the page independent of what happened before it.
+//
+// The boundary is read from the row itself rather than passed in: the column
+// stores 'YYYY-MM-DD HH:MM:SS' and a Go time.Time round-trip does not reproduce
+// that byte-for-byte (trailing zero seconds are dropped, and '...:59' does not
+// compare equal to '...:59.000'), so a bound timestamp silently mis-compares and
+// skips rows -- the very bug this replaces.
+//
+// A deleted boundary row makes the subquery NULL and stops pagination instead of
+// skipping rows: stopping is recoverable (a refresh restarts the list), skipping
+// is not (the row is never served again).
+func (q *Queries) ListDigestResultsByConfigAfterCursor(ctx context.Context, arg ListDigestResultsByConfigAfterCursorParams) ([]ListDigestResultsByConfigAfterCursorRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDigestResultsByConfigAfterCursor,
+		arg.ConfigID,
+		arg.UserID,
+		arg.Status,
+		arg.CursorID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDigestResultsByConfigAfterCursorRow{}
+	for rows.Next() {
+		var i ListDigestResultsByConfigAfterCursorRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ConfigID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Title,
+			&i.ItemCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDigestResultsByConfigAfterCursorOldestFirst = `-- name: ListDigestResultsByConfigAfterCursorOldestFirst :many
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
+FROM digest_results dr
+WHERE dr.config_id = ?1
+  AND dr.user_id = ?2
+  AND (dr.status = ?3 OR ?3 IS NULL)
+  AND (
+    dr.created_at > (SELECT br.created_at FROM digest_results br WHERE br.id = ?4)
+    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = ?4)
+        AND dr.id > ?4)
+  )
+ORDER BY dr.created_at ASC, dr.id ASC
+LIMIT ?5
+`
+
+type ListDigestResultsByConfigAfterCursorOldestFirstParams struct {
+	ConfigID int64          `json:"config_id"`
+	UserID   int64          `json:"user_id"`
+	Status   sql.NullString `json:"status"`
+	CursorID int64          `json:"cursor_id"`
+	Limit    int64          `json:"limit"`
+}
+
+type ListDigestResultsByConfigAfterCursorOldestFirstRow struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	ConfigID  int64     `json:"config_id"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Title     string    `json:"title"`
+	ItemCount int64     `json:"item_count"`
+}
+
+// Oldest-first twin of ListDigestResultsByConfigAfterCursor; see its comment.
+func (q *Queries) ListDigestResultsByConfigAfterCursorOldestFirst(ctx context.Context, arg ListDigestResultsByConfigAfterCursorOldestFirstParams) ([]ListDigestResultsByConfigAfterCursorOldestFirstRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDigestResultsByConfigAfterCursorOldestFirst,
+		arg.ConfigID,
+		arg.UserID,
+		arg.Status,
+		arg.CursorID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDigestResultsByConfigAfterCursorOldestFirstRow{}
+	for rows.Next() {
+		var i ListDigestResultsByConfigAfterCursorOldestFirstRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ConfigID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Title,
+			&i.ItemCount,
 		); err != nil {
 			return nil, err
 		}

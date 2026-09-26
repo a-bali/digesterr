@@ -27,7 +27,13 @@ export const useDigestStore = defineStore('digest', () => {
   // because a row can drop out of the served window when its status changes.
   // Deriving the offset from results.value.length skipped real rows after
   // either happened.
-  const nextOffset = ref(0)
+  // The id of the last row the SERVER served, used as the pagination cursor.
+  // A count (the old nextOffset) assumes nothing before the boundary changed --
+  // delete a result, or change one so it stops matching the filter, and every
+  // later row shifts up, so the count points past a row the user never saw. The
+  // id of a row actually held cannot drift that way: the next page continues
+  // FROM that row regardless of what happened before it.
+  const nextCursor = ref<number | null>(null)
   const unreadCounts = ref<Record<number, number>>({})
   const allResults = ref<DigestResultWithConfigName[]>([])
   const showingAllDigests = ref(false)
@@ -154,6 +160,22 @@ export const useDigestStore = defineStore('digest', () => {
     }
   }
 
+  // The cursor for the next page: the id of the last row the server served in
+  // THIS response. null when the page was empty, which the API reads as "first
+  // page" -- and an empty page is the end of the list anyway.
+  function lastCursorOf(rows: { id: number }[]): number | null {
+    return rows.length > 0 ? rows[rows.length - 1].id : null
+  }
+
+  // The server's count of the current filtered set, for the header's
+  // loaded/total pair. Distinct from results.value.length (which is only what has
+  // been paged in) and from hasMore (a boolean).
+  const resultsTotal = ref(0)
+
+  // Same, for the All-Digests list. Kept separate because the two lists have
+  // independent filters, so one list's total must not describe the other.
+  const allResultsTotal = ref(0)
+
   async function setActiveConfig(id: number) {
     const rid = ++resultsReq
     activeConfigId.value = id
@@ -161,15 +183,16 @@ export const useDigestStore = defineStore('digest', () => {
     resultItems.value = []
     loading.value = true
     hasMore.value = false
-    nextOffset.value = 0
+    nextCursor.value = null
     try {
-      const resp = await digestApi.listResults(id, { limit: PAGE_SIZE, offset: 0, ...listQueryOpts() })
+      const resp = await digestApi.listResults(id, { limit: PAGE_SIZE, ...listQueryOpts() })
       if (rid !== resultsReq) return
       results.value = resp.results.map(normalize)
-      // Advance the served offset past page one, or the first fetchMoreResults
-      // would ask for offset 0 again and pagination would stall.
-      nextOffset.value = resp.results.length
+      // Continue from the last row on this page; a null cursor means "first
+      // page", so an empty first page also leaves nothing to continue from.
+      nextCursor.value = lastCursorOf(resp.results)
       hasMore.value = resp.has_more
+      resultsTotal.value = resp.total ?? resp.results.length
     } catch (e) {
       if (rid !== resultsReq) return
       toastError(e, 'Failed to load digest results')
@@ -302,18 +325,18 @@ export const useDigestStore = defineStore('digest', () => {
     const cfgId = activeConfigId.value
     if (!hasMore.value || loadingMore.value || loading.value) return
     const rid = ++resultsReq
-    // The offset counts rows the SERVER has served, not rows on screen. Using
-    // results.value.length sent the next request past rows that the refresh had
-    // dropped, silently skipping results the user never saw.
-    const offset = nextOffset.value
+    // Continue from the row the previous page ended on. A cursor that is null
+    // here would re-fetch page one, so a non-null one is required to page.
+    const cursor = nextCursor.value
+    if (cursor == null) return
     loadingMore.value = true
     try {
-      const resp = await digestApi.listResults(cfgId, { limit: PAGE_SIZE, offset, ...listQueryOpts() })
+      const resp = await digestApi.listResults(cfgId, { limit: PAGE_SIZE, cursor, ...listQueryOpts() })
       if (rid !== resultsReq) return
       const page = resp.results.map(normalize)
-      // Advance by what was SERVED, so the next page starts where this one
-      // ended even if some of it was filtered out of the visible list.
-      nextOffset.value = offset + page.length
+      // Advance to the last row SERVED, so the next page continues from where
+      // this one ended even if some rows were filtered out of the visible list.
+      nextCursor.value = lastCursorOf(resp.results) ?? cursor
       const have = new Set(results.value.map(r => r.id))
       const fresh = page.filter(r => !have.has(r.id))
       if (listQueryOpts().status != null) {
@@ -322,6 +345,7 @@ export const useDigestStore = defineStore('digest', () => {
         results.value.push(...fresh)
       }
       hasMore.value = resp.has_more
+      resultsTotal.value = resp.total ?? resultsTotal.value
     } catch {
       // silent
     } finally {
@@ -339,10 +363,10 @@ export const useDigestStore = defineStore('digest', () => {
       loadingMore.value = true
     }
     try {
-      const offset = replace ? 0 : nextOffset.value
+      const cursor = replace ? undefined : nextCursor.value ?? undefined
       const resp = await digestApi.listAllResults({
         limit: PAGE_SIZE,
-        offset,
+        cursor,
         ...listQueryOpts(),
       })
       if (rid !== resultsReq) return
@@ -350,7 +374,7 @@ export const useDigestStore = defineStore('digest', () => {
       // view rendered unread results as read (grey, no dot) and the Unread
       // filter matched nothing, because the status never equalled 'unread'.
       const page = resp.results.map(normalize)
-      nextOffset.value = offset + page.length
+      nextCursor.value = lastCursorOf(resp.results)
       if (replace) {
         allResults.value = page
       } else {
@@ -358,6 +382,7 @@ export const useDigestStore = defineStore('digest', () => {
         allResults.value.push(...page.filter(r => !have.has(r.id)))
       }
       hasMore.value = resp.has_more
+      allResultsTotal.value = resp.total ?? allResultsTotal.value
     } catch (e) {
       toastError(e, 'Failed to load digest results')
     } finally {
@@ -372,7 +397,8 @@ export const useDigestStore = defineStore('digest', () => {
     selectedResult.value = null
     resultItems.value = []
     allResults.value = []
-    nextOffset.value = 0
+    allResultsTotal.value = 0
+    nextCursor.value = null
     loadAllResults(true)
   }
 
@@ -405,10 +431,10 @@ export const useDigestStore = defineStore('digest', () => {
   //   - Rows that no longer belong are DROPPED. The merge only added or
   //     updated, so a result marked read from another client stayed visible
   //     under the unread filter that excludes it.
-  //   - The paging offset counts rows the SERVER served, tracked in nextOffset,
-  //     not the local array length. Rows retained from an earlier page that the
-  //     server no longer returns inflated the length, so the next request
-  //     skipped real rows.
+  //   - The paging cursor is the id of the DEEPEST row held, tracked in
+  //     nextCursor, not a count of pages served. Rows retained from an earlier
+  //     page that the server no longer returns inflated a count, so the next
+  //     request skipped real rows; an id cannot drift that way.
   //
   // Visibility is reconciled against what the server currently serves:
   //
@@ -446,12 +472,6 @@ export const useDigestStore = defineStore('digest', () => {
       if (!seen.has(r.id)) out.push(r)
     }
 
-    // The client's paging offset counts rows the SERVER served, so it is a
-    // high-water mark that only grows. results.value.length is not usable here:
-    // it diverges as soon as the refresh merges page one into a longer list, or
-    // a row drops out of the served window.
-    nextOffset.value = Math.max(nextOffset.value, fetched.length)
-
     // Order in the direction the user selected, so a refreshed row lands where
     // the server puts it rather than jumping to the top of an "Oldest" list.
     const dir = opts.sort === 'oldest' ? 1 : -1
@@ -459,6 +479,17 @@ export const useDigestStore = defineStore('digest', () => {
     const kept = hasMore ? out : out.filter(r => byId.has(r.id))
     const filtered = kept.filter(matchesFilter)
     filtered.sort((a, b) => dir * (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()))
+
+    // The cursor continues from the last row in the current ordering -- which,
+    // because the loaded set is a contiguous prefix of the server's, is the
+    // DEEPEST row the client holds. Deriving it from the list (rather than
+    // counting page one) is what keeps the boundary correct after a refresh
+    // merges page one into a longer list: counting gave a number that grew
+    // independently of which rows were actually held, and the row that later
+    // shifted into that count was skipped permanently. An empty list leaves
+    // nothing to continue from, which reads as "first page" and is the safe
+    // restart.
+    nextCursor.value = filtered.length > 0 ? filtered[filtered.length - 1].id : null
     return filtered
   }
 
@@ -583,9 +614,10 @@ export const useDigestStore = defineStore('digest', () => {
       await loadAllResults(true)
       return
     }
-    // Reset paging: the loaded rows answered the OLD query.
+    // Reset paging: the loaded rows answered the OLD query, so the cursor that
+    // described that query must not be reused against the new one.
     hasMore.value = false
-    nextOffset.value = 0
+    nextCursor.value = null
     await setActiveConfig(activeConfigId.value)
   }
 
@@ -620,7 +652,8 @@ export const useDigestStore = defineStore('digest', () => {
 
   return {
     configs, activeConfigId, results, selectedResult, resultItems,
-    loading, generating, loadingMore, loadingContent, hasMore, nextOffset, activeConfig, unreadCounts, backgroundRefreshing,
+    loading, generating, loadingMore, loadingContent, hasMore, nextCursor, activeConfig, unreadCounts, backgroundRefreshing,
+    resultsTotal, allResultsTotal,
     allResults, showingAllDigests, resultFilter, resultSort,
     fetchConfigs, createConfig, updateConfig, deleteConfig,
     setActiveConfig, selectResult, selectResultById, generateNow, markResultRead, deleteResult,

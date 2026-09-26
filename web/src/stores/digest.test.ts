@@ -61,7 +61,7 @@ describe('digest store stale-request guards', () => {
     expect(store.loading).toBe(false)
   })
 
-  it('fetchMoreResults uses the offset captured at request time', async () => {
+  it('fetchMoreResults continues from the cursor captured at request time', async () => {
     const { digestApi } = await import('../services/api')
     ;(digestApi.listResults as ReturnType<typeof vi.fn>).mockResolvedValue({
       results: [{ id: 1 }, { id: 2 }],
@@ -76,8 +76,9 @@ describe('digest store stale-request guards', () => {
     ;(digestApi.listResults as ReturnType<typeof vi.fn>).mockImplementationOnce(() => pending.promise)
     const morePromise = store.fetchMoreResults()
 
-    // Offset was captured before the request resolved, regardless of later mutations.
-    expect(digestApi.listResults).toHaveBeenLastCalledWith(1, { limit: 50, offset: 2 })
+    // The cursor is the last row held, captured before the request resolved and
+    // regardless of later mutations to the list.
+    expect(digestApi.listResults).toHaveBeenLastCalledWith(1, { limit: 50, cursor: 2 })
     pending.resolve({ results: [{ id: 3 }], has_more: false })
     await morePromise
     expect(store.results.map(r => r.id)).toEqual([1, 2, 3])
@@ -208,8 +209,9 @@ describe('digest store All-Digests pagination', () => {
 
     expect(store.allResults.map(r => r.id)).toEqual([1, 2])
     expect(store.hasMore).toBe(false)
-    // The second call must be a continuation, not a restart.
-    expect(digestApi.listAllResults).toHaveBeenLastCalledWith({ limit: expect.any(Number), offset: 1 })
+    // The second call must be a continuation, not a restart: the cursor is the
+    // last row served, so the next page starts after it.
+    expect(digestApi.listAllResults).toHaveBeenLastCalledWith({ limit: expect.any(Number), cursor: 1 })
   })
 
   it('fetchMoreResults is a no-op in All-Digests mode when the server says there is no more', async () => {

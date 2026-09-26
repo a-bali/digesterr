@@ -297,6 +297,15 @@ watch(
       digestStore.selectedResult = null
       digestStore.resultItems = []
       feedStore.setActiveSection('feeds')
+    } else if (itemId && path.startsWith('/feeds/item/')) {
+      // All-Feeds item: /feeds/item/:itemId. The section mixes feeds, so there is
+      // no feed id to resolve against -- the item id is the only handle.
+      showingSaved.value = false
+      digestStore.exitAllDigestsMode()
+      digestStore.activeConfigId = null
+      digestStore.selectedResult = null
+      feedStore.setActiveSection('feeds')
+      await resolveItemById(itemId, feedStore.multiItems)
     } else if (category) {
       // Category view: /feeds/category/:category(/:itemId)
       showingSaved.value = false
@@ -339,12 +348,16 @@ watch(
           await digestStore.selectResultById(resultId)
         }
       } else { digestStore.selectedResult = null; digestStore.resultItems = [] }
-    } else if (path === '/saved') {
+    } else if (path === '/saved' || path.startsWith('/saved/')) {
       showingSaved.value = true; sidebarOpen.value = false
       feedStore.clearActiveView()
       digestStore.exitAllDigestsMode()
       digestStore.activeConfigId = null; digestStore.selectedResult = null
+      // Wait for the page before resolving, so the item is found in the loaded
+      // rows when it is there (and fetched by id when it is not).
       await feedStore.fetchSavedItems()
+      if (itemId) await resolveItemById(itemId, feedStore.savedItems)
+      else feedStore.selectedItem = null
     } else if (path === '/') {
       showingSaved.value = false
       feedStore.clearActiveView()
@@ -393,6 +406,10 @@ function goBackToList() {
   digestStore.selectedResult = null
   if (feedStore.activeFeedId) router.push({ path: `/feeds/${feedStore.activeFeedId}` })
   else if (digestStore.activeConfigId) router.push({ path: `/digests/${digestStore.activeConfigId}` })
+  // Saved and All-Feeds items now carry the id in the URL, so returning to the
+  // list has to drop it -- otherwise the route still names an item and the
+  // content pane reopens.
+  else if (showingSaved.value) router.push({ path: '/saved' })
   else if (feedStore.activeSection === 'feeds') router.push({ path: '/feeds' })
   else if (digestStore.showingAllDigests) router.push({ path: '/digests' })
   else if (feedStore.activeCategory) router.push({ path: `/feeds/category/${encodeURIComponent(feedStore.activeCategory)}` })
@@ -404,6 +421,13 @@ async function selectItem(item: Item) {
     router.push({ path: `/feeds/${feedStore.activeFeedId}/${item.id}` })
   } else if (feedStore.activeCategory) {
     router.push({ path: `/feeds/category/${encodeURIComponent(feedStore.activeCategory)}/${item.id}` })
+  } else if (showingSaved.value) {
+    // Saved spans feeds and categories, so the item needs its own segment for
+    // the URL to name it. Without this the pane updated while the route stayed
+    // at /saved, making the open item unlinkable and lost on reload.
+    router.push({ path: `/saved/${item.id}` })
+  } else if (feedStore.activeSection === 'feeds') {
+    router.push({ path: `/feeds/item/${item.id}` })
   }
   if (item.status === 'unread') {
     // updateItemStatus -> applyUpdatedItem now reaches savedItems too, so no

@@ -126,18 +126,60 @@ const loadedCount = computed(() => {
 const totalCount = computed(() => (props.showingSaved ? feedStore.savedTotal : feedStore.totalItems))
 
 // Whether a mark-all-read is offered here at all. The button stays RENDERED
-// whenever the list has items but is disabled once nothing is unread, so it never
-// silently disappears (the sidebar controls follow the same rule). An unread item
-// may sit outside the loaded page, so `totalItems` gates presence and the loaded
-// rows gate enabled-ness.
+// whenever the list has items, so the action never silently disappears (the
+// sidebar controls follow the same rule).
 const markAllReadApplies = computed(() =>
   (feedStore.activeFeedId != null || feedStore.isMultiView) && !props.showingSaved && feedStore.totalItems > 0,
 )
-const hasUnreadLoaded = computed(() => displayItems.value.some(i => i.status === 'unread'))
-const showMarkAllRead = computed(() =>
-  markAllReadApplies.value && !feedStore.loadingMore && (hasUnreadLoaded.value || feedStore.totalItems > 0),
+// How many items the action would actually mark, from the SERVER's tallies.
+// The loaded page is the wrong source: the action covers the whole feed or
+// category, and the paginated window may be entirely read while unread items sit
+// on a later page. Gating on loaded rows then disabled the button and labelled it
+// "Nothing unread in all feeds" while the sidebar showed a non-zero badge for the
+// same scope. The list must not answer a question about the whole scope using
+// only the rows it happens to hold.
+//
+// null means "not loaded yet" (the counts arrive in a separate request), which is
+// deliberately NOT treated as zero: unknown must not claim emptiness.
+const scopeUnread = computed<number | null>(() => {
+  if (feedStore.isMultiView) {
+    if (feedStore.activeCategory) {
+      let sum = 0
+      let known = false
+      for (const f of feedStore.feeds) {
+        if (f.category !== feedStore.activeCategory) continue
+        const n = feedStore.unreadCounts[f.id]
+        if (typeof n === 'number') { sum += n; known = true }
+      }
+      return known ? sum : null
+    }
+    // The "Feeds" section spans every feed.
+    let sum = 0
+    let known = false
+    for (const f of feedStore.feeds) {
+      const n = feedStore.unreadCounts[f.id]
+      if (typeof n === 'number') { sum += n; known = true }
+    }
+    return known ? sum : null
+  }
+  if (feedStore.activeFeedId != null) {
+    const n = feedStore.unreadCounts[feedStore.activeFeedId]
+    return typeof n === 'number' ? n : null
+  }
+  return null
+})
+
+const showMarkAllRead = computed(() => markAllReadApplies.value && !feedStore.loadingMore)
+
+// The control is never disabled, following the sidebar's documented rule: a
+// disabled button cannot be pressed, so the user loses the answer the action
+// gives on an empty scope ("nothing to mark as read"), and a disabled control
+// renders pale rather than hidden. State is carried by the label instead.
+const markAllReadTitle = computed(() =>
+  scopeUnread.value !== null && scopeUnread.value === 0
+    ? scopeEmptyLabel({ kind: 'feeds-section' })
+    : scopeActionLabel({ kind: 'feeds-section' }),
 )
-const markAllReadDisabled = computed(() => feedStore.loadingMore || !hasUnreadLoaded.value)
 
 function onFilterStatus(v: FilterStatus) { feedStore.changeFilter(v as FeedStatusFilter) }
 function onSortValue(v: FilterSort) { feedStore.changeSort(SCORE_MAP[v] ?? 'date_desc') }
@@ -285,7 +327,7 @@ async function markBelowRead(item: any) {
       <span class="sr-only">Loading items</span>
     </div>
     <div v-else-if="!feedStore.activeFeedId && !feedStore.isMultiView && !showingSaved" class="p-6 text-center text-sm text-muted-foreground">Select a feed</div>
-    <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground">{{ feedStore.filter === 'all' || feedStore.filter === 'saved' ? 'No saved items' : 'No saved items match this filter' }}</div>
+    <div v-else-if="showingSaved && savedItems.length === 0" class="p-6 text-center text-sm text-muted-foreground" data-saved-empty>No saved items</div>
     <template v-else>
       <!-- Refresh in flight with rows present: dim instead of replacing, so
            the list and scroll position stay visible during the reload.
@@ -539,13 +581,13 @@ async function markBelowRead(item: any) {
       <Skeleton class="h-12" />
     </div>
     </template>
-    <!-- End-of-list mark-all-read button. Present-but-disabled once nothing is
-         unread, matching the sidebar controls, so the action never looks absent. -->
+    <!-- End-of-list mark-all-read button. Always ENABLED when shown, matching the
+         sidebar controls: the action answers "nothing to mark" on an empty scope,
+         and a disabled control cannot be pressed to get that answer. -->
     <div v-if="showMarkAllRead" class="px-4 py-6 flex items-center justify-center">
       <button
-        class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-accent/20 bg-accent/5 text-accent text-sm font-medium hover:bg-accent/10 active:bg-accent/20 transition-colors disabled:opacity-40 disabled:cursor-default disabled:hover:bg-accent/5"
-        :disabled="markAllReadDisabled"
-        :title="markAllReadDisabled ? scopeEmptyLabel({ kind: 'feeds-section' }) : scopeActionLabel({ kind: 'feeds-section' })"
+        class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-accent/20 bg-accent/5 text-accent text-sm font-medium hover:bg-accent/10 active:bg-accent/20 transition-colors"
+        :title="markAllReadTitle"
         data-mark-all-read
         @click="emit('markAllRead')"
       >

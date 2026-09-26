@@ -138,10 +138,18 @@ export const useFeedStore = defineStore('feed', () => {
       }
       hasMore.value = resp.has_more
     } catch (e) {
+      // Only the request that still owns the state may report its failure.
+      if (rid !== fetchReq) return
       toastError(e, 'Failed to load items')
     } finally {
-      if (replace) loading.value = false
-      else loadingMore.value = false
+      // Guarded, like loadSavedPage: an older request's finally must not clear
+      // the flag a NEWER request set. Unguarded, a slow superseded response that
+      // resolved last cleared loading while a live request was still in flight,
+      // so the list rendered no spinner and no rows until that one landed.
+      if (rid === fetchReq) {
+        if (replace) loading.value = false
+        else loadingMore.value = false
+      }
     }
   }
 
@@ -207,10 +215,16 @@ export const useFeedStore = defineStore('feed', () => {
       }
       hasMore.value = resp.has_more
     } catch (e) {
+      // Only the request that still owns the state may report its failure.
+      if (rid !== fetchReq) return
       toastError(e, 'Failed to load items')
     } finally {
-      if (replace) loading.value = false
-      else loadingMore.value = false
+      // Guarded for the same reason as loadPage: a superseded request must not
+      // clear the loading flag that the current one set.
+      if (rid === fetchReq) {
+        if (replace) loading.value = false
+        else loadingMore.value = false
+      }
     }
   }
 

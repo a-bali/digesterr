@@ -56,6 +56,59 @@ WHERE dr.config_id = sqlc.arg(config_id)
 ORDER BY dr.created_at ASC, dr.id ASC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
+-- name: ListDigestResultsByConfigAfterCursor :many
+-- Keyset page for the per-config digest list. OFFSET pagination assumes the
+-- rows before the boundary never change, which is false here: deleting a result
+-- (or changing one so it stops matching the active filter) shifts every later
+-- row up by one. A silent refresh only re-reads page one, so the client never
+-- learns of the shift, keeps its high-water offset, and the row that moved into
+-- the boundary is skipped permanently -- it is on neither the loaded page nor
+-- the next one. Ordering by (created_at, id) and continuing from the last row
+-- actually seen makes the page independent of what happened before it.
+--
+-- The boundary is read from the row itself rather than passed in: the column
+-- stores 'YYYY-MM-DD HH:MM:SS' and a Go time.Time round-trip does not reproduce
+-- that byte-for-byte (trailing zero seconds are dropped, and '...:59' does not
+-- compare equal to '...:59.000'), so a bound timestamp silently mis-compares and
+-- skips rows -- the very bug this replaces.
+--
+-- A deleted boundary row makes the subquery NULL and stops pagination instead of
+-- skipping rows: stopping is recoverable (a refresh restarts the list), skipping
+-- is not (the row is never served again).
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
+FROM digest_results dr
+WHERE dr.config_id = sqlc.arg(config_id)
+  AND dr.user_id = sqlc.arg(user_id)
+  AND (dr.status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+  AND (
+    dr.created_at < (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
+    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
+        AND dr.id < sqlc.arg(cursor_id))
+  )
+ORDER BY dr.created_at DESC, dr.id DESC
+LIMIT sqlc.arg(limit);
+
+-- name: ListDigestResultsByConfigAfterCursorOldestFirst :many
+-- Oldest-first twin of ListDigestResultsByConfigAfterCursor; see its comment.
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
+FROM digest_results dr
+WHERE dr.config_id = sqlc.arg(config_id)
+  AND dr.user_id = sqlc.arg(user_id)
+  AND (dr.status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+  AND (
+    dr.created_at > (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
+    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
+        AND dr.id > sqlc.arg(cursor_id))
+  )
+ORDER BY dr.created_at ASC, dr.id ASC
+LIMIT sqlc.arg(limit);
+
 -- name: CountDigestResultsByConfig :one
 SELECT CAST(COUNT(*) AS INTEGER) AS count
 FROM digest_results
@@ -154,6 +207,46 @@ WHERE dr.user_id = sqlc.arg(user_id)
   AND (dr.status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
 ORDER BY dr.created_at ASC, dr.id ASC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
+-- name: ListAllDigestResultsByUserAfterCursor :many
+-- Keyset page for the All-Digests list; see
+-- ListDigestResultsByConfigAfterCursor for why a cursor replaces the offset and
+-- why the boundary is read from the row rather than bound as a timestamp.
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       dc.name AS config_name,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
+FROM digest_results dr
+JOIN digest_configs dc ON dc.id = dr.config_id
+WHERE dr.user_id = sqlc.arg(user_id)
+  AND (dr.status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+  AND (
+    dr.created_at < (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
+    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
+        AND dr.id < sqlc.arg(cursor_id))
+  )
+ORDER BY dr.created_at DESC, dr.id DESC
+LIMIT sqlc.arg(limit);
+
+-- name: ListAllDigestResultsByUserAfterCursorOldestFirst :many
+-- Oldest-first twin of ListAllDigestResultsByUserAfterCursor; see its comment.
+SELECT dr.id, dr.user_id, dr.config_id, dr.status, dr.created_at, dr.updated_at,
+       dc.name AS config_name,
+       CAST(COALESCE(json_extract(dr.content, '$.title'), '') AS TEXT) AS title,
+       COALESCE(json_array_length(json_extract(dr.content, '$.highlights')), 0)
+       + COALESCE(json_array_length(json_extract(dr.content, '$.items')), 0) AS item_count
+FROM digest_results dr
+JOIN digest_configs dc ON dc.id = dr.config_id
+WHERE dr.user_id = sqlc.arg(user_id)
+  AND (dr.status = sqlc.narg(status) OR sqlc.narg(status) IS NULL)
+  AND (
+    dr.created_at > (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
+    OR (dr.created_at = (SELECT br.created_at FROM digest_results br WHERE br.id = sqlc.arg(cursor_id))
+        AND dr.id > sqlc.arg(cursor_id))
+  )
+ORDER BY dr.created_at ASC, dr.id ASC
+LIMIT sqlc.arg(limit);
 
 -- name: CountAllDigestResultsByUser :one
 SELECT CAST(COUNT(*) AS INTEGER) AS count

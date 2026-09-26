@@ -61,10 +61,14 @@ describe('digest filter changes always re-query', () => {
     expect(store.resultFilter).toBe('unread')
     // The filter reached the server: without this the list still held the
     // unfiltered page while the control read "Unread".
-    expect(api.listResults).toHaveBeenCalledWith(
-      1,
-      expect.objectContaining({ status: 'unread', offset: 0 }),
-    )
+    // The filter reached the server, and it is page ONE: no cursor, so the query
+    // starts at the newest row of the new filtered set rather than continuing
+    // from the previous query's boundary.
+    const [cfgArg, optsArg] = (api.listResults as any).mock.calls.at(-1)!
+    expect(cfgArg).toBe(1)
+    expect(optsArg.status).toBe('unread')
+    expect(optsArg.cursor).toBeUndefined()
+    expect(optsArg.offset).toBeUndefined()
     expect(store.results.map(r => r.id)).toEqual([30])
   })
 
@@ -81,10 +85,9 @@ describe('digest filter changes always re-query', () => {
     await vi.waitFor(() => expect(store.loading).toBe(false))
     await Promise.resolve()
 
-    expect(api.listResults).toHaveBeenCalledWith(
-      1,
-      expect.objectContaining({ status: 'read', offset: 0 }),
-    )
+    const [, opts] = (api.listResults as any).mock.calls.at(-1)!
+    expect(opts.status).toBe('read')
+    expect(opts.cursor).toBeUndefined()
   })
 
   it('re-queries when the sort direction changes', async () => {
@@ -101,28 +104,32 @@ describe('digest filter changes always re-query', () => {
     await Promise.resolve()
 
     // Order is applied by the server, so the change must reach it.
-    expect(api.listResults).toHaveBeenCalledWith(
-      1,
-      expect.objectContaining({ sort: 'oldest', offset: 0 }),
-    )
+    const [, sortOpts] = (api.listResults as any).mock.calls.at(-1)!
+    expect(sortOpts.sort).toBe('oldest')
+    expect(sortOpts.cursor).toBeUndefined()
   })
 
-  it('resets the paging offset so a filtered query starts at the beginning', async () => {
+  it('resets the paging cursor so a filtered query starts at the beginning', async () => {
     const api = await mockApi()
     const store = useDigestStore()
     store.activeConfigId = 1
     ;(api.listConfigs as any).mockResolvedValue([])
     ;(api.listResults as any).mockResolvedValue({ results: [result(30)], has_more: false })
     await store.setActiveConfig(1)
-    // The user scrolled, so the offset advanced.
-    store.nextOffset = 50
+    // The user scrolled, so the cursor advanced to a row.
+    store.nextCursor = 50
     ;(api.listResults as any).mockClear()
 
     store.toggleResultFilter()
     await vi.waitFor(() => expect(store.loading).toBe(false))
     await Promise.resolve()
 
-    // Page one of the NEW query, not a continuation of the old one.
-    expect(api.listResults).toHaveBeenCalledWith(1, expect.objectContaining({ offset: 0 }))
+    // Page one of the NEW query, not a continuation of the old one. Reusing the
+    // old cursor would continue from a row that belongs to the previous query.
+    const [cfgArg2, resetOpts] = (api.listResults as any).mock.calls.at(-1)!
+    expect(cfgArg2).toBe(1)
+    expect(resetOpts.cursor).toBeUndefined()
+    // The boundary is now the only row the new query served.
+    expect(store.nextCursor).toBe(30)
   })
 })

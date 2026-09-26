@@ -188,6 +188,60 @@ func oldestRowsToPreview(rows []store.ListDigestResultsByConfigOldestFirstPagina
 	return out
 }
 
+// digestListCursorParam parses the `cursor` query parameter: the id of the last
+// row the client already holds. It is the id, not an offset, so the next page
+// continues from a row instead of a count -- see
+// ListDigestResultsByConfigAfterCursor for why a count is unsafe here.
+//
+// Absent or unparseable means "first page", which is also the safe reading: a
+// bad cursor restarts the list rather than skipping rows.
+func digestListCursorParam(r *http.Request) int64 {
+	if c := r.URL.Query().Get("cursor"); c != "" {
+		if v, err := strconv.ParseInt(c, 10, 64); err == nil && v > 0 {
+			return v
+		}
+	}
+	return 0
+}
+
+// cursorRowsToPreview maps the keyset row type onto the offset one so both
+// pagination paths share one response builder. The column list is identical; the
+// signature differs only because sqlc names a row type per query.
+func cursorRowsToPreview(rows []store.ListDigestResultsByConfigAfterCursorRow) []store.ListDigestResultsByConfigPaginatedRow {
+	out := make([]store.ListDigestResultsByConfigPaginatedRow, len(rows))
+	for i, r := range rows {
+		out[i] = store.ListDigestResultsByConfigPaginatedRow{
+			ID:        r.ID,
+			UserID:    r.UserID,
+			ConfigID:  r.ConfigID,
+			Status:    r.Status,
+			CreatedAt: r.CreatedAt,
+			UpdatedAt: r.UpdatedAt,
+			Title:     r.Title,
+			ItemCount: r.ItemCount,
+		}
+	}
+	return out
+}
+
+// cursorRowsOldestToPreview is cursorRowsToPreview for the oldest-first statement.
+func cursorRowsOldestToPreview(rows []store.ListDigestResultsByConfigAfterCursorOldestFirstRow) []store.ListDigestResultsByConfigPaginatedRow {
+	out := make([]store.ListDigestResultsByConfigPaginatedRow, len(rows))
+	for i, r := range rows {
+		out[i] = store.ListDigestResultsByConfigPaginatedRow{
+			ID:        r.ID,
+			UserID:    r.UserID,
+			ConfigID:  r.ConfigID,
+			Status:    r.Status,
+			CreatedAt: r.CreatedAt,
+			UpdatedAt: r.UpdatedAt,
+			Title:     r.Title,
+			ItemCount: r.ItemCount,
+		}
+	}
+	return out
+}
+
 func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request) {
 	userID := authedUserID(r)
 	configID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -209,6 +263,7 @@ func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	status := digestListStatusParam(r)
+	cursorID := digestListCursorParam(r)
 
 	// Fetch one row beyond the page. has_more is derived from that extra row,
 	// so it must be requested — asking for exactly `limit` rows makes
@@ -219,31 +274,61 @@ func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request)
 	// The sort direction picks the statement: see digestListSortIsOldest.
 	var results []store.ListDigestResultsByConfigPaginatedRow
 	if digestListSortIsOldest(r) {
-		rows, err := s.queries.ListDigestResultsByConfigOldestFirstPaginated(r.Context(), store.ListDigestResultsByConfigOldestFirstPaginatedParams{
-			ConfigID: configID,
-			UserID:   userID,
-			Status:   status,
-			Limit:    int64(limit + 1),
-			Offset:   int64(offset),
-		})
-		if err != nil {
-			writeServerError(w, "failed to list digest results", err)
-			return
+		if cursorID > 0 {
+			rows, err := s.queries.ListDigestResultsByConfigAfterCursorOldestFirst(r.Context(), store.ListDigestResultsByConfigAfterCursorOldestFirstParams{
+				ConfigID: configID,
+				UserID:   userID,
+				Status:   status,
+				CursorID: cursorID,
+				Limit:    int64(limit + 1),
+			})
+			if err != nil {
+				writeServerError(w, "failed to list digest results", err)
+				return
+			}
+			results = cursorRowsOldestToPreview(rows)
+		} else {
+			rows, err := s.queries.ListDigestResultsByConfigOldestFirstPaginated(r.Context(), store.ListDigestResultsByConfigOldestFirstPaginatedParams{
+				ConfigID: configID,
+				UserID:   userID,
+				Status:   status,
+				Limit:    int64(limit + 1),
+				Offset:   int64(offset),
+			})
+			if err != nil {
+				writeServerError(w, "failed to list digest results", err)
+				return
+			}
+			results = oldestRowsToPreview(rows)
 		}
-		results = oldestRowsToPreview(rows)
 	} else {
-		rows, err := s.queries.ListDigestResultsByConfigPaginated(r.Context(), store.ListDigestResultsByConfigPaginatedParams{
-			ConfigID: configID,
-			UserID:   userID,
-			Status:   status,
-			Limit:    int64(limit + 1),
-			Offset:   int64(offset),
-		})
-		if err != nil {
-			writeServerError(w, "failed to list digest results", err)
-			return
+		if cursorID > 0 {
+			rows, err := s.queries.ListDigestResultsByConfigAfterCursor(r.Context(), store.ListDigestResultsByConfigAfterCursorParams{
+				ConfigID: configID,
+				UserID:   userID,
+				Status:   status,
+				CursorID: cursorID,
+				Limit:    int64(limit + 1),
+			})
+			if err != nil {
+				writeServerError(w, "failed to list digest results", err)
+				return
+			}
+			results = cursorRowsToPreview(rows)
+		} else {
+			rows, err := s.queries.ListDigestResultsByConfigPaginated(r.Context(), store.ListDigestResultsByConfigPaginatedParams{
+				ConfigID: configID,
+				UserID:   userID,
+				Status:   status,
+				Limit:    int64(limit + 1),
+				Offset:   int64(offset),
+			})
+			if err != nil {
+				writeServerError(w, "failed to list digest results", err)
+				return
+			}
+			results = rows
 		}
-		results = rows
 	}
 
 	hasMore := len(results) > limit
@@ -276,9 +361,33 @@ func (s *Server) handleListDigestResults(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// The count describes the same filtered set the page came from, so the header
+	// can read "50 of 120" instead of "50/50". It is the OTHER half of the fix in
+	// the browser, which previously passed the loaded row count as both numbers
+	// because this endpoint offered no total at all. CountDigestResultsByConfig
+	// already existed for exactly this shape and was simply never wired up.
+	//
+	// Fetched with the same status filter and deliberately WITHOUT a cursor: the
+	// count is the size of the whole filtered set, not of whatever remains after
+	// the row the client is paging from.
+	total := int64(len(items))
+	if hasMore || offset > 0 || cursorID > 0 {
+		count, err := s.queries.CountDigestResultsByConfig(r.Context(), store.CountDigestResultsByConfigParams{
+			ConfigID: configID,
+			UserID:   userID,
+			Status:   status,
+		})
+		if err != nil {
+			writeServerError(w, "failed to count digest results", err)
+			return
+		}
+		total = count
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"results":  items,
 		"has_more": hasMore,
+		"total":    total,
 	})
 }
 
