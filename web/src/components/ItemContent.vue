@@ -9,6 +9,7 @@ import Skeleton from './ui/Skeleton.vue'
 import { BookOpen, MessageSquare, Download, LoaderCircle, RefreshCw, ChevronDown, ChevronsDown, Sparkles, X, AlignLeft, AlignJustify, Rows3 } from 'lucide-vue-next'
 import { absoluteTime, relativeTimeAgo } from '../lib/format'
 import { decodeHTMLEntities } from '../lib/utils'
+import { renderCommentHtml } from '../lib/linkify'
 import { setItemCommentsScroller, clearItemCommentsScroller } from '../lib/itemComments'
 import type { ItemComment, ItemSummaryResponse } from '../types/api'
 
@@ -454,102 +455,9 @@ async function doSummarize() {
   }
 }
 
-// Render comment text: escape HTML, then convert Reddit markdown images and
-// bare image URLs to <img> tags with size constraints.
-//
-// src/alt are escaped and scheme-checked BEFORE interpolation: the result is
-// inserted via v-html, so an unescaped `"` in either field breaks out of the
-// attribute (e.g. `![a](x" onerror="...)`) and executes in the reader session.
-function escapeAttr(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-// Only http(s) image URLs are rendered as <img>. Anything else (javascript:,
-// data:, protocol-relative, whitespace-padded schemes) falls back to plain
-// escaped text instead of a tag, so no crafted URL can become an attribute.
-function safeImgSrc(raw: string): string | null {
-  const src = raw.trim()
-  if (!/^https?:\/\//i.test(src)) return null
-  if (/[\s"'<>]/.test(src)) return null
-  return src
-}
-
-function renderCommentHtml(text: string): string {
-  // Step 1: Extract markdown images and bare image URLs, replace with placeholders.
-  const placeholders: string[] = []
-  let work = text
-
-  // Phase 0: Convert Reddit's internal giphy syntax ![alt](giphy|ID) to real URLs.
-  // The ID is restricted to URL-safe chars so it cannot smuggle `"`, spaces or
-  // a scheme break into the generated img tag.
-  work = work.replace(/!\[([^\]]*)\]\(giphy\|([^)]+)\)/g, (_m: string, alt: string, id: string) => {
-    if (!/^[A-Za-z0-9_-]+$/.test(id)) return _m
-    return `![${alt}](https://media.giphy.com/media/${id}/giphy.gif)`
-  })
-
-  // Markdown images: ![alt](url)
-  work = work.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_m, alt: string, src: string) => {
-    const safe = safeImgSrc(src)
-    if (!safe) return escapeAttr(_m)
-    const tag = `<img src="${escapeAttr(safe)}" alt="${escapeAttr(alt)}" style="max-width:400px;max-height:300px;width:auto;height:auto;border-radius:4px;margin:4px 0;display:block" loading="lazy" />`
-    placeholders.push(tag)
-    return `\x00IMG${placeholders.length - 1}\x00`
-  })
-
-  // Bare image URLs from common hosts
-  work = work.replace(
-    /https?:\/\/(?:media\d*\.giphy\.com\/\S+\.(?:gif|webp|png|jpg|jpeg)(?:\?\S*)?|giphy\.com\/gifs\/\S+|[^\s]*\.?(?:i\.redd\.it|preview\.redd\.it|imgur\.com|i\.imgur\.com|files\.catbox\.moe|cdn\.discordapp\.com)\/\S+\.(?:jpg|jpeg|png|gif|webp|svg)(?:\?\S*)?)/g,
-    (url) => {
-      const safe = safeImgSrc(url)
-      if (!safe) return escapeAttr(url)
-      const tag = `<img src="${escapeAttr(safe)}" alt="" style="max-width:400px;max-height:300px;width:auto;height:auto;border-radius:4px;margin:4px 0;display:block" loading="lazy" />`
-      placeholders.push(tag)
-      return `\x00IMG${placeholders.length - 1}\x00`
-    },
-  )
-
-  // Step 2: Escape HTML in the remaining text.
-  const escaped = work
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-
-  // Step 2b: Decode Reddit's original HTML entities that got double-escaped.
-  // e.g. Reddit's &gt; → &amp;gt; after escaping → decode back to >
-  let decoded = escaped
-    .replace(/&amp;gt;/g, '>')
-    .replace(/&amp;lt;/g, '<')
-    .replace(/&amp;quot;/g, '"')
-    .replace(/&amp;#39;/g, "'")
-    .replace(/&amp;amp;/g, '&')
-
-  // Step 3: Restore image tags.
-  const restored = decoded.replace(/\x00IMG(\d+)\x00/g, (_, i: string) => placeholders[parseInt(i)])
-
-  // Step 3b: Convert bare URLs to clickable links. Skip URLs already inside
-  // HTML attributes (preceded by ", ', >, or /) to avoid double-linking.
-  // Both the href and the link text are escaped: the text sits in element
-  // content (escape <>&), the href in an attribute (escape quotes too).
-  const skipPrefixes = new Set(['"', "'", '>', '/'])
-  const withLinks = restored.replace(
-    /((?:https?):\/\/[^\s<>"]+)/g,
-    (match: string, _capture: string, offset: number) => {
-      // Use this match's own offset. indexOf(match) returned the FIRST
-      // occurrence in the whole string, so a URL appearing twice was judged
-      // twice by the prefix of its first copy — linking one that sits inside an
-      // attribute, and skipping one that sits in plain text.
-      if (offset > 0 && skipPrefixes.has(restored[offset - 1])) return match
-      if (!safeImgSrc(match)) return match
-      const href = escapeAttr(match)
-      const label = match.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      return '<a href="' + href + '" target="_blank" rel="noopener noreferrer">' + label + '</a>'
-    },
-  )
-
-  // Step 4: Convert plain-text newlines to <br> for visible line breaks.
-  return withLinks.replace(/\n/g, '<br>')
-}
+// Comment text rendering lives in ../lib/linkify: the item pane and the digest
+// view must render a comment identically, and the Go side shares the same rules
+// through internal/linkify.
 
 // Per-item scroll memory: reopening the SAME item restores its previous
 // scroll position; opening a DIFFERENT item resets to top. The scroller is a

@@ -85,6 +85,21 @@ function mountDigestContent() {
   return mount(DigestContent, { global: { plugins: [pinia, router] } })
 }
 
+/** Mounts the digest with a specific highlight's top_comments replaced. */
+function mountWithComments(comments: unknown[]) {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  const parsed = JSON.parse(content)
+  parsed.highlights[0].top_comments = comments
+  useDigestStore().selectedResult = { ...makeResult(), content: JSON.stringify(parsed) }
+
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/', component: { template: '<div />' } }],
+  })
+  return mount(DigestContent, { global: { plugins: [pinia, router] } })
+}
+
 describe('DigestContent', () => {
   let wrapper: ReturnType<typeof mountDigestContent>
 
@@ -133,12 +148,62 @@ describe('DigestContent', () => {
     expect(hlLink!.classes()).not.toContain('hover:underline')
   })
 
-  it('renders comment author as plain text, not a link', () => {
-    const authorSpans = wrapper.findAll('span').filter(s => s.text() === 'alice')
-    expect(authorSpans.length).toBe(1)
-    expect(wrapper.findAll('a').filter(a => a.text() === 'alice').length).toBe(0)
-    // The comment text itself is still a link.
-    expect(wrapper.findAll('a').some(a => a.text() === 'Great insight')).toBe(true)
+  // The author carries the permalink, and the comment body is rendered as HTML
+  // instead of being wrapped in that anchor. Wrapping the body meant the
+  // author's own links could only be a nested <a> (invalid) or plain text
+  // (unclickable), which is what the previous shape did.
+  it('links the comment author to its permalink', () => {
+    const authorLinks = wrapper.findAll('a').filter(a => a.text() === 'alice')
+    expect(authorLinks.length).toBe(1)
+    expect(authorLinks[0].attributes('href')).toBe('https://news.ycombinator.com/item?id=10')
+    // No author link when the comment carries no permalink.
+    expect(wrapper.findAll('a').filter(a => a.text() === 'bob').length).toBe(0)
+    expect(wrapper.findAll('span').filter(s => s.text() === 'bob').length).toBe(1)
+  })
+
+  it('renders the comment body as text, not as the permalink anchor', () => {
+    expect(wrapper.findAll('a').some(a => a.text() === 'Great insight')).toBe(false)
+    expect(wrapper.text()).toContain('Great insight')
+  })
+
+  it('linkifies URLs inside comment bodies', () => {
+    const withUrls = mountWithComments([
+      {
+        author: 'carol',
+        text: 'see https://colo.to/exercise.pdf and [Itt](https://www.youtube.com/live/xyz) for more',
+        points: 2,
+        url: 'https://news.ycombinator.com/item?id=11',
+      },
+    ])
+    const hrefs = withUrls.findAll('a').map(a => a.attributes('href'))
+    expect(hrefs).toContain('https://colo.to/exercise.pdf')
+    expect(hrefs).toContain('https://www.youtube.com/live/xyz')
+    // The markdown link renders with its label, not the raw URL.
+    expect(withUrls.findAll('a').some(a => a.text() === 'Itt')).toBe(true)
+    // And the rendered comment does not show raw markdown syntax.
+    expect(withUrls.text()).not.toContain('](https://www.youtube.com')
+  })
+
+  it('linkifies URLs in the digest summary and per-highlight summaries', () => {
+    const withUrls = mountWithComments([])
+    // Summary text is LLM prose; a bare URL in it must be clickable.
+    const summary = withUrls.findAll('p').find(p => p.text().includes('Test summary'))
+    expect(summary).toBeDefined()
+    // The fixture summary has no URL, so assert on a summary that does.
+    const parsed = JSON.parse(content)
+    parsed.summary = 'See https://example.com/digest-summary for context.'
+    parsed.highlights[0].llm_summary = 'Read https://example.com/highlight for more.'
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useDigestStore().selectedResult = { ...makeResult(), content: JSON.stringify(parsed) }
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', component: { template: '<div />' } }],
+    })
+    const w = mount(DigestContent, { global: { plugins: [pinia, router] } })
+    const hrefs = w.findAll('a').map(a => a.attributes('href'))
+    expect(hrefs).toContain('https://example.com/digest-summary')
+    expect(hrefs).toContain('https://example.com/highlight')
   })
 
   it('renders comment score when present', () => {
