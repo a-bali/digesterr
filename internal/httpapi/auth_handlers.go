@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -54,6 +55,18 @@ func newUserResponse(u store.User) userResponse {
 // an HTTPS-only deployment. server.cookie_secure overrides that. Leaving it
 // unset preserves the old behaviour, so a plain-HTTP install (LAN, no proxy)
 // keeps a working refresh cookie instead of one the browser refuses to store.
+//
+// CHANGING Path REQUIRES RETIRING THE OLD PATH (see staleRefreshCookiePaths
+// and retireSupersededRefreshCookies).
+// Cookies are keyed on (name, domain, path), so a Set-Cookie for a new path
+// does not replace one at the old path — the browser keeps both and sends
+// both. Since browsers order cookies longest-path-first, a leftover cookie at
+// the old, longer path arrives FIRST, and net/http's Request.Cookie returns
+// the first match. That is how the /api/auth/refresh -> /api/auth move logged
+// every existing user out: their old cookie was presented ahead of the live
+// one, the handler validated it, the server's row for it was already gone, and
+// it answered 401. Signing in again did not help, because signing in only ever
+// wrote the new path.
 func (s *Server) refreshCookie(r *http.Request, value string, maxAge int) *http.Cookie {
 	secure := r.TLS != nil
 	if s.cookieSecure != nil {
@@ -62,12 +75,83 @@ func (s *Server) refreshCookie(r *http.Request, value string, maxAge int) *http.
 	return &http.Cookie{
 		Name:     "refresh_token",
 		Value:    value,
-		Path:     "/api/auth",
+		Path:     refreshCookiePath,
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	}
+}
+
+const (
+	// refreshCookiePath is where the refresh cookie lives today.
+	refreshCookiePath = "/api/auth"
+	// legacyRefreshCookiePath is where it lived before the signout-revocation
+	// fix (pre-v0.7.4).
+	legacyRefreshCookiePath = "/api/auth/refresh"
+)
+
+// staleRefreshCookiePaths are the paths a client may still be holding a refresh
+// cookie at: every path this application has ever issued one on, other than the
+// current path. Append here whenever refreshCookiePath changes — a client
+// carrying a cookie at a path this list does not know about keeps sending it,
+// and it sorts ahead of the live cookie.
+//
+// Deriving the set from the request instead is not possible: a Cookie request
+// header carries name=value only, so the server is never told which path a
+// presented cookie was scoped to.
+var staleRefreshCookiePaths = []string{
+	legacyRefreshCookiePath,
+}
+
+// retireSupersededRefreshCookies expires the refresh cookie at every retired
+// path.
+//
+// MaxAge -1 (with an empty value) is the deletion form, and expiry is scoped to
+// the cookie's own path: there is no "delete this name everywhere" in the
+// cookie protocol, so removing a stale cookie requires naming its path. A
+// client that has no cookie at that path is unaffected — the browser simply has
+// nothing to delete.
+//
+// Call this from responses that INVALIDATE the session (signout, password
+// change), never from the responses that mint one: a deletion Set-Cookie
+// travelling next to a credential makes clients that key deletion on the cookie
+// name alone discard the new token. Signin and refresh leave the stale cookie
+// in place on purpose — it is tried after the live one and its row is already
+// gone, so it cannot shadow a session.
+func (s *Server) retireSupersededRefreshCookies(w http.ResponseWriter, r *http.Request) {
+	for _, path := range staleRefreshCookiePaths {
+		deletion := s.refreshCookie(r, "", -1)
+		deletion.Path = path
+		http.SetCookie(w, deletion)
+	}
+}
+
+// presentedRefreshTokens returns every refresh token the request carries, in
+// the order the browser sent them.
+//
+// r.Cookie("refresh_token") returns the FIRST match, and browsers serialise
+// cookies longest-path-first (RFC 6265bis S5.8.3; Chromium's
+// CookieMonster::CookieSorter sorts on path length descending, Firefox does the
+// same in its cookie service). A stale cookie left behind at an older, longer
+// path is therefore the one r.Cookie hands back, even when a live cookie is
+// present at the current path. Any client that tried the current release once
+// while holding a pre-upgrade cookie is in exactly that state.
+//
+// Ordering does not tell us which cookie is live, so callers must try all of
+// them. Duplicates are dropped so a client that repeats a value cannot cause
+// repeated work.
+func presentedRefreshTokens(r *http.Request) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, c := range r.Cookies() {
+		if c.Name != "refresh_token" || c.Value == "" || seen[c.Value] {
+			continue
+		}
+		seen[c.Value] = true
+		out = append(out, c.Value)
+	}
+	return out
 }
 
 type signupRequest struct {
@@ -177,17 +261,19 @@ func (s *Server) handleSignout(w http.ResponseWriter, r *http.Request) {
 	// token has no cookie to read, so looking only at the cookie left it unable
 	// to revoke: the row survived and the token stayed valid until expiry, which
 	// is exactly the state signout exists to end.
-	token := ""
-	if cookie, err := r.Cookie("refresh_token"); err == nil {
-		token = cookie.Value
-	}
-	if token == "" && r.Body != nil {
+	//
+	// ALL cookies are revoked, not just the one r.Cookie returns: a client may
+	// still hold a cookie at a retired path (see presentedRefreshTokens), and a
+	// credential that outlives signout is the failure this endpoint exists to
+	// prevent.
+	tokens := presentedRefreshTokens(r)
+	if len(tokens) == 0 && r.Body != nil {
 		var req refreshRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
-			token = req.RefreshToken
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil && req.RefreshToken != "" {
+			tokens = []string{req.RefreshToken}
 		}
 	}
-	if token != "" {
+	for _, token := range tokens {
 		if err := s.auth.DeleteRefreshToken(r.Context(), token); err != nil {
 			// Revocation failed: report it rather than answering "signed out".
 			// A client that believes it revoked a live credential is worse off
@@ -198,6 +284,9 @@ func (s *Server) handleSignout(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Retire stale siblings, then expire the live cookie: signout must leave
+	// nothing behind, or the session it just ended is still a credential.
+	s.retireSupersededRefreshCookies(w, r)
 	http.SetCookie(w, s.refreshCookie(r, "", -1))
 	writeJSON(w, http.StatusOK, map[string]string{"message": "signed out"})
 }
@@ -206,18 +295,43 @@ type refreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+// findLiveRefreshToken picks the token to rotate out of everything the request
+// presents. It exists because the cookie the client sends FIRST is not
+// necessarily the live one: a stale cookie at a retired path sorts ahead of the
+// current one (see presentedRefreshTokens), so trusting the first cookie turned
+// a working session into a permanent 401.
+//
+// Validation order is presentation order, so the ordinary single-cookie client
+// costs exactly one query. Returns the row and its raw token.
+func (s *Server) findLiveRefreshToken(ctx context.Context, tokens []string) (*store.RefreshToken, string, error) {
+	var firstErr error
+	for _, token := range tokens {
+		rt, err := s.auth.ValidateRefreshToken(ctx, token)
+		if err == nil {
+			return rt, token, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr == nil {
+		firstErr = auth.ErrTokenInvalid
+	}
+	return nil, "", firstErr
+}
+
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("refresh_token")
-	if err != nil {
+	tokens := presentedRefreshTokens(r)
+	if len(tokens) == 0 {
 		var req refreshRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.RefreshToken == "" {
 			writeError(w, http.StatusUnauthorized, "no refresh token provided")
 			return
 		}
-		cookie = &http.Cookie{Value: req.RefreshToken}
+		tokens = []string{req.RefreshToken}
 	}
 
-	rt, err := s.auth.ValidateRefreshToken(r.Context(), cookie.Value)
+	rt, presented, err := s.findLiveRefreshToken(r.Context(), tokens)
 	if err != nil {
 		if errors.Is(err, auth.ErrTokenExpired) {
 			writeError(w, http.StatusUnauthorized, "refresh token expired")
@@ -239,7 +353,7 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
-	newRefresh, err := s.auth.RotateRefreshToken(r.Context(), cookie.Value, user.ID)
+	newRefresh, err := s.auth.RotateRefreshToken(r.Context(), presented, user.ID)
 	if err != nil {
 		slog.Error("refresh token: rotation failed (old token kept)", logging.CategoryAttr(logging.CategoryAuth), "error", err, "user_id", user.ID)
 		writeError(w, http.StatusInternalServerError, "failed to create refresh token")
@@ -251,6 +365,12 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	// every account through /api/logs.
 	slog.Debug("token refreshed", logging.CategoryAttr(logging.CategoryAuth), "user_id", user.ID)
 
+	// Deliberately does NOT retire cookies at older paths here. Doing so means
+	// emitting a deletion Set-Cookie alongside the credential, and clients that
+	// treat a deletion as "this cookie name is gone" would drop the token they
+	// were just handed. The stale cookie is inert regardless: it is tried after
+	// the live one and has no row in refresh_tokens, so it can never shadow a
+	// session again. Signout retires it.
 	http.SetCookie(w, s.refreshCookie(r, newRefresh, int(auth.RefreshTokenDuration.Seconds())))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -305,6 +425,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.auth.DeleteAllUserRefreshTokens(r.Context(), userID)
+	s.retireSupersededRefreshCookies(w, r)
 	http.SetCookie(w, s.refreshCookie(r, "", -1))
 	writeJSON(w, http.StatusOK, map[string]string{"message": "password changed"})
 }
