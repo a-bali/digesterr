@@ -4,7 +4,6 @@
 package metrics
 
 import (
-	"net/http"
 	"net/url"
 	"sort"
 	"sync"
@@ -91,7 +90,7 @@ func New(capacity int) *Recorder {
 	return &Recorder{
 		records:   make([]Record, capacity),
 		size:      capacity,
-		transport: NewTransport(http.DefaultTransport),
+		transport: NewTransport(OutboundTransport()),
 	}
 }
 
