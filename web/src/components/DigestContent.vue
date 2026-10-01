@@ -9,6 +9,7 @@ import Separator from './ui/Separator.vue'
 import Skeleton from './ui/Skeleton.vue'
 import { ExternalLink, Clock, MessageCircle, Trash2, Check, ArrowUp, BookOpen, LoaderCircle } from 'lucide-vue-next'
 import { absoluteTime, feedIcon } from '../lib/format'
+import { renderCommentHtml } from '../lib/linkify'
 
 const store = useDigestStore()
 const feedStore = useFeedStore()
@@ -157,7 +158,7 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
       <!-- Summary -->
       <div v-if="digestContent?.summary" class="mb-6 p-4 rounded-lg border bg-muted/30 min-w-0" :class="wrapClass">
         <h3 class="text-sm font-semibold mb-2">Summary</h3>
-        <p class="text-sm leading-relaxed text-foreground/85">{{ digestContent.summary }}</p>
+        <p class="text-sm leading-relaxed text-foreground/85" v-html="renderCommentHtml(digestContent.summary)" v-external-links />
       </div>
 
       <!-- Sections: category sections wrap feed subsections; feed sections
@@ -206,18 +207,22 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
                     <MessageCircle class="size-3" /> {{ item.comments_count }}
                   </a>
                 </div>
-                <p v-if="item.llm_summary" class="text-sm leading-relaxed mb-3">
-                  {{ item.llm_summary }}
-                </p>
+                <p v-if="item.llm_summary" class="text-sm leading-relaxed mb-3"
+                  v-html="renderCommentHtml(item.llm_summary)" v-external-links />
                 <div v-if="item.top_comments?.length" class="mb-3 border-t pt-2">
                   <p class="text-xs font-medium text-muted-foreground mb-1">Top comments</p>
                   <div v-for="c in item.top_comments" :key="c.url || c.text.substring(0, 20)"
                     class="text-xs mb-1 pl-2 border-l-2 border-border">
-                    <span class="font-medium text-muted-foreground">{{ c.author }}</span>
+                    <a v-if="c.url" :href="c.url" target="_blank" rel="noopener noreferrer"
+                      class="font-medium text-muted-foreground hover:text-accent">{{ c.author }}</a>
+                    <span v-else class="font-medium text-muted-foreground">{{ c.author }}</span>
                     <span v-if="c.points != null" class="ml-1 text-accent text-[10px]">[{{ c.points }}]</span>
                     <span class="mx-1 text-muted-foreground/40">–</span>
-                    <a v-if="c.url" :href="c.url" target="_blank" rel="noopener noreferrer" class="text-foreground/80 hover:text-accent whitespace-pre-wrap">{{ c.text }}</a>
-                    <span v-else class="text-foreground/80 whitespace-pre-wrap">{{ c.text }}</span>
+                    <!-- The comment body is rendered, not wrapped in the permalink
+                         anchor: nesting the author's own links inside it would be
+                         invalid and would make them unclickable. -->
+                    <span class="text-foreground/80 whitespace-pre-wrap break-words"
+                      v-html="renderCommentHtml(c.text)" v-external-links />
                   </div>
                 </div>
               </div>

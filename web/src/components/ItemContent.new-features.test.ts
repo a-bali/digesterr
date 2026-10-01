@@ -171,11 +171,16 @@ describe('ItemContent scroll-to-comments', () => {
     expect(section.exists()).toBe(true)
   })
 
-  it('judges each URL occurrence by its own preceding character', async () => {
+  it('links every bare mention of the same URL', async () => {
     // Regression: the skip-if-already-in-an-attribute check used
     // restored.indexOf(match) — the FIRST occurrence of the URL in the whole
     // string. The same URL appearing twice was therefore judged twice by the
     // prefix of its first copy, so the bare second mention was left unlinked.
+    //
+    // The check itself is gone: linkification now runs on the raw text before
+    // any href exists, so a URL cannot be inside an attribute when it is
+    // judged. That also means a QUOTED url is linked, which the old prefix
+    // heuristic refused to do; an apostrophe is not an attribute.
     const url = 'https://example.com/article'
     const wrapper = mountItemContent(makeItem({ comment_url: 'https://example.com/c' }))
     const vm = wrapper.vm as any
@@ -186,9 +191,6 @@ describe('ItemContent scroll-to-comments', () => {
     vm.topComments = [
       {
         author: 'alice',
-        // Apostrophes survive the escaping pass, so they still count as a
-        // "already inside an attribute" prefix. The quoted mention is skipped;
-        // the bare mention after it must be linked.
         text: `'${url}' and again ${url}`,
         points: 5,
         valid_points: true,
@@ -198,10 +200,34 @@ describe('ItemContent scroll-to-comments', () => {
     await wrapper.vm.$nextTick()
 
     const links = wrapper.findAll(`a[href="${url}"]`)
-    expect(links.length, 'the bare second mention should be linked exactly once').toBe(1)
-
-    // The anchor wraps the bare mention, not the quoted one.
+    expect(links.length, 'both mentions should be linked').toBe(2)
     expect(wrapper.html()).toContain(`and again <a href="${url}"`)
+  })
+
+  it('does not link a URL that is already an href', async () => {
+    // The property the old prefix heuristic was protecting: a URL inside an
+    // attribute must never be turned into a nested anchor. Raw HTML in a
+    // comment body is the case that exercises it.
+    const wrapper = mountItemContent(makeItem({ comment_url: 'https://example.com/c' }))
+    const vm = wrapper.vm as any
+    vm.commentsLoading = false
+    vm.topComments = [
+      {
+        author: 'alice',
+        text: 'see <a href="https://example.com/inside">label</a> and https://example.com/bare',
+        points: 1,
+        valid_points: true,
+        url: '',
+      },
+    ]
+    await wrapper.vm.$nextTick()
+
+    // The pre-existing anchor is left alone (v-external-links adds target to it,
+    // which is that directive's job) and is NOT wrapped in a second anchor.
+    expect(wrapper.html().match(/<a href="https:\/\/example\.com\/inside"/g)?.length).toBe(1)
+    expect(wrapper.html()).not.toMatch(/<a href="https:\/\/example\.com\/inside"[^>]*><a /)
+    // Exactly one anchor wraps the BARE url.
+    expect(wrapper.findAll(`a[href="https://example.com/bare"]`).length).toBe(1)
   })
 
   // Regression: HomeView swaps between the desktop and tablet/mobile layout

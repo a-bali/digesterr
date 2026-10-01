@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"html"
 	"strings"
 	"testing"
 	"time"
@@ -116,18 +117,67 @@ func TestRenderCommentTextRedditBareImgur(t *testing.T) {
 }
 
 func TestRenderCommentTextRedditHTMLEntities(t *testing.T) {
-	// Reddit HTML-encodes > < & in comment bodies.
+	// Reddit HTML-encodes > < & in comment bodies. They must reach the reader as
+	// the characters themselves — decoding them is what makes a blockquote
+	// marker render as `>` instead of the literal text `&gt;`.
 	text := "&gt;quoted text&lt; with &amp; ampersand"
 	got := renderCommentText(text, "reddit")
-	if !strings.Contains(got, ">quoted text<") {
-		t.Fatalf("expected decoded entities, got: %s", got)
+	// Assert on the rendered text: entities in the source are decoded by the
+	// client, so asserting the source spelling would pass for either encoding.
+	visible := html.UnescapeString(strings.ReplaceAll(got, "<br>", "\n"))
+	if !strings.Contains(visible, ">quoted text< with & ampersand") {
+		t.Fatalf("expected decoded entities, got: %s (rendered: %s)", got, visible)
 	}
-	if !strings.Contains(got, "& ampersand") {
-		t.Fatalf("expected decoded ampersand, got: %s", got)
+	if strings.Contains(got, "&amp;amp;") {
+		t.Fatalf("entities were encoded twice, got: %s", got)
 	}
-	// Should NOT be double-escaped.
-	if strings.Contains(got, "&gt;") {
-		t.Fatalf("entities were not decoded, got: %s", got)
+}
+
+// Regression: the previous pipeline escaped the text and THEN decoded a fixed
+// list of double-escaped entities, which turned an entity-encoded `<script>`
+// back into a raw tag inside the Reader API body — a feed reader renders that
+// body as HTML. The old escaping test missed it because it only used a RAW
+// `<script>`, which the escape pass genuinely did neutralize.
+func TestRenderCommentTextDoesNotUnescapeIntoMarkup(t *testing.T) {
+	for _, text := range []string{
+		"&lt;script&gt;alert(1)&lt;/script&gt;",
+		"&lt;img src=x onerror=alert(1)&gt;",
+		"&lt;a href=\"javascript:alert(1)\"&gt;click&lt;/a&gt;",
+	} {
+		got := renderCommentText(text, "reddit")
+		for _, raw := range []string{"<script>", "<img", "<a href"} {
+			if strings.Contains(got, raw) {
+				t.Fatalf("entity-encoded markup %q became raw %q in output: %s", text, raw, got)
+			}
+		}
+	}
+}
+
+func TestRenderCommentTextLinkifiesBareURL(t *testing.T) {
+	// Real fixture: an HN comment with a bare URL and no markup at all.
+	got := renderCommentText("No, it doesn't.\nhttps://colo.to/exercise.pdf\nThey exercised 15,625.", "hn")
+	if !strings.Contains(got, `<a href="https://colo.to/exercise.pdf" target="_blank" rel="noopener noreferrer">https://colo.to/exercise.pdf</a>`) {
+		t.Fatalf("expected bare URL linked, got: %s", got)
+	}
+}
+
+func TestRenderCommentTextMarkdownLink(t *testing.T) {
+	// Real fixture: a Reddit comment with a markdown link.
+	got := renderCommentText("[kifli.hu](http://kifli.hu)", "reddit")
+	if !strings.Contains(got, `<a href="http://kifli.hu" target="_blank" rel="noopener noreferrer">kifli.hu</a>`) {
+		t.Fatalf("expected markdown link rendered, got: %s", got)
+	}
+}
+
+func TestRenderCommentTextMarkdownLinkKeepsQuerySeparator(t *testing.T) {
+	// Real fixture: the ampersand arrives entity-encoded and must survive as a
+	// single `&` in the href, not `&amp;amp;`.
+	got := renderCommentText("[Itt](https://www.youtube.com/live/BU6rXYv726I?si=U50DG_vDKNazLq92&amp;t=30918)", "reddit")
+	if !strings.Contains(got, `href="https://www.youtube.com/live/BU6rXYv726I?si=U50DG_vDKNazLq92&amp;t=30918"`) {
+		t.Fatalf("expected single-escaped href, got: %s", got)
+	}
+	if strings.Contains(got, "&amp;amp;") {
+		t.Fatalf("href was double-escaped, got: %s", got)
 	}
 }
 

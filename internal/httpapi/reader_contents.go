@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"digesterr/internal/linkify"
 	"digesterr/internal/store"
 )
 
@@ -496,7 +497,7 @@ func renderDigestFlatHTML(b *strings.Builder, highlights, items []digestContentR
 		}
 
 		if h.LLMSummary != "" {
-			fmt.Fprintf(b, `<p>%s</p>`+"\n", html.EscapeString(h.LLMSummary))
+			fmt.Fprintf(b, `<p>%s</p>`+"\n", linkify.Text(h.LLMSummary))
 		}
 
 		if len(h.TopComments) > 0 {
@@ -511,7 +512,7 @@ func renderDigestFlatHTML(b *strings.Builder, highlights, items []digestContentR
 				if tc.Points != nil {
 					points = fmt.Sprintf(" (%d)", *tc.Points)
 				}
-				fmt.Fprintf(b, `<li>%s — %s%s</li>`, author, html.EscapeString(tc.Text), points)
+				fmt.Fprintf(b, `<li>%s — %s%s</li>`, author, linkify.Text(tc.Text), points)
 			}
 			b.WriteString(`</ul>` + "\n")
 		}
