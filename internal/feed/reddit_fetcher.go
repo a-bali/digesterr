@@ -400,40 +400,92 @@ func renderGalleryContent(p redditPostData) string {
 	return b.String()
 }
 
-// renderPostContent renders a post's own payload: inline media (gallery, video,
-// or image) followed by any selftext. mediaURL supplies the video/image URL —
-// the post's own URL, or the parent's URL when rendering a crosspost. Returns
-// "" when the post carries nothing renderable, letting the caller pick a fallback.
-func renderPostContent(p redditPostData, mediaURL string) string {
-	var content string
-	// Media always renders inline regardless of selftext — the media IS the content.
-	if p.IsGallery {
-		content = renderGalleryContent(p)
-	}
-	if content == "" && isRedditVideoURL(mediaURL) {
-		videoURL := mediaURL
-		if p.IsVideo && p.Media.RedditVideo != nil && p.Media.RedditVideo.FallbackURL != "" {
-			videoURL = p.Media.RedditVideo.FallbackURL
+// redditVideoFallback returns the playable MP4 for a Reddit video post, looking
+// at the post's own media and — for a crosspost — at the parent's, because that
+// is where Reddit puts media.reddit_video when the video was crossposted: the
+// crosspost itself carries media=null and is_video=false. The depth is bounded
+// (a crosspost is one level) but a nesting guard keeps a malformed payload from
+// recursing.
+func redditVideoFallback(p redditPostData) string {
+	const maxDepth = 3
+	for depth := 0; depth < maxDepth; depth++ {
+		if p.Media.RedditVideo != nil && p.Media.RedditVideo.FallbackURL != "" {
+			return p.Media.RedditVideo.FallbackURL
 		}
+		if len(p.CrosspostParentList) == 0 {
+			return ""
+		}
+		p = p.CrosspostParentList[0]
+	}
+	return ""
+}
+
+// renderPostMedia renders a post's inline media: gallery, video, or image.
+// Returns "" when the payload carries nothing renderable. A video is only
+// rendered when a playable MP4 exists — the bare v.redd.it/<id> URL answers with
+// a redirect to the post's HTML page, so a <video> pointed at it is a player
+// that can never start; the caller degrades to a link instead.
+func renderPostMedia(p redditPostData, mediaURL string) string {
+	if p.IsGallery {
+		if g := renderGalleryContent(p); g != "" {
+			return g
+		}
+	}
+	if isRedditVideoURL(mediaURL) {
 		// mediaURL/videoURL derive from the post payload (untrusted): escape
 		// and scheme-check before interpolating into attributes. Both are
 		// absolute https media URLs, so the absolute-URL variant applies.
-		videoSafe, mediaSafe := safeRedditURL(videoURL), safeRedditURL(mediaURL)
+		videoSafe, mediaSafe := safeRedditURL(redditVideoFallback(p)), safeRedditURL(mediaURL)
 		if videoSafe != "" && mediaSafe != "" {
-			content = `<p><video src="` + redditAttrEscape(videoSafe) + `" controls style="max-width:100%;border-radius:4px"><a href="` + redditAttrEscape(mediaSafe) + `" target="_blank" rel="noopener noreferrer">Watch video ↗</a></video></p>`
+			return `<p><video src="` + redditAttrEscape(videoSafe) + `" controls style="max-width:100%;border-radius:4px"><a href="` + redditAttrEscape(mediaSafe) + `" target="_blank" rel="noopener noreferrer">Watch video ↗</a></video></p>`
 		}
+		return ""
 	}
-	if content == "" && isRedditImageURL(mediaURL) {
+	if isRedditImageURL(mediaURL) {
 		if mediaSafe := safeRedditURL(mediaURL); mediaSafe != "" {
-			content = `<p><img src="` + redditAttrEscape(mediaSafe) + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
+			return `<p><img src="` + redditAttrEscape(mediaSafe) + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
 		}
 	}
-	// Append selftext after any media — posts often include explanatory text
-	// that must not be silently dropped.
-	if p.Selftext != "" {
-		content += "<p>" + renderRedditMarkdown(p.Selftext) + "</p>"
+	return ""
+}
+
+// renderPostSelftext renders a post's own body text after any media. A post
+// often includes explanatory text that must not be silently dropped.
+func renderPostSelftext(p redditPostData) string {
+	if p.Selftext == "" {
+		return ""
 	}
-	return content
+	return "<p>" + renderRedditMarkdown(p.Selftext) + "</p>"
+}
+
+// renderMediaOrParent renders the playable media for a post, following a
+// crosspost to its parent when the post's own payload has none. Reddit strips
+// the media keys from a crosspost and keeps them on the parent (verified live:
+// outer media=null/is_video=false, crosspost_parent_list[0].media.reddit_video
+// present), so a video post's fallback_url only exists one level down.
+//
+// Exactly ONE payload contributes media: rendering the stub's media as well
+// produced two players for a single video.
+func renderMediaOrParent(p redditPostData, mediaURL string) string {
+	if m := renderPostMedia(p, mediaURL); m != "" {
+		return m
+	}
+	if parent, ok := crosspostParent(p); ok {
+		parentURL := absoluteRedditURL(parent.URL)
+		if parentURL == "" {
+			parentURL = mediaURL
+		}
+		return renderPostMedia(parent, parentURL)
+	}
+	return ""
+}
+
+// renderPostContent renders a post's own payload — media plus selftext. Used
+// where the crosspost chain is irrelevant (comments, tests).
+// Returns "" when the post carries nothing renderable, letting the caller pick a
+// fallback.
+func renderPostContent(p redditPostData, mediaURL string) string {
+	return renderMediaOrParent(p, mediaURL) + renderPostSelftext(p)
 }
 
 // crosspostParent returns the post a crosspost points at. Reddit ships it in
@@ -482,7 +534,7 @@ func (f *RedditFetcher) parseListing(data []byte, subreddit string) ([]Item, err
 
 		commentURL := "https://www.reddit.com" + p.Permalink
 
-		content := renderPostContent(p, itemURL)
+		content := renderMediaOrParent(p, itemURL)
 		linkURL := itemURL
 		// A crosspost's own payload is a stub — selftext is empty and the
 		// gallery/media keys are simply absent; the shared content lives on the
@@ -494,22 +546,28 @@ func (f *RedditFetcher) parseListing(data []byte, subreddit string) ([]Item, err
 			if parentURL == "" {
 				parentURL = itemURL
 			}
-			content += renderPostContent(parent, parentURL)
+			// The MEDIA comes from exactly one payload — see renderMediaOrParent.
+			if content == "" {
+				content = renderPostMedia(parent, parentURL)
+			}
+			content += renderPostSelftext(parent)
 			linkURL = parentURL
 		}
-	// Still nothing renderable (e.g. a plain link post): fall back to a link.
-	// linkURL is an absolute post/media URL (possibly attacker-influenced via
-	// the payload): escape and scheme-check before interpolating. Absolute
-	// links only — a relative path would resolve against the reader.
-	if content == "" && !p.IsSelf && linkURL != "" {
-		if linkSafe := safeRedditURL(linkURL); linkSafe != "" {
-			if isRedditImageURL(linkSafe) {
-				content = `<p><img src="` + redditAttrEscape(linkSafe) + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
-			} else {
-				content = `<p><a href="` + redditAttrEscape(linkSafe) + `" target="_blank" rel="noopener noreferrer">` + redditTextEscape(linkSafe) + `</a></p>`
+		content = renderPostSelftext(p) + content
+
+		// Still nothing renderable (e.g. a plain link post): fall back to a link.
+		// linkURL is an absolute post/media URL (possibly attacker-influenced via
+		// the payload): escape and scheme-check before interpolating. Absolute
+		// links only — a relative path would resolve against the reader.
+		if content == "" && !p.IsSelf && linkURL != "" {
+			if linkSafe := safeRedditURL(linkURL); linkSafe != "" {
+				if isRedditImageURL(linkSafe) {
+					content = `<p><img src="` + redditAttrEscape(linkSafe) + `" loading="lazy" style="max-width:100%;border-radius:4px" /></p>`
+				} else {
+					content = `<p><a href="` + redditAttrEscape(linkSafe) + `" target="_blank" rel="noopener noreferrer">` + redditTextEscape(linkSafe) + `</a></p>`
+				}
 			}
 		}
-	}
 
 		pubAt := time.Time{}
 		if p.CreatedUTC > 0 {

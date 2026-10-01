@@ -245,11 +245,16 @@ func spaHandler(api http.Handler, fs http.FileSystem) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Defense in depth behind the sanitizers: the SPA serves no inline
 		// scripts/styles (Vite emits hashed external assets only), so block
-		// inline execution, plugins, and framing outright. Feed images still
-		// load from anywhere; the connect-src 'self' keeps fetch/XHR on-origin.
+		// inline execution, plugins, and framing outright. Feed images AND
+		// media still load from anywhere: every feed that carries inline
+		// video (Reddit v.redd.it, Twitter video.twimg.com) points <video> at
+		// a https CDN, and without an explicit media-src the directive falls
+		// back to default-src 'self' — the video then never loads and the
+		// element sits empty at readyState 0 with no visible error. The
+		// connect-src 'self' keeps fetch/XHR on-origin.
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
-				"img-src 'self' https: data:; font-src 'self' data:; "+
+				"img-src 'self' https: data:; media-src 'self' https:; font-src 'self' data:; "+
 				"connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'")
 		if len(r.URL.Path) >= 4 && r.URL.Path[:4] == "/api" {
 			api.ServeHTTP(w, r)
