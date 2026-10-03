@@ -718,17 +718,30 @@ func renderRedditMarkdown(text string) string {
 		return ph(`<img src="` + redditAttrEscape(src) + `" alt="` + redditAttrEscape(parts[1]) + `" loading="lazy" style="max-width:100%;border-radius:4px" />`)
 	})
 
-	// Markdown links: [text](url)
-	reLink := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+	// Markdown links: [text](url). The label is optional: Reddit authors write
+// `[](url)` to attach a bare image or link, and requiring a label left the
+// literal `[](...)` in the body for the bare-URL pass to then linkify inside
+// its parentheses, producing `[](<a href="...">...`). An empty label falls
+// back to the URL itself, matching internal/linkify on the other surfaces.
+	reLink := regexp.MustCompile(`\[([^\]]*)\]\(([^)]+)\)`)
 	s = reLink.ReplaceAllStringFunc(s, func(m string) string {
 		parts := reLink.FindStringSubmatch(m)
+		label := parts[1]
 		href := safeRedditURL(parts[2])
 		if href == "" {
 			// Unsafe scheme (or a relative path that would resolve against
-			// the reader): keep the label as plain text, no link.
-			return ph(redditTextEscape(parts[1]))
+			// the reader): keep the label as plain text, no link. With no
+			// label there is nothing to keep, so leave the construct as
+			// written rather than deleting it.
+			if strings.TrimSpace(label) == "" {
+				return m
+			}
+			return ph(redditTextEscape(label))
 		}
-		return ph(`<a href="` + redditAttrEscape(href) + `" target="_blank" rel="noopener">` + redditTextEscape(parts[1]) + `</a>`)
+		if strings.TrimSpace(label) == "" {
+			label = href
+		}
+		return ph(`<a href="` + redditAttrEscape(href) + `" target="_blank" rel="noopener">` + redditTextEscape(label) + `</a>`)
 	})
 
 	// Bare image URLs (i.redd.it, preview.redd.it)
@@ -737,22 +750,30 @@ func renderRedditMarkdown(text string) string {
 		return ph(`<img src="` + redditAttrEscape(m) + `" loading="lazy" style="max-width:100%;border-radius:4px" />`)
 	})
 
-	// Bare URLs (http/https, not inside href/src attributes)
-	reURL := regexp.MustCompile(`(https?://[^\s<>"\)\]]+)`)
+	// Bare URLs (http/https, not inside href/src attributes). The character
+	// class excludes `*`, so a URL written in emphasis (`**https://x**`) does
+	// not absorb the closing marker into its href. That single character is the
+	// difference between `<strong><a href="https://x">x</a></strong>` and a
+	// link whose href and label both end in `**` — the emphasis pass runs after
+	// this one, so it can only wrap what is left here, never repair it.
+	reURL := regexp.MustCompile(`(https?://[^\s<>"\)\]\*]+)`)
 	s = reURL.ReplaceAllStringFunc(s, func(m string) string {
 		// Skip URLs that look like they're inside an already-processed tag
 		// (preceded by a quote or = which indicates an attribute value)
 		return ph(`<a href="` + redditAttrEscape(m) + `" target="_blank" rel="noopener">` + redditTextEscape(m) + `</a>`)
 	})
 
-	// Bold: **text**
+	// Bold: **text**. The replacement is registered through ph and the inner
+	// text is only escaped, never re-registered: nesting the marker inside the
+	// generated <strong> is what lets an inner element (an image or link
+	// placeholder) survive. See the restore loop for why.
 	reBold := regexp.MustCompile(`\*\*([^*]+)\*\*`)
 	s = reBold.ReplaceAllStringFunc(s, func(m string) string {
 		parts := reBold.FindStringSubmatch(m)
 		return ph(`<strong>` + redditTextEscape(parts[1]) + `</strong>`)
 	})
 
-	// Italic: *text* (after bold is processed, remaining single asterisks)
+	// Italic: *text* (after bold is processed, remaining single asterisks).
 	reItalic := regexp.MustCompile(`\*([^*\n]+)\*`)
 	s = reItalic.ReplaceAllStringFunc(s, func(m string) string {
 		parts := reItalic.FindStringSubmatch(m)
@@ -765,9 +786,23 @@ func renderRedditMarkdown(text string) string {
 	s = strings.ReplaceAll(s, ">", "&gt;")
 	s = strings.ReplaceAll(s, "\n", "<br />")
 
-	// Restore placeholders
-	for i, p := range phs {
-		s = strings.Replace(s, fmt.Sprintf("\x00PH_%d\x00", i), p.html, 1)
+	// Restore placeholders, INNERMOST FIRST (reverse creation order).
+	//
+	// The emphasis passes above wrap a marker rather than re-registering it, so
+	// a tag can be nested inside a later one: `**![alt](u)**` leaves the image
+	// as PH_0 and the <strong> wrapper as PH_1, whose html embeds the PH_0
+	// marker. Restoring in creation order would run PH_0 before that marker
+	// existed in s, leaving a literal NUL in the body — which is exactly how
+	// `🔗 <strong>\x00PH_0\x00</strong>` reached the database for 24 items.
+	// Reverse order inserts the outer wrapper first and then substitutes the
+	// inner markers inside it.
+	//
+	// ReplaceAll, not Replace(..., 1): each placeholder is unique and now
+	// restored exactly once, so either works — ReplaceAll is used to state the
+	// invariant outright, since a placeholder surviving restoration is what a
+	// reader sees as garbage.
+	for i := len(phs) - 1; i >= 0; i-- {
+		s = strings.ReplaceAll(s, fmt.Sprintf("\x00PH_%d\x00", i), phs[i].html)
 	}
 
 	return s

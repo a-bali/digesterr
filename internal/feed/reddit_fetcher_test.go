@@ -973,6 +973,179 @@ func TestRenderRedditMarkdownKeepsLegitimateMarkup(t *testing.T) {
 	}
 }
 
+// TestRenderRedditMarkdownNestsElementsInEmphasis pins the interaction between
+// the emphasis passes and the placeholder mechanism.
+//
+// Every generated tag is swapped for a \x00PH_n\x00 marker and restored at the
+// end, and the emphasis passes run AFTER the tags that can appear inside them.
+// Two ways that went wrong, both visible to a reader as garbage:
+//
+//   - The emphasis replacement re-registered its content through ph, so a tag
+//     nested inside emphasis was registered twice (`**![alt](u)**` produced
+//     `<strong>\x00PH_0\x00</strong>`), and restoring once per placeholder left
+//     the duplicate marker in the stored body — 24 items in production carry a
+//     literal NUL for this reason.
+//   - The bare-URL pass ran before emphasis and its character class did not
+//     exclude `*`, so `**https://x**` put the closing asterisks INSIDE both the
+//     href and the label, yielding a broken link.
+//
+// The fix is that emphasis WRAPS the marker instead of re-registering it, and
+// restoration runs innermost-first. Asserting on the composed markup (not on
+// absence of a marker alone) is what pins the nesting: a marker could also be
+// absent because the tag was dropped entirely.
+func TestRenderRedditMarkdownNestsElementsInEmphasis(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains []string
+	}{
+		{
+			name:  "image inside bold",
+			input: `**![alt](https://i.redd.it/a.png)**`,
+			contains: []string{
+				`<strong><img src="https://i.redd.it/a.png" alt="alt"`,
+				`/></strong>`,
+			},
+		},
+		{
+			name:     "link inside bold",
+			input:    `**[label](https://example.com/a)**`,
+			contains: []string{`<strong><a href="https://example.com/a"`, `>label</a></strong>`},
+		},
+		{
+			name:     "link inside italic",
+			input:    `*[label](https://example.com/a)*`,
+			contains: []string{`<em><a href="https://example.com/a"`, `>label</a></em>`},
+		},
+		{
+			// The emphasis marker must not be absorbed into the URL.
+			name:     "bare URL inside bold",
+			input:    `**https://example.com/x**`,
+			contains: []string{`<strong><a href="https://example.com/x"`, `>https://example.com/x</a></strong>`},
+		},
+		{
+			name:     "bare URL inside italic",
+			input:    `*https://example.com/x*`,
+			contains: []string{`<em><a href="https://example.com/x"`, `>https://example.com/x</a></em>`},
+		},
+		{
+			// Each emphasis span must close independently.
+			name:  "two bold URLs",
+			input: `**https://example.com/x** and **https://example.com/y**`,
+			contains: []string{
+				`<strong><a href="https://example.com/x"`, `>https://example.com/x</a></strong>`,
+				`<strong><a href="https://example.com/y"`, `>https://example.com/y</a></strong>`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := renderRedditMarkdown(tt.input)
+			for _, s := range tt.contains {
+				if !strings.Contains(got, s) {
+					t.Errorf("rendered output missing %q\ninput: %s\ngot:   %s", s, tt.input, got)
+				}
+			}
+		})
+	}
+}
+
+// TestRenderRedditMarkdownLeavesNoPlaceholder is the direct guard on the marker
+// mechanism: whatever a body contains, no \x00PH_n\x00 may survive into it. A
+// surviving marker is rendered to the reader as nothing useful, and because the
+// body is stored, the artifact is permanent for that item.
+//
+// This is deliberately broader than the nesting cases above — it is the
+// property that must hold for ALL input, including emphasis, tables, images and
+// combinations the other tests do not enumerate.
+func TestRenderRedditMarkdownLeavesNoPlaceholder(t *testing.T) {
+	inputs := []string{
+		`**![alt](https://i.redd.it/a.png)**`,
+		`**https://example.com/x**`,
+		`*https://example.com/x*`,
+		`**bold with ![alt](https://i.redd.it/a.png) inside**`,
+		`*italic with [label](https://example.com/a) inside*`,
+		`**https://example.com/x** and **https://example.com/y**`,
+		`before **![alt](https://i.redd.it/a.png)** after *[l](https://e.com/a)* end`,
+		"| A | B |\n| --- | --- |\n| **https://example.com/x** | ![alt](https://i.redd.it/a.png) |",
+		`**![gif](giphy|eunrMjB8lBUKeL1fqD)**`,
+	}
+	for _, in := range inputs {
+		got := renderRedditMarkdown(in)
+		if strings.ContainsRune(got, 0) {
+			t.Errorf("a placeholder survived into the rendered body\ninput: %s\ngot:   %q", in, got)
+		}
+	}
+}
+
+// TestRenderRedditMarkdownEmptyLinkLabel pins the empty-label markdown link
+// `[](url)`, which Reddit authors use to attach a link or image with no text.
+//
+// The link pattern required at least one label character, so `[](url)` did not
+// match: the literal `[](...)` stayed in the body and the bare-URL pass then
+// linkified the URL INSIDE its parentheses, producing `[](<a href="...">`.
+// The control cases below (a labelled link, and an empty label over an unsafe
+// scheme) must keep behaving as before: the fix is to accept an absent label,
+// not to relax the scheme gate.
+func TestRenderRedditMarkdownEmptyLinkLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains []string
+		excludes []string
+	}{
+		{
+			name:     "empty label falls back to the URL",
+			input:    `[](https://444.hu/2026/09/22/x)`,
+			contains: []string{`<a href="https://444.hu/2026/09/22/x" target="_blank" rel="noopener">https://444.hu/2026/09/22/x</a>`},
+			excludes: []string{"[](", "[](<a"},
+		},
+		{
+			name:     "empty label mid-sentence",
+			input:    `by [](https://www.reddit.com/user/Das_Zeppelin/)`,
+			contains: []string{`<a href="https://www.reddit.com/user/Das_Zeppelin/"`, `>https://www.reddit.com/user/Das_Zeppelin/</a>`},
+			excludes: []string{"[]("},
+		},
+		{
+			// CONTROL: a labelled link still uses its label, not the URL.
+			name:     "labelled link keeps its label",
+			input:    `[label](https://444.hu/x)`,
+			contains: []string{`<a href="https://444.hu/x" target="_blank" rel="noopener">label</a>`},
+		},
+		{
+			// CONTROL: an empty label does not become a way to smuggle a scheme
+			// past the gate. No anchor is built, so the construct is left as
+			// written rather than silently emptied.
+			name:     "empty label over javascript scheme is not linked",
+			input:    `[](javascript:alert(1))`,
+			excludes: []string{"<a ", "href="},
+		},
+		{
+			// CONTROL: whitespace-only labels behave as empty ones.
+			name:     "whitespace label falls back to the URL",
+			input:    `[   ](https://444.hu/x)`,
+			contains: []string{`<a href="https://444.hu/x"`, `>https://444.hu/x</a>`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := renderRedditMarkdown(tt.input)
+			for _, s := range tt.contains {
+				if !strings.Contains(got, s) {
+					t.Errorf("rendered output missing %q\ninput: %s\ngot:   %s", s, tt.input, got)
+				}
+			}
+			for _, s := range tt.excludes {
+				if strings.Contains(got, s) {
+					t.Errorf("rendered output should not contain %q\ninput: %s\ngot:   %s", s, tt.input, got)
+				}
+			}
+		})
+	}
+}
+
 // TestRedditQuotaSnapshotExposed asserts the metrics API surfaces Reddit's
 // rate-limit headroom, so a client running out of budget is diagnosable from
 // the API rather than only from the absence of new posts.
