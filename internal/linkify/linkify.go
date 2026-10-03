@@ -20,13 +20,16 @@
 //  3. Markdown images `![alt](url)` become <img>; they must be claimed before
 //     markdown links, which match a superset of their syntax.
 //  4. Markdown links `[label](url)` become <a>.
-//  5. Bare image-host URLs become <img> (an image is a better rendering than a
+//  5. App-only Reddit comment-video links become an inline player. They must be
+//     claimed before the bare-URL pass, which would otherwise linkify them into
+//     a page Reddit serves as "r/subreddit is banned" (see comment_video.go).
+//  6. Bare image-host URLs become <img> (an image is a better rendering than a
 //     link to an image).
-//  6. Remaining bare URLs (http/https, and `www.` with no scheme) become <a>.
+//  7. Remaining bare URLs (http/https, and `www.` with no scheme) become <a>.
 //     This runs on the not-yet-escaped text and BEFORE the generated tags are
 //     restored, so a markdown link's own label can never be linkified into a
 //     nested anchor.
-//  7. Escape everything, then restore the generated tags.
+//  8. Escape everything, then restore the generated tags.
 //
 // Every href is scheme-checked: no `javascript:`, `data:`, or `vbscript:` URL
 // can reach an attribute, whether it arrived as a markdown link or as bare text.
@@ -63,16 +66,53 @@ var (
 	bareURLRe = regexp.MustCompile(`(?:https?://|www\.)[^\s<>"']+`)
 )
 
-// Text renders raw comment text as display HTML.
+// Text renders raw comment text as display HTML: markdown BLOCK structure
+// (blockquotes, lists, code fences — see blocks.go) wrapping the inline marks
+// rendered by textInline.
+//
+// The result is a sequence of complete top-level elements, so a caller must NOT
+// wrap it in a paragraph.
 func Text(s string) string {
 	if s == "" {
 		return ""
 	}
 
-	// Step 1: normalize entities once, on the raw text.
+	// Normalize entities ONCE, for the whole body and BEFORE splitting into
+	// blocks: sources encode the blockquote marker as &gt;, so splitting first
+	// would never see a quote.
 	s = html.UnescapeString(s)
 
-	// Step 2: Reddit's internal giphy syntax → real URL.
+	return renderBlocks(s, textInline)
+}
+
+// textInline renders the INLINE marks of one block of comment text. HTML
+// entities must already be decoded by the caller.
+//
+// The rules, in order:
+//
+//  1. Reddit's internal `![alt](giphy|ID)` form becomes a real giphy URL.
+//  2. Markdown images `![alt](url)` become <img>; they must be claimed before
+//     markdown links, which match a superset of their syntax.
+//  3. Markdown links `[label](url)` become <a>.
+//  4. App-only Reddit comment-video links become an inline player. They must be
+//     claimed before the bare-URL pass, which would otherwise linkify them into
+//     a page Reddit serves as "r/subreddit is banned" (see comment_video.go).
+//  5. Bare image-host URLs become <img> (an image is a better rendering than a
+//     link to an image).
+//  6. Remaining bare URLs (http/https, and `www.` with no scheme) become <a>.
+//     This runs on the not-yet-escaped text and BEFORE the generated tags are
+//     restored, so a markdown link's own label can never be linkified into a
+//     nested anchor.
+//  7. Escape everything, then restore the generated tags.
+//
+// Every href is scheme-checked: no `javascript:`, `data:`, or `vbscript:` URL
+// can reach an attribute, whether it arrived as a markdown link or as bare text.
+func textInline(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	// Step 1: Reddit's internal giphy syntax → real URL.
 	s = redditGiphyRe.ReplaceAllStringFunc(s, func(match string) string {
 		parts := redditGiphyRe.FindStringSubmatch(match)
 		if len(parts) < 3 {
@@ -118,7 +158,12 @@ func Text(s string) string {
 		return next(anchorHTML(target, label))
 	})
 
-	// Step 5: bare image URLs.
+	// Step 5: app-only Reddit comment-video links become an inline player. These
+	// must be claimed before the bare-URL pass below, which would otherwise turn
+	// them into a link to a page Reddit renders as "r/subreddit is banned".
+	s = replaceCommentVideos(s, next)
+
+	// Step 5 (see textInline doc): bare image URLs.
 	s = bareImageURLRe.ReplaceAllStringFunc(s, func(match string) string {
 		if !SafeHref(match) {
 			return match

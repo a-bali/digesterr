@@ -6,15 +6,30 @@
  * `internal/linkify` on the Go side so a comment renders the same in the web UI
  * and through the Reader API.
  *
- * Order matters, and it is not the obvious one:
+ * The work is split in two, mirroring the Go twin:
  *
- *  1. Decode HTML entities in the raw text exactly once. Comment sources encode
- *     them inconsistently (Reddit stores `&gt;` for a blockquote marker AND
- *     `&amp;` for a literal ampersand), so the text is normalized first and
- *     re-escaped once at the end. Decoding after escaping instead leaves
- *     `&amp;amp;` inside a generated href, which the browser reads as a query
- *     parameter literally named `amp;t` — a broken link that looks fine in the
- *     source.
+ *  - `renderBlocks` splits the text into markdown BLOCKS — blockquotes, lists and
+ *    code fences — and emits their wrapping elements. Comments carry markdown
+ *    too. Measured over 3,702 real Reddit comments the constructs that occur are
+ *    blockquote 2.78%, bullet list 0.46%, ordered list 0.32%, code fence 0.05%;
+ *    headings/rules/tables are ~0.05% and are deliberately NOT handled (they keep
+ *    rendering as the literal text they render as today, not as a regression).
+ *  - `commentInline` renders the INLINE marks inside one block: giphy, markdown
+ *    images and links, bare image URLs, bare URLs.
+ *
+ * The returned HTML is a sequence of complete top-level elements, so a caller
+ * must NOT wrap it in a paragraph of its own.
+ *
+ * Inline order matters, and it is not the obvious one:
+ *
+ *  1. Decode HTML entities in the raw text exactly once, BEFORE splitting into
+ *     blocks: a comment source encodes the blockquote marker as `&gt;`, so
+ *     splitting first would never see a quote. Comment sources encode entities
+ *     inconsistently (Reddit stores `&gt;` for a blockquote marker AND `&amp;`
+ *     for a literal ampersand), so the text is normalized first and re-escaped
+ *     once at the end. Decoding after escaping instead leaves `&amp;amp;` inside
+ *     a generated href, which the browser reads as a query parameter literally
+ *     named `amp;t` — a broken link that looks fine in the source.
  *  2. Reddit's internal `![alt](giphy|ID)` form becomes a real giphy URL.
  *  3. Markdown images `![alt](url)` become <img>; they are claimed before
  *     markdown links, whose syntax is a superset of theirs.
@@ -64,6 +79,12 @@ const BARE_IMAGE_RE =
   /https?:\/\/(?:media\d*\.giphy\.com\/\S+\.(?:gif|webp|png|jpg|jpeg)(?:\?\S*)?|giphy\.com\/gifs\/\S+|[^/\s]*\.?(?:i\.redd\.it|preview\.redd\.it|imgur\.com|i\.imgur\.com|files\.catbox\.moe|cdn\.discordapp\.com)\/\S+\.(?:jpg|jpeg|png|gif|webp|svg)(?:\?\S*)?)/g
 /** Matches a bare URL, with or without a scheme. `www.` is included because authors write hostnames the way they read them. */
 const BARE_URL_RE = /(?:https?:\/\/|www\.)[^\s<>"']+/g
+
+/** Block-level markers. A marker is only a marker when followed by a space, so `*emphasis*` is not a bullet. */
+const QUOTE_RE = /^ {0,3}>[ \t]?(.*)$/
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*(\S*)[ \t]*$/
+const BULLET_RE = /^([ \t]*)([-*+])[ \t]+(.*)$/
+const ORDERED_RE = /^([ \t]*)(\d{1,9})[.)][ \t]+(.*)$/
 
 /**
  * Removes trailing punctuation a URL match absorbs because it is not
@@ -125,10 +146,224 @@ function restore(s: string, placeholders: string[]): string {
 export function renderCommentHtml(text: string): string {
   if (!text) return ''
 
-  const placeholders: string[] = []
+  // Normalize entities once, for the whole body and BEFORE splitting into
+  // blocks: the blockquote marker is stored as &gt;, so splitting first would
+  // never see a quote.
+  return renderBlocks(decodeEntitiesOnce(text), commentInline)
+}
 
-  // Step 1: normalize entities once, on the raw text.
-  let work = decodeEntitiesOnce(text)
+/** One bullet or numbered entry, with the indentation that decides nesting. */
+interface BlockEntry {
+  indent: number
+  ordered: boolean
+  number: number
+  content: string
+}
+
+/**
+ * Splits text into markdown blocks and renders each block's inline content
+ * through `inline`. Blocks produced: fenced code, blockquote, bullet/ordered
+ * lists, and paragraphs.
+ */
+function renderBlocks(text: string, inline: (s: string) => string): string {
+  const lines = text.split('\n')
+  let out = ''
+  let i = 0
+
+  while (i < lines.length) {
+    const line = lines[i]
+
+    if (line.trim() === '') {
+      i++
+      continue
+    }
+
+    // Fenced code is claimed first so no inline rule runs over the sample inside
+    // it, and its newlines stay significant inside <pre>.
+    const fence = FENCE_RE.exec(line)
+    if (fence) {
+      const marker = fence[1]
+      const body: string[] = []
+      i++
+      while (i < lines.length) {
+        if (closesFence(lines[i], marker)) {
+          i++
+          break
+        }
+        body.push(lines[i])
+        i++
+      }
+      out += '<pre><code>' + escapeAttr(body.join('\n')) + '</code></pre>'
+      continue
+    }
+
+    if (QUOTE_RE.test(line)) {
+      const quoted: string[] = []
+      while (i < lines.length) {
+        const m = QUOTE_RE.exec(lines[i])
+        if (!m) break
+        quoted.push(m[1])
+        i++
+      }
+      out += '<blockquote>' + inline(quoted.join('\n')) + '</blockquote>'
+      continue
+    }
+
+    if (parseEntry(line) !== null) {
+      const entries: BlockEntry[] = []
+      while (i < lines.length) {
+        const e = parseEntry(lines[i])
+        if (!e) break
+        entries.push(e)
+        i++
+      }
+      out += renderEntries(entries, inline)
+      continue
+    }
+
+    const start = i
+    while (i < lines.length && lines[i].trim() !== '' && !endsParagraph(lines, i)) {
+      i++
+    }
+    if (i > start) {
+      out += '<p>' + inline(lines.slice(start, i).join('\n')) + '</p>'
+    } else {
+      // An unrecognised line must still advance, or the loop spins.
+      out += '<p>' + inline(line) + '</p>'
+      i++
+    }
+  }
+
+  return out
+}
+
+/**
+ * Emits nested <ul>/<ol> from a flat run of entries. An entry more indented than
+ * the previous one opens a list INSIDE it, so the markup nests
+ * (`<li>a<ul><li>b</li></ul></li>`) rather than emitting the child as a sibling.
+ */
+function renderEntries(entries: BlockEntry[], inline: (s: string) => string): string {
+  interface Frame {
+    ordered: boolean
+    indent: number
+    openLI: boolean
+  }
+  const stack: Frame[] = []
+  let out = ''
+
+  const closeDeeperThan = (indent: number) => {
+    while (stack.length > 0 && stack[stack.length - 1].indent > indent) {
+      const f = stack.pop() as Frame
+      if (f.openLI) out += '</li>'
+      out += f.ordered ? '</ol>' : '</ul>'
+    }
+  }
+
+  entries.forEach((en, idx) => {
+    closeDeeperThan(en.indent)
+
+    if (stack.length > 0 && stack[stack.length - 1].indent === en.indent) {
+      const top = stack[stack.length - 1]
+      if (top.ordered !== en.ordered) {
+        // Same level, different marker: end this list, start another.
+        if (top.openLI) {
+          out += '</li>'
+          top.openLI = false
+        }
+        out += top.ordered ? '</ol>' : '</ul>'
+        stack.pop()
+      } else if (top.openLI) {
+        // Coming back up to a level whose item was left open for its children.
+        out += '</li>'
+        top.openLI = false
+      }
+    }
+
+    if (stack.length === 0 || stack[stack.length - 1].indent < en.indent) {
+      if (en.ordered) {
+        // Preserve the author's start number: 3,4,5 must not renumber to 1,2,3.
+        out += en.number > 1 ? `<ol start="${en.number}">` : '<ol>'
+      } else {
+        out += '<ul>'
+      }
+      stack.push({ ordered: en.ordered, indent: en.indent, openLI: false })
+    }
+
+    out += '<li>' + inline(en.content)
+    if (idx + 1 < entries.length && entries[idx + 1].indent > en.indent) {
+      stack[stack.length - 1].openLI = true
+    } else {
+      out += '</li>'
+    }
+  })
+
+  closeDeeperThan(-1)
+  return out
+}
+
+/**
+ * `true` when line closes a fence opened with `open`: the same character, at
+ * least as long, and carrying nothing else.
+ */
+function closesFence(line: string, open: string): boolean {
+  const t = line.replace(/^[ \t]+/, '')
+  const ch = open[0]
+  let n = 0
+  while (n < t.length && t[n] === ch) n++
+  if (n < open.length) return false
+  return t.slice(n).trim() === ''
+}
+
+/**
+ * `true` when lines[i] ends the paragraph being collected. Mirrors the branches
+ * of renderBlocks, with CommonMark's rule that an ordered list interrupts a
+ * paragraph only when it starts at 1 — so "2024. We shipped X" stays prose and
+ * keeps its number instead of losing it to a list marker.
+ */
+function endsParagraph(lines: string[], i: number): boolean {
+  const l = lines[i]
+  if (FENCE_RE.test(l) || QUOTE_RE.test(l) || BULLET_RE.test(l)) return true
+  const m = ORDERED_RE.exec(l)
+  if (m) return parseInt(m[2], 10) === 1
+  return false
+}
+
+/** Splits a list line into its indentation, kind and content. */
+function parseEntry(line: string): BlockEntry | null {
+  const bullet = BULLET_RE.exec(line)
+  if (bullet) {
+    return { indent: indentWidth(bullet[1]), ordered: false, number: 0, content: bullet[3].trim() }
+  }
+  const ordered = ORDERED_RE.exec(line)
+  if (ordered) {
+    return {
+      indent: indentWidth(ordered[1]),
+      ordered: true,
+      number: parseInt(ordered[2], 10),
+      content: ordered[3].trim(),
+    }
+  }
+  return null
+}
+
+/**
+ * Counts leading whitespace, treating a tab as four columns so a tab-indented
+ * child nests under a space-indented parent.
+ */
+function indentWidth(ws: string): number {
+  let w = 0
+  for (const ch of ws) w += ch === '\t' ? 4 : 1
+  return w
+}
+
+/**
+ * Renders the INLINE marks of one block of comment text. HTML entities must
+ * already be decoded by the caller.
+ */
+function commentInline(work: string): string {
+  if (!work) return ''
+
+  const placeholders: string[] = []
 
   // Step 2: Reddit's internal giphy syntax → real URL. The ID is restricted to
   // URL-safe characters so it cannot smuggle `"`, whitespace or a scheme break
