@@ -451,11 +451,16 @@ func renderPostMedia(p redditPostData, mediaURL string) string {
 
 // renderPostSelftext renders a post's own body text after any media. A post
 // often includes explanatory text that must not be silently dropped.
+//
+// The body is NOT wrapped in a paragraph. renderRedditMarkdown already emits
+// complete top-level blocks — paragraphs included — so adding a wrapper would
+// produce <p><p>text</p><h2>…</h2></p>: invalid markup that the browser
+// repairs by hoisting the headings and lists out of the paragraph.
 func renderPostSelftext(p redditPostData) string {
 	if p.Selftext == "" {
 		return ""
 	}
-	return "<p>" + renderRedditMarkdown(p.Selftext) + "</p>"
+	return renderRedditMarkdown(p.Selftext)
 }
 
 // renderMediaOrParent renders the playable media for a post, following a
@@ -664,11 +669,14 @@ func safeRedditURL(raw string) string {
 	return ""
 }
 
-// renderRedditMarkdown converts Reddit-flavored selftext to HTML.
-// Handles: markdown tables, images, links, bare URLs, bold, italic, newlines.
+// renderRedditInline renders the INLINE marks inside one block of Reddit text:
+// code spans, images, links, bare URLs, emphasis and strikethrough. Block
+// structure (headings, lists, quotes, fences, tables, rules) is handled by
+// renderRedditMarkdown in reddit_markdown.go, which calls this once per block.
+//
 // All HTML-producing elements are extracted to placeholders before escaping,
 // then restored after — so user content in URLs/text stays safe.
-func renderRedditMarkdown(text string) string {
+func renderRedditInline(text string) string {
 	type placeholder struct{ html string }
 	var phs []placeholder
 
@@ -680,30 +688,20 @@ func renderRedditMarkdown(text string) string {
 
 	s := text
 
-	// Markdown tables: detect consecutive lines containing "|" where the
-	// second line is a separator (---, :---, :---:, ---:). Render as <table>
-	// before other inline processing to avoid placeholder conflicts.
-	lines := strings.Split(s, "\n")
-	var result []string
-	i := 0
-	for i < len(lines) {
-		if strings.Contains(lines[i], "|") {
-			start := i
-			for i < len(lines) && strings.Contains(lines[i], "|") {
-				i++
-			}
-			block := lines[start:i]
-			if len(block) >= 3 && isTableSeparator(block[1]) {
-				result = append(result, renderMarkdownTable(block, ph))
-			} else {
-				result = append(result, block...)
-			}
-		} else {
-			result = append(result, lines[i])
-			i++
-		}
-	}
-	s = strings.Join(result, "\n")
+	// Code spans run FIRST, so nothing inside backticks is read as markdown:
+	// `**x**` is a code sample, not bold, and `<b>` in a sample is escaped
+	// rather than dropped. A span ends at the next backtick — deliberately the
+	// original single-backtick rule, not CommonMark's double-backtick escaping.
+	reCode := regexp.MustCompile("`([^`\n]+)`")
+	s = reCode.ReplaceAllStringFunc(s, func(m string) string {
+		return ph("<code>" + redditTextEscape(reCode.FindStringSubmatch(m)[1]) + "</code>")
+	})
+
+	// Strip fence remnants that the block layer did not pair (a mid-line fence,
+	// or an odd marker inside a line). Not doing this leaves literal ``` in the
+	// stored body, which reads to the user as garbage.
+	s = strings.ReplaceAll(s, "```", "")
+	s = strings.ReplaceAll(s, "~~~", "")
 
 	// Markdown images: ![alt](url)
 	reImg := regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
@@ -761,6 +759,14 @@ func renderRedditMarkdown(text string) string {
 		// Skip URLs that look like they're inside an already-processed tag
 		// (preceded by a quote or = which indicates an attribute value)
 		return ph(`<a href="` + redditAttrEscape(m) + `" target="_blank" rel="noopener">` + redditTextEscape(m) + `</a>`)
+	})
+
+	// Strikethrough: ~~text~~. Runs before the emphasis passes so a `~~` pair is
+	// not left for the italic rule to read as a single `*`-style marker.
+	reStrike := regexp.MustCompile(`~~([^~\n]+)~~`)
+	s = reStrike.ReplaceAllStringFunc(s, func(m string) string {
+		parts := reStrike.FindStringSubmatch(m)
+		return ph("<del>" + redditTextEscape(parts[1]) + "</del>")
 	})
 
 	// Bold: **text**. The replacement is registered through ph and the inner
