@@ -584,6 +584,18 @@ func (p *Poller) CommentFetchers() map[string]CommentFetcher {
 	return p.commentFetchers
 }
 
+// SetCommentFetcher replaces the comment fetcher for one feed type. It is the
+// seam that lets tests drive the per-item comment path (the one the Google
+// Reader contents endpoints depend on) without reaching upstream, and it mirrors
+// the Set* configuration the enrichers already expose (SetRateLimiter,
+// SetUserAgent, SetMaxHits).
+func (p *Poller) SetCommentFetcher(feedType string, cf CommentFetcher) {
+	if p.commentFetchers == nil {
+		p.commentFetchers = map[string]CommentFetcher{}
+	}
+	p.commentFetchers[feedType] = cf
+}
+
 func (p *Poller) ExtractItem(ctx context.Context, itemID int64) error {
 	item, err := p.queries.GetItem(ctx, itemID)
 	if err != nil {

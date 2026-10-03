@@ -32,6 +32,13 @@ type commentCache struct {
 	mu    sync.RWMutex
 	items map[int64]commentCacheEntry
 	ttl   time.Duration
+
+	// stop is closed by Close to end the background cleanup goroutine.
+	// stopOnce makes Close idempotent so shutdown paths need not coordinate.
+	stop     chan struct{}
+	stopOnce sync.Once
+	// startOnce guards the lazily-started sweeper (see startSweeper).
+	startOnce sync.Once
 }
 
 type commentCacheEntry struct {
@@ -46,10 +53,36 @@ func newCommentCache(ttl time.Duration) *commentCache {
 	c := &commentCache{
 		items: make(map[int64]commentCacheEntry),
 		ttl:   ttl,
+		stop:  make(chan struct{}),
 	}
-	// Background cleanup every minute.
-	go c.cleanup()
 	return c
+}
+
+// startSweeper launches the background expiry sweep, once, on first use.
+//
+// It is lazy so that a commentCache which never stores anything owns no
+// goroutine: every Server constructs one, and a process that makes no comment
+// fetches (most of the test suite, and any deployment with
+// FEED_TOP_COMMENTS=0) would otherwise run a sweeper that can never have work.
+func (c *commentCache) startSweeper() {
+	c.startOnce.Do(func() {
+		go c.cleanup()
+	})
+}
+
+// Close ends the background cleanup goroutine. It is idempotent, so production
+// shutdown and test cleanup can both call it without coordinating.
+//
+// Without this, every commentCache — and therefore every Server — leaks one
+// goroutine for the life of the process: the cleanup loop blocked on its ticker
+// forever. The test suite constructs hundreds of servers, which is how the leak
+// surfaced (a goroutine dump on test timeout was wall-to-wall cleanup loops).
+func (c *commentCache) Close() {
+	c.stopOnce.Do(func() {
+		if c.stop != nil {
+			close(c.stop)
+		}
+	})
 }
 
 func (c *commentCache) get(itemID int64) ([]feed.Comment, bool) {
@@ -72,12 +105,20 @@ func (c *commentCache) set(itemID int64, comments []feed.Comment) {
 		comments: comments,
 		expires:  time.Now().Add(c.ttl),
 	}
+	// First insert starts the sweeper; without it nothing would ever expire, and
+	// starting it here means a cache that is never written owns no goroutine.
+	c.startSweeper()
 }
 
 func (c *commentCache) cleanup() {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
+		select {
+		case <-c.stop:
+			return
+		case <-ticker.C:
+		}
 		c.mu.Lock()
 		now := time.Now()
 		for id, entry := range c.items {

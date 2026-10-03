@@ -1,12 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"digesterr/internal/linkify"
@@ -93,16 +95,13 @@ func (s *Server) handleReaderStreamItemsContents(w http.ResponseWriter, r *http.
 	}
 
 	rawIDs := r.Form["i"]
-	items := make([]readerContentStreamItem, 0, len(rawIDs))
+	refs := make([]int64, 0, len(rawIDs))
 	for _, rawID := range rawIDs {
-		ref, ok := parseReaderItemRef(rawID)
-		if !ok {
-			continue
-		}
-		if obj, ok := s.resolveContentObject(r, userID, ref); ok {
-			items = append(items, obj)
+		if ref, ok := parseReaderItemRef(rawID); ok {
+			refs = append(refs, ref)
 		}
 	}
+	items := s.resolveContentObjects(r, userID, refs)
 
 	writeJSON(w, http.StatusOK, readerContentsResponse{
 		Direction: "ltr",
@@ -112,6 +111,61 @@ func (s *Server) handleReaderStreamItemsContents(w http.ResponseWriter, r *http.
 		Updated:   time.Now().Unix(),
 		Items:     items,
 	})
+}
+
+// resolveContentObjects resolves every ref concurrently and returns the
+// objects in input order, skipping refs that do not resolve.
+//
+// Comment fetching happens per item and is one upstream round-trip each, so
+// resolving serially made a 98-item request take 40-400s and blow past the 60s
+// request timeout NetNewsWire uses — the client saw no response at all, which
+// is why the failure was silent. Warm items (comments already cached) return
+// without touching the network.
+//
+// Comment fetches run on a context detached from the request: if a client
+// gives up mid-request, the fetches it paid for still land in the cache, so the
+// retry does not start from zero. This mirrors the detached per-item extraction
+// precedent. The work is still bounded by the server's commentFetchSem, so a
+// flood of reader requests cannot spawn unbounded upstream calls.
+func (s *Server) resolveContentObjects(r *http.Request, userID int64, refs []int64) []readerContentStreamItem {
+	if len(refs) == 0 {
+		return []readerContentStreamItem{}
+	}
+
+	r = r.WithContext(context.WithoutCancel(r.Context()))
+
+	// Indexed slots so each worker writes a disjoint element and the results
+	// can be reassembled in input order without locking.
+	slots := make([]*readerContentStreamItem, len(refs))
+
+	sem := s.commentFetchSem
+	if sem == nil {
+		// Server built outside NewServer (tests): keep a local bound rather
+		// than falling back to unbounded fan-out.
+		sem = make(chan struct{}, defaultCommentFetchConcurrency)
+	}
+
+	var wg sync.WaitGroup
+	for i, ref := range refs {
+		wg.Add(1)
+		go func(i int, ref int64) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if obj, ok := s.resolveContentObject(r, userID, ref); ok {
+				slots[i] = &obj
+			}
+		}(i, ref)
+	}
+	wg.Wait()
+
+	items := make([]readerContentStreamItem, 0, len(refs))
+	for _, slot := range slots {
+		if slot != nil {
+			items = append(items, *slot)
+		}
+	}
+	return items
 }
 
 // handleReaderStreamContents implements
@@ -144,16 +198,13 @@ func (s *Server) handleReaderStreamContents(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	items := make([]readerContentStreamItem, 0, len(entries))
+	refs := make([]int64, 0, len(entries))
 	for _, e := range entries {
-		ref, ok := parseReaderItemRef(e.id)
-		if !ok {
-			continue
-		}
-		if obj, ok := s.resolveContentObject(r, userID, ref); ok {
-			items = append(items, obj)
+		if ref, ok := parseReaderItemRef(e.id); ok {
+			refs = append(refs, ref)
 		}
 	}
+	items := s.resolveContentObjects(r, userID, refs)
 
 	writeJSON(w, http.StatusOK, readerContentsResponse{
 		Direction: "ltr",

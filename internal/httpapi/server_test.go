@@ -29,6 +29,9 @@ func setupTestServer(t *testing.T) (*Server, *store.Queries) {
 	db, queries := setupTestDB(t)
 	authSvc := auth.NewService("test-jwt-secret-for-testing", queries, db)
 	server := NewServer(db, queries, authSvc, logbuf.New(100), config.Default())
+	// End the comment cache's sweeper goroutine; every Server owns one, and the
+	// suite builds hundreds (see commentCache.Close).
+	t.Cleanup(server.commentCache.Close)
 	return server, queries
 }
 

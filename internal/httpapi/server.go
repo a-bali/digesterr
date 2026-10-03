@@ -42,6 +42,10 @@ type Server struct {
 	topComments int
 	// commentCache caches fetched comments in memory with a configurable TTL.
 	commentCache *commentCache
+	// commentFetchSem bounds parallel per-item comment fetches when serving a
+	// whole stream. Each fetch is one upstream round-trip, so serial fetching
+	// is what made a 98-item Reader request take 40-400s.
+	commentFetchSem chan struct{}
 	// schedulerTimezone is the IANA timezone name for digest cron schedules.
 	schedulerTimezone string
 	// summaryPrompt is the configured system prompt for per-item summaries.
@@ -103,6 +107,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 		cookieSecure:      cfg.Server.CookieSecure,
 		topComments:       cfg.Feed.TopComments,
 		commentCache:      newCommentCache(cfg.Feed.CommentCacheTTL.Duration()),
+		commentFetchSem:   make(chan struct{}, commentFetchConcurrency(cfg)),
 		schedulerTimezone: cfg.Digest.SchedulerTimezone,
 		summaryPrompt:     cfg.LLM.SummaryPrompt,
 		llmDefaultModel:   cfg.LLM.Model,
@@ -264,6 +269,45 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 	return s
 }
 
+// defaultCommentFetchConcurrency bounds parallel per-item comment fetches when
+// config leaves the value unset. Comment fetching is network-bound (one
+// round-trip per item), so a small multiple of the SQLite writer keeps the
+// stream paths responsive without crowding out polling.
+const defaultCommentFetchConcurrency = 8
+
+// readerWriteDeadline bounds a single Reader API request. It is deliberately
+// generous: a large cold stream (comments uncached, one upstream round-trip per
+// item) is legitimately slow, and it must have room to finish, because a
+// kill here is exactly the silent failure this deadline exists to make visible.
+// It sits above reader clients' own request timeout on purpose: the client gives
+// up first and retries, and the deadline only catches the genuinely stuck case.
+const readerWriteDeadline = 120 * time.Second
+
+// wantsWriteDeadline reports whether the path is a Reader API route. Every
+// route under /reader/ streams a variable number of items, so all of them can
+// exceed a sane client timeout when comments are cold.
+func wantsWriteDeadline(path string) bool {
+	return strings.HasPrefix(path, "/reader/")
+}
+
+// withWriteDeadline returns a request whose context expires after d, accepting
+// that it also cancels once d has elapsed even if the handler finished (the
+// caller defers cancel). Handlers detect expiry via context.Cause, which
+// distinguishes a slow handler from a client that disconnected.
+func withWriteDeadline(r *http.Request, d time.Duration) (*http.Request, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(r.Context(), d)
+	return r.WithContext(ctx), cancel
+}
+
+// commentFetchConcurrency resolves the configured comment-fetch bound,
+// falling back to the default for an unset or non-positive value.
+func commentFetchConcurrency(cfg config.Config) int {
+	if n := cfg.Feed.CommentFetchConcurrency; n > 0 {
+		return n
+	}
+	return defaultCommentFetchConcurrency
+}
+
 // extractConcurrency bounds detached per-item extractions. Zero or negative
 // config falls back to the default: extraction is I/O-bound (30s upstream
 // timeout), so a small multiple of the single SQLite writer keeps throughput
@@ -321,6 +365,12 @@ func (s *Server) WaitBackground(ctx context.Context) {
 	case <-done:
 	case <-ctx.Done():
 	}
+	// End the comment cache's cleanup goroutine. Detached comment fetches may
+	// still be writing into the cache (Close only stops the sweeper, the map
+	// stays usable), so this is safe to do after the drain rather than before.
+	if s.commentCache != nil {
+		s.commentCache.Close()
+	}
 }
 
 // maxRequestBody bounds how many bytes a client may send on any API request.
@@ -370,6 +420,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rid := requestIDOf(r)
 	w.Header().Set("X-Request-ID", rid)
 	r = r.WithContext(context.WithValue(r.Context(), requestIDKey, rid))
+
+	// Bound how long a Reader API request may occupy the handler. The stream
+	// contents paths fetch comments per item, and a response is only written
+	// once every item is resolved: without a deadline a slow upstream holds the
+	// connection for minutes and the client sees no status at all (NetNewsWire
+	// then reports nothing and keeps the articles unread). A client that gave up
+	// already produced no output, so answering 503 here is strictly more useful
+	// than hanging. Other handlers are left untouched: summarize/generate
+	// legitimately run for minutes, which is why the server sets no WriteTimeout.
+	if wantsWriteDeadline(r.URL.Path) {
+		var cancel context.CancelFunc
+		r, cancel = withWriteDeadline(r, readerWriteDeadline)
+		defer cancel()
+	}
+
 	logger := slog.With("request_id", rid)
 	rec := &responseRecorder{ResponseWriter: w, rid: rid}
 	defer func() {
@@ -402,6 +467,11 @@ type responseRecorder struct {
 // so a 500's server-side log line carries the correlation ID without every
 // call site threading the request through.
 func (rr *responseRecorder) RequestID() string { return rr.rid }
+
+// Unwrap lets http.ResponseController reach the underlying ResponseWriter, so
+// handlers can still install per-request write deadlines and flush. Without it
+// the wrapper hides those optimizations.
+func (rr *responseRecorder) Unwrap() http.ResponseWriter { return rr.ResponseWriter }
 
 func (rr *responseRecorder) WriteHeader(code int) {
 	if !rr.wroteHeader {

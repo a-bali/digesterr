@@ -185,6 +185,12 @@ type FeedConfig struct {
 	// PollConcurrency bounds how many feeds are fetched at once in a poll
 	// cycle. Zero means 4 (default).
 	PollConcurrency int `yaml:"poll_concurrency"`
+	// CommentFetchConcurrency bounds how many items' comments are fetched in
+	// parallel when serving a whole stream (the Google Reader contents paths).
+	// Comment fetching is one round-trip per item, so doing it serially made a
+	// 98-item request take 40-400s and blow past reader clients' 60s timeout.
+	// Zero means 8 (default).
+	CommentFetchConcurrency int `yaml:"comment_fetch_concurrency"`
 	// PollTimeout bounds one feed's whole poll (fetch + enrich + extract).
 	// Zero means 5 minutes (default).
 	PollTimeout Duration `yaml:"poll_timeout"`
@@ -241,20 +247,21 @@ func Default() Config {
 			Timeout:  Duration(LLMTimeoutDefault),
 		},
 		Feed: FeedConfig{
-			SyncInterval:        Duration(15 * time.Minute),
-			ExpireItems:         Duration(365 * 24 * time.Hour),
-			ExpireDigests:       Duration(365 * 24 * time.Hour),
-			EnrichmentWindow:    Duration(24 * time.Hour),
-			UserAgent:           "",
-			TwitterCount:        20,
-			RedditCount:         20,
-			TopComments:         5,
-			CommentCacheTTL:     Duration(5 * time.Minute),
-			HNEnrichCount:       0,
-			LobstersEnrichCount: 0,
-			ExtractConcurrency:  4,
-			PollConcurrency:     4,
-			PollTimeout:         Duration(5 * time.Minute),
+			SyncInterval:            Duration(15 * time.Minute),
+			ExpireItems:             Duration(365 * 24 * time.Hour),
+			ExpireDigests:           Duration(365 * 24 * time.Hour),
+			EnrichmentWindow:        Duration(24 * time.Hour),
+			UserAgent:               "",
+			TwitterCount:            20,
+			RedditCount:             20,
+			TopComments:             5,
+			CommentCacheTTL:         Duration(5 * time.Minute),
+			HNEnrichCount:           0,
+			LobstersEnrichCount:     0,
+			ExtractConcurrency:      4,
+			PollConcurrency:         4,
+			CommentFetchConcurrency: 8,
+			PollTimeout:             Duration(5 * time.Minute),
 		},
 		Reddit:  RedditConfig{},
 		Twitter: TwitterConfig{},
@@ -413,6 +420,7 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 	setInt(&cfg.Feed.LobstersEnrichCount, "FEED_LOBSTERS_ENRICH_COUNT", "")
 	setInt(&cfg.Feed.ExtractConcurrency, "FEED_EXTRACT_CONCURRENCY", "")
 	setInt(&cfg.Feed.PollConcurrency, "FEED_POLL_CONCURRENCY", "")
+	setInt(&cfg.Feed.CommentFetchConcurrency, "FEED_COMMENT_FETCH_CONCURRENCY", "")
 	setDuration(&cfg.Feed.PollTimeout, "FEED_POLL_TIMEOUT")
 
 	setString(&cfg.Reddit.ClientID, "REDDIT_CLIENT_ID", "")

@@ -130,13 +130,83 @@ func Text(s string) string {
 	// so a link's own label is never linkified again.
 	s = replaceBareURLs(s, next)
 
-	// Step 7: escape once, keep line breaks, restore generated tags.
-	s = html.EscapeString(s)
-	s = strings.ReplaceAll(s, "\n", "<br>")
-	for key, tag := range tags {
-		s = strings.ReplaceAll(s, key, tag)
+	// Step 7: escape and materialise in a SINGLE pass.
+	//
+	// This used to escape the whole string and then run one strings.ReplaceAll
+	// per generated tag over the whole string. That is O(tags x len) in both
+	// time and allocation, and it dominated comment rendering: a 13 KB comment
+	// block with ~200 links copied ~2.6 MB, a 52 KB block ~76 MB (measured
+	// 9.2 ms and 111 ms respectively on the Celeron in this deployment). A
+	// Reader client fetching ~98 items with 10 comments each therefore spent
+	// minutes of CPU here alone. Emitting each tag exactly once is O(len+tags).
+	return renderEscaped(s, tags)
+}
+
+// renderEscaped escapes the literal text, keeps line breaks as <br>, and
+// substitutes the NUL-delimited placeholders created by next — in one pass.
+//
+// Generated tags are emitted verbatim (they are already-safe markup built by
+// anchorHTML/imgTag); every other byte is escaped with exactly the same
+// substitutions html.EscapeString makes, so output is unchanged. A NUL that is
+// not a known placeholder is passed through untouched, keeping the function
+// total for arbitrary input.
+func renderEscaped(s string, tags map[string]string) string {
+	var b strings.Builder
+	b.Grow(len(s) + len(s)/4)
+
+	for {
+		i := strings.IndexByte(s, 0)
+		if i < 0 {
+			writeEscaped(&b, s)
+			return b.String()
+		}
+		writeEscaped(&b, s[:i])
+
+		rest := s[i:]
+		end := strings.IndexByte(rest[1:], 0)
+		if end < 0 {
+			writeEscaped(&b, rest)
+			return b.String()
+		}
+		key := rest[:end+2] // both NUL delimiters inclusive
+		if tag, ok := tags[key]; ok {
+			b.WriteString(tag)
+			s = rest[len(key):]
+			continue
+		}
+		// NUL that is not a placeholder: keep it and resume after it.
+		writeEscaped(&b, rest[:1])
+		s = rest[1:]
 	}
-	return s
+}
+
+// writeEscaped appends s to b with the same substitutions html.EscapeString
+// applies, plus newline-to-<br>, without allocating an intermediate string.
+func writeEscaped(b *strings.Builder, s string) {
+	last := 0
+	for i := 0; i < len(s); i++ {
+		var repl string
+		switch s[i] {
+		case '&':
+			repl = "&amp;"
+		case '<':
+			repl = "&lt;"
+		case '>':
+			repl = "&gt;"
+		case '"':
+			repl = "&#34;"
+		case '\'':
+			repl = "&#39;"
+		case '\n':
+			repl = "<br>"
+		default:
+			continue
+		}
+		b.WriteString(s[last:i])
+		b.WriteString(repl)
+		last = i + 1
+	}
+	b.WriteString(s[last:])
 }
 
 // replaceBareURLs wraps bare URLs in anchors, leaving text inside an attribute
