@@ -15,7 +15,7 @@
  *    headings/rules/tables are ~0.05% and are deliberately NOT handled (they keep
  *    rendering as the literal text they render as today, not as a regression).
  *  - `commentInline` renders the INLINE marks inside one block: giphy, markdown
- *    images and links, bare image URLs, bare URLs.
+ *    images and links, comment-video links, bare image URLs, bare URLs.
  *
  * The returned HTML is a sequence of complete top-level elements, so a caller
  * must NOT wrap it in a paragraph of its own.
@@ -34,12 +34,15 @@
  *  3. Markdown images `![alt](url)` become <img>; they are claimed before
  *     markdown links, whose syntax is a superset of theirs.
  *  4. Markdown links `[label](url)` become <a>.
- *  5. Bare image-host URLs become <img> (an image renders better than a link to
+ *  5. App-only Reddit comment-video links become an inline player. They must be
+ *     claimed before the bare-URL passes, which would otherwise linkify them
+ *     into a page Reddit serves as "r/subreddit is banned".
+ *  6. Bare image-host URLs become <img> (an image renders better than a link to
  *     an image).
- *  6. Remaining bare URLs become <a>. This runs on the not-yet-escaped text and
+ *  7. Remaining bare URLs become <a>. This runs on the not-yet-escaped text and
  *     BEFORE the generated tags are restored, so a link's own label can never be
  *     linkified into a nested anchor and no href is ever rewritten.
- *  7. Escape once, convert newlines, restore the generated tags.
+ *  8. Escape once, convert newlines, restore the generated tags.
  *
  * Every href goes through `safeUrl`: no `javascript:`/`data:` URL can reach an
  * attribute, whether it arrived as a markdown link or as bare text.
@@ -79,6 +82,24 @@ const BARE_IMAGE_RE =
   /https?:\/\/(?:media\d*\.giphy\.com\/\S+\.(?:gif|webp|png|jpg|jpeg)(?:\?\S*)?|giphy\.com\/gifs\/\S+|[^/\s]*\.?(?:i\.redd\.it|preview\.redd\.it|imgur\.com|i\.imgur\.com|files\.catbox\.moe|cdn\.discordapp\.com)\/\S+\.(?:jpg|jpeg|png|gif|webp|svg)(?:\?\S*)?)/g
 /** Matches a bare URL, with or without a scheme. `www.` is included because authors write hostnames the way they read them. */
 const BARE_URL_RE = /(?:https?:\/\/|www\.)[^\s<>"']+/g
+
+/**
+ * Matches Reddit's app-only comment-video deep link:
+ *
+ *     https://reddit.com/link/<comment_id>/video/<media_id>/player
+ *
+ * A comment carrying a video has NO media field on the comment object at all —
+ * the media id exists only in the URL the author pasted. Reddit's web handler
+ * rewrites the path into a comment permalink using the literal string
+ * `subreddit` as the subreddit, so an anonymous visitor lands on a page reading
+ * "r/subreddit is banned".
+ *
+ * The scheme and host prefix are optional because authors paste the bare
+ * `reddit.com` form. The id class is `[A-Za-z0-9]+` so nothing taken from user
+ * text can carry a quote or whitespace into the generated markup.
+ */
+const COMMENT_VIDEO_RE =
+  /(?:https?:\/\/)?(?:www\.|old\.|new\.|m\.)?reddit\.com\/link\/[A-Za-z0-9]+\/video\/([A-Za-z0-9]+)\/player\/?/gi
 
 /** Block-level markers. A marker is only a marker when followed by a space, so `*emphasis*` is not a bullet. */
 const QUOTE_RE = /^ {0,3}>[ \t]?(.*)$/
@@ -137,6 +158,101 @@ function replaceBareUrls(text: string, placeholders: string[]): string {
 /** Restores the generated tags that were swapped out for placeholders. */
 function restore(s: string, placeholders: string[]): string {
   return s.replace(/\x00T(\d+)\x00/g, (_, i: string) => placeholders[parseInt(i, 10)])
+}
+
+/**
+ * Reports whether the URL at `start` sits inside an existing attribute value
+ * (href=…, src=…), where it must not be claimed again. Raw HTML in a comment
+ * body is the case that matters; this runs before the escape pass, so the
+ * quote is still literal.
+ *
+ * Mirrors `isAttributeURL` in the Go twin.
+ */
+function isAttributeUrl(text: string, start: number): boolean {
+  if (start === 0) return false
+  const prev = text[start - 1]
+  if (prev === '>' || prev === '/') return false
+  let i = start - 1
+  if (prev === '"' || prev === "'") {
+    i--
+  } else {
+    return false
+  }
+  while (i >= 0 && text[i] === ' ') i--
+  if (i < 0 || text[i] !== '=') return false
+  i--
+  while (i >= 0 && text[i] === ' ') i--
+  const head = text.slice(0, i + 1).toLowerCase()
+  return head.endsWith('href') || head.endsWith('src')
+}
+
+/**
+ * The direct address of a comment video's media: the HLS master manifest,
+ * which is the only asset Reddit serves carrying BOTH picture and sound. The
+ * progressive `CMAF_*.mp4` files are video-only, confirmed by parsing the MP4
+ * boxes. This URL answers 200 with no query string.
+ */
+export function commentVideoMediaUrl(mediaId: string): string {
+  return `https://v.redd.it/${mediaId}/HLSPlaylist.m3u8`
+}
+
+/**
+ * Renders a comment video as an inline player.
+ *
+ * Progressive sources first, HLS last: a browser that can play an MP4 picks
+ * the first source it understands, and only a client with HLS support reaches
+ * the manifest — putting the manifest first would leave Chrome and Firefox
+ * with an empty player. CMAF_* and never DASH_*, which is a 403 for every id
+ * tested. The trailing anchor means a reader whose browser plays none of the
+ * sources still has something to click rather than an empty player.
+ *
+ * Every URL is rebuilt from the media id through a fixed template, never
+ * taken from the input, so a crafted URL cannot steer a src at another host.
+ */
+export function commentVideoHtml(mediaId: string): string {
+  const src = `https://v.redd.it/${mediaId}/`
+  return (
+    '<video controls preload="metadata" style="max-width:100%;border-radius:4px">' +
+    `<source src="${src}CMAF_720.mp4" type="video/mp4" />` +
+    `<source src="${src}CMAF_480.mp4" type="video/mp4" />` +
+    `<source src="${src}HLSPlaylist.m3u8" type="application/vnd.apple.mpegurl" />` +
+    `<a href="${src}HLSPlaylist.m3u8" target="_blank" rel="noopener noreferrer">Watch video ↗</a>` +
+    '</video>'
+  )
+}
+
+/**
+ * Replaces app-only comment-video links with an inline player, before the
+ * bare-URL pass would otherwise linkify them into a banned-subreddit page.
+ *
+ * Like `replaceBareUrls` it takes plain string positions, so it can reject a
+ * match that starts mid-word (`xreddit.com/…`) or sits inside an existing
+ * attribute value.
+ */
+function replaceCommentVideos(text: string, placeholders: string[]): string {
+  COMMENT_VIDEO_RE.lastIndex = 0
+  const matches: { start: number; end: number; mediaId: string }[] = []
+  let m: RegExpExecArray | null
+  while ((m = COMMENT_VIDEO_RE.exec(text)) !== null) {
+    matches.push({ start: m.index, end: m.index + m[0].length, mediaId: m[1] })
+  }
+  if (matches.length === 0) return text
+
+  let out = ''
+  let last = 0
+  for (const cand of matches) {
+    const { start, end, mediaId } = cand
+    // A match overlapping one already consumed is a duplicate find.
+    if (start < last || isAttributeUrl(text, start)) continue
+    // `xreddit.com/link/...` is one word, not a URL.
+    if (start > 0 && /[\w.\-@]/.test(text[start - 1])) continue
+    out += text.slice(last, start)
+    placeholders.push(commentVideoHtml(mediaId))
+    out += `\x00T${placeholders.length - 1}\x00`
+    last = end
+  }
+  out += text.slice(last)
+  return out
 }
 
 /**
@@ -391,7 +507,12 @@ function commentInline(work: string): string {
     return `\x00T${placeholders.length - 1}\x00`
   })
 
-  // Step 5: bare image URLs.
+  // Step 5: app-only Reddit comment-video links become an inline player. These
+  // must be claimed before the bare-URL passes below, which would otherwise
+  // turn them into a link to a page Reddit renders as "r/subreddit is banned".
+  work = replaceCommentVideos(work, placeholders)
+
+  // Step 6: bare image URLs.
   work = work.replace(BARE_IMAGE_RE, (m: string) => {
     const safe = safeUrl(m)
     if (!safe) return m
@@ -399,10 +520,10 @@ function commentInline(work: string): string {
     return `\x00T${placeholders.length - 1}\x00`
   })
 
-  // Step 6: remaining bare URLs.
+  // Step 7: remaining bare URLs.
   work = replaceBareUrls(work, placeholders)
 
-  // Step 7: escape once, keep line breaks, restore generated tags.
+  // Step 8: escape once, keep line breaks, restore generated tags.
   const escaped = work
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

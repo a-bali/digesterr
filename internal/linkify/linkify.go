@@ -128,7 +128,7 @@ func textInline(s string) string {
 		return key
 	}
 
-	// Step 3: markdown images.
+	// Step 2: markdown images.
 	s = imgTagRe.ReplaceAllStringFunc(s, func(match string) string {
 		parts := imgTagRe.FindStringSubmatch(match)
 		if len(parts) < 3 {
@@ -141,7 +141,7 @@ func textInline(s string) string {
 		return next(imgTag(src, parts[1]))
 	})
 
-	// Step 4: markdown links. An empty label falls back to the URL itself, so
+	// Step 3: markdown links. An empty label falls back to the URL itself, so
 	// `[](url)` still renders something clickable.
 	s = mdLinkRe.ReplaceAllStringFunc(s, func(match string) string {
 		parts := mdLinkRe.FindStringSubmatch(match)
@@ -158,12 +158,12 @@ func textInline(s string) string {
 		return next(anchorHTML(target, label))
 	})
 
-	// Step 5: app-only Reddit comment-video links become an inline player. These
+	// Step 4: app-only Reddit comment-video links become an inline player. These
 	// must be claimed before the bare-URL pass below, which would otherwise turn
 	// them into a link to a page Reddit renders as "r/subreddit is banned".
 	s = replaceCommentVideos(s, next)
 
-	// Step 5 (see textInline doc): bare image URLs.
+	// Step 5: bare image URLs.
 	s = bareImageURLRe.ReplaceAllStringFunc(s, func(match string) string {
 		if !SafeHref(match) {
 			return match
