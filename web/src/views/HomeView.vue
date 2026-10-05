@@ -232,6 +232,12 @@ onMounted(() => {
     // digest errors cleared but feed errors did not.
     feedStore.fetchFeeds({ silent: true })
     digestStore.silentRefresh()
+    // The item LIST is refreshed too, not just the counts: a new item raised the
+    // sidebar badge while the open middle pane stayed frozen until the feed was
+    // reselected or a filter changed. silentRefresh merges into the loaded list
+    // (in the active sort order), so it injects the arrival without discarding
+    // pages the reader has scrolled to.
+    feedStore.silentRefresh()
   }, 10000)
   // External clients (e.g. NetNewsWire via the Reader API) can change item
   // statuses while this tab is backgrounded. Refresh on focus so the list
@@ -246,10 +252,13 @@ onUnmounted(() => {
 function onVisibilityChange() {
   if (document.visibilityState !== 'visible') return
   if (showingSaved.value) feedStore.fetchSavedItems()
-  // Don't refresh the item list — it causes read items to vanish from a
-  // filtered (Unread) view when the server response no longer includes them.
-  // The 10s poll already keeps sidebar counts fresh; the list itself stays
-  // exactly as the user left it.
+  // Refresh the item list on return, but MERGE rather than replace: a clean
+  // replace would make read items vanish from a filtered (Unread) view whenever
+  // the response no longer includes them, which is why this used to be skipped
+  // entirely. silentRefresh keeps the loaded rows and only adds/updates, so the
+  // list stays exactly as the user left it while still picking up arrivals and
+  // status changes made elsewhere (e.g. NetNewsWire via the Reader API).
+  else feedStore.silentRefresh()
   feedStore.fetchUnreadCounts()
   digestStore.fetchUnreadCounts()
   feedStore.fetchSavedCount()

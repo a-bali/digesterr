@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { feedApi, itemApi, settingsApi } from '../services/api'
 import type { Feed, Item, MultiItem, ItemSort, MarkRelativeOptions } from '../types/api'
 import { toastError, toastSuccess } from '../lib/toast'
+import { parseDate } from '../lib/format'
 import { MARK_SUCCESS_TITLE, MARK_FAILURE_TITLE } from '../lib/markAllRead'
 import { SCORE_FEED_TYPES } from '../lib/feeds'
 
@@ -308,6 +309,130 @@ export const useFeedStore = defineStore('feed', () => {
     }
   }
 
+  // ---- Background item refresh (the 10s poll) ----
+  //
+  // A poll may only MERGE what it fetches into the loaded list, never assign
+  // over it: the reader scrolls, and the list holds several lazily loaded pages.
+  //
+  // The merge must also put an arrived row where the SERVER's sort puts it. A
+  // first-page response is ordered by that sort, and a row the list did not have
+  // is NEW, not "next in scroll order" — the old code appended every unseen row
+  // to the end, which is right for an append-only digest list but drops a
+  // newly-arrived item at the BOTTOM of a newest-first feed.
+  type ListRow = Item | MultiItem
+
+  // compareRows mirrors the server's ORDER BY for the active list sort, so a
+  // poll merge and a fresh page agree on where a row belongs. The server sorts
+  // by COALESCE(published_at, created_at) then created_at then id.
+  //
+  // published_at arrives as the Go `time.Time` JSON shape ({"Time","Valid"}), NOT
+  // a string — `new Date(that)` is NaN and a comparator built on it silently
+  // no-ops (every pair compares equal, so the merge keeps insertion order and a
+  // new row lands LAST). parseDate unwraps that shape (and still accepts a plain
+  // ISO string), so it is the only correct way to read these fields.
+  function rowTime(v: unknown): number {
+    const d = parseDate(v)
+    return d ? d.getTime() : 0
+  }
+
+  function compareRows(a: ListRow, b: ListRow, key: FeedSort): number {
+    if (key === 'score_desc' || key === 'score_asc') {
+      const ap = a.points ?? 0
+      const bp = b.points ?? 0
+      if (ap !== bp) return key === 'score_desc' ? bp - ap : ap - bp
+    }
+    const at = rowTime(a.published_at ?? a.created_at)
+    const bt = rowTime(b.published_at ?? b.created_at)
+    if (at !== bt) return key === 'date_asc' ? at - bt : bt - at
+    // Same instant (or both unparseable): id is the server's final tiebreaker,
+    // and a list row does not carry created_at to fall back on.
+    return key === 'date_asc' ? a.id - b.id : b.id - a.id
+  }
+
+  // Merge a fresh first page into the loaded list, in the active sort order.
+  // Rows the response omits are KEPT: it is page one, and the reader may hold
+  // deeper pages this request knows nothing about. An empty response returns the
+  // list unchanged, so a transient empty poll cannot blank the pane.
+  function mergeRefreshedRows<T extends ListRow>(loaded: T[], fetched: T[]): T[] {
+    if (fetched.length === 0) return loaded
+    const freshById = new Map(fetched.map(f => [f.id, f]))
+    const out = loaded.map(old => {
+      const fresh = freshById.get(old.id)
+      // Spread, so a MultiItem keeps feed_name/feed_type: the item endpoints
+      // return a plain Item, which carries neither.
+      return fresh ? { ...old, ...fresh } : old
+    })
+    const seen = new Set(loaded.map(r => r.id))
+    for (const f of fetched) if (!seen.has(f.id)) out.push(f as T)
+    return out.sort((a, b) => compareRows(a, b, sort.value))
+  }
+
+  // silentRefresh is the 10-second background poll for the item LIST, the
+  // middle pane's counterpart to fetchUnreadCounts. Without it a new item raised
+  // the sidebar badge while the open list stayed frozen until the feed was
+  // reselected or a filter changed.
+  //
+  // It is deliberately narrow: it touches only the ACTIVE view, merges rather
+  // than assigns, and skips whenever a user-initiated load is in flight (that
+  // load replaces the list anyway, and racing it would risk applying page-one
+  // data over one the reader is building).
+  async function silentRefresh() {
+    if (showingSaved.value) return
+    if (activeFeedId.value == null && !isMultiView.value) return
+    if (loading.value || loadingMore.value || backgroundRefreshing.value) return
+    // The Feeds section is scoped by feed ids; with none loaded there is nothing
+    // to ask for (and an empty list would be dropped, making the request
+    // unscoped and rejected). The feed poll loads the list every tick anyway.
+    if (activeSection.value === 'feeds' && feeds.value.length === 0) return
+
+    const rid = ++fetchReq
+    const seqAtFetch = itemWriteSeq
+    try {
+      if (isMultiView.value) {
+        const opts: Parameters<typeof feedApi.multiItems>[0] = {
+          status: filter.value === 'all' ? undefined : filter.value,
+          min_score: minScore.value || undefined,
+          sort: sort.value,
+          limit: PAGE_SIZE,
+          offset: 0,
+        }
+        if (activeCategory.value) opts.category = activeCategory.value
+        else opts.feed_ids = feeds.value.map(f => f.id)
+        const resp = await feedApi.multiItems(opts)
+        // A user load (fetchReq) or a local read/star write (itemWriteSeq) that
+        // landed mid-flight makes this response stale; drop it and let the next
+        // tick have a clean run.
+        if (rid !== fetchReq || itemWriteSeq !== seqAtFetch) return
+        // An empty page injects nothing, so leave the list and its total exactly
+        // as they are: adopting the response's total would claim the scope holds
+        // 0 while the reader still sees rows (and the merge below deliberately
+        // keeps loaded rows rather than emptying the pane).
+        if (resp.items.length === 0) return
+        multiItems.value = mergeRefreshedRows(multiItems.value, resp.items)
+        totalItems.value = resp.total ?? 0
+      } else {
+        const resp = await feedApi.getItems(activeFeedId.value as number, {
+          status: filter.value === 'all' ? undefined : filter.value,
+          min_score: minScore.value || undefined,
+          sort: sort.value,
+          limit: PAGE_SIZE,
+          offset: 0,
+        })
+        if (rid !== fetchReq || itemWriteSeq !== seqAtFetch) return
+        if (resp.items.length === 0) return
+        items.value = mergeRefreshedRows(items.value, resp.items)
+        // totalItems is the header's filter-aware total; adopting it here is what
+        // keeps the middle pane's count in step with the sidebar badge. hasMore
+        // is deliberately NOT taken: a page-one response cannot know whether the
+        // loaded deeper pages end the list, and adopting its value would re-enable
+        // (or stop) infinite scroll on a list the reader already scrolled.
+        totalItems.value = resp.total ?? 0
+      }
+    } catch {
+      // silent: a poll failure must not toast every 10 seconds.
+    }
+  }
+
   async function refreshItems(opts?: { silent?: boolean; replace?: boolean }) {
     if (isMultiView.value) {
       // Multi-view refresh.
@@ -331,28 +456,8 @@ export const useFeedStore = defineStore('feed', () => {
         const resp = await feedApi.multiItems(refreshOpts)
         if (rid !== fetchReq) return
         if (opts?.silent && !opts?.replace) {
-          // Silent refresh: merge to preserve scroll.
-          const localMap = new Map(multiItems.value.map(i => [i.id, i]))
-          const merged: MultiItem[] = []
-          const seenLocal = new Set<number>()
-          for (const fresh of resp.items) {
-            const old = localMap.get(fresh.id)
-            if (old) {
-              seenLocal.add(fresh.id)
-              if (fresh.status !== old.status || fresh.points !== old.points ||
-                  fresh.comments_count !== old.comments_count || fresh.title !== old.title) {
-                merged.push(fresh)
-              } else {
-                merged.push(old)
-              }
-            } else {
-              merged.push(fresh)
-            }
-          }
-          for (const old of multiItems.value) {
-            if (!seenLocal.has(old.id)) merged.push(old)
-          }
-          multiItems.value = merged
+          // Silent refresh: merge to preserve scroll, in the active sort order.
+          multiItems.value = mergeRefreshedRows(multiItems.value, resp.items)
         } else {
           multiItems.value = resp.items
         }
@@ -384,27 +489,7 @@ export const useFeedStore = defineStore('feed', () => {
       if (rid !== fetchReq) return
 
       if (opts?.silent && !opts?.replace) {
-        const localMap = new Map(items.value.map(i => [i.id, i]))
-        const merged: Item[] = []
-        const seenLocal = new Set<number>()
-        for (const fresh of resp.items) {
-          const old = localMap.get(fresh.id)
-          if (old) {
-            seenLocal.add(fresh.id)
-            if (fresh.status !== old.status || fresh.points !== old.points ||
-                fresh.comments_count !== old.comments_count || fresh.title !== old.title) {
-              merged.push(fresh)
-            } else {
-              merged.push(old)
-            }
-          } else {
-            merged.push(fresh)
-          }
-        }
-        for (const old of items.value) {
-          if (!seenLocal.has(old.id)) merged.push(old)
-        }
-        items.value = merged
+        items.value = mergeRefreshedRows(items.value, resp.items)
       } else {
         items.value = resp.items
       }
@@ -501,6 +586,11 @@ export const useFeedStore = defineStore('feed', () => {
   // the source-feed label vanish from the middle pane (see "MultiItem field
   // preservation on status update").
   function applyUpdatedItem(updated: Item) {
+    // Mark a local write before mutating the lists: any select-time fetch or
+    // background poll already in flight was built from the pre-write row, so it
+    // must not overwrite this change. Bumping here (rather than only in
+    // updateItemStatus) covers every writer — deleteExtraction included.
+    itemWriteSeq++
     const idx = items.value.findIndex(i => i.id === updated.id)
     if (idx !== -1) items.value[idx] = updated
     const midx = multiItems.value.findIndex(i => i.id === updated.id)
@@ -536,9 +626,8 @@ export const useFeedStore = defineStore('feed', () => {
       if (status !== undefined) body.status = status
       if (saved !== undefined) body.saved = saved
       const updated = await itemApi.updateStatus(item.id, body)
-      // Mark a local write so any select-time fetch already in flight knows its
-      // response predates this change and must not overwrite it.
-      itemWriteSeq++
+      // applyUpdatedItem bumps the write sequence and writes the row into every
+      // list that holds it.
       applyUpdatedItem(updated)
       // Keep the saved badge in step without a round trip: the transition is
       // already known here. Clamped because the counter is a total maintained
@@ -757,7 +846,7 @@ export const useFeedStore = defineStore('feed', () => {
   return {
     feeds, activeFeedId, activeCategory, activeSection, items, multiItems, selectedItem, savedItems, savedCount, savedTotal, showingSaved, savedSort, filter, minScore, sort, loading, loadingMore, hasMore, totalItems,
     activeFeed, isMultiView, supportsScore, unreadCounts, backgroundRefreshing,
-    fetchFeeds, setActiveFeed, setActiveCategory, setActiveSection, clearActiveView, fetchFirstPage, refreshItems, fetchMoreItems,
+    fetchFeeds, setActiveFeed, setActiveCategory, setActiveSection, clearActiveView, fetchFirstPage, refreshItems, silentRefresh, fetchMoreItems,
     selectItem, updateItemStatus, unsaveItem, deleteExtraction, changeFilter, changeSort, changeMinScore, fetchUnreadCounts, fetchSavedItems, fetchMoreSavedItems, fetchSavedCount, markFeedRead, markAllRead, markReadAbove, markReadBelow,
     emailInbox, ensureEmailConfig, refreshEmailConfig,
   }
