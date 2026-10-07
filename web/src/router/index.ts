@@ -6,6 +6,7 @@ import { getAuthToken, silentRefresh } from '../services/api'
 const HomeView = () => import('../views/HomeView.vue')
 const LoginView = () => import('../views/LoginView.vue')
 const NotFoundView = () => import('../views/NotFoundView.vue')
+const ItemSummaryView = () => import('../views/ItemSummaryView.vue')
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -19,6 +20,7 @@ export const router = createRouter({
     // the section view had nowhere to navigate and the URL could not name the
     // item at all -- the pane updated while the route stayed at /feeds.
     { path: '/feeds/item/:itemId(\\d+)', component: HomeView, meta: { requiresAuth: true } },
+    { path: '/items/:itemId(\\d+)/summary', component: ItemSummaryView, meta: { requiresAuth: true } },
     { path: '/feeds/category/:category', component: HomeView, meta: { requiresAuth: true } },
     { path: '/feeds/category/:category/:itemId(\\d+)', component: HomeView, meta: { requiresAuth: true } },
     { path: '/digests', component: HomeView, meta: { requiresAuth: true } },

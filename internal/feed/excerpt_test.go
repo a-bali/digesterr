@@ -248,3 +248,17 @@ func TestExcerptForPreviewSourceSelection(t *testing.T) {
 		})
 	}
 }
+
+func TestExcerptTextLenCountsVisibleTextWithoutPreviewBudget(t *testing.T) {
+	body := `<p>` + strings.Repeat("word ", 200) + `</p><script>` + strings.Repeat("x", 500) + `</script>`
+	if got := ExcerptTextLen(body); got != 800 {
+		t.Fatalf("ExcerptTextLen() = %d, want 800", got)
+	}
+}
+
+func TestExcerptTextLenIgnoresAttributesAndHiddenNodes(t *testing.T) {
+	body := `<a href="https://example.com/` + strings.Repeat("x", 2000) + `">hi</a><div style="display:none">hidden</div>`
+	if got := ExcerptTextLen(body); got != 2 {
+		t.Fatalf("ExcerptTextLen() = %d, want 2", got)
+	}
+}

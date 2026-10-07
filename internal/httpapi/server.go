@@ -40,6 +40,9 @@ type Server struct {
 	// topComments is the experimental per-item comment fetch limit.
 	// Zero disables on-demand comment fetching.
 	topComments int
+	// summaryLinkMin is the visible-text threshold for the Reader API's
+	// summarize link. Zero disables it.
+	summaryLinkMin int
 	// commentCache caches fetched comments in memory with a configurable TTL.
 	commentCache *commentCache
 	// commentFetchSem bounds parallel per-item comment fetches when serving a
@@ -106,6 +109,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 		publicBaseURL:     strings.TrimRight(cfg.Server.PublicBaseURL, "/"),
 		cookieSecure:      cfg.Server.CookieSecure,
 		topComments:       cfg.Feed.TopComments,
+		summaryLinkMin:    cfg.Feed.SummaryLinkMinChars,
 		commentCache:      newCommentCache(cfg.Feed.CommentCacheTTL.Duration()),
 		commentFetchSem:   make(chan struct{}, commentFetchConcurrency(cfg)),
 		schedulerTimezone: cfg.Digest.SchedulerTimezone,

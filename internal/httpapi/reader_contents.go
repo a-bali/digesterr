@@ -294,6 +294,12 @@ func (s *Server) itemContentObject(r *http.Request, item store.Item) readerConte
 		body = meta + body
 	}
 
+	// Put the Reader-only summarize link at the very top of the served body.
+	// It is never stored, so the web UI's original item content is unchanged.
+	if link := s.summaryLinkHTML(r, item); link != "" {
+		body = link + body
+	}
+
 	// Append top comments when experimental comment fetching is enabled.
 	if topComments, _ := s.fetchTopComments(r, item, s.topComments, false); len(topComments) > 0 {
 		body += "\n" + topCommentsHTML(topComments, feedType)

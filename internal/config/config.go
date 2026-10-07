@@ -191,6 +191,9 @@ type FeedConfig struct {
 	// 98-item request take 40-400s and blow past reader clients' 60s timeout.
 	// Zero means 8 (default).
 	CommentFetchConcurrency int `yaml:"comment_fetch_concurrency"`
+	// SummaryLinkMinChars is the minimum visible-text length for feed items to
+	// carry the Reader API's summarize link. Zero disables the link.
+	SummaryLinkMinChars int `yaml:"summary_link_min_chars"`
 	// PollTimeout bounds one feed's whole poll (fetch + enrich + extract).
 	// Zero means 5 minutes (default).
 	PollTimeout Duration `yaml:"poll_timeout"`
@@ -261,6 +264,7 @@ func Default() Config {
 			ExtractConcurrency:      4,
 			PollConcurrency:         4,
 			CommentFetchConcurrency: 8,
+			SummaryLinkMinChars:     600,
 			PollTimeout:             Duration(5 * time.Minute),
 		},
 		Reddit:  RedditConfig{},
@@ -421,6 +425,7 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 	setInt(&cfg.Feed.ExtractConcurrency, "FEED_EXTRACT_CONCURRENCY", "")
 	setInt(&cfg.Feed.PollConcurrency, "FEED_POLL_CONCURRENCY", "")
 	setInt(&cfg.Feed.CommentFetchConcurrency, "FEED_COMMENT_FETCH_CONCURRENCY", "")
+	setInt(&cfg.Feed.SummaryLinkMinChars, "FEED_SUMMARY_LINK_MIN_CHARS", "")
 	setDuration(&cfg.Feed.PollTimeout, "FEED_POLL_TIMEOUT")
 
 	setString(&cfg.Reddit.ClientID, "REDDIT_CLIENT_ID", "")

@@ -66,6 +66,7 @@ type excerptWalk struct {
 	parts   []string
 	visible int
 	done    bool
+	budget  int // 0 means unbounded; otherwise stop after this many visible characters.
 }
 
 func (w *excerptWalk) walk(n *html.Node) {
@@ -119,13 +120,22 @@ func (w *excerptWalk) text(s string) {
 	if s == "" {
 		return
 	}
+	if w.budget <= 0 {
+		w.parts = append(w.parts, s)
+		for _, r := range s {
+			if !isExcerptSpace(r) {
+				w.visible++
+			}
+		}
+		return
+	}
 	take := len(s)
 	counted := 0
 	for i, r := range s {
 		if !isExcerptSpace(r) {
 			counted++
 		}
-		if w.visible+counted >= ExcerptTextBudget {
+		if w.visible+counted >= w.budget {
 			_, size := utf8.DecodeRuneInString(s[i:])
 			take = i + size
 			break
@@ -133,7 +143,7 @@ func (w *excerptWalk) text(s string) {
 	}
 	w.parts = append(w.parts, s[:take])
 	w.visible += counted
-	if w.visible >= ExcerptTextBudget {
+	if w.visible >= w.budget {
 		w.done = true
 	}
 }
@@ -157,7 +167,7 @@ func excerptText(body string) string {
 	if err != nil {
 		return ""
 	}
-	w := &excerptWalk{}
+	w := &excerptWalk{budget: ExcerptTextBudget}
 	w.walk(root)
 	return strings.Join(strings.Fields(strings.Join(w.parts, "")), " ")
 }
@@ -176,4 +186,25 @@ func ExcerptForPreview(body, extractBody, extractStatus string) string {
 		}
 	}
 	return excerptText(body)
+}
+
+// ExcerptTextLen returns the number of visible non-whitespace characters in a
+// stored item body. It uses the same HTML-aware walker as ExcerptForPreview,
+// but does not stop at the preview's 200-character budget.
+func ExcerptTextLen(body string) int {
+	if body == "" {
+		return 0
+	}
+	// Bound pathological inputs while allowing enough room to measure article
+	// bodies well beyond the preview limit.
+	if len(body) > ExcerptMaxBody*16 {
+		body = body[:ExcerptMaxBody*16]
+	}
+	root, err := html.Parse(strings.NewReader(body))
+	if err != nil {
+		return 0
+	}
+	w := &excerptWalk{}
+	w.walk(root)
+	return w.visible
 }
