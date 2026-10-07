@@ -9,6 +9,7 @@ import Separator from './ui/Separator.vue'
 import Skeleton from './ui/Skeleton.vue'
 import { ExternalLink, Clock, MessageCircle, Trash2, Check, ArrowUp, BookOpen, LoaderCircle } from 'lucide-vue-next'
 import { absoluteTime, feedIcon } from '../lib/format'
+import HtmlContent from './HtmlContent.vue'
 import { renderCommentHtml } from '../lib/linkify'
 
 const store = useDigestStore()
@@ -158,7 +159,7 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
       <!-- Summary -->
       <div v-if="digestContent?.summary" class="mb-6 p-4 rounded-lg border bg-muted/30 min-w-0" :class="wrapClass">
         <h3 class="text-sm font-semibold mb-2">Summary</h3>
-        <p class="text-sm leading-relaxed text-foreground/85" v-html="renderCommentHtml(digestContent.summary)" v-external-links />
+        <HtmlContent class="text-sm leading-relaxed text-foreground/85" :html="renderCommentHtml(digestContent.summary)" />
       </div>
 
       <!-- Sections: category sections wrap feed subsections; feed sections
@@ -207,8 +208,8 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
                     <MessageCircle class="size-3" /> {{ item.comments_count }}
                   </a>
                 </div>
-                <p v-if="item.llm_summary" class="text-sm leading-relaxed mb-3"
-                  v-html="renderCommentHtml(item.llm_summary)" v-external-links />
+                <HtmlContent v-if="item.llm_summary" class="text-sm leading-relaxed mb-3"
+                  :html="renderCommentHtml(item.llm_summary)" />
                 <div v-if="item.top_comments?.length" class="mb-3 border-t pt-2">
                   <p class="text-xs font-medium text-muted-foreground mb-1">Top comments</p>
                   <div v-for="c in item.top_comments" :key="c.url || c.text.substring(0, 20)"
@@ -221,8 +222,8 @@ function feedSectionsOf(block: DigestSection): DigestSection[] {
                     <!-- The comment body is rendered, not wrapped in the permalink
                          anchor: nesting the author's own links inside it would be
                          invalid and would make them unclickable. -->
-                    <span class="text-foreground/80 whitespace-pre-wrap break-words"
-                      v-html="renderCommentHtml(c.text)" v-external-links />
+                    <HtmlContent class="text-foreground/80 whitespace-pre-wrap break-words"
+                      :html="renderCommentHtml(c.text)" />
                   </div>
                 </div>
               </div>

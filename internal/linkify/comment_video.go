@@ -66,26 +66,18 @@ func CommentVideoMediaURL(mediaID string) string {
 	return "https://v.redd.it/" + mediaID + "/HLSPlaylist.m3u8"
 }
 
-// CommentVideoHTML renders a comment video as an inline player.
-//
-// Progressive sources first, HLS last: a browser that can play an MP4 picks the
-// first source it understands, and only a client with HLS support reaches the
-// manifest. CMAF_* and never DASH_* — Reddit no longer serves the DASH_*.mp4
-// form (403 for every id tested, including ones Reddit's own API still
-// advertises), so a DASH source would silently drop the video for every browser
-// that skips it.
-//
-// The trailing anchor means a reader whose browser plays none of the sources —
-// including any browser without HLS, where the manifest is unreachable — still
-// has something to click rather than an empty player.
+// CommentVideoHTML uses HLS first for native readers, followed by progressive
+// fallbacks. Keep the watch link outside video so supported players show it.
 func CommentVideoHTML(mediaID string) string {
+	if !redditMediaIDRe.MatchString(mediaID) {
+		return ""
+	}
 	src := "https://v.redd.it/" + mediaID + "/"
 	return `<video controls preload="metadata" style="max-width:100%;border-radius:4px">` +
+		`<source src="` + src + `HLSPlaylist.m3u8" type="application/vnd.apple.mpegurl" />` +
 		`<source src="` + src + `CMAF_720.mp4" type="video/mp4" />` +
 		`<source src="` + src + `CMAF_480.mp4" type="video/mp4" />` +
-		`<source src="` + src + `HLSPlaylist.m3u8" type="application/vnd.apple.mpegurl" />` +
-		`<a href="` + src + `HLSPlaylist.m3u8" target="_blank" rel="noopener noreferrer">Watch video ↗</a>` +
-		`</video>`
+		`</video><a href="` + src + `HLSPlaylist.m3u8" target="_blank" rel="noopener noreferrer">Watch video ↗</a>`
 }
 
 // replaceCommentVideos swaps every app-only comment-video URL in s for an inline

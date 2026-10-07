@@ -37,10 +37,13 @@ func TestTextRendersCommentVideoInline(t *testing.T) {
 	if strings.Contains(got, `href="https://reddit.com/link/`) {
 		t.Errorf("still links the app-only URL, which is the reported bug:\n%s", got)
 	}
-	// CMAF first, HLS last: a browser takes the first source it understands, so
-	// putting the manifest first leaves Chrome/Firefox with an empty player.
-	if strings.Index(got, "CMAF_720.mp4") > strings.Index(got, "HLSPlaylist.m3u8") {
-		t.Errorf("HLS source must come after the progressive sources:\n%s", got)
+	// Native HLS readers must try the audio master before silent MP4.
+	// Engines without HLS skip the unsupported type and keep MP4 fallback.
+	if strings.Index(got, "HLSPlaylist.m3u8") > strings.Index(got, "CMAF_720.mp4") {
+		t.Errorf("HLS source must precede progressive sources:\n%s", got)
+	}
+	if !strings.Contains(got, `</video><a href=`) {
+		t.Error("watch link must be outside video")
 	}
 	// DASH_*.mp4 is 403 for every id tested; a DASH source silently drops video.
 	if strings.Contains(got, "DASH") {

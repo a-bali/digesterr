@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"digesterr/internal/linkify"
 	"golang.org/x/time/rate"
 )
 
@@ -35,7 +36,8 @@ func isRedditImageURL(url string) bool {
 
 // isRedditVideoURL reports whether the URL points to a Reddit-hosted video.
 func isRedditVideoURL(url string) bool {
-	return strings.Contains(strings.ToLower(url), "v.redd.it/")
+	_, ok := linkify.RedditVideoMediaID(url)
+	return ok
 }
 
 // RedditFetcher fetches subreddit posts via Reddit's OAuth JSON API.
@@ -407,17 +409,25 @@ func renderGalleryContent(p redditPostData) string {
 // (a crosspost is one level) but a nesting guard keeps a malformed payload from
 // recursing.
 func redditVideoFallback(p redditPostData) string {
+	if video := redditVideoMetadata(p); video != nil {
+		return video.FallbackURL
+	}
+	return ""
+}
+
+// Resolve URL and GIF flag from the same payload, including crossposts.
+func redditVideoMetadata(p redditPostData) *redditVideo {
 	const maxDepth = 3
 	for depth := 0; depth < maxDepth; depth++ {
 		if p.Media.RedditVideo != nil && p.Media.RedditVideo.FallbackURL != "" {
-			return p.Media.RedditVideo.FallbackURL
+			return p.Media.RedditVideo
 		}
 		if len(p.CrosspostParentList) == 0 {
-			return ""
+			return nil
 		}
 		p = p.CrosspostParentList[0]
 	}
-	return ""
+	return nil
 }
 
 // renderPostMedia renders a post's inline media: gallery, video, or image.
@@ -432,12 +442,19 @@ func renderPostMedia(p redditPostData, mediaURL string) string {
 		}
 	}
 	if isRedditVideoURL(mediaURL) {
-		// mediaURL/videoURL derive from the post payload (untrusted): escape
-		// and scheme-check before interpolating into attributes. Both are
-		// absolute https media URLs, so the absolute-URL variant applies.
-		videoSafe, mediaSafe := safeRedditURL(redditVideoFallback(p)), safeRedditURL(mediaURL)
-		if videoSafe != "" && mediaSafe != "" {
-			return `<p><video src="` + redditAttrEscape(videoSafe) + `" controls style="max-width:100%;border-radius:4px"><a href="` + redditAttrEscape(mediaSafe) + `" target="_blank" rel="noopener noreferrer">Watch video ↗</a></video></p>`
+		fallback := redditVideoFallback(p)
+		fallbackURL, err := urlpkg.Parse(fallback)
+		if err != nil {
+			return ""
+		}
+		if id, ok := linkify.RedditVideoMediaID(fallback); ok && strings.HasSuffix(fallbackURL.Path, ".mp4") {
+			if video := redditVideoMetadata(p); video != nil && video.IsGif {
+				return `<p><video data-reddit-gif src="` + redditAttrEscape(fallback) + `" controls style="max-width:100%;border-radius:4px"></video><a href="` + redditAttrEscape(fallback) + `" target="_blank" rel="noopener noreferrer">Watch video ↗</a></p>`
+			}
+			player := linkify.CommentVideoHTML(id)
+			// Retain the API's known progressive rendition after the audio master.
+			player = strings.Replace(player, `</video>`, `<source src="`+redditAttrEscape(fallback)+`" type="video/mp4" /></video>`, 1)
+			return `<p>` + player + `</p>`
 		}
 		return ""
 	}

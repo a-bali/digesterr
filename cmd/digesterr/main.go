@@ -251,11 +251,11 @@ func spaHandler(api http.Handler, fs http.FileSystem) http.Handler {
 		// a https CDN, and without an explicit media-src the directive falls
 		// back to default-src 'self' — the video then never loads and the
 		// element sits empty at readyState 0 with no visible error. The
-		// connect-src 'self' keeps fetch/XHR on-origin.
+		// HLS uses CDN fetch/XHR and an MSE blob URL; workers remain disabled.
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
-				"img-src 'self' https: data:; media-src 'self' https:; font-src 'self' data:; "+
-				"connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'")
+				"img-src 'self' https: data:; media-src 'self' https: blob:; font-src 'self' data:; "+
+				"connect-src 'self' https://v.redd.it; frame-src 'none'; object-src 'none'; base-uri 'self'")
 		if len(r.URL.Path) >= 4 && r.URL.Path[:4] == "/api" {
 			api.ServeHTTP(w, r)
 			return

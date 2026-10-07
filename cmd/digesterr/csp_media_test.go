@@ -36,6 +36,12 @@ func TestSPAHandlerCSPAllowsRemoteMedia(t *testing.T) {
 	if !hasDirective(csp, "media-src", "https:") {
 		t.Errorf("CSP does not allow remote media: %q", csp)
 	}
+	if !hasDirective(csp, "media-src", "blob:") || !hasDirective(csp, "connect-src", "https://v.redd.it") {
+		t.Errorf("HLS MSE resources blocked: %q", csp)
+	}
+	if hasDirective(csp, "connect-src", "https:") || hasDirective(csp, "script-src", "blob:") {
+		t.Errorf("unnecessarily broad HLS policy: %q", csp)
+	}
 	// Control: the directives that make the policy worth having must survive.
 	if !hasDirective(csp, "script-src", "'self'") {
 		t.Errorf("script-src 'self' missing from CSP: %q", csp)

@@ -9,6 +9,7 @@ import Skeleton from './ui/Skeleton.vue'
 import { BookOpen, MessageSquare, Download, LoaderCircle, RefreshCw, ChevronDown, ChevronsDown, Sparkles, X, AlignLeft, AlignJustify, Rows3 } from 'lucide-vue-next'
 import { absoluteTime, relativeTimeAgo } from '../lib/format'
 import { decodeHTMLEntities } from '../lib/utils'
+import HtmlContent from './HtmlContent.vue'
 import { renderCommentHtml } from '../lib/linkify'
 import { setItemCommentsScroller, clearItemCommentsScroller } from '../lib/itemComments'
 import type { ItemComment, ItemSummaryResponse } from '../types/api'
@@ -923,7 +924,7 @@ onUnmounted(() => {
         <p class="text-xs font-medium text-warning-foreground dark:text-warning mb-1">Content processing failed after {{ feedStore.selectedItem.extract_retries }} attempt{{ feedStore.selectedItem.extract_retries === 1 ? '' : 's' }}</p>
         <pre class="text-xs text-warning-foreground/80 dark:text-warning/90 whitespace-pre-wrap">{{ feedStore.selectedItem.extract_content }}</pre>
       </div>
-      <div v-else :class="proseClass" v-html="shownBody" v-external-links />
+      <HtmlContent v-else :class="proseClass" :html="shownBody" />
 
       <!-- Top Comments (experimental) -->
       <div ref="commentsRef" data-comments-section>
@@ -961,7 +962,7 @@ onUnmounted(() => {
                   <span v-else class="font-medium">{{ c.author }}</span>
                   <span v-if="c.valid_points && c.points > 0" class="text-xs text-muted-foreground">{{ c.points }} pts</span>
                 </div>
-                <p class="text-muted-foreground text-xs leading-relaxed" v-html="renderCommentHtml(c.text)" v-external-links />
+                <HtmlContent class="text-muted-foreground text-xs leading-relaxed" :html="renderCommentHtml(c.text)" />
               </li>
             </ul>
           </div>

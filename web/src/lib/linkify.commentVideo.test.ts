@@ -34,9 +34,10 @@ describe('renderCommentHtml — comment video', () => {
     expect(got).not.toContain('href="https://reddit.com/link/')
   })
 
-  it('puts the progressive sources before HLS so non-HLS browsers play it', () => {
+  it('puts HLS first for audio-capable native readers and retains MP4 fallback', () => {
     const got = renderCommentHtml(URL)
-    expect(got.indexOf('CMAF_720.mp4')).toBeLessThan(got.indexOf('HLSPlaylist.m3u8'))
+    expect(got.indexOf('HLSPlaylist.m3u8')).toBeLessThan(got.indexOf('CMAF_720.mp4'))
+    expect(got).toContain('</video><a href=')
   })
 
   it('never points a source at DASH, which is a 403 on this CDN', () => {
@@ -103,6 +104,9 @@ describe('renderCommentHtml — comment video', () => {
 })
 
 describe('commentVideo helpers', () => {
+  it('rejects malformed IDs before interpolating HTML attributes', () => {
+    for (const id of ['', '../other', 'id" onerror="alert(1)', 'id/extra']) expect(commentVideoHtml(id)).toBe('')
+  })
   it('builds every URL from a fixed template, never from the input', () => {
     const html = commentVideoHtml('abc123XYZ')
     expect(html).toContain('<video controls')

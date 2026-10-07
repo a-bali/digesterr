@@ -196,28 +196,17 @@ export function commentVideoMediaUrl(mediaId: string): string {
   return `https://v.redd.it/${mediaId}/HLSPlaylist.m3u8`
 }
 
-/**
- * Renders a comment video as an inline player.
- *
- * Progressive sources first, HLS last: a browser that can play an MP4 picks
- * the first source it understands, and only a client with HLS support reaches
- * the manifest — putting the manifest first would leave Chrome and Firefox
- * with an empty player. CMAF_* and never DASH_*, which is a 403 for every id
- * tested. The trailing anchor means a reader whose browser plays none of the
- * sources still has something to click rather than an empty player.
- *
- * Every URL is rebuilt from the media id through a fixed template, never
- * taken from the input, so a crafted URL cannot steer a src at another host.
- */
+/** HLS first for native readers; progressive fallbacks for other engines. */
 export function commentVideoHtml(mediaId: string): string {
+  if (!/^[A-Za-z0-9]+$/.test(mediaId)) return ''
   const src = `https://v.redd.it/${mediaId}/`
   return (
     '<video controls preload="metadata" style="max-width:100%;border-radius:4px">' +
+    `<source src="${src}HLSPlaylist.m3u8" type="application/vnd.apple.mpegurl" />` +
     `<source src="${src}CMAF_720.mp4" type="video/mp4" />` +
     `<source src="${src}CMAF_480.mp4" type="video/mp4" />` +
-    `<source src="${src}HLSPlaylist.m3u8" type="application/vnd.apple.mpegurl" />` +
-    `<a href="${src}HLSPlaylist.m3u8" target="_blank" rel="noopener noreferrer">Watch video ↗</a>` +
-    '</video>'
+    '</video>' +
+    `<a href="${src}HLSPlaylist.m3u8" target="_blank" rel="noopener noreferrer">Watch video ↗</a>`
   )
 }
 
