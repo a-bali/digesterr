@@ -669,6 +669,59 @@ func safeRedditURL(raw string) string {
 	return ""
 }
 
+// redditEscapablePunctChars are the ASCII punctuation characters CommonMark
+// lets a backslash escape.
+const redditEscapablePunctChars = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+
+// redditEscapablePunct reports whether c is a character a backslash escapes.
+func redditEscapablePunct(c byte) bool {
+	return strings.IndexByte(redditEscapablePunctChars, c) >= 0
+}
+
+// redditEscapedMarkChars are the escaped characters that must be hidden from
+// the later inline passes, because those passes would otherwise read the
+// resolved character as the syntax it was escaped to avoid: `\*x\*` must not
+// become emphasis, `\[x](u)` must not become a link. Everything else escapable
+// is emitted as the plain character, which matters for URLs — Reddit slugs carry
+// escaped underscores (`oc\_aki`), and hiding those in a placeholder makes the
+// destination unparseable and drops the link.
+const redditEscapedMarkChars = "`*~![]()"
+
+// redditEscapedMark reports whether resolving an escaped c needs it stashed in a
+// placeholder rather than emitted as plain text.
+func redditEscapedMark(c byte) bool {
+	return strings.IndexByte(redditEscapedMarkChars, c) >= 0
+}
+
+// redditUnescapeBackslashes resolves CommonMark backslash escapes in one block of
+// Reddit text.
+//
+// Reddit stores selftext with the escapes verbatim, so an author writing
+// `warm\_compaction` (to keep the underscore literal) sends the backslash too.
+// Without this pass the reader shows `warm\_compaction`. Rules: a backslash
+// before ASCII punctuation yields that character alone; a backslash before
+// anything else is a literal backslash (`\a` stays `\a`).
+//
+// emit receives the escaped character and returns its replacement. The inline
+// pass uses it to stash the characters the mark passes would misread (see
+// redditEscapedMark) while emitting the rest verbatim.
+func redditUnescapeBackslashes(text string, emit func(byte) string) string {
+	if !strings.Contains(text, `\`) {
+		return text
+	}
+	var b strings.Builder
+	b.Grow(len(text))
+	for i := 0; i < len(text); i++ {
+		if text[i] == '\\' && i+1 < len(text) && redditEscapablePunct(text[i+1]) {
+			b.WriteString(emit(text[i+1]))
+			i++
+			continue
+		}
+		b.WriteByte(text[i])
+	}
+	return b.String()
+}
+
 // renderRedditInline renders the INLINE marks inside one block of Reddit text:
 // code spans, images, links, bare URLs, emphasis and strikethrough. Block
 // structure (headings, lists, quotes, fences, tables, rules) is handled by
@@ -688,7 +741,16 @@ func renderRedditInline(text string) string {
 
 	s := text
 
-	// Code spans run FIRST, so nothing inside backticks is read as markdown:
+	// An escaped backtick is a LITERAL backtick, not a code-span delimiter.
+	// Stash it before the code-span pass so it cannot open or close a span;
+	// resolving it here (rather than in the general escape pass below) is what
+	// keeps `\`code\`` from pairing into a span it was escaped to avoid.
+	s = strings.ReplaceAll(s, "\\`", ph(redditTextEscape("`")))
+
+	// Code spans run before the general escape pass, so their content is
+	// verbatim: CommonMark does not apply backslash escapes inside a code span,
+	// and a technical post's `` `C:\Users` `` or `` `\d+` `` must keep the
+	// backslash. Nothing else inside backticks is read as markdown either:
 	// `**x**` is a code sample, not bold, and `<b>` in a sample is escaped
 	// rather than dropped. A span ends at the next backtick — deliberately the
 	// original single-backtick rule, not CommonMark's double-backtick escaping.
@@ -702,6 +764,26 @@ func renderRedditInline(text string) string {
 	// stored body, which reads to the user as garbage.
 	s = strings.ReplaceAll(s, "```", "")
 	s = strings.ReplaceAll(s, "~~~", "")
+
+	// CommonMark backslash escapes, resolved before every remaining mark that
+	// can read a punctuation character as syntax. Reddit stores the escape
+	// verbatim in selftext, so an author writing `warm\_compaction` (to keep the
+	// underscore literal) sends the backslash too, and without this pass the
+	// reader shows the literal `\_` — the reported r/hermesagent bug. Resolving
+	// before the emphasis/link passes is also what makes escaping SUPPRESS the
+	// mark it escapes: `\*text\*` must not reach the emphasis pass as `*text*`.
+	//
+	// The characters those passes would misread are stashed in placeholders
+	// (redditEscapedMark); the rest — underscores, dashes, dots — are emitted as
+	// plain text, which URLs need: Reddit slugs carry escapes like `oc\_aki`,
+	// and stashing those would make the destination unparseable and drop the
+	// link.
+	s = redditUnescapeBackslashes(s, func(c byte) string {
+		if redditEscapedMark(c) {
+			return ph(redditTextEscape(string(c)))
+		}
+		return string(c)
+	})
 
 	// Markdown images: ![alt](url)
 	reImg := regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
