@@ -2,6 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Drop the Referer for cross-origin media. video.twimg.com answers 403 to
+         any request whose Referer is not an X/Twitter host, and this page's own
+         origin is exactly such a Referer, so twitter video players showed a
+         poster that never played. A per-element referrerpolicy attribute does
+         not apply to media loads (the policy comes from the document), so the
+         document-level tag is what makes the player request carry no Referer. -->
+    <meta name="referrer" content="no-referrer" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Digesterr</title>

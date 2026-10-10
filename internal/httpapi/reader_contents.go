@@ -305,7 +305,7 @@ func (s *Server) itemContentObject(r *http.Request, item store.Item) readerConte
 		body += "\n" + topCommentsHTML(topComments, feedType)
 	}
 
-	body = linkify.UpgradeRedditVideos(body)
+	body = linkify.UpgradeMediaPlayers(body)
 	ts := itemTimestamp(item)
 
 	return readerContentStreamItem{
@@ -365,7 +365,7 @@ func (s *Server) digestContentObject(r *http.Request, userID int64, dr store.Dig
 
 	// NetNewsWire reads only `summary` as the article body, so render the full
 	// digest once and put it in both fields (matching the item content path).
-	rendered := linkify.UpgradeRedditVideos(renderDigestHTML(dr.Content, s.webBaseURL(r)))
+	rendered := linkify.UpgradeMediaPlayers(renderDigestHTML(dr.Content, s.webBaseURL(r)))
 
 	// Prefer the generated digest title; fall back to "Digest: <config name>"
 	// for older results that predate titles.
