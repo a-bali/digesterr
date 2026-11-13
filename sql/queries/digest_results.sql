@@ -183,9 +183,23 @@ WHERE dc.user_id = ?
 GROUP BY dc.id;
 
 -- name: ListUnreadDigestItemsByFeed :many
+-- Backlog window for one feed's digest selection.
+--
+-- The digest must not simply take the N highest-scoring unread items: HN
+-- ingests more items per day than a feed's share of max_items, and points
+-- correlate with recency, so a points-only cutoff re-selects the newest items
+-- every run and permanently starves the older, lower-scoring tail (observed in
+-- production: 107 items stuck unread across 18 days, 57 of them never
+-- reachable). The caller fetches a window larger than it needs and ranks in Go
+-- with an age-aware priority (see digest.selectionPriority).
+--
+-- Ordering here only decides which rows survive the LIMIT. Newest-first is the
+-- conservative choice for a truncated window: if a feed's backlog ever exceeds
+-- it, the rows dropped are the oldest ones this ranking would deprioritise
+-- anyway, and age weighting gives them a bounded wait rather than none.
 SELECT * FROM items
 WHERE feed_id = ? AND status = 'unread'
-ORDER BY points DESC
+ORDER BY created_at DESC, id DESC
 LIMIT ?;
 
 -- name: ListAllDigestResultsByUser :many

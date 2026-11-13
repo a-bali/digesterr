@@ -285,21 +285,10 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig, llmOve
 	if maxItems <= 0 {
 		maxItems = 100
 	}
-	perFeed := maxItems / len(feedLimits)
-	if perFeed < 1 {
-		perFeed = 1
-	}
 
-	var allItems []store.Item
-	for feedID := range feedLimits {
-		feedItems, err := g.queries.ListUnreadDigestItemsByFeed(ctx, store.ListUnreadDigestItemsByFeedParams{
-			FeedID: feedID,
-			Limit:  int64(perFeed),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("listing unread items for feed %d: %w", feedID, err)
-		}
-		allItems = append(allItems, feedItems...)
+	allItems, err := g.selectFeedItems(ctx, feedLimits, maxItems, time.Now(), genLogger)
+	if err != nil {
+		return nil, err
 	}
 
 	filtered := make([]digestItem, 0, len(allItems))
@@ -398,6 +387,164 @@ func (g *Generator) Generate(ctx context.Context, cfg store.DigestConfig, llmOve
 type feedLimit struct {
 	Highlights int
 	Comments   int
+}
+
+// backlogWindowFactor sizes the per-feed fetch window relative to the number of
+// items that feed may actually contribute. Selection is age-weighted, so the
+// rows that win are not necessarily the newest: a window of exactly the feed's
+// budget would starve the same tail the ranking is meant to rescue. Fetching a
+// multiple of the budget gives the ranking a real choice while keeping memory
+// bounded on a feed with a very large backlog.
+const backlogWindowFactor = 20
+
+// ageHalfLife is how long an un-digested item waits before its age weight
+// reaches 2x. Chosen so a few days of backlog meaningfully outranks a fresh
+// high-scoring item, without making a week-old item dominate a genuinely
+// important one on its first day.
+const ageHalfLife = 72 * time.Hour
+
+// maxAgeWeight caps the age bonus so a long-neglected item cannot drown out a
+// feed's genuinely important items indefinitely. At the cap a stale item
+// competes on roughly equal footing with a fresh one of 20x its score.
+const maxAgeWeight = 20.0
+
+// ageWeight returns the multiplier applied to an item's score for digest
+// selection. It is 1.0 for an item created at `now` and grows linearly with the
+// number of half-lives it has waited, up to maxAgeWeight.
+//
+// This is the fix for the starvation bug: ordering by points alone re-selects
+// the newest items on every run (HN points correlate with recency), so older
+// low-scoring items were never chosen and accumulated as unread forever. The
+// weight gives every item a bounded wait instead of an unbounded one.
+func ageWeight(createdAt, now time.Time) float64 {
+	if createdAt.IsZero() || !now.After(createdAt) {
+		return 1
+	}
+	w := 1 + float64(now.Sub(createdAt))/float64(ageHalfLife)
+	if w > maxAgeWeight {
+		return maxAgeWeight
+	}
+	return w
+}
+
+// selectionPriority ranks a candidate item. Score carries the "is this worth
+// reading" signal; the age weight guarantees the backlog drains.
+func selectionPriority(item store.Item, now time.Time) float64 {
+	// +1 so a zero-score (RSS) item is not collapsed to zero priority: those
+	// feeds carry no score data and must still be selectable.
+	return float64(item.Points+1) * ageWeight(item.CreatedAt, now)
+}
+
+// selectFeedItems picks at most maxItems unread items across the configured
+// feeds, in two passes:
+//
+//  1. Fair share. Each feed gets maxItems/len(feeds) slots so one busy feed
+//     cannot consume the whole digest and starve the others (the original
+//     intent of the per-feed split).
+//  2. Redistribution. Slots a feed could not fill (its backlog is smaller than
+//     its share) are handed to feeds that still have candidates, highest
+//     priority first. Without this, an idle feed's share was simply wasted:
+//     in production 291 of 1000 slots across ten runs went unused while HN's
+//     backlog waited behind a cap that was never raised.
+//
+// Within a feed, candidates are ranked by selectionPriority (score adjusted by
+// age), so hot items still lead but a neglected tail cannot be starved.
+func (g *Generator) selectFeedItems(
+	ctx context.Context,
+	feedLimits map[int64]feedLimit,
+	maxItems int,
+	now time.Time,
+	logger *slog.Logger,
+) ([]store.Item, error) {
+	if len(feedLimits) == 0 {
+		return nil, nil
+	}
+
+	perFeed := maxItems / len(feedLimits)
+	if perFeed < 1 {
+		perFeed = 1
+	}
+	window := perFeed * backlogWindowFactor
+	if window < perFeed {
+		window = perFeed
+	}
+
+	// Fetch and rank each feed's backlog independently.
+	ranked := make(map[int64][]store.Item, len(feedLimits))
+	for feedID := range feedLimits {
+		feedItems, err := g.queries.ListUnreadDigestItemsByFeed(ctx, store.ListUnreadDigestItemsByFeedParams{
+			FeedID: feedID,
+			Limit:  int64(window),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("listing unread items for feed %d: %w", feedID, err)
+		}
+		sort.SliceStable(feedItems, func(i, j int) bool {
+			pi, pj := selectionPriority(feedItems[i], now), selectionPriority(feedItems[j], now)
+			if pi != pj {
+				return pi > pj
+			}
+			// Deterministic tie-break: oldest first, then lowest ID. Preferring
+			// the oldest on a tie keeps the backlog draining predictably.
+			if !feedItems[i].CreatedAt.Equal(feedItems[j].CreatedAt) {
+				return feedItems[i].CreatedAt.Before(feedItems[j].CreatedAt)
+			}
+			return feedItems[i].ID < feedItems[j].ID
+		})
+		ranked[feedID] = feedItems
+	}
+
+	// Pass 1: each feed up to its fair share.
+	taken := make(map[int64]int, len(feedLimits))
+	selected := make([]store.Item, 0, maxItems)
+	for feedID := range feedLimits {
+		n := perFeed
+		if len(ranked[feedID]) < n {
+			n = len(ranked[feedID])
+		}
+		selected = append(selected, ranked[feedID][:n]...)
+		taken[feedID] = n
+	}
+
+	// Pass 2: redistribute leftover slots to feeds with remaining candidates,
+	// repeatedly picking the highest-priority item still available.
+	remaining := maxItems - len(selected)
+	for remaining > 0 {
+		var (
+			bestFeed int64
+			bestIdx  = -1
+			bestPrio float64
+			found    bool
+		)
+		for feedID := range feedLimits {
+			idx := taken[feedID]
+			if idx >= len(ranked[feedID]) {
+				continue
+			}
+			prio := selectionPriority(ranked[feedID][idx], now)
+			if !found || prio > bestPrio || (prio == bestPrio && feedID < bestFeed) {
+				bestFeed, bestIdx, bestPrio, found = feedID, idx, prio, true
+			}
+		}
+		if !found {
+			break
+		}
+		selected = append(selected, ranked[bestFeed][bestIdx])
+		taken[bestFeed]++
+		remaining--
+	}
+
+	if logger != nil {
+		leftover := 0
+		for feedID := range feedLimits {
+			leftover += len(ranked[feedID]) - taken[feedID]
+		}
+		logger.Debug("digest item selection",
+			"max_items", maxItems, "per_feed_share", perFeed,
+			"window", window, "selected", len(selected), "left_unread", leftover)
+	}
+
+	return selected, nil
 }
 
 func (g *Generator) buildFeedLimits(ctx context.Context, userID int64, dcfg digestConfigJSON) map[int64]feedLimit {
