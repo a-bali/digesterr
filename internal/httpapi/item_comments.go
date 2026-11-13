@@ -289,19 +289,32 @@ func topCommentsHTML(comments []feed.Comment, feedType string) string {
 	b.WriteString(`<h4 style="font-size:0.85em;margin:0 0 0.5em">Top comments</h4>` + "\n")
 	b.WriteString(`<ul style="list-style:none;padding:0;margin:0">` + "\n")
 	for _, c := range comments {
-		author := html.EscapeString(c.Author)
-		if c.URL != "" {
-			author = fmt.Sprintf(`<a href="%s">%s</a>`, html.EscapeString(c.URL), author)
-		}
-		points := ""
-		if c.ValidPoints && c.Points > 0 {
-			points = fmt.Sprintf(" <span style=\"color:#888;font-size:0.85em\">(%d)</span>", c.Points)
-		}
-		rendered := renderCommentText(c.Text, feedType)
-		b.WriteString(fmt.Sprintf(`<li style="margin-bottom:0.75em;padding-left:0.5em;border-left:2px solid #ddd"><strong>%s</strong>%s<br/><span style="font-size:0.9em">%s</span></li>`+"\n",
-			author, points, rendered))
+		b.WriteString(commentListItemHTML(c.Author, c.Text, c.Points, c.ValidPoints, c.URL, feedType) + "\n")
 	}
 	b.WriteString(`</ul>` + "\n")
 	b.WriteString(`</div>` + "\n")
 	return b.String()
+}
+
+// commentListItemHTML renders one comment as a list item with the quote-bar
+// styling used everywhere comments appear in the Reader API: a left border
+// instead of bullet indentation, the author in bold, the score as a muted
+// parenthetical, and the body at a slightly reduced size.
+//
+// It is the single definition of "a comment looks like this" so a feed item's
+// comments and a digest highlight's comments cannot drift apart. Points are
+// only shown when the source actually carried a score (validPoints), which is
+// how a zero-vote comment avoids rendering a misleading "(0)".
+func commentListItemHTML(author, text string, points int, validPoints bool, url, feedType string) string {
+	renderedAuthor := html.EscapeString(author)
+	if url != "" {
+		renderedAuthor = fmt.Sprintf(`<a href="%s">%s</a>`, html.EscapeString(url), renderedAuthor)
+	}
+	renderedPoints := ""
+	if validPoints && points > 0 {
+		renderedPoints = fmt.Sprintf(" <span style=\"color:#888;font-size:0.85em\">(%d)</span>", points)
+	}
+	renderedText := renderCommentText(text, feedType)
+	return fmt.Sprintf(`<li style="margin-bottom:0.75em;padding-left:0.5em;border-left:2px solid #ddd"><strong>%s</strong>%s<br/><span style="font-size:0.9em">%s</span></li>`,
+		renderedAuthor, renderedPoints, renderedText)
 }

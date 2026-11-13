@@ -559,20 +559,26 @@ func renderDigestFlatHTML(b *strings.Builder, highlights, items []digestContentR
 		}
 
 		if len(h.TopComments) > 0 {
-			b.WriteString(`<h4>Top comments</h4>` + "\n")
-			b.WriteString(`<ul>`)
+			// Reuse the feed-item comment renderer so a digest highlight's
+			// comments look identical to a feed item's comments: same quote-bar
+			// list, same tight spacing. Previously this emitted its own
+			// `<h4>` + bare `<ul>` with default list indentation, which read as
+			// a different, more padded component than comments elsewhere.
+			b.WriteString(`<div class="digest-comments" style="margin-top:1em;border-top:1px solid #ccc;padding-top:0.5em">` + "\n")
+			b.WriteString(`<h4 style="font-size:0.85em;margin:0 0 0.5em">Top comments</h4>` + "\n")
+			b.WriteString(`<ul style="list-style:none;padding:0;margin:0">` + "\n")
 			for _, tc := range h.TopComments {
-				author := html.EscapeString(tc.Author)
-				if tc.URL != "" {
-					author = fmt.Sprintf(`<a href="%s">%s</a>`, html.EscapeString(tc.URL), author)
+				// A nil Points means the digest never recorded a score for this
+				// comment; 0 would render a misleading "(0)".
+				validPoints := tc.Points != nil
+				points := 0
+				if validPoints {
+					points = *tc.Points
 				}
-				points := ""
-				if tc.Points != nil {
-					points = fmt.Sprintf(" (%d)", *tc.Points)
-				}
-				fmt.Fprintf(b, `<li>%s — %s%s</li>`, author, linkify.Text(tc.Text), points)
+				b.WriteString(commentListItemHTML(tc.Author, tc.Text, points, validPoints, tc.URL, "") + "\n")
 			}
 			b.WriteString(`</ul>` + "\n")
+			b.WriteString(`</div>` + "\n")
 		}
 	}
 
