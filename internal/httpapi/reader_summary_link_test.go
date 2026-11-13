@@ -59,14 +59,14 @@ func TestReaderSummarizeLinkThresholdAndBodyPlacement(t *testing.T) {
 		item := fetch(longItem.ID)
 		body := item.Summary.Content
 		wantHref := "https://digesterr.example/items/" + strconv.FormatInt(longItem.ID, 10) + "/summary"
-		if !strings.HasPrefix(body, `<p class="digest-meta"><a href="`+wantHref+`" target="_blank" rel="noopener noreferrer">summarize</a></p>`) {
+		if !strings.HasPrefix(body, `<p class="digest-meta"><a href="`+wantHref+`" target="_blank" rel="noopener noreferrer">[Summarize]</a></p>`) {
 			t.Fatalf("summarize link not at top of body: %q", body[:min(len(body), 240)])
 		}
 		if item.Content.Content != body {
 			t.Fatal("summary.content and content.content differ")
 		}
-		if strings.Count(body, "summarize") != 1 {
-			t.Fatalf("summarize link count = %d, want 1", strings.Count(body, "summarize"))
+		if strings.Count(body, "Summarize") != 1 {
+			t.Fatalf("Summarize link count = %d, want 1", strings.Count(body, "Summarize"))
 		}
 	})
 
