@@ -1234,7 +1234,7 @@ func (q *Queries) ListUnreadDigestItems(ctx context.Context, arg ListUnreadDiges
 const listUnreadDigestItemsByFeed = `-- name: ListUnreadDigestItemsByFeed :many
 SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items
 WHERE feed_id = ? AND status = 'unread'
-ORDER BY points DESC
+ORDER BY created_at DESC, id DESC
 LIMIT ?
 `
 
@@ -1243,6 +1243,20 @@ type ListUnreadDigestItemsByFeedParams struct {
 	Limit  int64 `json:"limit"`
 }
 
+// Backlog window for one feed's digest selection.
+//
+// The digest must not simply take the N highest-scoring unread items: HN
+// ingests more items per day than a feed's share of max_items, and points
+// correlate with recency, so a points-only cutoff re-selects the newest items
+// every run and permanently starves the older, lower-scoring tail (observed in
+// production: 107 items stuck unread across 18 days, 57 of them never
+// reachable). The caller fetches a window larger than it needs and ranks in Go
+// with an age-aware priority (see digest.selectionPriority).
+//
+// Ordering here only decides which rows survive the LIMIT. Newest-first is the
+// conservative choice for a truncated window: if a feed's backlog ever exceeds
+// it, the rows dropped are the oldest ones this ranking would deprioritise
+// anyway, and age weighting gives them a bounded wait rather than none.
 func (q *Queries) ListUnreadDigestItemsByFeed(ctx context.Context, arg ListUnreadDigestItemsByFeedParams) ([]Item, error) {
 	rows, err := q.db.QueryContext(ctx, listUnreadDigestItemsByFeed, arg.FeedID, arg.Limit)
 	if err != nil {
