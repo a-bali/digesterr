@@ -9,7 +9,16 @@
          not apply to media loads (the policy comes from the document), so the
          document-level tag is what makes the player request carry no Referer. -->
     <meta name="referrer" content="no-referrer" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <!-- The app's mark: the lucide `Newspaper` icon in the accent colour, the
+         same glyph HomeView renders in the header. public/icon.svg is the
+         source; the rasters are generated from it by public/render-favicon.py.
+         The .ico and the PNG sizes are both listed because Safari and some
+         older readers ignore SVG icons, and the ICO is what a bare
+         /favicon.ico request gets. -->
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Digesterr</title>
   </head>
