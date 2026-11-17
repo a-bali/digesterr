@@ -54,7 +54,13 @@ release:
 	@test -n "$(VERSION)" || (echo "VERSION not set (e.g. make release VERSION=v0.5.0)" >&2; exit 1)
 	test -z "$$(git status --porcelain)" || (echo "uncommitted changes" >&2; exit 1)
 	@test "$$(git rev-parse --abbrev-ref HEAD)" = "main" || (echo "must be on main" >&2; exit 1)
+	@test -z "$$(git tag -l '$(VERSION)')" || (echo "tag $(VERSION) already exists" >&2; exit 1)
+	@# Build and push the image BEFORE the tag is published. The reverse order
+	@# leaves a pushed tag with no image behind it if the build fails, and any
+	@# gitops bump would then reference a digest that does not exist.
+	@# `image` ends with `crane tag ... latest`, which also proves the push
+	@# landed: crane fails if the version tag is not in the registry.
+	$(MAKE) image VERSION=$(VERSION)
 	git tag -a "$(VERSION)" -m "$(VERSION)"
 	git push origin "$(VERSION)"
-	$(MAKE) image VERSION=$(VERSION)
 	@echo "==> Release $(VERSION) built and pushed"
