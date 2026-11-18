@@ -296,27 +296,24 @@ func (s *Server) itemContentObject(r *http.Request, item store.Item) readerConte
 	// It is never stored, so the web UI's original item content is unchanged.
 	link := s.summaryLinkHTML(r, item)
 
-	// `content` is the article as opened; `summary` is what a Google Reader
-	// client renders as the list-view excerpt. The summarize link is a control,
-	// not article text, so it goes only in `content` — prepending it to
-	// `summary` put "[Summarize]" at the top of every row's snippet. The
-	// points/comments meta line stays in both: it is real metadata, and some
-	// clients read only `summary`.
+	// The link goes in BOTH fields, not just `content`. Google Reader clients
+	// — NetNewsWire among them — render `summary` as the article body, so
+	// keeping the link out of `summary` made the control invisible to the very
+	// clients it exists for. v0.7.9 shipped that regression; this is the revert.
 	//
-	// Note both fields still carry the FULL article, not a truncated preview:
-	// NetNewsWire reads only `summary` as the article body.
+	// The trade-off is real and accepted: `summary` also serves as the
+	// list-row snippet, so the glyph appears in both places. It is a single
+	// character (the same one the web UI's Summarize control uses) precisely
+	// because of that — a word would be noise in the list view. There is no way
+	// to give one field different bytes to two consumers.
 	body := meta + link + article
-	excerpt := meta + article
 
 	// Append top comments when experimental comment fetching is enabled.
 	if topComments, _ := s.fetchTopComments(r, item, s.topComments, false); len(topComments) > 0 {
-		block := "\n" + topCommentsHTML(topComments, feedType)
-		body += block
-		excerpt += block
+		body += "\n" + topCommentsHTML(topComments, feedType)
 	}
 
 	body = linkify.UpgradeMediaPlayers(body)
-	excerpt = linkify.UpgradeMediaPlayers(excerpt)
 	ts := itemTimestamp(item)
 
 	return readerContentStreamItem{
@@ -330,9 +327,9 @@ func (s *Server) itemContentObject(r *http.Request, item store.Item) readerConte
 		Alternate:     []readerAlternate{{Href: item.Url, Type: "text/html"}},
 		// NetNewsWire reads only `summary` as the article body, so both fields
 		// carry the full body (extracted when available), matching Miniflux.
-		// `summary` omits the summarize link: clients render it as the
-		// list-view excerpt, where a control link is noise.
-		Summary:     readerContentBody{Content: excerpt},
+		// The summarize link is in both, because this is the field clients
+		// actually render.
+		Summary:     readerContentBody{Content: body},
 		Content:     readerContentBody{Content: body},
 		Author:      item.Author,
 		Origin:      readerOrigin{StreamID: feedStreamID(item.FeedID), Title: feedName, HTMLURL: s.feedWebURL(r, item.FeedID)},

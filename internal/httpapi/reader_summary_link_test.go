@@ -55,28 +55,30 @@ func TestReaderSummarizeLinkThresholdAndBodyPlacement(t *testing.T) {
 		return resp.Items[0]
 	}
 
-	t.Run("long item gets top link in content, not in summary", func(t *testing.T) {
+	t.Run("long item gets the star link at the top of both bodies", func(t *testing.T) {
 		item := fetch(longItem.ID)
 		wantHref := "https://digesterr.example/items/" + strconv.FormatInt(longItem.ID, 10) + "/summary"
-		wantLink := `<p class="digest-meta"><a href="` + wantHref + `" target="_blank" rel="noopener noreferrer">[Summarize]</a></p>`
+		wantLink := `<p class="digest-meta"><a href="` + wantHref +
+			`" target="_blank" rel="noopener noreferrer" title="Summarize" aria-label="Summarize">✦</a></p>`
 
-		// `content` is the article as opened: the control belongs here.
+		// The link must be in BOTH fields. Reader clients (NetNewsWire) render
+		// `summary` as the article body, so a link only in `content` is
+		// invisible to them — that regression shipped in v0.7.9.
 		if !strings.HasPrefix(item.Content.Content, wantLink) {
-			t.Fatalf("summarize link not at top of content: %q", item.Content.Content[:min(len(item.Content.Content), 240)])
+			t.Fatalf("summary link not at top of content: %q", item.Content.Content[:min(len(item.Content.Content), 240)])
 		}
-		if strings.Count(item.Content.Content, "Summarize") != 1 {
-			t.Fatalf("Summarize link count in content = %d, want 1", strings.Count(item.Content.Content, "Summarize"))
+		if !strings.HasPrefix(item.Summary.Content, wantLink) {
+			t.Fatalf("summary link not at top of summary: %q", item.Summary.Content[:min(len(item.Summary.Content), 240)])
 		}
-
-		// `summary` is the list-view excerpt: the control must not appear.
-		if strings.Contains(item.Summary.Content, "Summarize") {
-			t.Fatalf("summarize link leaked into the summary excerpt: %q",
-				item.Summary.Content[:min(len(item.Summary.Content), 240)])
+		if item.Content.Content != item.Summary.Content {
+			t.Fatal("summary and content should carry identical bodies")
 		}
-		// Both fields still carry the full article body, not a truncated
-		// preview: NetNewsWire reads only `summary` as the article.
-		if !strings.Contains(item.Summary.Content, "A sufficiently long article body.") {
-			t.Fatalf("summary lost the article body: %q", item.Summary.Content)
+		if strings.Count(item.Content.Content, "✦") != 1 {
+			t.Fatalf("star link count = %d, want 1", strings.Count(item.Content.Content, "✦"))
+		}
+		// The glyph is the label; the word only appears in the tooltip attrs.
+		if strings.Contains(item.Content.Content, ">Summarize<") {
+			t.Fatalf("link still labelled with the word, want the single glyph: %q", item.Content.Content[:240])
 		}
 	})
 
