@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"digesterr/internal/feed"
 	"digesterr/internal/linkify"
 	"digesterr/internal/store"
 )
@@ -288,6 +289,13 @@ func (s *Server) itemContentObject(r *http.Request, item store.Item) readerConte
 	if item.ExtractContent != "" && item.ExtractStatus == "done" {
 		article = item.ExtractContent
 	}
+	// Repair a body written before the image/filler rules existed. This is a
+	// read-time upgrade, not a rewrite: the stored row is left alone, so it
+	// stays auditable and the next deploy can change its mind about the markup.
+	// Without it, everything stored before the change keeps its oversized
+	// images and unbreakable filler run forever — the poller only ever looks at
+	// items it has not seen.
+	article = feed.UpgradeStoredBody(article)
 
 	// Prepend the points/comments meta line when the item carries them.
 	meta := readerItemMetaHTML(item)

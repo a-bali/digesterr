@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"digesterr/internal/feed"
 	"digesterr/internal/store"
 )
 
@@ -98,6 +99,12 @@ func (s *Server) handleGetItem(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "item not found")
 		return
 	}
+	// Repair a body stored before the image/filler rules existed, on the single
+	// item the reader just opened. The Reader API path does the same for the
+	// bodies it serves; both surfaces render the same stored markup, so both
+	// have to apply the same upgrade. The stored row is not modified.
+	item.Content = feed.UpgradeStoredBody(item.Content)
+	item.ExtractContent = feed.UpgradeStoredBody(item.ExtractContent)
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -182,4 +189,3 @@ func (s *Server) handleDeleteItemExtraction(w http.ResponseWriter, r *http.Reque
 	}
 	writeJSON(w, http.StatusOK, item)
 }
-

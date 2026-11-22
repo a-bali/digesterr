@@ -1416,6 +1416,16 @@ func (p *Poller) applyReadabilityToItems(ctx context.Context, feed store.Feed, l
 		logger.Debug("failed to list items for readability", "error", err)
 		return
 	}
+	// Re-judge what an earlier guard already rejected. A rejection is stored as
+	// a reason string rather than a body, and ListItemsNeedingReadability only
+	// ever took never-seen rows, so before this an item judged by a buggy guard
+	// stayed rejected forever even after the guard was fixed. The work is
+	// bounded and self-extinguishing: an item that is accepted here becomes
+	// 'done', and one that is rejected again is stored in the same shape but is
+	// no longer re-selected by the retry marker below.
+	if retry, rerr := p.queries.ListReadabilityRejections(ctx, feed.ID); rerr == nil {
+		items = append(retry, items...)
+	}
 	if len(items) == 0 {
 		return
 	}
@@ -1435,8 +1445,8 @@ func (p *Poller) applyReadabilityToItems(ctx context.Context, feed store.Feed, l
 			// show the reason without a new field.
 			reason := fmt.Sprintf("%s: dropped %d%% of the text (kept %d of %d words)",
 				ReadabilityApplyFailedPrefix,
-				100-100*wordCount(res.Content)/max(wordCount(item.Content), 1),
-				wordCount(res.Content), wordCount(item.Content))
+				100-100*proseWordCount(res.Content)/max(proseWordCount(item.Content), 1),
+				proseWordCount(res.Content), proseWordCount(item.Content))
 			logger.Info("readability declined its output", "item_id", item.ID, "reason", reason)
 			p.setReadabilityOutcome(ctx, item.ID, reason, "failed", logger)
 		case verdict == ReadabilityNoBenefit:
@@ -1450,15 +1460,16 @@ func (p *Poller) applyReadabilityToItems(ctx context.Context, feed store.Feed, l
 
 // setReadabilityOutcome persists one readability decision.
 //
-// extract_retries is pinned to 1 on failure so it can never reach the extraction
-// retry budget of 3: a readability rejection is deterministic, not a transient
-// network error, and retrying it would burn the same body three times for the same
-// answer. The status also keeps the item out of ListItemsNeedingReadability, which
-// only takes never-processed items.
+// A failure is stored with extract_retries = 2. The value is not a retry budget:
+// a readability rejection is deterministic over a fixed body, so retrying cannot
+// change the answer. It is a provenance marker. The pre-fix guard always stored
+// 1, so ListReadabilityRejections selects exactly those rows for one
+// re-judgement under the corrected rule, and anything this version writes (2)
+// is settled and never selected again.
 func (p *Poller) setReadabilityOutcome(ctx context.Context, itemID int64, content, status string, logger *slog.Logger) {
 	retries := int64(0)
 	if status == "failed" {
-		retries = 1
+		retries = 2
 	}
 	if _, err := p.queries.UpdateItemExtraction(ctx, store.UpdateItemExtractionParams{
 		ID:             itemID,
