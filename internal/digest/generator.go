@@ -1292,9 +1292,9 @@ func contentForRendering(item store.Item) string {
 	// successful body is content to render; 'pending'/'failed'/'cleared' hold
 	// nothing usable. Original content is the fallback in every other case.
 	if item.ExtractContent != "" && item.ExtractStatus == "done" {
-		return item.ExtractContent
+		return feed.UpgradeStoredBody(item.ExtractContent)
 	}
-	return item.Content
+	return feed.UpgradeStoredBody(item.Content)
 }
 
 func formatNullTime(nt sql.NullTime) string {

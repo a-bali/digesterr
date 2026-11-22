@@ -14,12 +14,12 @@ import (
 func readabilityFeed(t *testing.T, queries *store.Queries, user store.User) store.Feed {
 	t.Helper()
 	feed, err := queries.CreateFeed(t.Context(), store.CreateFeedParams{
-		UserID:     user.ID,
-		Type:       "rss",
-		Name:       "Full-text feed",
-		Url:        "https://example.com/feed",
-		Config:     "{}",
-		Status:     "active",
+		UserID:      user.ID,
+		Type:        "rss",
+		Name:        "Full-text feed",
+		Url:         "https://example.com/feed",
+		Config:      "{}",
+		Status:      "active",
 		Readability: 1,
 	})
 	if err != nil {
@@ -332,5 +332,85 @@ func TestPollChoosesReadabilityOverExtraction(t *testing.T) {
 	untouched, _ := queries.GetItem(t.Context(), plainID)
 	if untouched.ExtractStatus != "" || untouched.ExtractContent != "" {
 		t.Errorf("a feed with no flags was processed: status=%q content_len=%d", untouched.ExtractStatus, len(untouched.ExtractContent))
+	}
+}
+
+// A rejection left behind by an earlier guard must be re-judged once, and an
+// item the corrected guard accepts must become 'done' rather than staying stuck
+// on the old reason string forever.
+func TestReadabilityRejudgesAnEarlierRejection(t *testing.T) {
+	queries := setupFeedLoggingDB(t)
+	user := createFeedLoggingUser(t, queries)
+	feed := readabilityFeed(t, queries, user)
+
+	// A body whose only "loss" is invisible padding: the old guard counted the
+	// padding as words and rejected it, which is exactly the stored shape below.
+	padding := strings.Repeat("\u00a0\u200c", 250)
+	body := `<html><body><div>Teaser line.` + padding + `</div><article><p>` +
+		strings.Repeat("This is substantial article prose that has to survive. ", 60) +
+		`</p></article><footer>Copyright nobody. Unsubscribe.</footer></body></html>`
+	id := insertItem(t, queries, feed, "Padded piece", body)
+
+	// The row an older version would have written.
+	stale := ReadabilityApplyFailedPrefix + ": dropped 9% of the text (kept 1000 of 1100 words)"
+	if _, err := queries.UpdateItemExtraction(t.Context(), store.UpdateItemExtractionParams{
+		ID: id, ExtractContent: stale, ExtractStatus: "failed", ExtractRetries: 1,
+	}); err != nil {
+		t.Fatalf("seed rejection: %v", err)
+	}
+
+	poller := NewPoller(queries)
+	poller.applyReadabilityToItems(context.Background(), feed, slog.Default())
+
+	got, err := queries.GetItem(t.Context(), id)
+	if err != nil {
+		t.Fatalf("get item: %v", err)
+	}
+	if got.ExtractStatus != "done" {
+		t.Fatalf("extract_status = %q, want \"done\": the corrected guard must accept a body whose only loss is invisible padding", got.ExtractStatus)
+	}
+	if got.ExtractContent == "" || got.ExtractContent == stale {
+		t.Error("extract_content still holds the rejection reason")
+	}
+	if !strings.Contains(got.ExtractContent, "substantial article prose") {
+		t.Error("the re-judged body does not carry the article")
+	}
+}
+
+// Re-judgement must be bounded: a body the guard STILL rejects has to settle, or
+// every poll would re-run readability over it for the life of the feed.
+func TestReadabilityDoesNotRejudgeARejectionTwice(t *testing.T) {
+	queries := setupFeedLoggingDB(t)
+	user := createFeedLoggingUser(t, queries)
+	feed := readabilityFeed(t, queries, user)
+
+	// A mangled case: prose spread across containers the library drops.
+	var b strings.Builder
+	b.WriteString(`<html><body><div class="wrapper"><article><p>`)
+	b.WriteString(strings.Repeat("First substantial paragraph of the piece. ", 12))
+	b.WriteString(`</p>`)
+	for i := 0; i < 9; i++ {
+		b.WriteString(`<div class="unlikely-related"><p>`)
+		b.WriteString(strings.Repeat("Later paragraph carrying equally important prose. ", 12))
+		b.WriteString(`</p></div>`)
+	}
+	b.WriteString(`</article></div></body></html>`)
+	id := insertItem(t, queries, feed, "Mangled piece", b.String())
+
+	poller := NewPoller(queries)
+	poller.applyReadabilityToItems(context.Background(), feed, slog.Default())
+
+	first, _ := queries.GetItem(t.Context(), id)
+	if first.ExtractStatus != "failed" || !strings.HasPrefix(first.ExtractContent, ReadabilityApplyFailedPrefix) {
+		t.Fatalf("expected a rejection, got status=%q", first.ExtractStatus)
+	}
+
+	// The second pass must not select it again: the rejection is settled.
+	again, err := queries.ListReadabilityRejections(t.Context(), feed.ID)
+	if err != nil {
+		t.Fatalf("list rejections: %v", err)
+	}
+	if len(again) != 0 {
+		t.Errorf("a re-judged rejection is still eligible (%d rows), so it would be re-processed every poll", len(again))
 	}
 }

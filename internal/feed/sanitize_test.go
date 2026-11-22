@@ -232,3 +232,194 @@ func TestSanitizeNewsletterHTMLVoidElementsNoClosingTag(t *testing.T) {
 		t.Errorf("img got a closing tag: %s", got)
 	}
 }
+
+// --- Reader layout: images and invisible filler -----------------------------
+//
+// Two independent defects made a newsletter render as unwrapped, clipped text in
+// a Reader client, and both are properties of the STORED MARKUP rather than of
+// one publisher's template. Measured in bare Chromium (no stylesheet of ours,
+// which is what a third-party Reader client gives the body): the affected body
+// overran a 720px pane by 1372px and a 360px pane by 1732px before these rules,
+// and by 0px after.
+
+// An image must never be able to exceed the width of the article, because that
+// is what forces the whole body into horizontal scroll instead of wrapping.
+func TestSanitizeConstrainsImageWidth(t *testing.T) {
+	got := SanitizeFeedHTML(`<p><img src="https://x.example/wide.png" width="2000" height="442"></p>`)
+	if !strings.Contains(got, "max-width:100%") {
+		t.Errorf("image is not constrained to the pane width: %s", got)
+	}
+	if !strings.Contains(got, "height:auto") {
+		t.Errorf("image constraint would squash the aspect ratio without height:auto: %s", got)
+	}
+}
+
+// Publisher CSS must not be able to reach that slot: the style attribute is
+// stripped from the input, so the constraint above is the only one present.
+func TestSanitizeImageStyleIsOursNotThePublishers(t *testing.T) {
+	got := SanitizeFeedHTML(`<img src="https://x.example/i.png" style="width:4000px;position:fixed">`)
+	if strings.Contains(got, "4000px") || strings.Contains(got, "position:fixed") {
+		t.Fatalf("publisher style survived the sanitizer: %s", got)
+	}
+	if !strings.Contains(got, "max-width:100%") {
+		t.Errorf("our constraint is missing: %s", got)
+	}
+}
+
+// An image with no alt renders a 16x16 broken-image glyph when it fails to load;
+// the same image with alt="" renders nothing. Ad beacons ship without alt and
+// without dimensions, so this is what leaves garbage boxes in a body whose image
+// host is blocked or offline.
+func TestSanitizeFillsMissingImageAlt(t *testing.T) {
+	got := SanitizeFeedHTML(`<img src="https://tracker.example/imp?s=1">`)
+	if !strings.Contains(got, `alt=""`) {
+		t.Errorf("image with no alt got no empty alt: %s", got)
+	}
+
+	// An author's real alt text must be preserved verbatim.
+	kept := SanitizeFeedHTML(`<img src="https://x.example/c.png" alt="Revenue chart">`)
+	if !strings.Contains(kept, `alt="Revenue chart"`) {
+		t.Errorf("existing alt text was replaced: %s", kept)
+	}
+	if strings.Count(kept, "alt=") != 1 {
+		t.Errorf("alt attribute was duplicated: %s", kept)
+	}
+}
+
+// A 1x1 read receipt is dropped outright: it carries no content, and keeping it
+// only creates a request that reports the read.
+func TestSanitizeDropsTrackingPixels(t *testing.T) {
+	got := SanitizeFeedHTML(`<p>x</p><img src="https://t.example/q" width="1" height="1" alt="">`)
+	if strings.Contains(got, "t.example") {
+		t.Errorf("1x1 tracking pixel survived: %s", got)
+	}
+
+	// The match is narrow on purpose: a 1x1 WITH alt text, or a 2x1, is content.
+	withAlt := SanitizeFeedHTML(`<img src="https://x.example/dot.png" width="1" height="1" alt="bullet">`)
+	if !strings.Contains(withAlt, "dot.png") {
+		t.Errorf("a 1x1 image with alt text is content and was dropped: %s", withAlt)
+	}
+	notTiny := SanitizeFeedHTML(`<img src="https://x.example/b.png" width="2" height="1">`)
+	if !strings.Contains(notTiny, "b.png") {
+		t.Errorf("a non-1x1 image was dropped: %s", notTiny)
+	}
+}
+
+// A run of NBSP/zero-width characters is invisible but has no break opportunity,
+// so it sets a minimum content width for the whole block. This is the actual
+// cause of "the text is not word-wrapped any more": nothing was clipped, the
+// block was simply wider than the pane.
+func TestSanitizeCollapsesInvisibleFillerRun(t *testing.T) {
+	run := strings.Repeat("\u00a0\u200c", 250)
+	got := SanitizeFeedHTML(`<div>Summary line.` + run + `</div><p>body</p>`)
+	if strings.Contains(got, "\u00a0\u00a0") || strings.Contains(got, "\u200c\u200c") {
+		t.Errorf("filler run survived: %d bytes of output", len(got))
+	}
+	if !strings.Contains(got, "Summary line.") {
+		t.Errorf("visible text was lost: %s", got)
+	}
+	if len(got) > 200 {
+		t.Errorf("output is still dominated by filler (%d bytes): %q", len(got), got)
+	}
+}
+
+// A single nbsp is ordinary typography (it keeps "10 kg" on one line) and must
+// not be touched — only runs are filler.
+func TestSanitizeKeepsSingleNbsp(t *testing.T) {
+	got := SanitizeFeedHTML(`<p>10&nbsp;kg of coffee</p>`)
+	if !strings.Contains(got, "10\u00a0kg") {
+		t.Errorf("single nbsp between values was rewritten: %q", got)
+	}
+}
+
+// A run made only of zero-width characters must vanish rather than become a
+// space: it never occupied visible width, so a space would invent separation.
+func TestSanitizeZeroWidthOnlyRunLeavesNothing(t *testing.T) {
+	got := SanitizeFeedHTML("<p>a" + strings.Repeat("\u200b\u200c", 4) + "b</p>")
+	if strings.Contains(got, "a b") {
+		t.Errorf("zero-width run was turned into a visible space: %q", got)
+	}
+	if !strings.Contains(got, "ab") {
+		t.Errorf("text around the run was altered: %q", got)
+	}
+}
+
+// --- Upgrading already-stored bodies ---------------------------------------
+
+// Bodies written before these rules must render the same as new ones, and the
+// pass must be idempotent so repeated reads do not accumulate attributes.
+func TestUpgradeStoredBodyIsIdempotent(t *testing.T) {
+	body := `<div>Pre.` + strings.Repeat("\u00a0\u200c", 100) + `</div>` +
+		`<img src="https://x.example/a.png" width="2000">` +
+		`<img src="https://t.example/imp" width="1" height="1" alt="">`
+	once := UpgradeStoredBody(body)
+	twice := UpgradeStoredBody(once)
+	if once != twice {
+		t.Fatalf("not idempotent:\n once: %s\n twice: %s", once, twice)
+	}
+	if !strings.Contains(once, "max-width:100%") || !strings.Contains(once, "Pre.") {
+		t.Errorf("upgrade did not apply the rules: %s", once)
+	}
+}
+
+// The upgrade must be additive: only img tags and filler runs are rewritten.
+// Re-sanitizing the whole body would delete the <video> players that the Reddit
+// and Twitter ingest paths build, which the sanitizer's allowlist does not know
+// about.
+func TestUpgradeStoredBodyPreservesNonSanitizerMarkup(t *testing.T) {
+	body := `<p>x</p><video controls poster="https://p/1.jpg"><source src="https://v/1.m3u8"></video>` +
+		`<blockquote class="reddit-card">quote</blockquote>`
+	got := UpgradeStoredBody(body)
+	for _, want := range []string{"<video", `poster="https://p/1.jpg"`, "<source", "m3u8", "reddit-card"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("upgrade dropped %q from a stored body: %s", want, got)
+		}
+	}
+}
+
+// A body with no image and no filler cannot be changed, so the upgrade must
+// return it untouched — the read path renders up to 100 bodies per request and
+// must not pay for a tokenizer run on the common case.
+func TestUpgradeStoredBodyLeavesPlainBodiesAlone(t *testing.T) {
+	body := `<p>A plain body with no images and no filler.</p>`
+	if got := UpgradeStoredBody(body); got != body {
+		t.Errorf("plain body was rewritten:\n got: %s\nwant: %s", got, body)
+	}
+}
+
+// A body may carry its own style attribute, and a tag can only have ONE. The
+// constraint has to be merged into it, not appended as a second attribute:
+// browsers keep the first style and silently discard the rest, so a duplicate
+// would leave the image unconstrained while looking fixed in the source.
+func TestUpgradeStoredBodyMergesIntoAnExistingStyle(t *testing.T) {
+	got := UpgradeStoredBody(`<p><img src="https://x.example/1.png" style="border:0"></p>`)
+	if n := strings.Count(got, "style="); n != 1 {
+		t.Errorf("image has %d style attributes, want exactly 1: %s", n, got)
+	}
+	if !strings.Contains(got, "max-width:100%") {
+		t.Errorf("constraint was not merged into the existing style: %s", got)
+	}
+	if !strings.Contains(got, "border:0") {
+		t.Errorf("the body's own style was dropped: %s", got)
+	}
+}
+
+// A body that already constrains its images must not get a second declaration:
+// the linkify image builder emits max-width:100% itself.
+func TestUpgradeStoredBodyRespectsAnExistingMaxWidth(t *testing.T) {
+	got := UpgradeStoredBody(`<p><img src="https://x.example/2.png" style="max-width:100%;border-radius:4px"></p>`)
+	if n := strings.Count(got, "max-width"); n != 1 {
+		t.Errorf("image carries %d max-width declarations, want 1: %s", n, got)
+	}
+	if !strings.Contains(got, "border-radius:4px") {
+		t.Errorf("the body's own style was dropped: %s", got)
+	}
+}
+
+// Tag names are case insensitive, so the pre-check must not miss <IMG>.
+func TestUpgradeStoredBodyHandlesUppercaseImages(t *testing.T) {
+	got := UpgradeStoredBody(`<IMG SRC="https://x.example/3.png">`)
+	if !strings.Contains(got, "max-width:100%") || !strings.Contains(got, `alt=""`) {
+		t.Errorf("uppercase img was not upgraded: %s", got)
+	}
+}

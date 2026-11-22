@@ -1,6 +1,7 @@
 package feed
 
 import (
+	"io"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -136,7 +137,7 @@ func SanitizeNewsletterHTML(raw string) string {
 func writeSanitizedNode(b *strings.Builder, n *html.Node) {
 	switch n.Type {
 	case html.TextNode:
-		b.WriteString(escapeNewsletterText(n.Data))
+		b.WriteString(escapeNewsletterText(collapseFillerRuns(n.Data)))
 		return
 	case html.CommentNode:
 		// Comments are dropped outright: they are invisible in a browser but
@@ -154,6 +155,14 @@ func writeSanitizedNode(b *strings.Builder, n *html.Node) {
 
 	tagAtom := n.DataAtom
 	if dropWithContents[tagAtom] {
+		return
+	}
+	if tagAtom == atom.Img && isTrackingPixel(n) {
+		// A 1x1 pixel exists only to report a read. It renders as a broken
+		// image box in a client whose image loader is blocked or offline, and
+		// it carries no content, so dropping it loses nothing. Matching is
+		// deliberately narrow: an explicit 1x1 with no alt text. Anything the
+		// author could have meant as content stays.
 		return
 	}
 	if !allowedElements[tagAtom] {
@@ -189,7 +198,7 @@ func writeSanitizedNode(b *strings.Builder, n *html.Node) {
 	// Remote images: keep them (a newsletter is mostly images) but do not leak
 	// the reader's referrer to whatever host serves them.
 	if tagAtom == atom.Img {
-		b.WriteString(` loading="lazy" referrerpolicy="no-referrer"`)
+		writeImgExtraAttrs(b, n)
 	}
 
 	if isVoidElement(tagAtom) {
@@ -210,6 +219,296 @@ func isVoidElement(a atom.Atom) bool {
 	case atom.Area, atom.Base, atom.Br, atom.Col, atom.Embed, atom.Hr,
 		atom.Img, atom.Input, atom.Link, atom.Meta, atom.Param, atom.Source,
 		atom.Track, atom.Wbr:
+		return true
+	}
+	return false
+}
+
+// imgConstraintStyle keeps a remote image inside whatever width the reader
+// gives the article.
+//
+// Without it an image whose natural size exceeds the view (1000-2000px wide
+// newsletter artwork) renders at full size and forces the article horizontally
+// scrollable: the text then CONTINUES past the right edge instead of wrapping,
+// which is what a "not word-wrapped any more" report actually looks like.
+//
+// A `width` attribute is not enough. Newsletters set width="100%" on a
+// scaffolding table cell, so the percentage resolves against a table that is
+// itself sized by its content, and an unsized image contributes nothing to
+// shrink. An inline max-width beats both cases, and it is the only lever that
+// travels with the HTML: a third-party Reader client inserts this body into its
+// own article view and applies no stylesheet of ours. Measured in bare Chromium
+// over four real bodies: 297-1372px of horizontal overrun before, 0px after.
+//
+// height:auto is not decoration — a width/height pair encoded in the attributes
+// would otherwise be honoured literally, squashing the aspect ratio once
+// max-width kicks in.
+//
+// This is a CONSTANT rather than publisher CSS: the sanitizer still drops the
+// style attribute, so nothing a feed writes can reach this slot.
+const imgConstraintStyle = ` style="max-width:100%;height:auto"`
+
+// UpgradeStoredBody repairs a body that was stored before the image and filler
+// rules existed, so existing items render correctly without a re-poll.
+//
+// The rules themselves live in the sanitizer's emit path, but that path only
+// runs on INGEST: a body already in the database was written by an older
+// version and keeps its old markup forever, because the poller only processes
+// never-seen items. That is exactly why the regression showed up on items
+// arriving after a publisher changed its template and not on older ones.
+//
+// This is deliberately a TOKEN pass, not SanitizeNewsletterHTML over the stored
+// body. Stored bodies are not all sanitizer output: the Reddit and Twitter paths
+// build <video> players and linkify builds markup the sanitizer's allowlist does
+// not contain, so re-sanitizing would delete 400+ real players from history.
+// Rewriting only the img tags and the text runs through the tokenizer leaves
+// every other byte of the body exactly as it was.
+//
+// It is idempotent: an image that already carries the attributes is emitted with
+// its existing ones left alone, and a collapsed run has no run left to collapse.
+func UpgradeStoredBody(body string) string {
+	if strings.TrimSpace(body) == "" {
+		return body
+	}
+	// Cheap pre-check: a body with no image and no filler run cannot be changed
+	// by this pass. The Reader contents path renders up to 100 bodies per
+	// request, so the common case must not pay for a tokenizer run. Case
+	// insensitive because HTML tag names are, and a body written by another
+	// generator may well use <IMG>.
+	if !strings.Contains(strings.ToLower(body), "<img") && !strings.ContainsFunc(body, isFillerRune) {
+		return body
+	}
+
+	var b strings.Builder
+	b.Grow(len(body) + len(body)/64)
+	z := html.NewTokenizer(strings.NewReader(body))
+	for {
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			if z.Err() == io.EOF {
+				break
+			}
+			// Unparseable tail: keep the remaining bytes rather than losing them.
+			b.Write(z.Raw())
+			break
+		}
+		switch tt {
+		case html.TextToken:
+			b.WriteString(escapeNewsletterText(collapseFillerRuns(string(z.Text()))))
+		case html.StartTagToken, html.SelfClosingTagToken:
+			name, _ := z.TagName()
+			if string(name) != "img" {
+				b.Write(z.Raw())
+				continue
+			}
+			writeUpgradedImgTag(&b, z, tt == html.SelfClosingTagToken)
+		default:
+			b.Write(z.Raw())
+		}
+	}
+	return b.String()
+}
+
+// writeUpgradedImgTag emits an img element with the attributes the read path
+// requires, keeping every attribute the body already had.
+//
+// The existing attributes are re-read from the tokenizer and copied in order, so
+// a body that already carries width/alt/srcset keeps them; only the missing
+// pieces are appended. That is what makes the transform idempotent and
+// non-destructive.
+func writeUpgradedImgTag(b *strings.Builder, z *html.Tokenizer, selfClosing bool) {
+	type kv struct{ k, v string }
+	var attrs []kv
+	seen := map[string]bool{}
+	hasAlt, constrainsWidth := false, false
+	styleIdx := -1
+	for {
+		k, v, more := z.TagAttr()
+		if k == nil && !more {
+			break
+		}
+		key := string(k)
+		lower := strings.ToLower(key)
+		seen[lower] = true
+		switch lower {
+		case "alt":
+			hasAlt = true
+		case "style":
+			styleIdx = len(attrs)
+			// The body may already carry a width constraint of its own (the
+			// linkify image builder emits max-width:100% with a border radius),
+			// in which case there is nothing to add.
+			if strings.Contains(strings.ToLower(string(v)), "max-width") {
+				constrainsWidth = true
+			}
+		}
+		attrs = append(attrs, kv{key, string(v)})
+		if !more {
+			break
+		}
+	}
+
+	// A tag may only carry ONE style attribute, so a body that already has one
+	// gets the constraint appended to it rather than a second attribute (which
+	// browsers resolve by keeping the first, silently discarding ours).
+	if !constrainsWidth && styleIdx >= 0 {
+		attrs[styleIdx].v = strings.TrimRight(attrs[styleIdx].v, "; ") + ";max-width:100%;height:auto"
+		constrainsWidth = true
+	}
+
+	b.WriteString("<img")
+	for _, a := range attrs {
+		b.WriteString(" " + a.k + `="` + redditAttrEscape(a.v) + `"`)
+	}
+	if !seen["loading"] {
+		b.WriteString(` loading="lazy"`)
+	}
+	if !seen["referrerpolicy"] {
+		b.WriteString(` referrerpolicy="no-referrer"`)
+	}
+	if !constrainsWidth {
+		b.WriteString(imgConstraintStyle)
+	}
+	if !hasAlt {
+		b.WriteString(` alt=""`)
+	}
+	if selfClosing {
+		b.WriteString(" />")
+		return
+	}
+	b.WriteString(">")
+}
+
+// isTrackingPixel reports whether an img node is a read receipt: explicitly
+// 1x1 and carrying no alt text.
+func isTrackingPixel(n *html.Node) bool {
+	var w, h, alt string
+	var hasW, hasH bool
+	for _, a := range n.Attr {
+		switch strings.ToLower(a.Key) {
+		case "width":
+			w, hasW = strings.TrimSpace(a.Val), true
+		case "height":
+			h, hasH = strings.TrimSpace(a.Val), true
+		case "alt":
+			alt = strings.TrimSpace(a.Val)
+		}
+	}
+	return hasW && hasH && w == "1" && h == "1" && alt == ""
+}
+
+// writeImgExtraAttrs emits the attributes every stored image gets, whether it
+// arrives through the sanitizer (ingest) or is repaired in place (a body stored
+// before these rules existed).
+//
+// Shared rather than duplicated because the Reader view is what the rules exist
+// for, and the two paths must produce identical markup: a body that was
+// sanitized at ingest and one that was upgraded later must not render
+// differently in a client.
+func writeImgExtraAttrs(b *strings.Builder, n *html.Node) {
+	// Keep the image inside whatever width the reader gives the article.
+	b.WriteString(` loading="lazy" referrerpolicy="no-referrer"` + imgConstraintStyle)
+	// Every image must carry an alt attribute, empty when the publisher did not
+	// supply one. This is not an accessibility afterthought: an <img> with NO
+	// alt that fails to load renders a 16x16 broken-image box, while the same
+	// element with alt="" renders nothing. Ad beacons are shipped exactly that
+	// way — no alt, no dimensions — and a body here carried three of them,
+	// pointing at a tracker that redirects to an ad exchange and serves no image
+	// bytes. Measured in bare Chromium: a failed image with no alt occupies
+	// 16x16; adding alt="" takes it to 0x0, at any configured width.
+	//
+	// So the rule is deliberately about the ELEMENT, not the URL: no host list,
+	// no path matching, nothing that needs a feed-specific exception.
+	// Populating a missing alt is also the one change that cannot hide content,
+	// because the attribute is empty by definition.
+	if !hasAltAttr(n) {
+		b.WriteString(` alt=""`)
+	}
+}
+
+// hasAltAttr reports whether an img node carries an alt attribute at all,
+// including an explicitly empty one.
+//
+// Presence is what matters, not content: HTML renders alt="" as nothing when the
+// image fails, while a missing alt renders the browser's broken-image glyph.
+func hasAltAttr(n *html.Node) bool {
+	for _, a := range n.Attr {
+		if strings.EqualFold(a.Key, "alt") {
+			return true
+		}
+	}
+	return false
+}
+
+// collapseFillerRuns replaces runs of invisible filler characters with a single
+// space, and removes runs that are entirely zero-width.
+//
+// Newsletters pad their preheader with a run like "&nbsp;\u200c\u200c…" hundreds
+// of characters long so the mail client's inbox preview fills with the real
+// summary. That run is invisible, but it is still TEXT: it has no break
+// opportunity, so it sets a minimum content width for every block that contains
+// it. In a narrow pane the paragraph cannot wrap below that width, so the whole
+// article inherits a huge scroll width and every line appears clipped at the
+// right edge. Measured on the affected body: a 500-character run forced 1372px
+// of overrun in a 720px pane; collapsing it to one space took that to 0.
+//
+// The collapse is per text node, which is where the run physically lives.
+// Nothing visible is removed: a run of only zero-width characters renders as
+// nothing at all, so it becomes empty rather than becoming a space.
+//
+// A run of exactly ONE character is left alone. A lone &nbsp; is ordinary
+// typography — it keeps "10 kg" and "5 km/h" from breaking — and rewriting it
+// to an ordinary space would change how the text wraps. Only longer runs are the
+// padding this targets.
+func collapseFillerRuns(s string) string {
+	if !strings.ContainsFunc(s, isFillerRune) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	var run strings.Builder // the exact bytes seen in the current filler run
+	runLen := 0             // run length in CHARACTERS (nbsp and zero-width are multi-byte)
+	flush := func() {
+		if runLen == 0 {
+			return
+		}
+		switch {
+		case runLen == 1:
+			// Ordinary typography: preserve the character verbatim.
+			b.WriteString(run.String())
+		case strings.Contains(run.String(), "\u00a0"):
+			// At least one non-breaking space: the run occupied visible
+			// width, so a single space preserves the author's separation.
+			b.WriteByte(' ')
+		default:
+			// Purely zero-width: it rendered as nothing, so it leaves nothing.
+		}
+		run.Reset()
+		runLen = 0
+	}
+	for _, r := range s {
+		if isFillerRune(r) {
+			run.WriteRune(r)
+			runLen++
+			continue
+		}
+		// An ordinary space already provides a break opportunity, so it ends the
+		// run: collapsing across it would merge two separately-spaced words.
+		flush()
+		b.WriteRune(r)
+	}
+	flush()
+	return b.String()
+}
+
+// isFillerRune reports whether r participates in a filler run: the invisible
+// characters newsletters pad with, plus the spaces that can separate them.
+//
+// A run has to be longer than one character to be filler — a single &nbsp; is
+// ordinary typography (it keeps "10 kg" together) and is left alone.
+func isFillerRune(r rune) bool {
+	switch r {
+	case '\u00a0', '\u200b', '\u200c', '\u200d', '\u2060', '\ufeff':
 		return true
 	}
 	return false

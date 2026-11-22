@@ -1624,6 +1624,72 @@ func (q *Queries) ListItemsNeedingReadability(ctx context.Context, feedID int64)
 	return items, nil
 }
 
+const listReadabilityRejections = `-- name: ListReadabilityRejections :many
+SELECT id, feed_id, hash, title, url, content, author, comment_url, points, comments_count, published_at, status, fetched_at, created_at, updated_at, last_enriched_at, extract_content, extract_status, extract_retries, extract_date, is_saved FROM items WHERE feed_id = ? AND extract_status = 'failed' AND extract_retries = 1 AND extract_content LIKE 'readability declined its output%' ORDER BY published_at DESC
+`
+
+// Items a readability feed rejected, to be re-judged after the guard changed.
+//
+// A readability rejection is stored in extract_content with a fixed prefix (see
+// ReadabilityApplyFailedPrefix) because a lossy result has no body to keep. That
+// made the decision permanent: ListItemsNeedingReadability only takes never-seen
+// rows, so an item judged by a buggy guard stayed rejected forever.
+//
+// Scoping to the prefix (not to extract_status = 'failed') is what keeps this
+// safe: extraction failures and user deletions live in the same column and must
+// not be re-run, and a user's 'cleared' row keeps its status.
+//
+// 1 was what the pre-fix guard always stored, so extract_retries = 1 identifies
+// rows judged by the OLD rule and nothing else. Re-judging one stores 2 below,
+// which takes it out of this query for good: an item the corrected guard accepts
+// becomes 'done', and one it still rejects is settled. That makes the repair
+// self-extinguishing: it runs once over the affected backlog, never on every
+// poll, and it cannot touch a row this version wrote.
+func (q *Queries) ListReadabilityRejections(ctx context.Context, feedID int64) ([]Item, error) {
+	rows, err := q.db.QueryContext(ctx, listReadabilityRejections, feedID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Hash,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Author,
+			&i.CommentUrl,
+			&i.Points,
+			&i.CommentsCount,
+			&i.PublishedAt,
+			&i.Status,
+			&i.FetchedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastEnrichedAt,
+			&i.ExtractContent,
+			&i.ExtractStatus,
+			&i.ExtractRetries,
+			&i.ExtractDate,
+			&i.IsSaved,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSavedItemsByUser = `-- name: ListSavedItemsByUser :many
 SELECT i.id, i.title, substr(i.content, 1, 8192) AS content, i.comment_url, i.points, i.comments_count,
        i.published_at, i.status, i.is_saved, substr(i.extract_content, 1, 8192) AS extract_content, i.extract_status,

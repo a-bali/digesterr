@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-
 // --- The guard -------------------------------------------------------------
 //
 // Readability's output may only replace the stored body when it removes chrome
@@ -113,8 +112,8 @@ func TestWordCountIgnoresMarkupAndWhitespace(t *testing.T) {
 		{`<p class="a b c d e">real</p>`, 1},
 	}
 	for _, tc := range cases {
-		if got := wordCount(tc.in); got != tc.want {
-			t.Errorf("wordCount(%q) = %d, want %d", tc.in, got, tc.want)
+		if got := proseWordCount(tc.in); got != tc.want {
+			t.Errorf("proseWordCount(%q) = %d, want %d", tc.in, got, tc.want)
 		}
 	}
 }
@@ -148,7 +147,7 @@ func TestReadabilityGuardedJudgesWordsNotBytes(t *testing.T) {
 	}
 	// Precondition: the bytes drop hard while the words barely move.
 	byteDrop := 100 * float64(len(heavy.String())-len(res.Content)) / float64(len(heavy.String()))
-	wordDrop := 100 * float64(wordCount(heavy.String())-wordCount(res.Content)) / float64(wordCount(heavy.String()))
+	wordDrop := 100 * float64(proseWordCount(heavy.String())-proseWordCount(res.Content)) / float64(proseWordCount(heavy.String()))
 	if byteDrop <= maxWordLossPercent {
 		t.Fatalf("precondition failed: byte drop %.1f%% must exceed the threshold for this test to mean anything", byteDrop)
 	}
@@ -158,5 +157,96 @@ func TestReadabilityGuardedJudgesWordsNotBytes(t *testing.T) {
 	if verdict != ReadabilityAccept {
 		t.Fatalf("verdict = %v, want ReadabilityAccept: %.1f%% of bytes went but only %.1f%% of words (a byte rule would wrongly reject)",
 			verdict, byteDrop, wordDrop)
+	}
+}
+
+// --- Invisible padding is not prose ----------------------------------------
+//
+// Newsletters pad their preheader with a long run of &nbsp;/zero-width characters
+// so the mail client's inbox preview shows the summary. The run is invisible but
+// whitespace-separated, so a Fields-based count scores it as tens of words; when
+// readability correctly stripped it as chrome, the guard read that as content
+// loss and refused the whole cleaned article. Measured on the affected feed:
+// these bodies were rejected at 5.5-7.7% "loss" while losing 0.5-1.0% of the
+// words a reader would actually miss.
+
+// proseWordCount must not count words that render as nothing.
+func TestProseWordCountIgnoresInvisiblePadding(t *testing.T) {
+	padding := strings.Repeat("\u00a0\u200c", 200)
+	body := `<div>Real summary line.` + padding + `</div><p>First real paragraph here.</p>`
+
+	if got := proseWordCount(body); got != 7 {
+		t.Errorf("proseWordCount = %d, want 7 (only rendered words counted)", got)
+	}
+	// The pre-fix count saw the padding as hundreds of extra words, which is what
+	// made a correctly-stripped body look like content loss.
+	if raw := len(strings.Fields(stripHTMLTags(body))); raw < 200 {
+		t.Fatalf("fixture does not reproduce the miscount: plain Fields saw %d words", raw)
+	}
+}
+
+// The end-to-end verdict: a body whose only removal is invisible padding must be
+// ACCEPTED, because nothing a reader sees was lost.
+func TestReadabilityGuardedAcceptsBodyWhoseOnlyLossIsPadding(t *testing.T) {
+	padding := strings.Repeat("\u00a0\u200c", 250)
+	doc := `<html><body><div>` +
+		`Editorial teaser line.` + padding + `</div><article><p>` +
+		strings.Repeat("Real article prose that must survive the cleanup. ", 100) +
+		`</p></article><footer>Bloomberg L.P. 731 Lexington, New York, NY, 10022</footer></body></html>`
+
+	res, verdict, err := ApplyReadabilityGuarded(doc, "https://example.com/story")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if verdict != ReadabilityAccept {
+		in, out := proseWordCount(doc), proseWordCount(res.Content)
+		t.Fatalf("verdict = %v, want ReadabilityAccept (prose %d -> %d)", verdict, in, out)
+	}
+	if !strings.Contains(res.Content, "Real article prose that must survive") {
+		t.Error("prose lost from the accepted output")
+	}
+	// The verdict above is the point: the filler is invisible, so whether
+	// readability keeps a copy of it is irrelevant to the decision. What must
+	// hold is that the cleaned body still carries the article.
+	if strings.Contains(res.Content, "First real paragraph") {
+		t.Error("fixture behaviour changed: readability kept chrome it used to drop")
+	}
+}
+
+// A single nbsp is typography, not filler, and counts as part of its word:
+// "10 kg" is one rendered token either way, so the guard must not treat the
+// nbsp as a word by itself.
+func TestProseWordCountTreatsLoneNbspAsTypography(t *testing.T) {
+	if got := proseWordCount(`<p>10&nbsp;kg</p>`); got != 2 {
+		// Fields splits on a non-breaking space, so "10" and "kg" are two
+		// tokens and neither is invisible. What matters is that the nbsp itself
+		// is not counted as a third, padding-only word.
+		t.Errorf("proseWordCount(10 nbsp kg) = %d, want 2", got)
+	}
+	if got := proseWordCount(`<p>` + strings.Repeat("\u00a0", 5) + `</p>`); got != 0 {
+		t.Errorf("proseWordCount(padding only) = %d, want 0", got)
+	}
+}
+
+// Content loss measured in VISIBLE words must still be rejected: the fix must not
+// have softened the guard into accepting a body that ate real prose.
+func TestReadabilityGuardedStillRejectsVisibleContentLoss(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`<html><body><div class="wrapper"><article><p>`)
+	b.WriteString(strings.Repeat("First substantial paragraph of the piece. ", 12))
+	b.WriteString(`</p>`)
+	for i := 0; i < 9; i++ {
+		b.WriteString(`<div class="unlikely-related"><p>`)
+		b.WriteString(strings.Repeat("Later paragraph carrying equally important prose. ", 12))
+		b.WriteString(`</p></div>`)
+	}
+	b.WriteString(`</article></div></body></html>`)
+
+	_, verdict, err := ApplyReadabilityGuarded(b.String(), "https://example.com/story")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if verdict != ReadabilityLossy {
+		t.Errorf("verdict = %v, want ReadabilityLossy", verdict)
 	}
 }

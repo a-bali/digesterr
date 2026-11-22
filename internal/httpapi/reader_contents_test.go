@@ -449,3 +449,53 @@ func TestReaderStreamContentsUnauthorized(t *testing.T) {
 		}
 	}
 }
+
+// The Reader API serves a stored body to a third-party client that applies no
+// stylesheet of ours, so the served markup has to constrain its own images. A
+// body stored before those rules existed must be repaired on the way out: the
+// stored row is never rewritten, so without this an old item would stay
+// unreadable forever.
+func TestReaderContentsRepairsLegacyBodiesOnTheWayOut(t *testing.T) {
+	server, queries, db := setupStreamTestServer(t)
+	user := createReaderUser(t, queries, "testkey123")
+	seed := seedReaderStream(t, queries, db, user.ID)
+
+	// The shape a pre-fix ingest stored: an unfilled <img> and a filler run.
+	filler := repeatRune('\u200c', 250)
+	legacy := `<div>Teaser.` + filler + `</div><p><img src="https://x.example/wide.png" width="2000"></p>`
+	if _, err := db.Exec(`UPDATE items SET content = ? WHERE id = ?`, legacy, seed.aUnreadNewest.ID); err != nil {
+		t.Fatalf("seed legacy body: %v", err)
+	}
+
+	resp := getContents(t, server, "/reader/api/0/stream/contents/"+feedStreamID(seed.feedA.ID)+"?output=json")
+	var body string
+	for _, it := range resp.Items {
+		if it.ID == readerContentID(seed.aUnreadNewest.ID) {
+			body = it.Content.Content
+		}
+	}
+	if body == "" {
+		t.Fatal("item not found in the contents response")
+	}
+	if !strings.Contains(body, "max-width:100%") {
+		t.Errorf("served body does not constrain its images: %s", body)
+	}
+	if strings.Count(body, "\u200c") > 1 {
+		t.Errorf("served body still carries the filler run (%d chars)", strings.Count(body, "\u200c"))
+	}
+
+	// The stored row must be untouched: the upgrade happens on read.
+	var stored string
+	if err := db.QueryRow(`SELECT content FROM items WHERE id = ?`, seed.aUnreadNewest.ID).Scan(&stored); err != nil {
+		t.Fatalf("read stored body: %v", err)
+	}
+	if stored != legacy {
+		t.Error("the stored body was rewritten; the repair must be read-time only")
+	}
+}
+
+// repeatRune builds a string of n copies of r (helpers in the httpapi package do
+// not import strings.Repeat for runes elsewhere).
+func repeatRune(r rune, n int) string {
+	return strings.Repeat(string(r), n)
+}

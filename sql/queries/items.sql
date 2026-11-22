@@ -330,6 +330,26 @@ UPDATE items SET extract_content = ?, extract_status = ?, extract_retries = ?, e
 -- deletion) must not be undone by the next poll.
 SELECT * FROM items WHERE feed_id = ? AND content != '' AND extract_status = '' ORDER BY published_at DESC;
 
+-- name: ListReadabilityRejections :many
+-- Items a readability feed rejected, to be re-judged after the guard changed.
+--
+-- A readability rejection is stored in extract_content with a fixed prefix (see
+-- ReadabilityApplyFailedPrefix) because a lossy result has no body to keep. That
+-- made the decision permanent: ListItemsNeedingReadability only takes never-seen
+-- rows, so an item judged by a buggy guard stayed rejected forever.
+--
+-- Scoping to the prefix (not to extract_status = 'failed') is what keeps this
+-- safe: extraction failures and user deletions live in the same column and must
+-- not be re-run, and a user's 'cleared' row keeps its status.
+--
+-- 1 was what the pre-fix guard always stored, so extract_retries = 1 identifies
+-- rows judged by the OLD rule and nothing else. Re-judging one stores 2 below,
+-- which takes it out of this query for good: an item the corrected guard accepts
+-- becomes 'done', and one it still rejects is settled. That makes the repair
+-- self-extinguishing: it runs once over the affected backlog, never on every
+-- poll, and it cannot touch a row this version wrote.
+SELECT * FROM items WHERE feed_id = ? AND extract_status = 'failed' AND extract_retries = 1 AND extract_content LIKE 'readability declined its output%' ORDER BY published_at DESC;
+
 -- name: ClearItemExtraction :one
 -- Drop an extracted body so the item falls back to its original content.
 -- extract_status = 'cleared' is a deliberate marker, not an empty string:
