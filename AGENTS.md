@@ -80,6 +80,8 @@ Use `devenv shell` to enter a shell with all tools. Use `devenv up` to run both 
 - `internal/store/` — sqlc-generated DB access (do not edit manually)
 - `internal/httpapi/` — HTTP handlers and routing
 - `internal/httpapi/reader*.go` — Google Reader API (mounted under `/reader/`)
+- `internal/oidc/` + `internal/httpapi/oidc.go` — optional OIDC sign-in
+  (see `docs/oidc.md`; off by default, additive to local auth)
 - `internal/schema/schema.sql` — also used by sqlc for code generation (`sqlc.yaml` points here)
 - `sql/queries/` — sqlc query definitions
 

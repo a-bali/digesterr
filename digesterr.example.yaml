@@ -150,10 +150,16 @@ oidc:
   # oidc.issuer), and logs the user in through the same session the password
   # form creates.
   #
-  # Read docs/oidc.md before enabling this: first-login email matching hands an
-  # existing account to whoever the provider says owns the address, which is
-  # only safe with a provider you control and open signup closed. That file also
-  # covers offboarding and session revocation.
+  # Read docs/oidc.md before enabling this. Two things there matter more than
+  # the settings below:
+  #
+  #   * First-login matching hands an existing account to whoever the provider
+  #     says owns the address. Local signup stays open in this release, so an
+  #     address registered locally and never verified can be claimed by the
+  #     person who registered it once the real owner signs in through the IdP
+  #     (pre-hijacking). Restrict signup at the proxy if that matters to you.
+  #   * Provider-side removal does not end an existing session: the refresh token
+  #     lives 7 days and rotates without contacting the provider.
   enabled: false                      # [OIDC_ENABLED]
 
   # The provider's issuer identifier, exactly as it appears in the `iss` claim
@@ -178,7 +184,12 @@ oidc:
   # "single sign-on".                            [OIDC_PROVIDER_NAME]
   provider_name: ""
 
-  # Scopes to request. Comma- or space-separated. Must include openid; the
-  # default is openid, email, profile and is the minimum this feature needs.
+  # Scopes to request. Must include openid, which the server enforces at
+  # startup. `email` is what supplies the address this feature links on, so
+  # dropping it makes every login fail with "no email address"; `profile`
+  # is optional (display name only). Listed here as the actual default.
   #                                                 [OIDC_SCOPES]
-  # scopes: [openid, email, profile]
+  scopes:
+    - openid
+    - email
+    - profile

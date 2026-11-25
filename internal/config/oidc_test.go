@@ -1,9 +1,13 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // oidcBase returns a valid enabled OIDC configuration that individual tests
@@ -162,5 +166,65 @@ func TestExampleConfigParsesWithOIDCDisabled(t *testing.T) {
 	}
 	if err := cfg.OIDC.Validate(); err != nil {
 		t.Errorf("disabled example section fails validation: %v", err)
+	}
+}
+
+// Every OIDC setting the binary reads must appear in the shipped example.
+//
+// This is a reflection-based parity check rather than a hand-written list: the
+// example is the only document an operator copies, and a setting that exists in
+// the struct but not there is invisible — the previous state of this file was
+// missing `scopes` entirely, which is exactly the drift a list would reproduce
+// the next time a field is added.
+func TestExampleConfigDocumentsEveryOIDCSetting(t *testing.T) {
+	path := filepath.Join("..", "..", "digesterr.example.yaml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read example config: %v", err)
+	}
+	var doc map[string]map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse example config: %v", err)
+	}
+	section, ok := doc["oidc"]
+	if !ok {
+		t.Fatal("digesterr.example.yaml has no oidc: section")
+	}
+
+	typ := reflect.TypeOf(OIDCConfig{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		key := strings.Split(f.Tag.Get("yaml"), ",")[0]
+		if key == "" || key == "-" {
+			continue
+		}
+		if _, ok := section[key]; !ok {
+			t.Errorf("oidc.%s is a supported setting but is missing from digesterr.example.yaml", key)
+		}
+	}
+	// And nothing documented that the binary would ignore.
+	for key := range section {
+		if _, ok := typ.FieldByNameFunc(func(name string) bool {
+			f, _ := typ.FieldByName(name)
+			return strings.Split(f.Tag.Get("yaml"), ",")[0] == key
+		}); !ok {
+			t.Errorf("digesterr.example.yaml documents oidc.%s, which the binary does not read", key)
+		}
+	}
+}
+
+// The example's scope list must be the one the server actually requests by
+// default, or the comment above it lies about what an unconfigured instance
+// sends.
+func TestExampleConfigScopesMatchEffectiveDefault(t *testing.T) {
+	path := filepath.Join("..", "..", "digesterr.example.yaml")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load example: %v", err)
+	}
+	got := cfg.OIDC.EffectiveScopes()
+	want := (OIDCConfig{}).EffectiveScopes()
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("example scopes = %v, built-in default = %v: the example documents a different request than the default", got, want)
 	}
 }
