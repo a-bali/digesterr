@@ -6,7 +6,14 @@ import Input from './ui/Input.vue'
 import Button from './ui/Button.vue'
 import { authApi } from '../services/api'
 
-const props = withDefaults(defineProps<{ open?: boolean }>(), { open: false })
+const props = withDefaults(defineProps<{ open?: boolean; hasPassword?: boolean }>(), {
+  open: false,
+  // An account provisioned through OIDC has no local password, so there is
+  // nothing to type into "current password" and the server accepts the change
+  // with no old password at all. The default is the pre-OIDC shape, so a caller
+  // that does not know about the flag keeps the three-field form.
+  hasPassword: true,
+})
 
 const emit = defineEmits<{
   (e: 'update:open', v: boolean): void
@@ -31,7 +38,9 @@ watch(
   { immediate: true },
 )
 
-const allFilled = computed(() => form.current !== '' && form.next !== '' && form.confirm !== '')
+const allFilled = computed(
+  () => (!props.hasPassword || form.current !== '') && form.next !== '' && form.confirm !== '',
+)
 const passwordsMatch = computed(() => form.next === form.confirm)
 const formValid = computed(() => allFilled.value && passwordsMatch.value)
 
@@ -40,8 +49,8 @@ async function submit() {
   submitting.value = true
   error.value = ''
   try {
-    await authApi.changePassword(form.current, form.next)
-    toastSuccess('Password changed')
+    await authApi.changePassword(props.hasPassword ? form.current : '', form.next)
+    toastSuccess(props.hasPassword ? 'Password changed' : 'Password set')
     emit('update:open', false)
   } catch (e) {
     toastError(e, 'Failed to change password')
@@ -56,11 +65,15 @@ async function submit() {
   <Dialog
     :open="props.open"
     title="Change password"
-    description="Enter your current password and choose a new one."
+    :description="
+      props.hasPassword
+        ? 'Enter your current password and choose a new one.'
+        : 'This account signs in through your identity provider. Set a password to also be able to sign in without it.'
+    "
     @update:open="emit('update:open', $event)"
   >
     <form @submit.prevent="submit" class="space-y-4" data-change-password-dialog>
-      <div class="space-y-1">
+      <div v-if="props.hasPassword" class="space-y-1">
         <label for="current-password" class="text-sm font-medium">Current password</label>
         <Input
           id="current-password"

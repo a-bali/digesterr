@@ -325,6 +325,11 @@ func TestOIDCHappyPathProvisionsPasswordlessUser(t *testing.T) {
 	if profile.ID != user.ID || profile.Email != "happy@example.com" {
 		t.Errorf("me = %+v, want the provisioned user %d", profile, user.ID)
 	}
+	// A provisioned account has no password; the account dialog relies on this
+	// flag to offer "set a password" rather than "change password".
+	if profile.HasPassword {
+		t.Error("provisioned OIDC account reports has_password=true")
+	}
 
 	// The generated Reader key authenticates the Reader API, which is the
 	// machine-client path OIDC does not replace.

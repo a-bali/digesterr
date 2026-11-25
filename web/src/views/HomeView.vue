@@ -821,7 +821,11 @@ usePageTitle({ total: totalUnread, feedName: activeFeedName, feedUnread: activeF
       </div>
     </header>
 
-    <ChangePasswordDialog :open="showChangePassword" @update:open="showChangePassword = $event" />
+    <ChangePasswordDialog
+      :open="showChangePassword"
+      :has-password="authStore.user?.has_password !== false"
+      @update:open="showChangePassword = $event"
+    />
     <SettingsDialog :open="showLlmSettings" @update:open="showLlmSettings = $event" />
     <GoogleReaderApiDialog :open="readerApiOpen" @update:open="readerApiOpen = $event" />
     <ShortcutsDialog v-model:open="showShortcuts" />
