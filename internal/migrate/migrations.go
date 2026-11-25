@@ -547,10 +547,26 @@ WHERE (text != '' OR html != '')
 			`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_identities_issuer_subject ON user_identities(issuer, subject)`,
 			`CREATE INDEX IF NOT EXISTS idx_user_identities_user_id ON user_identities(user_id)`,
 		},
+		// recheck: the guard below tests SCHEMA SHAPE (tables and indexes
+		// present), not row data, so consulting it after the version is
+		// recorded is exactly the repair case this needs. Every statement
+		// above is IF NOT EXISTS, so a re-run is a no-op when nothing is missing.
+		recheck: true,
+		// Every statement above is IF NOT EXISTS, so this is safe to re-run.
+		//
+		// The guard checks the INDEXES as well as the tables. Table presence
+		// alone would baseline a database that has both tables but lost
+		// idx_user_identities_issuer_subject (a partial restore, or tables
+		// created by hand) -- and that index is what makes (issuer, subject)
+		// single-valued, which the account-resolution code relies on to avoid
+		// mapping one provider identity to two accounts.
 		applied: func(db *sql.DB) (bool, error) {
 			return allTrue(db,
 				tablePresent("oidc_auth_requests"),
 				tablePresent("user_identities"),
+				indexPresent("idx_oidc_auth_requests_expires"),
+				indexPresent("idx_user_identities_issuer_subject"),
+				indexPresent("idx_user_identities_user_id"),
 			)
 		},
 	},

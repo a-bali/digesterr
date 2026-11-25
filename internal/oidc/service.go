@@ -244,6 +244,15 @@ func (s *Service) resolveOnce(ctx context.Context, id Identity) (*store.User, bo
 // LOWER(), so a query-side match would consider a different set of candidates
 // than the application does.
 //
+// The cost is a full read of (id, email) from users on every login that has no
+// identity row yet. That is deliberate rather than overlooked: the alternative
+// is a SQL prefilter using LOWER(), which would silently drop exactly the
+// non-ASCII candidates this exists to keep, and a stored normalised column would
+// need a migration plus a write path for every account. It is one indexed-column
+// scan of two small columns, and it happens once per first login per identity,
+// not once per request. If an instance ever grows to where this shows up, the
+// fix is a persisted folded-email column, not a SQL LOWER() comparison.
+//
 // What this is NOT: full Unicode case folding. strings.ToLower is simple
 // lowercasing, so "ß" does not match "ss", "ς" does not match "σ" and the
 // fullwidth "Ａ" does not match "a". That difference only ever produces a

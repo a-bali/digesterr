@@ -96,3 +96,51 @@ VALUES ('h1', 'n1', 'v1', 'b1', DATETIME('now', '+10 minutes'))`
 		t.Fatal("duplicate state_hash accepted: single-use state cannot rely on a non-unique key")
 	}
 }
+
+// A database that has both tables but lost the unique index must be repaired,
+// not baselined as "already migrated".
+//
+// The index is what makes (issuer, subject) single-valued, and the account
+// resolution code relies on that to avoid mapping one provider identity to two
+// accounts. A table-presence-only guard would skip the migration forever on a
+// partial restore, leaving the constraint silently absent.
+func TestMigration44RebuildsMissingIndexes(t *testing.T) {
+	db := openTestDB(t)
+	if err := Run(db); err != nil {
+		t.Fatalf("initial Run: %v", err)
+	}
+	for _, stmt := range []string{
+		`DROP INDEX idx_user_identities_issuer_subject`,
+		`DROP INDEX idx_oidc_auth_requests_expires`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	// The version stays recorded: the guard, not the version table, is what
+	// has to notice.
+	if err := Run(db); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	for _, idx := range []string{"idx_user_identities_issuer_subject", "idx_oidc_auth_requests_expires"} {
+		var n int
+		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?`, idx).Scan(&n); err != nil {
+			t.Fatalf("check index %s: %v", idx, err)
+		}
+		if n != 1 {
+			t.Errorf("index %s was not recreated on a database missing it", idx)
+		}
+	}
+	// And the constraint is real again: a duplicate (issuer, subject) must be
+	// rejected. The user row is created first so the foreign key is satisfied
+	// and the unique index is the only thing that can fail.
+	if _, err := db.Exec(`INSERT INTO users (email, password_hash, api_key) VALUES ('dup@example.com', '', 'k1')`); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO user_identities (user_id, issuer, subject, email) VALUES (1, 'i', 's', 'e')`); err != nil {
+		t.Fatalf("seed identity: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO user_identities (user_id, issuer, subject, email) VALUES (1, 'i', 's', 'e2')`); err == nil {
+		t.Error("a duplicate (issuer, subject) was accepted: the unique index is not enforcing anything")
+	}
+}
