@@ -131,12 +131,14 @@ auth and Reader keys remain fully functional.
   provider resolving to the account, while the account's password (if any) and
   Reader API key still work. Full unlink:
   `DELETE FROM user_identities WHERE user_id = ?`. Deleting the user cascades.
-- **A provisioned (OIDC-only) account** has no password. Its owner sets a first
-  password from the account menu after signing in (the dialog omits "current
-  password" — `has_password` in `/api/auth/me` drives that, and the server skips
-  the old-password check only while the stored hash is empty). Its Reader API key
-  is visible in Settings and can be rotated there, which is the revocation path
-  for machine clients.
+- **A provisioned (OIDC-only) account has no local password and cannot set one
+  yet.** It starts with an empty password hash, so password sign-in can never
+  match it; it is reachable only through the provider. Letting its owner set a
+  first password needs a second proof of identity beyond the session (otherwise a
+  stolen access token would become permanent ownership of the account), and that
+  is deliberately not part of this change. Until then, such an account signs in
+  through the IdP only. Its Reader API key is visible in Settings and can be
+  rotated there, which is the revocation path for machine clients.
 - **Disabling the feature** (`oidc.enabled: false` and restart) removes the
   routes. Existing sessions and identities keep working; only new OIDC logins
   stop. Identities can still be used again if it is re-enabled.

@@ -31,20 +31,10 @@ type userResponse struct {
 	Email     string    `json:"email"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-	// HasPassword reports whether this account has a local password at all.
-	// An OIDC-provisioned account has none, so the UI asks for a new password
-	// instead of the current one; the hash itself is never exposed.
-	HasPassword bool `json:"has_password"`
 }
 
 func newUserResponse(u store.User) userResponse {
-	return userResponse{
-		ID:          u.ID,
-		Email:       u.Email,
-		CreatedAt:   u.CreatedAt,
-		UpdatedAt:   u.UpdatedAt,
-		HasPassword: u.PasswordHash != "",
-	}
+	return userResponse{ID: u.ID, Email: u.Email, CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt}
 }
 
 // refreshCookie builds the refresh-token cookie scoped to /api/auth.
@@ -400,8 +390,8 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	if req.NewPassword == "" {
-		writeError(w, http.StatusBadRequest, "new_password is required")
+	if req.OldPassword == "" || req.NewPassword == "" {
+		writeError(w, http.StatusBadRequest, "old_password and new_password are required")
 		return
 	}
 	if err := auth.CheckPasswordLength(req.NewPassword); err != nil {
@@ -414,15 +404,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "user not found")
 		return
 	}
-	// An account provisioned through OIDC has no password yet (empty hash), so
-	// there is no old password to prove: the authenticated session is the only
-	// credential it has. This is the sole path by which such an account can
-	// gain a password, and it is why the field is optional.
-	//
-	// Once a hash exists the check is absolute: a session alone must never
-	// replace a known password, or a stolen access token would become permanent
-	// account ownership.
-	if user.PasswordHash != "" && !auth.CheckPassword(req.OldPassword, user.PasswordHash) {
+	if !auth.CheckPassword(req.OldPassword, user.PasswordHash) {
 		writeError(w, http.StatusUnauthorized, "invalid old password")
 		return
 	}

@@ -3,10 +3,6 @@ export interface User {
   email: string
   created_at: string
   updated_at: string
-  // has_password is false for an account provisioned through OIDC, which has no
-  // local password until its owner sets one. The account dialog uses it to ask
-  // for a new password instead of the current one.
-  has_password: boolean
 }
 
 export interface Feed {
