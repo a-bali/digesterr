@@ -528,7 +528,9 @@ WHERE (text != '' OR html != '')
     code_verifier TEXT    NOT NULL,
     binding_hash  TEXT    NOT NULL,
     return_to     TEXT    NOT NULL DEFAULT '/',
-    expires_at    DATETIME NOT NULL,
+    -- Unix seconds -- see internal/schema/schema.sql for why this is INTEGER
+    -- rather than DATETIME text.
+    expires_at    INTEGER NOT NULL,
     created_at    DATETIME NOT NULL DEFAULT (DATETIME('now'))
 )`,
 			`CREATE INDEX IF NOT EXISTS idx_oidc_auth_requests_expires ON oidc_auth_requests(expires_at)`,

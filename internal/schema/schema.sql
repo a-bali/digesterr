@@ -149,7 +149,13 @@ CREATE TABLE oidc_auth_requests (
     -- Where to send the browser after a successful login. Restricted to an
     -- in-app path by the handler, never an absolute URL.
     return_to     TEXT    NOT NULL DEFAULT '/',
-    expires_at    DATETIME NOT NULL,
+    -- Unix seconds (INTEGER), not a DATETIME text. Two reasons, both learned
+    -- the hard way: SQLite compares TEXT lexicographically, so a Go time
+    -- written with a zone offset sorted wrongly against DATETIME('now') (which
+    -- carries none) and every login failed west of UTC; and any comparison
+    -- wrapped in strftime() cannot use idx_oidc_auth_requests_expires. An
+    -- integer compares as a number and keeps the index usable.
+    expires_at    INTEGER NOT NULL,
     created_at    DATETIME NOT NULL DEFAULT (DATETIME('now'))
 );
 

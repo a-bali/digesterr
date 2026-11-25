@@ -179,7 +179,9 @@ func (h *oidcHandler) handleStart(w http.ResponseWriter, r *http.Request) {
 		CodeVerifier: verifier,
 		BindingHash:  hashSecret(binding),
 		ReturnTo:     returnTo,
-		ExpiresAt:    time.Now().Add(oidcFlowTTL),
+		// Unix seconds: the column is INTEGER, so this cannot be compared as
+		// text (see internal/schema/schema.sql).
+		ExpiresAt:    time.Now().Add(oidcFlowTTL).Unix(),
 	}); err != nil {
 		writeServerError(w, "failed to start sign-in", err)
 		return

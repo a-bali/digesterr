@@ -125,7 +125,7 @@ type OidcAuthRequest struct {
 	CodeVerifier string    `json:"code_verifier"`
 	BindingHash  string    `json:"binding_hash"`
 	ReturnTo     string    `json:"return_to"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	ExpiresAt    int64     `json:"expires_at"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 

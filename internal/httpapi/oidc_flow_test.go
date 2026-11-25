@@ -788,7 +788,7 @@ func TestOIDCStartSweepsExpiredRequestsOnly(t *testing.T) {
 	expired := time.Now().Add(-time.Minute)
 	if err := queries.CreateOIDCAuthRequest(t.Context(), store.CreateOIDCAuthRequestParams{
 		StateHash: "stale-hash", Nonce: "n", CodeVerifier: "v", BindingHash: "b",
-		ReturnTo: "/", ExpiresAt: expired,
+		ReturnTo: "/", ExpiresAt: expired.Unix(),
 	}); err != nil {
 		t.Fatalf("seed expired row: %v", err)
 	}

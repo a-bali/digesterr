@@ -46,7 +46,7 @@ func TestConsumeAuthRequestIsTimezoneIndependent(t *testing.T) {
 				BindingHash:  "binding",
 				ReturnTo:     "/",
 				// Ten minutes in the FUTURE, expressed in the process's zone.
-				ExpiresAt: time.Now().In(tc.loc).Add(10 * time.Minute),
+				ExpiresAt: time.Now().In(tc.loc).Add(10 * time.Minute).Unix(),
 			}); err != nil {
 				t.Fatalf("create auth request: %v", err)
 			}
@@ -69,7 +69,7 @@ func TestConsumeAuthRequestIsTimezoneIndependent(t *testing.T) {
 				CodeVerifier: "verifier",
 				BindingHash:  "binding",
 				ReturnTo:     "/",
-				ExpiresAt:    time.Now().In(tc.loc).Add(10 * time.Minute),
+				ExpiresAt:    time.Now().In(tc.loc).Add(10 * time.Minute).Unix(),
 			}); err != nil {
 				t.Fatalf("create second auth request: %v", err)
 			}
@@ -100,7 +100,7 @@ func TestConsumeAuthRequestRejectsExpiredInAnyZone(t *testing.T) {
 			CodeVerifier: "verifier",
 			BindingHash:  "binding",
 			ReturnTo:     "/",
-			ExpiresAt:    time.Now().In(loc).Add(-time.Minute),
+			ExpiresAt:    time.Now().In(loc).Add(-time.Minute).Unix(),
 		}); err != nil {
 			t.Fatalf("create auth request: %v", err)
 		}
