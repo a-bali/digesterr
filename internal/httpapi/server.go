@@ -65,6 +65,10 @@ type Server struct {
 	// needing no exported base-URL setter on feed.AgentMailClient (which exists
 	// precisely so the host cannot become a configuration knob).
 	emailVerify func(ctx context.Context, inbox, apiKey string) error
+	// oidcConfig is the configured OIDC section. The routes are registered by
+	// EnableOIDC (which also performs discovery), not by NewServer, so a server
+	// built in a test without calling it has no OIDC endpoints at all.
+	oidcConfig config.OIDCConfig
 	// llmModels lists the endpoint's models for the settings picker. Nil means
 	// the real endpoint; tests substitute a function. The list is advisory, so a
 	// failure is swallowed rather than surfaced.
@@ -116,6 +120,7 @@ func NewServer(db *sql.DB, queries *store.Queries, authSvc *auth.Service, logs *
 		summaryPrompt:     cfg.LLM.SummaryPrompt,
 		llmDefaultModel:   cfg.LLM.Model,
 		extractSem:        make(chan struct{}, extractConcurrency(cfg)),
+		oidcConfig:        cfg.OIDC,
 	}
 
 	llmClient := digest.NewLLMClient(cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model, cfg.LLM.Timeout.Duration())

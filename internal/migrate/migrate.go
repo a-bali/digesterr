@@ -355,6 +355,22 @@ func tableAbsent(table string) func(*sql.DB) (bool, error) {
 	return noRows("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", table)
 }
 
+// indexPresent returns an applied-guard that reports true when the named index
+// exists. Use it together with tablePresent for a migration whose value lives
+// partly in an index: a database restored without the index looks "already
+// migrated" to a table-only guard, and the constraint the index enforces would
+// then be silently absent forever.
+func indexPresent(name string) func(*sql.DB) (bool, error) {
+	return func(db *sql.DB) (bool, error) {
+		var n int
+		err := db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?", name).Scan(&n)
+		if err != nil {
+			return false, err
+		}
+		return n > 0, nil
+	}
+}
+
 // tablePresent returns an applied-guard that reports true when the named
 // table exists. The mirror of tableAbsent: for migrations whose statements
 // are IF NOT EXISTS / INSERT OR IGNORE idempotent, presence means a prior

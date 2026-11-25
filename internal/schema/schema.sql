@@ -124,6 +124,64 @@ CREATE TABLE digest_result_items (
     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
 );
 
+-- OIDC sign-in: one row per in-flight authorization request.
+--
+-- state_hash is the SHA-256 of the state value, never the value itself: the
+-- state is a bearer token until it is consumed, so a copy of this table (a
+-- backup, a support dump) must not be enough to complete someone else's login.
+-- The row is deleted when the callback consumes it, which is what makes the
+-- state single-use; the UNIQUE index guarantees a replay cannot find a second
+-- row even if a delete ever raced.
+--
+-- binding_hash is the SHA-256 of a random value stored in a short-lived
+-- HttpOnly cookie on the initiating browser. A callback that arrives in a
+-- different browser presents a different (or no) cookie and fails, so a state
+-- value leaked to another browser still cannot be redeemed there.
+--
+-- code_verifier is the PKCE verifier for this request. It is a secret until the
+-- exchange completes, and it is useless without the code.
+CREATE TABLE oidc_auth_requests (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    state_hash    TEXT    NOT NULL UNIQUE,
+    nonce         TEXT    NOT NULL,
+    code_verifier TEXT    NOT NULL,
+    binding_hash  TEXT    NOT NULL,
+    -- Where to send the browser after a successful login. Restricted to an
+    -- in-app path by the handler, never an absolute URL.
+    return_to     TEXT    NOT NULL DEFAULT '/',
+    -- Unix seconds (INTEGER), not a DATETIME text. Two reasons, both learned
+    -- the hard way: SQLite compares TEXT lexicographically, so a Go time
+    -- written with a zone offset sorted wrongly against DATETIME('now') (which
+    -- carries none) and every login failed west of UTC; and any comparison
+    -- wrapped in strftime() cannot use idx_oidc_auth_requests_expires. An
+    -- integer compares as a number and keeps the index usable.
+    expires_at    INTEGER NOT NULL,
+    created_at    DATETIME NOT NULL DEFAULT (DATETIME('now'))
+);
+
+CREATE INDEX idx_oidc_auth_requests_expires ON oidc_auth_requests(expires_at);
+
+-- user_identities maps a user to an external identity. (issuer, subject) is the
+-- stable key: email is mutable at the provider and must never be the lookup
+-- used to recognise a returning user. One row per linked identity, so a user
+-- may hold several providers while each provider account maps to one user.
+--
+-- email is a record of what the provider asserted when the row was written (or
+-- last refreshed); it is display/audit data, not an identity key.
+CREATE TABLE user_identities (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    issuer     TEXT    NOT NULL,
+    subject    TEXT    NOT NULL,
+    email      TEXT    NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    updated_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX idx_user_identities_issuer_subject ON user_identities(issuer, subject);
+CREATE INDEX idx_user_identities_user_id ON user_identities(user_id);
+
 CREATE TABLE refresh_tokens (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     INTEGER NOT NULL,

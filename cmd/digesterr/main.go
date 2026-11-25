@@ -100,6 +100,13 @@ func main() {
 		slog.Error("JWT_SECRET (server.jwt_secret) is required")
 		os.Exit(1)
 	}
+	// Validate the OIDC section before touching the database: a typo in the
+	// issuer or redirect URI is an operator error that should stop startup with
+	// a precise message, not surface as a broken login button later.
+	if err := cfg.OIDC.Validate(); err != nil {
+		slog.Error("invalid OIDC configuration", "error", err)
+		os.Exit(1)
+	}
 
 	db, err := sql.Open("sqlite", cfg.DB.Path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_texttotime=true&_time_format=sqlite")
 	if err != nil {
@@ -126,6 +133,13 @@ func main() {
 	queries := store.New(db)
 	authSvc := auth.NewService(cfg.Server.JWTSecret, queries, db)
 	server := httpapi.NewServer(db, queries, authSvc, logBuf, cfg)
+	// Discovery runs here, not on first login: an unreachable provider or a
+	// mismatched issuer must fail startup rather than serve a button that
+	// cannot work.
+	if err := server.EnableOIDC(context.Background()); err != nil {
+		slog.Error("failed to enable OIDC sign-in", "error", err)
+		os.Exit(1)
+	}
 
 	// Cancelled on SIGINT/SIGTERM: stops the poller and scheduler on their next
 	// tick and is the lifetime context for detached extraction work.

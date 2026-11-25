@@ -89,6 +89,7 @@ type Config struct {
 	Reddit  RedditConfig  `yaml:"reddit"`
 	Twitter TwitterConfig `yaml:"twitter"`
 	Digest  DigestConfig  `yaml:"digest"`
+	OIDC    OIDCConfig    `yaml:"oidc"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -435,4 +436,14 @@ func applyEnv(cfg *Config, levelSetByFile bool) {
 	setString(&cfg.Twitter.AuthToken, "TWITTER_AUTH_TOKEN", "")
 
 	setString(&cfg.Digest.SchedulerTimezone, "DIGEST_SCHEDULER_TIMEZONE", "")
+
+	setBool(&cfg.OIDC.Enabled, "OIDC_ENABLED")
+	setString(&cfg.OIDC.Issuer, "OIDC_ISSUER", "")
+	setString(&cfg.OIDC.ClientID, "OIDC_CLIENT_ID", "")
+	setString(&cfg.OIDC.ClientSecret, "OIDC_CLIENT_SECRET", "")
+	setString(&cfg.OIDC.RedirectURL, "OIDC_REDIRECT_URL", "")
+	setString(&cfg.OIDC.ProviderName, "OIDC_PROVIDER_NAME", "")
+	if v, ok := lookupEnv("OIDC_SCOPES"); ok {
+		cfg.OIDC.Scopes = parseScopeList(v)
+	}
 }

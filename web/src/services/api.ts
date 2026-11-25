@@ -1,4 +1,4 @@
-import type { AllDigestResultsResponse, AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, HealthInfo, Item, LogsResponse, MarkRelativeOptions, MetricsSummary, MultiFeedItemsResponse, SavedItemsResponse, User } from '../types/api'
+import type { AllDigestResultsResponse, AuthResponse, DigestConfig, DigestResult, DigestResultItemWithData, Feed, FeedItemsResponse, HealthInfo, Item, LogsResponse, MarkRelativeOptions, MetricsSummary, MultiFeedItemsResponse, OIDCStatus, SavedItemsResponse, User } from '../types/api'
 
 // The access token lives in memory only — never localStorage. Any XSS that
 // reaches the page (e.g. through feed HTML) could otherwise read it straight
@@ -138,6 +138,10 @@ export const authApi = {
     api<void>('/auth/change-password', { method: 'POST', body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }) }),
   getApiKey: () => api<{ api_key: string }>('/auth/api-key'),
   rotateApiKey: () => api<{ api_key: string }>('/auth/api-key/rotate', { method: 'POST' }),
+  // oidcStatus asks whether a provider is configured. A 404 means the feature
+  // is off (the routes only exist when it is enabled), so callers treat a
+  // rejection as "no provider" rather than as an error to show.
+  oidcStatus: () => api<OIDCStatus>('/auth/oidc/status'),
 }
 
 export const feedApi = {

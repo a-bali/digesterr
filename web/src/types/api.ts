@@ -289,6 +289,14 @@ export interface AuthResponse {
   access_token: string
 }
 
+// OIDCStatus is the login page's view of the optional OIDC provider. It is
+// deliberately tiny: the browser never learns the issuer, client id or any token
+// endpoint, because the SPA never talks to the provider itself.
+export interface OIDCStatus {
+  enabled: boolean
+  provider_name: string
+}
+
 export interface MultiItem extends Item {
   feed_name: string
   feed_type: string
