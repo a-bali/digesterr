@@ -875,4 +875,3 @@ func tableExists(db *sql.DB, table string) (bool, error) {
 		"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&n)
 	return n > 0, err
 }
-
