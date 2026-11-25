@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"digesterr/internal/store"
 )
@@ -85,7 +86,70 @@ func NewService(db *sql.DB, queries *store.Queries, issuer string, newAPIKey API
 // An unverified email is refused outright, including for an already-mapped
 // identity: the requirement is that email_verified is true on every login, not
 // only on first login.
+// resolveAttempts bounds how many times a transient write lock is retried. Each
+// attempt is a fresh transaction, and the backoff below is short enough that a
+// user never sees it next to a redirect.
+const resolveAttempts = 5
+
+// busyRetryBase is the first backoff; it doubles per attempt, so five attempts
+// wait ~375ms in total. That is deliberately under the threshold where a user
+// notices a pause on a redirect, and well inside SQLITE's own 5s busy_timeout:
+// this covers the snapshot-class lock that busy_timeout does NOT cover.
+const busyRetryBase = 25 * time.Millisecond
+
+// Resolve maps a validated identity to a local user, retrying when the database
+// reports a transient write lock.
+//
+// The transaction is read-then-write, so it needs the writer lock before it can
+// commit. Another process sharing the SQLite file (a backup, sqlite3 on the
+// volume, a second replica) can hold that lock for a moment, and the driver
+// surfaces that as "database is locked" — sometimes the snapshot variant
+// (SQLITE_BUSY_SNAPSHOT, code 517), which does NOT honour busy_timeout. Treating
+// it as fatal turned a short-lived condition into a failed login the user saw as
+// /login?error=oidc_error, so it is retried here instead.
+//
+// The retry is bounded and re-runs the whole resolution: an attempt that failed
+// at commit wrote nothing, and re-reading the identity row means the second
+// attempt takes the "already mapped" path if the first one actually landed.
+// internal/oidc/busy_retry_test.go pins both the retry and the give-up.
 func (s *Service) Resolve(ctx context.Context, id Identity) (*store.User, bool, error) {
+	var lastErr error
+	for attempt := 0; attempt < resolveAttempts; attempt++ {
+		user, provisioned, err := s.resolveOnce(ctx, id)
+		if err == nil {
+			return user, provisioned, nil
+		}
+		if !isTransientLock(err) {
+			return nil, false, err
+		}
+		lastErr = err
+		if attempt == resolveAttempts-1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		case <-time.After(busyRetryBase << attempt):
+		}
+	}
+	return nil, false, fmt.Errorf("oidc: database stayed locked after %d attempts: %w", resolveAttempts, lastErr)
+}
+
+// isTransientLock reports whether err is SQLite telling us to try again later.
+//
+// Both the generic busy result and the snapshot variant are matched, by text:
+// the driver's error type is internal to modernc.org/sqlite and matching on it
+// would couple this package to that implementation.
+func isTransientLock(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "database is locked") || strings.Contains(msg, "database table is locked")
+}
+
+// resolveOnce is one attempt: it either resolves the identity or fails.
+func (s *Service) resolveOnce(ctx context.Context, id Identity) (*store.User, bool, error) {
 	if strings.TrimSpace(id.Subject) == "" {
 		return nil, false, ErrSubjectMissing
 	}
