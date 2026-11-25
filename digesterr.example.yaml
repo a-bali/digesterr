@@ -138,3 +138,47 @@ twitter:
   ct0: ""        # [TWITTER_CT0]
   auth_token: "" # [TWITTER_AUTH_TOKEN]
 
+
+oidc:
+  # Optional native OpenID Connect sign-in. Disabled by default: local signup,
+  # password sign-in and Reader API keys keep working exactly as before, with
+  # or without this section.
+  #
+  # When enabled, the server performs the authorization-code flow with PKCE
+  # itself, reads the provider's discovery document at startup (startup fails
+  # if the issuer is unreachable or the document's issuer disagrees with
+  # oidc.issuer), and logs the user in through the same session the password
+  # form creates.
+  #
+  # Read docs/oidc.md before enabling this: first-login email matching hands an
+  # existing account to whoever the provider says owns the address, which is
+  # only safe with a provider you control and open signup closed. That file also
+  # covers offboarding and session revocation.
+  enabled: false                      # [OIDC_ENABLED]
+
+  # The provider's issuer identifier, exactly as it appears in the `iss` claim
+  # and in its discovery document (including any path, and any trailing slash).
+  # Must be https; plain http is accepted only for loopback (local testing).
+  #                                         [OIDC_ISSUER]
+  issuer: ""
+
+  # Registered confidential client. A client secret is required: the code is
+  # exchanged on the server, so this is not a public client.
+  #                                    [OIDC_CLIENT_ID, OIDC_CLIENT_SECRET]
+  client_id: ""
+  client_secret: ""
+
+  # The exact callback registered with the provider. It must be absolute, use
+  # https (loopback excepted), carry no query or fragment, and end in
+  # /api/auth/oidc/callback. It is never derived from the request Host header.
+  #                                        [OIDC_REDIRECT_URL]
+  redirect_url: ""
+
+  # Label on the sign-in button ("Continue with <name>"). Empty means
+  # "single sign-on".                            [OIDC_PROVIDER_NAME]
+  provider_name: ""
+
+  # Scopes to request. Comma- or space-separated. Must include openid; the
+  # default is openid, email, profile and is the minimum this feature needs.
+  #                                                 [OIDC_SCOPES]
+  # scopes: [openid, email, profile]

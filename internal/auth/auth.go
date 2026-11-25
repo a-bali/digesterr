@@ -200,3 +200,18 @@ func hashToken(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
 }
+
+// GenerateAPIKey returns a random Reader API key: 32 random bytes, hex-encoded
+// to 64 lowercase characters.
+//
+// It lives here rather than in the HTTP package because two paths mint keys
+// now — local signup and OIDC provisioning — and a second copy of the format
+// would drift. The Reader API matches keys by exact string, so a key of the
+// wrong shape simply never authenticates.
+func GenerateAPIKey() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generating api key: %w", err)
+	}
+	return hex.EncodeToString(buf), nil
+}

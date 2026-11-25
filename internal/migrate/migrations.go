@@ -513,6 +513,45 @@ WHERE (text != '' OR html != '')
 			)
 		},
 	},
+	{
+		version: 44,
+		name:    "add OIDC auth request and identity tables",
+		// Kept in step with internal/schema/schema.sql. The applied predicate
+		// tests table presence (not row data), so a database that already has
+		// both tables is baselined without re-running, and one restored from a
+		// backup taken between the two CREATE TABLEs is repaired.
+		stmts: []string{
+			`CREATE TABLE IF NOT EXISTS oidc_auth_requests (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    state_hash    TEXT    NOT NULL UNIQUE,
+    nonce         TEXT    NOT NULL,
+    code_verifier TEXT    NOT NULL,
+    binding_hash  TEXT    NOT NULL,
+    return_to     TEXT    NOT NULL DEFAULT '/',
+    expires_at    DATETIME NOT NULL,
+    created_at    DATETIME NOT NULL DEFAULT (DATETIME('now'))
+)`,
+			`CREATE INDEX IF NOT EXISTS idx_oidc_auth_requests_expires ON oidc_auth_requests(expires_at)`,
+			`CREATE TABLE IF NOT EXISTS user_identities (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    issuer     TEXT    NOT NULL,
+    subject    TEXT    NOT NULL,
+    email      TEXT    NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    updated_at DATETIME NOT NULL DEFAULT (DATETIME('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+)`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_identities_issuer_subject ON user_identities(issuer, subject)`,
+			`CREATE INDEX IF NOT EXISTS idx_user_identities_user_id ON user_identities(user_id)`,
+		},
+		applied: func(db *sql.DB) (bool, error) {
+			return allTrue(db,
+				tablePresent("oidc_auth_requests"),
+				tablePresent("user_identities"),
+			)
+		},
+	},
 }
 
 // itemsPointsNotNullRebuild returns the statements for migration 42.

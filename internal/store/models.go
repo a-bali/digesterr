@@ -118,6 +118,17 @@ type Item struct {
 	IsSaved        int64        `json:"is_saved"`
 }
 
+type OidcAuthRequest struct {
+	ID           int64     `json:"id"`
+	StateHash    string    `json:"state_hash"`
+	Nonce        string    `json:"nonce"`
+	CodeVerifier string    `json:"code_verifier"`
+	BindingHash  string    `json:"binding_hash"`
+	ReturnTo     string    `json:"return_to"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 type RefreshToken struct {
 	ID        int64     `json:"id"`
 	UserID    int64     `json:"user_id"`
@@ -137,4 +148,14 @@ type User struct {
 	EmailApiKey  string    `json:"email_api_key"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type UserIdentity struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	Issuer    string    `json:"issuer"`
+	Subject   string    `json:"subject"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
