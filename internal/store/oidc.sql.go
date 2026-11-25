@@ -136,15 +136,6 @@ func (q *Queries) DeleteExpiredOIDCAuthRequests(ctx context.Context) error {
 	return err
 }
 
-const deleteUserIdentitiesByUser = `-- name: DeleteUserIdentitiesByUser :exec
-DELETE FROM user_identities WHERE user_id = ?
-`
-
-func (q *Queries) DeleteUserIdentitiesByUser(ctx context.Context, userID int64) error {
-	_, err := q.db.ExecContext(ctx, deleteUserIdentitiesByUser, userID)
-	return err
-}
-
 const getUserIdentityByIssuerSubject = `-- name: GetUserIdentityByIssuerSubject :one
 
 SELECT id, user_id, issuer, subject, email, created_at, updated_at FROM user_identities WHERE issuer = ? AND subject = ?
@@ -209,9 +200,9 @@ type ListAllUsersEmailsRow struct {
 	Email string `json:"email"`
 }
 
-// Used to build the case-insensitive match index in Go: SQLite cannot fold
-// non-ASCII case at all, so the authoritative comparison happens in the
-// application. Reading only the two columns keeps this cheap.
+// Used to build the case-insensitive match index in Go: SQLite's LOWER() folds
+// ASCII only, so the authoritative comparison happens in the application.
+// Reading only the two columns keeps this cheap.
 func (q *Queries) ListAllUsersEmails(ctx context.Context) ([]ListAllUsersEmailsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listAllUsersEmails)
 	if err != nil {
@@ -222,83 +213,6 @@ func (q *Queries) ListAllUsersEmails(ctx context.Context) ([]ListAllUsersEmailsR
 	for rows.Next() {
 		var i ListAllUsersEmailsRow
 		if err := rows.Scan(&i.ID, &i.Email); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listUserIdentitiesByUser = `-- name: ListUserIdentitiesByUser :many
-SELECT id, user_id, issuer, subject, email, created_at, updated_at FROM user_identities WHERE user_id = ? ORDER BY id
-`
-
-func (q *Queries) ListUserIdentitiesByUser(ctx context.Context, userID int64) ([]UserIdentity, error) {
-	rows, err := q.db.QueryContext(ctx, listUserIdentitiesByUser, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []UserIdentity{}
-	for rows.Next() {
-		var i UserIdentity
-		if err := rows.Scan(
-			&i.ID,
-			&i.UserID,
-			&i.Issuer,
-			&i.Subject,
-			&i.Email,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listUsersByEmailExact = `-- name: ListUsersByEmailExact :many
-SELECT id, email, password_hash, api_key, llm_model, email_inbox, email_api_key, created_at, updated_at FROM users WHERE LOWER(email) = LOWER(?)
-`
-
-// First-login matching. Comparison is done in Go on a folded copy, so this
-// returns candidates that differ only by case: SQLite's LOWER() is ASCII-only,
-// so it cannot be trusted for an email domain that may be internationalised.
-// Returns every row whose LOWER(email) matches LOWER(?) in ASCII, and the
-// caller re-checks with full Unicode folding before accepting a match.
-func (q *Queries) ListUsersByEmailExact(ctx context.Context, lower string) ([]User, error) {
-	rows, err := q.db.QueryContext(ctx, listUsersByEmailExact, lower)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []User{}
-	for rows.Next() {
-		var i User
-		if err := rows.Scan(
-			&i.ID,
-			&i.Email,
-			&i.PasswordHash,
-			&i.ApiKey,
-			&i.LlmModel,
-			&i.EmailInbox,
-			&i.EmailApiKey,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
