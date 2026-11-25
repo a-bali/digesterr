@@ -236,10 +236,23 @@ func TestOIDCStartSendsStateNonceAndPKCE(t *testing.T) {
 	if binding == nil {
 		t.Fatalf("no %s cookie was set: the callback cannot verify which browser started the flow", oidcBindingCookieName)
 	}
-	// The query string must not carry the state back to us in a form that
-	// leaks into Referer: the state lives in the URL only toward the provider.
-	if strings.Contains(start.Header().Get("Location"), "digesterr.test") && q.Get("state") == "" {
-		t.Error("no state parameter")
+	// The state must be unguessable AND different per request: a cached or
+	// constant state would make every flow share one value, which nothing else
+	// here would notice (proven by mutation: a constant state kept the suite
+	// green).
+	second := beginOIDCLogin(t, server, newBrowser(t), "")
+	if second.Code != http.StatusFound {
+		t.Fatalf("second start: %d: %s (a state that is not minted per request also collides on the state_hash unique index)", second.Code, second.Body.String())
+	}
+	secondLoc, err := url.Parse(second.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse second Location: %v", err)
+	}
+	if secondLoc.Query().Get("state") == q.Get("state") {
+		t.Error("two logins received the same state: it must be minted per request")
+	}
+	if secondLoc.Query().Get("nonce") == q.Get("nonce") {
+		t.Error("two logins received the same nonce: it must be minted per request")
 	}
 }
 
@@ -425,23 +438,77 @@ func TestOIDCRejectsAmbiguousEmail(t *testing.T) {
 	}
 }
 
-// The state is single use. A second delivery of the same callback must not
-// produce a session, even though it carries a valid-looking state and code.
+// The state is single use: the callback DELETES the row it consumes, so a second
+// delivery must not produce a session.
+//
+// The replay deliberately RESTORES the browser-binding cookie. The first
+// callback clears it (the flow cookie is single use too), so a naive replay is
+// rejected by the missing-cookie check and would pass even if consumption were
+// broken — which is exactly the vacuous version this test used to be. It was
+// proven by mutation: turning ConsumeOIDCAuthRequest into a plain SELECT left
+// the whole suite green.
 func TestOIDCCallbackStateIsSingleUse(t *testing.T) {
 	server, _, p, jar := setupOIDCServer(t)
 	p.identity = func() (string, string, bool) { return "sub-replay", "replay@example.com", true }
 
 	start := beginOIDCLogin(t, server, jar, "")
-	authorizeURL := start.Header().Get("Location")
-	callbackURI := authorizeAtProvider(t, authorizeURL).RequestURI()
+	callbackURL, _ := url.Parse("http://digesterr.test" + start.Header().Get("Location"))
+	_ = callbackURL
+	nothing := authorizeAtProvider(t, start.Header().Get("Location"))
+	callbackURI := nothing.RequestURI()
+
+	// Remember the binding cookie the flow started with, then let the first
+	// callback consume and clear it.
+	u, _ := url.Parse("http://digesterr.test/api/auth/oidc/callback")
+	var binding []*http.Cookie
+	for _, c := range jar.Cookies(u) {
+		if c.Name == oidcBindingCookieName {
+			binding = append(binding, c)
+		}
+	}
+	if len(binding) == 0 {
+		t.Fatal("no binding cookie at flow start")
+	}
 
 	if cb := doJarRequest(t, server, jar, http.MethodGet, callbackURI, nil); cb.Code != http.StatusSeeOther && cb.Code != http.StatusFound {
 		t.Fatalf("first callback: %d: %s", cb.Code, cb.Body.String())
 	}
-	// Replay the exact same request, cookies and all.
+	// Put the binding cookie back, so the replay can only be stopped by the
+	// state row having been consumed.
+	jar.SetCookies(u, binding)
+
 	replay := doJarRequest(t, server, jar, http.MethodGet, callbackURI, nil)
-	if got := callbackError(t, replay); got == "" {
-		t.Error("the replayed callback redirected into the app: state was reusable")
+	if got := callbackError(t, replay); got != "oidc_state_invalid" {
+		t.Fatalf("replayed callback error = %q, want oidc_state_invalid: the state row was not consumed", got)
+	}
+}
+
+// A binding cookie that is present but WRONG must be rejected by the hash
+// comparison itself. Without this the suite only ever exercised "no cookie",
+// so neutering the constant-time compare left everything green (proven by
+// mutation): presence and correctness are different checks.
+func TestOIDCCallbackRejectsWrongBindingCookie(t *testing.T) {
+	server, queries, p, jar := setupOIDCServer(t)
+	p.identity = func() (string, string, bool) { return "sub-wrongbind", "wrongbind@example.com", true }
+
+	start := beginOIDCLogin(t, server, jar, "")
+	back := authorizeAtProvider(t, start.Header().Get("Location"))
+
+	// A syntactically valid but unrelated value: same shape, wrong hash.
+	u, _ := url.Parse("http://digesterr.test/api/auth/oidc/callback")
+	jar.SetCookies(u, []*http.Cookie{{
+		Name:     oidcBindingCookieName,
+		Value:    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		Path:     oidcBindingCookiePath,
+		HttpOnly: true,
+	}})
+
+	cb := doJarRequest(t, server, jar, http.MethodGet, back.RequestURI(), nil)
+	if got := callbackError(t, cb); got != "oidc_state_invalid" {
+		t.Fatalf("error = %q, want oidc_state_invalid for a wrong binding cookie", got)
+	}
+	if n := len(mustListUsers(t, queries)); n != 0 {
+		t.Errorf("users = %d, want 0", n)
 	}
 }
 
@@ -536,10 +603,23 @@ func TestOIDCCallbackRejectsBadIDTokens(t *testing.T) {
 		{"missing email", func(p *testOIDCProvider) {
 			p.mutateIDToken = func(c map[string]any) { delete(c, "email") }
 		}},
-		{"email_verified as string", func(p *testOIDCProvider) {
+		{"email_verified as string true", func(p *testOIDCProvider) {
 			// Some providers send the string "true". Accepting it would mean a
 			// provider could also send "false" and be read as verified.
 			p.mutateIDToken = func(c map[string]any) { c["email_verified"] = "true" }
+		}},
+		{"email_verified as string false", func(p *testOIDCProvider) {
+			// The pair matters: rejecting "true" only proves the decoder
+			// refuses strings. This case proves the same for a string whose
+			// VALUE would legitimate a login if it were coerced, so a future
+			// "be liberal in what you accept" change cannot pass unnoticed.
+			p.mutateIDToken = func(c map[string]any) { c["email_verified"] = "false" }
+		}},
+		{"email_verified absent", func(p *testOIDCProvider) {
+			p.mutateIDToken = func(c map[string]any) { delete(c, "email_verified") }
+		}},
+		{"email_verified numeric", func(p *testOIDCProvider) {
+			p.mutateIDToken = func(c map[string]any) { c["email_verified"] = 1 }
 		}},
 	}
 	for _, tc := range cases {

@@ -235,15 +235,24 @@ func (s *Service) resolveOnce(ctx context.Context, id Identity) (*store.User, bo
 	return &user, true, nil
 }
 
-// matchUniqueEmail finds the single account whose email equals want under
-// Unicode case-insensitive comparison, and any surrounding whitespace removed.
-// It returns (nil, nil) when no account matches and ErrEmailAmbiguous when more
-// than one does.
+// matchUniqueEmail finds the single account whose email equals want after
+// trimming surrounding whitespace and lowercasing, and returns (nil, nil) when
+// no account matches and ErrEmailAmbiguous when more than one does.
 //
-// The comparison happens in Go rather than SQL because SQLite's LOWER() only
-// folds ASCII: a query-side match would silently treat "İ" and "i" as different
-// while a Go-side one correctly folds them, and the two would disagree about
-// which accounts are candidates.
+// The comparison happens in Go rather than SQL because SQLite's LOWER() folds
+// ASCII only: "İ" (U+0130) lowercases to "i" in Go and is left untouched by
+// LOWER(), so a query-side match would consider a different set of candidates
+// than the application does.
+//
+// What this is NOT: full Unicode case folding. strings.ToLower is simple
+// lowercasing, so "ß" does not match "ss", "ς" does not match "σ" and the
+// fullwidth "Ａ" does not match "a". That difference only ever produces a
+// MISSED link — a provider identity whose address differs from a local account
+// by one of those folds provisions a new account instead of linking the
+// existing one — never a wrong link, because two addresses that compare equal
+// here are genuinely the same string case-insensitively. If stronger folding is
+// ever wanted, golang.org/x/text/cases with fold would be the tool, and the
+// ambiguity branch would need re-examining.
 func (s *Service) matchUniqueEmail(ctx context.Context, q *store.Queries, want string) (*store.User, error) {
 	rows, err := q.ListAllUsersEmails(ctx)
 	if err != nil {
@@ -273,9 +282,9 @@ func (s *Service) matchUniqueEmail(ctx context.Context, q *store.Queries, want s
 	}
 }
 
-// foldEmail normalises an address for comparison: trimmed, then lowercased with
-// full Unicode case folding via strings.ToLower (which is Unicode-aware, unlike
-// SQLite's LOWER).
+// foldEmail normalises an address for comparison: trimmed, then lowercased.
+// strings.ToLower is Unicode-aware (unlike SQLite's LOWER, which is ASCII-only)
+// but it is simple lowercasing, not case folding — see matchUniqueEmail.
 func foldEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
