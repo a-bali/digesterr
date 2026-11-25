@@ -45,9 +45,20 @@ VALUES (?, ?, ?, ?, ?, ?);
 -- also deleted but returns nothing, because expires_at is part of the
 -- predicate -- the caller cannot tell "expired" from "unknown", and neither
 -- should complete a login.
+--
+-- The comparison goes through strftime('%s', ...) rather than comparing the
+-- stored text against DATETIME('now'). Both columns are TEXT, and SQLite
+-- compares them lexicographically: DATETIME('now') carries no offset
+-- ("2026-11-25 11:08:32") while a Go-written value carries one
+-- ("2026-11-25 06:18:32-05:00"), so a deadline ten minutes in the FUTURE sorts
+-- before "now" on any host west of UTC and every login fails as "expired".
+-- strftime('%s', ...) parses the offset, giving a real instant on both sides.
+-- internal/oidc/authrequest_test.go pins both directions.
 DELETE FROM oidc_auth_requests
-WHERE state_hash = ? AND expires_at > DATETIME('now')
+WHERE state_hash = ? AND strftime('%s', expires_at) > strftime('%s', 'now')
 RETURNING *;
 
 -- name: DeleteExpiredOIDCAuthRequests :exec
-DELETE FROM oidc_auth_requests WHERE expires_at <= DATETIME('now');
+-- Same instant comparison as ConsumeOIDCAuthRequest: this must never sweep a
+-- row that is still live in any timezone.
+DELETE FROM oidc_auth_requests WHERE strftime('%s', expires_at) <= strftime('%s', 'now');
