@@ -570,6 +570,17 @@ WHERE (text != '' OR html != '')
 			)
 		},
 	},
+	{
+		version: 45,
+		name:    "add feeds.site_url",
+		// No backfill: the value comes from the feed DOCUMENT (the channel
+		// <link>), which only a fetch can reveal, so an existing row learns it
+		// on its next poll rather than from a guessed URL's origin. Until then
+		// reader clients fall back to the origin, which is what they used before
+		// the column existed.
+		stmts:   []string{"ALTER TABLE feeds ADD COLUMN site_url TEXT NOT NULL DEFAULT ''"},
+		applied: columnPresent("feeds", "site_url"),
+	},
 }
 
 // itemsPointsNotNullRebuild returns the statements for migration 42.

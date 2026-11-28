@@ -121,8 +121,15 @@ func TestReaderSubscriptionList(t *testing.T) {
 	if hn.URL != "https://hn.example.com" {
 		t.Fatalf("expected HN feed url %q, got %q", "https://hn.example.com", hn.URL)
 	}
-	if !strings.HasSuffix(hn.HTMLURL, fmt.Sprintf("/feeds/%d", hnFeed.ID)) {
-		t.Fatalf("expected HN feed htmlUrl to end with /feeds/%d, got %q", hnFeed.ID, hn.HTMLURL)
+	// htmlUrl is the SITE, not digesterr's own feed page: NetNewsWire derives a
+	// feed's icon from this address, so pointing it at digesterr made every
+	// subscription show digesterr's logo. A feed with no recorded site_url (this
+	// one has never been polled) falls back to the feed URL's origin.
+	if hn.HTMLURL != "https://hn.example.com" {
+		t.Fatalf("expected HN feed htmlUrl to be its site origin %q, got %q", "https://hn.example.com", hn.HTMLURL)
+	}
+	if strings.Contains(hn.HTMLURL, "/feeds/") {
+		t.Fatalf("htmlUrl points at digesterr's own feed page: %q", hn.HTMLURL)
 	}
 	if len(hn.Categories) != 1 || hn.Categories[0].Label != "Tech" || hn.Categories[0].ID != "user/-/label/Tech" {
 		t.Fatalf("expected HN feed in Tech category, got %v", hn.Categories)

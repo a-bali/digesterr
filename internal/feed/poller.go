@@ -875,7 +875,17 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	// shared counter: feeds poll concurrently now, so a shared counter would let
 	// one feed claim another's requests and bytes.
 	scope := metrics.NewScope()
-	items, err := fetcher.Fetch(metrics.WithScope(ctx, scope), feed.Url)
+	// The RSS/Atom path parses the feed document anyway, so it also hands back
+	// the site the feed describes; the other fetchers have no feed document to
+	// read a site link from and leave siteURL empty.
+	var items []Item
+	var siteURL string
+	var err error
+	if rssFetcher, ok := fetcher.(*RSSFetcher); ok {
+		items, siteURL, err = rssFetcher.FetchWithSite(metrics.WithScope(ctx, scope), feed.Url)
+	} else {
+		items, err = fetcher.Fetch(metrics.WithScope(ctx, scope), feed.Url)
+	}
 	fetchDur := time.Since(start)
 	fetchBytes, fetchReqs := scope.Totals()
 	// Derive host from feed URL.
@@ -1068,6 +1078,11 @@ func (p *Poller) pollFeed(ctx context.Context, feed store.Feed, fetcher Fetcher)
 	// failures record a WARNING and never touch status, so their last_error was
 	// permanent — it survived every successful poll and had no other clear path.
 	_ = p.queries.ClearFeedError(ctx, feed.ID)
+	if siteURL != "" {
+		if err := p.queries.UpdateFeedSiteURL(ctx, store.UpdateFeedSiteURLParams{ID: feed.ID, SiteUrl: siteURL}); err != nil {
+			logger.Warn("failed to record feed site url", "error", err)
+		}
+	}
 	// Only an errored feed returns to 'active'. A feed the user paused must not
 	// be un-paused by a poll, and this is about the error, not the lifecycle.
 	if feed.Status == "error" {
