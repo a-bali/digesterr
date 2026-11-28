@@ -43,6 +43,15 @@ SET last_fetched_at = DATETIME('now'), updated_at = DATETIME('now')
 WHERE id = ?
 RETURNING *;
 
+-- name: UpdateFeedSiteURL :exec
+-- Records where the feed's content lives, as declared by the feed document.
+-- Called after a successful poll; an empty site_url (a feed that declares no
+-- <link>, or a type whose payload is not a feed) leaves the stored value alone
+-- so one silent feed document cannot erase what a previous poll learned.
+UPDATE feeds
+SET site_url = sqlc.arg(site_url), updated_at = DATETIME('now')
+WHERE id = sqlc.arg(id) AND sqlc.arg(site_url) != '';
+
 -- name: UpdateFeedStatus :one
 UPDATE feeds
 SET status = ?, updated_at = DATETIME('now')

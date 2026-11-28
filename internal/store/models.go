@@ -90,6 +90,7 @@ type Feed struct {
 	IsArchive         int64        `json:"is_archive"`
 	FailCount         int64        `json:"fail_count"`
 	NextPollAt        sql.NullTime `json:"next_poll_at"`
+	SiteUrl           string       `json:"site_url"`
 	CreatedAt         time.Time    `json:"created_at"`
 	UpdatedAt         time.Time    `json:"updated_at"`
 }

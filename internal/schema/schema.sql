@@ -53,6 +53,17 @@ CREATE TABLE feeds (
     -- may be polled again. next_poll_at NULL means "due now".
     fail_count          INTEGER NOT NULL DEFAULT 0,
     next_poll_at        DATETIME,
+    -- Where the feed's content actually lives: the RSS channel <link> or the
+    -- Atom feed's rel=alternate link, learned from the feed document during a
+    -- poll. Empty until a poll has seen the document, and empty forever for
+    -- feed types whose payload is not a feed (reddit, twitter, email).
+    --
+    -- Reader clients need this: NetNewsWire derives a feed's icon from the home
+    -- page it is told about (subscription `htmlUrl`), so pointing that at the
+    -- feed URL's host is wrong whenever the feed is not served from the site
+    -- (x.com, reddit.com, aggregator mirrors). Readers fall back to the URL's
+    -- origin when this is empty.
+    site_url            TEXT    NOT NULL DEFAULT '',
     created_at          DATETIME NOT NULL DEFAULT (DATETIME('now')),
     updated_at          DATETIME NOT NULL DEFAULT (DATETIME('now')),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

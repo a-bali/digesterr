@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -29,11 +30,24 @@ func NewRSSFetcher() *RSSFetcher {
 }
 
 func (f *RSSFetcher) Fetch(ctx context.Context, feedURL string) ([]Item, error) {
+	items, _, err := f.FetchWithSite(ctx, feedURL)
+	return items, err
+}
+
+// FetchWithSite fetches and parses once, also returning the site the feed
+// describes (its channel <link>). A poll stores that address so reader clients
+// can resolve the feed's own icon; fetching it separately would double the
+// request count for every feed on every poll.
+func (f *RSSFetcher) FetchWithSite(ctx context.Context, feedURL string) ([]Item, string, error) {
 	body, err := f.fetchBody(ctx, feedURL)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return f.parse(body)
+	items, err := f.parse(body)
+	if err != nil {
+		return nil, "", err
+	}
+	return items, feedSiteURL(body), nil
 }
 
 // fetchBody performs the HTTP GET shared by Fetch and FeedTitle.
@@ -85,6 +99,70 @@ func (f *RSSFetcher) FeedTitle(ctx context.Context, feedURL string) (string, err
 	default:
 		return "", fmt.Errorf("unsupported feed format: %s", detectFeedFormat(body))
 	}
+}
+
+// FeedSiteURL fetches the feed and returns the address of the site it
+// describes: the RSS channel <link> or the Atom feed's rel=alternate link.
+// Callers store it to learn where a feed's content really lives, which is not
+// always where the feed is served from (Twitter, Reddit and blog aggregators
+// host the feed on a different origin than the site).
+//
+// An empty string with a nil error means the feed declared no site link.
+func (f *RSSFetcher) FeedSiteURL(ctx context.Context, feedURL string) (string, error) {
+	body, err := f.fetchBody(ctx, feedURL)
+	if err != nil {
+		return "", err
+	}
+	return feedSiteURL(body), nil
+}
+
+// feedSiteURL extracts the site link from a feed document of any supported
+// format. It returns "" when the document declares none or the link is not an
+// absolute http(s) URL — a relative or urn: link is not a site address.
+func feedSiteURL(data []byte) string {
+	switch detectFeedFormat(data) {
+	case "rss":
+		feed, err := (&rss.Parser{}).Parse(bytes.NewReader(data))
+		if err != nil {
+			return ""
+		}
+		return absoluteHTTPURL(feed.Link)
+	case "atom":
+		feed, err := (&atom.Parser{}).Parse(bytes.NewReader(data))
+		if err != nil {
+			return ""
+		}
+		for _, link := range feed.Links {
+			if link == nil {
+				continue
+			}
+			if rel := strings.TrimSpace(link.Rel); rel != "" && rel != "alternate" {
+				continue
+			}
+			if u := absoluteHTTPURL(link.Href); u != "" {
+				return u
+			}
+		}
+	}
+	return ""
+}
+
+// absoluteHTTPURL trims s and returns it only when it is an absolute http(s)
+// URL, so a feed cannot make the reader point at javascript:, data: or a
+// page-relative path.
+func absoluteHTTPURL(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return ""
+	}
+	return u.String()
 }
 
 func (f *RSSFetcher) parse(data []byte) ([]Item, error) {

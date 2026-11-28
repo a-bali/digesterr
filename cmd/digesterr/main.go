@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -298,6 +299,16 @@ func spaHandler(api http.Handler, fs http.FileSystem) http.Handler {
 		if f, err := fs.Open(path); err == nil {
 			f.Close()
 			fileServer.ServeHTTP(w, r)
+			return
+		}
+		// A missing ASSET must 404, not fall back to index.html. The fallback
+		// answers with HTML, and clients treat that as a failed image/font/
+		// script rather than a missing file: NetNewsWire, for one, caches an
+		// icon URL that returned a non-image as "this page has no favicon" for
+		// days. SPA routes (feeds/1, digests/1/2) never contain a dot in their
+		// last segment, so this cannot swallow a route.
+		if lastSegment := path[strings.LastIndex(path, "/")+1:]; strings.Contains(lastSegment, ".") {
+			http.NotFound(w, r)
 			return
 		}
 		slog.Debug("spa fallback", "path", r.URL.Path)

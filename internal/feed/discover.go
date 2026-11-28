@@ -39,3 +39,20 @@ func (p *Poller) DiscoverFeedName(ctx context.Context, feedType, feedURL string)
 		return "", fmt.Errorf("unsupported feed type %q", feedType)
 	}
 }
+
+// DiscoverFeedSiteURL resolves the site a feed describes, so an added feed can
+// store it immediately instead of waiting for its first poll. It returns "" for
+// types whose payload is not a feed document (and for a feed that declares no
+// <link>), which callers treat as "unknown", never as an error.
+func (p *Poller) DiscoverFeedSiteURL(ctx context.Context, feedType, feedURL string) (string, error) {
+	switch feedType {
+	case "rss", "atom", "hn", "lobsters":
+		f, ok := p.fetchers["rss"].(*RSSFetcher)
+		if !ok {
+			return "", fmt.Errorf("rss fetcher unavailable")
+		}
+		return f.FeedSiteURL(ctx, feedURL)
+	default:
+		return "", nil
+	}
+}

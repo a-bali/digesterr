@@ -85,7 +85,31 @@ func (s *Server) handleCreateFeed(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, "failed to create feed", err)
 		return
 	}
+	// Learn the site now rather than at the first poll: a reader client that
+	// syncs before then would resolve the feed's icon from the feed URL's host,
+	// which is wrong for anything not served from its own site.
+	s.recordFeedSiteURL(r.Context(), feed.ID, req.Type, req.URL)
 	writeJSON(w, http.StatusCreated, feed)
+}
+
+// recordFeedSiteURL learns the site a feed describes and stores it, so reader
+// clients can resolve that feed's own icon. Best effort by design: the feed was
+// already created, so a slow or unreachable upstream must not fail the request.
+// The next poll retries anyway.
+func (s *Server) recordFeedSiteURL(ctx context.Context, feedID int64, feedType, feedURL string) {
+	ctx, cancel := context.WithTimeout(ctx, discoverTimeout)
+	defer cancel()
+	site, err := s.poller.DiscoverFeedSiteURL(ctx, feedType, feedURL)
+	if err != nil {
+		slog.Debug("feed site url discovery failed", "type", feedType, "url", feedURL, "error", err)
+		return
+	}
+	if site == "" {
+		return
+	}
+	if err := s.queries.UpdateFeedSiteURL(ctx, store.UpdateFeedSiteURLParams{ID: feedID, SiteUrl: site}); err != nil {
+		slog.Warn("failed to store feed site url", "feed_id", feedID, "error", err)
+	}
 }
 
 // discoverFeedRequest asks for the name a feed declares for itself, so the

@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -41,9 +42,85 @@ type readerSubscription struct {
 	Title         string           `json:"title"`
 	URL           string           `json:"url,omitempty"`
 	HTMLURL       string           `json:"htmlUrl,omitempty"`
+	IconURL       string           `json:"iconUrl,omitempty"`
 	Categories    []readerCategory `json:"categories"`
 	SortID        string           `json:"sortid"`
 	FirstItemMsec string           `json:"firstitemmsec"`
+}
+
+// readerFeedHomePage is the subscription `htmlUrl`: the address reader clients
+// should treat as the feed's home page.
+//
+// It must be the SITE, not digesterr's own feed page. NetNewsWire resolves a
+// feed's icon from the home page it is given — first the page's apple-touch-icon
+// / og:image, then its rel=icon — so pointing htmlUrl at digesterr made every
+// subscription advertise digesterr's own logo (or, before the web UI had a
+// favicon, a non-image that made the client cache "no icon" and draw a
+// placeholder). See internal/feed/rss.go: site_url is the <link> the feed
+// declares, learned at poll time.
+//
+// When site_url is unknown (no poll yet, or a type whose payload is not a feed)
+// the feed URL's origin is the best available answer, and it is exactly what
+// readers deriving a home page themselves would use.
+func readerFeedHomePage(f store.Feed) string {
+	if f.SiteUrl != "" {
+		return f.SiteUrl
+	}
+	// For a twitter feed the feed URL IS the profile page, and that page's
+	// og:image is the account's own avatar — a real per-feed icon, which the
+	// bare origin (x.com) would collapse into one generic logo for every
+	// account. For rss the URL is a feed document, not a page, so only the
+	// origin is meaningful there.
+	if f.Type == "twitter" {
+		if u := absoluteHTTPURL(f.Url); u != "" {
+			return u
+		}
+	}
+	return originOfURL(f.Url)
+}
+
+// readerFeedIconURL is the subscription `iconUrl`. NetNewsWire ignores it (it
+// resolves icons from htmlUrl itself), but other Google Reader clients read it,
+// and Miniflux — which this API mirrors — serves one. Empty for feed types with
+// no favicon to point at.
+func readerFeedIconURL(f store.Feed) string {
+	switch f.Type {
+	case "hn":
+		return "https://news.ycombinator.com/favicon.ico"
+	case "lobsters":
+		return "https://lobste.rs/favicon.ico"
+	}
+	host := originOfURL(f.Url)
+	if host == "" {
+		return ""
+	}
+	return host + "/favicon.ico"
+}
+
+// originOfURL returns scheme://host for an absolute http(s) URL, or "" when the
+// value is not one (an email address, an empty URL, a malformed string).
+func originOfURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// absoluteHTTPURL returns raw when it is an absolute http(s) URL, else "".
+func absoluteHTTPURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return ""
+	}
+	return raw
 }
 
 type readerSubscriptionList struct {
@@ -77,7 +154,8 @@ func (s *Server) handleReaderSubscriptionList(w http.ResponseWriter, r *http.Req
 			ID:            feedStreamID(f.ID),
 			Title:         f.Name,
 			URL:           f.Url,
-			HTMLURL:       s.feedWebURL(r, f.ID),
+			HTMLURL:       readerFeedHomePage(f),
+			IconURL:       readerFeedIconURL(f),
 			Categories:    []readerCategory{},
 			SortID:        readerSortID,
 			FirstItemMsec: "0",
